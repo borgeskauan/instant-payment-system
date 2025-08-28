@@ -25,7 +25,7 @@ public class CreditTransferTransaction {
     protected FinancialInstitutionIdentification creditorFinancialInstitution;
 
     @JsonProperty(value = "Cdtr", required = true)
-    protected IdPrivateIdentification creditorInfo;
+    protected NmIdPrivateIdentification creditorInfo;
 
     @JsonProperty(value = "CdtrAcct", required = true)
     protected CashAccountCreditorAccount cashAccountCreditorAccount;
