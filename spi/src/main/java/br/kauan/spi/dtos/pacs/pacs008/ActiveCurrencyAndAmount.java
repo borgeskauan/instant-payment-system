@@ -10,6 +10,6 @@ public class ActiveCurrencyAndAmount {
 
     protected BigDecimal value;
 
-    @JsonProperty(value = "Ccy", required = true)
+    @JsonPropertyCustom(value = "Ccy", required = true)
     protected ActiveCurrencyCode currencyCode;
 }

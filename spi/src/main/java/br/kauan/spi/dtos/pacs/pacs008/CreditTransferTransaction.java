@@ -1,35 +1,34 @@
 package br.kauan.spi.dtos.pacs.pacs008;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 @Data
 public class CreditTransferTransaction {
 
-    @JsonProperty(value = "PmtId", required = true)
+    @JsonPropertyCustom(value = "PmtId", required = true)
     protected PaymentIdentification paymentIdentification;
 
-    @JsonProperty(value = "IntrBkSttlmAmt", required = true)
+    @JsonPropertyCustom(value = "IntrBkSttlmAmt", required = true)
     protected ActiveCurrencyAndAmount amountInformation;
 
-    @JsonProperty(value = "Dbtr", required = true)
+    @JsonPropertyCustom(value = "Dbtr", required = true)
     protected NmIdPrivateIdentification debtorInfo;
 
-    @JsonProperty(value = "DbtrAcct", required = true)
+    @JsonPropertyCustom(value = "DbtrAcct", required = true)
     protected CashAccountDebtorAccount debtorAccount;
 
-    @JsonProperty(value = "DbtrAgt", required = true)
+    @JsonPropertyCustom(value = "DbtrAgt", required = true)
     protected FinancialInstitutionIdentification debtorFinancialInstitution;
 
-    @JsonProperty(value = "CdtrAgt", required = true)
+    @JsonPropertyCustom(value = "CdtrAgt", required = true)
     protected FinancialInstitutionIdentification creditorFinancialInstitution;
 
-    @JsonProperty(value = "Cdtr", required = true)
+    @JsonPropertyCustom(value = "Cdtr", required = true)
     protected NmIdPrivateIdentification creditorInfo;
 
-    @JsonProperty(value = "CdtrAcct", required = true)
-    protected CashAccountCreditorAccount cashAccountCreditorAccount;
+    @JsonPropertyCustom(value = "CdtrAcct", required = true)
+    protected CashAccountCreditorAccount creditorAccount;
 
-    @JsonProperty(value = "RmtInf")
+    @JsonPropertyCustom(value = "RmtInf")
     protected RemittanceInformation remittanceInformation;
 }

@@ -1,11 +1,10 @@
 package br.kauan.spi.dtos.pacs.pacs008;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 @Data
 public class AccountIdentificationChoice {
 
-    @JsonProperty(value = "Othr")
+    @JsonPropertyCustom(value = "Othr")
     protected GenericAccountIdentification other;
 }

@@ -1,11 +1,13 @@
 package br.kauan.spi.dtos.pacs.pacs002;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import br.kauan.spi.dtos.pacs.pacs008.JsonPropertyCustom;
+import lombok.Builder;
 import lombok.Data;
 
 @Data
+@Builder
 public class StatusReason {
 
-    @JsonProperty(value = "Cd")
+    @JsonPropertyCustom(value = "Cd")
     protected ExternalStatusReasonCode code;
 }

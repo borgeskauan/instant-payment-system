@@ -1,0 +1,38 @@
+{
+  "groupHeader": {
+    "id": "batch_12345",
+    "createdAt": "2025-08-28T23:50:53.580Z",
+    "totalTransactions": 1
+  },
+  "transactions": [
+    {
+      "paymentId": "endToEnd_001",
+      "amount": 150.75,
+      "currency": "BRL",
+      "description": "Payment for invoice #5678",
+
+      "sender": {
+        "name": "John Doe",
+        "taxId": "123.456.789-00",
+        "account": {
+          "number": 12345,
+          "branch": 1,
+          "type": "checking",
+          "bankCode": "12345678"
+        }
+      },
+
+      "receiver": {
+        "name": "Jane Smith",
+        "taxId": "987.654.321-00",
+        "account": {
+          "number": 67890,
+          "branch": 2,
+          "type": "checking",
+          "bankCode": "87654321"
+        },
+        "pixKey": "jane.smith@email.com"
+      }
+    }
+  ]
+}

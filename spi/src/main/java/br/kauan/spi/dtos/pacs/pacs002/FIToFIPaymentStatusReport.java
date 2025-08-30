@@ -1,16 +1,18 @@
 package br.kauan.spi.dtos.pacs.pacs002;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import br.kauan.spi.dtos.pacs.pacs008.JsonPropertyCustom;
+import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
 
 @Data
+@Builder
 public class FIToFIPaymentStatusReport {
 
-    @JsonProperty(value = "GrpHdr", required = true)
-    protected GroupHeader groupHeader;
+    @JsonPropertyCustom(value = "GrpHdr", required = true)
+    protected GroupHeaderStatusReport groupHeader;
 
-    @JsonProperty(value = "TxInfAndSts", required = true)
-    protected List<PaymentTransaction> transactionInfo;
+    @JsonPropertyCustom(value = "TxInfAndSts", required = true)
+    protected List<PaymentTransactionInfo> transactionInfo;
 }

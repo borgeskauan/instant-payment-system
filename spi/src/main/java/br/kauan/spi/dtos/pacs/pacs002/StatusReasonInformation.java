@@ -1,16 +1,18 @@
 package br.kauan.spi.dtos.pacs.pacs002;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import br.kauan.spi.dtos.pacs.pacs008.JsonPropertyCustom;
+import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
 
 @Data
+@Builder
 public class StatusReasonInformation {
 
-    @JsonProperty(value = "Rsn")
+    @JsonPropertyCustom(value = "Rsn")
     protected StatusReason reason;
 
-    @JsonProperty(value = "AddtlInf")
+    @JsonPropertyCustom(value = "AddtlInf")
     protected List<String> additionalInformation;
 }

@@ -6,6 +6,6 @@ import lombok.Data;
 @Data
 public class PaymentIdentification {
 
-    @JsonProperty(value = "EndToEndId", required = true)
+    @JsonPropertyCustom(value = "EndToEndId", required = true)
     protected String endToEndId;
 }

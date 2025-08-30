@@ -1,0 +1,19 @@
+{
+  "groupHeader": {
+    "id": "string",
+    "createdAt": "2025-08-28T23:50:53.594Z"
+  },
+  "transactionInfo": [
+    {
+      "originalMessageId": "string",
+      "originalPaymentId": "string",
+      "status": "accepted_and_settled",
+      "reasons": [
+        {
+          "code": "AB03",
+          "description": "Invalid Creditor Account Number"
+        }
+      ]
+    }
+  ]
+}

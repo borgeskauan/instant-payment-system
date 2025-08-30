@@ -1,17 +1,16 @@
 package br.kauan.spi.dtos.pacs.pacs008;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 @Data
 public class CashAccountCreditorAccount {
 
-    @JsonProperty(value = "Id", required = true)
+    @JsonPropertyCustom(value = "Id", required = true)
     protected AccountIdentificationChoice id;
 
-    @JsonProperty(value = "Tp", required = true)
-    protected CashAccountTypeChoice tp;
+    @JsonPropertyCustom(value = "Tp", required = true)
+    protected CashAccountTypeChoice accountType;
 
-    @JsonProperty(value = "Prxy")
+    @JsonPropertyCustom(value = "Prxy")
     protected ProxyAccountIdentification proxyAccountIdentification;
 }
