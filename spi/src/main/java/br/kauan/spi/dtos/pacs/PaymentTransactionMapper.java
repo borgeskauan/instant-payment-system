@@ -3,27 +3,27 @@ package br.kauan.spi.dtos.pacs;
 import br.kauan.spi.domain.entity.commons.BatchDetails;
 import br.kauan.spi.domain.entity.transfer.*;
 import br.kauan.spi.dtos.pacs.commons.CommonsMapper;
+import br.kauan.spi.dtos.pacs.commons.GroupHeader;
 import br.kauan.spi.dtos.pacs.pacs008.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import javax.xml.datatype.XMLGregorianCalendar;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
+import java.util.List;
 
 @Service
+@RequiredArgsConstructor
 public class PaymentTransactionMapper {
 
     private final CommonsMapper commonsMapper;
-
-    public PaymentTransactionMapper(CommonsMapper commonsMapper) {
-        this.commonsMapper = commonsMapper;
-    }
+    private final CodeMapping codeMapping;
 
     public FIToFICustomerCreditTransfer toRegulatoryRequest(PaymentBatch internalBatch) {
         var groupHeader = commonsMapper.createGroupHeader(internalBatch.getBatchDetails());
-        var creditTransferTransactions = internalBatch.getTransactions().stream()
-                .map(this::toCreditTransferTransaction)
-                .toList();
+        var creditTransferTransactions = mapPaymentTransactionsToCreditTransferTransactions(internalBatch.getTransactions());
 
         return FIToFICustomerCreditTransfer.builder()
                 .groupHeader(groupHeader)
@@ -32,16 +32,8 @@ public class PaymentTransactionMapper {
     }
 
     public PaymentBatch fromRegulatoryRequest(FIToFICustomerCreditTransfer regulatoryRequest) {
-        var groupHeader = regulatoryRequest.getGroupHeader();
-        var transactions = regulatoryRequest.getCreditTransferTransactions().stream()
-                .map(this::fromCreditTransferTransaction)
-                .toList();
-
-        var batchDetails = BatchDetails.builder()
-                .id(groupHeader.getMessageId())
-                .createdAt(convertXmlGregorianCalendarToInstant(groupHeader.getCreationTimestamp()))
-                .totalTransactions(groupHeader.getNumberOfTransactions().intValue())
-                .build();
+        var batchDetails = mapGroupHeaderToBatchDetails(regulatoryRequest.getGroupHeader());
+        var transactions = mapCreditTransferTransactionsToPaymentTransactions(regulatoryRequest.getCreditTransferTransactions());
 
         return PaymentBatch.builder()
                 .batchDetails(batchDetails)
@@ -49,27 +41,31 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    private CreditTransferTransaction toCreditTransferTransaction(PaymentTransaction paymentTransaction) {
-        var paymentIdentification = createPaymentIdentification(paymentTransaction);
-        var amountInformation = createAmountInformation(paymentTransaction);
-        var debtorInformation = createPartyInformation(paymentTransaction.getSender());
-        var debtorAccount = createAccount(paymentTransaction.getSender());
-        var debtorFinancialInstitution = createFinancialInstitutionId(paymentTransaction.getSender().getAccount());
-        var creditorInformation = createPartyInformation(paymentTransaction.getReceiver());
-        var creditorAccount = createAccount(paymentTransaction.getReceiver());
-        var creditorFinancialInstitution = createFinancialInstitutionId(paymentTransaction.getReceiver().getAccount());
-        var remittanceInformation = createRemittanceInformation(paymentTransaction);
+    private BatchDetails mapGroupHeaderToBatchDetails(GroupHeader groupHeader) {
+        return BatchDetails.builder()
+                .id(groupHeader.getMessageId())
+                .createdAt(convertXmlGregorianCalendarToInstant(groupHeader.getCreationTimestamp()))
+                .totalTransactions(groupHeader.getNumberOfTransactions().intValue())
+                .build();
+    }
 
+    private List<CreditTransferTransaction> mapPaymentTransactionsToCreditTransferTransactions(List<PaymentTransaction> paymentTransactions) {
+        return paymentTransactions.stream()
+                .map(this::mapPaymentTransactionToCreditTransferTransaction)
+                .toList();
+    }
+
+    private CreditTransferTransaction mapPaymentTransactionToCreditTransferTransaction(PaymentTransaction paymentTransaction) {
         return CreditTransferTransaction.builder()
-                .paymentIdentification(paymentIdentification)
-                .amountInformation(amountInformation)
-                .debtorInformation(debtorInformation)
-                .debtorAccount(debtorAccount)
-                .debtorFinancialInstitution(debtorFinancialInstitution)
-                .creditorInformation(creditorInformation)
-                .creditorAccount(creditorAccount)
-                .creditorFinancialInstitution(creditorFinancialInstitution)
-                .remittanceInformation(remittanceInformation)
+                .paymentIdentification(createPaymentIdentification(paymentTransaction))
+                .amountInformation(createAmountInformation(paymentTransaction))
+                .debtorInformation(createPartyInformation(paymentTransaction.getSender()))
+                .debtorAccount(createAccount(paymentTransaction.getSender()))
+                .debtorFinancialInstitution(createFinancialInstitutionId(paymentTransaction.getSender().getAccount()))
+                .creditorInformation(createPartyInformation(paymentTransaction.getReceiver()))
+                .creditorAccount(createAccount(paymentTransaction.getReceiver()))
+                .creditorFinancialInstitution(createFinancialInstitutionId(paymentTransaction.getReceiver().getAccount()))
+                .remittanceInformation(createRemittanceInformation(paymentTransaction))
                 .build();
     }
 
@@ -82,23 +78,22 @@ public class PaymentTransactionMapper {
     private CashAccountAccount createAccount(Party party) {
         var bankAccount = party.getAccount();
 
-        var accountId = createAccountIdentificationChoice(bankAccount);
-        var accountType = createCashAccountTypeChoice(bankAccount);
-
-        var proxyId = ProxyAccountIdentification.builder()
-                .pixKey(party.getPixKey())
-                .build();
-
         return CashAccountAccount.builder()
-                .id(accountId)
-                .accountType(accountType)
-                .proxyAccountIdentification(proxyId)
+                .id(createAccountIdentificationChoice(bankAccount))
+                .accountType(createCashAccountTypeChoice(bankAccount))
+                .proxyAccountIdentification(createProxyAccountIdentification(party))
                 .build();
     }
 
-    private FinancialInstitutionIdentification createFinancialInstitutionId(BankAccount paymentTransaction) {
+    private ProxyAccountIdentification createProxyAccountIdentification(Party party) {
+        return ProxyAccountIdentification.builder()
+                .pixKey(party.getPixKey())
+                .build();
+    }
+
+    private FinancialInstitutionIdentification createFinancialInstitutionId(BankAccount bankAccount) {
         var clearingMemberId = ClearingSystemMemberIdentification.builder()
-                .ispb(paymentTransaction.getBankCode())
+                .ispb(bankAccount.getBankCode())
                 .build();
 
         var financialIdInternal = FinancialInstitutionIdentificationInternal.builder()
@@ -110,7 +105,7 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    private static AccountIdentificationChoice createAccountIdentificationChoice(BankAccount bankAccount) {
+    private AccountIdentificationChoice createAccountIdentificationChoice(BankAccount bankAccount) {
         var genericAccountId = GenericAccountIdentification.builder()
                 .id(BigInteger.valueOf(bankAccount.getNumber()))
                 .branchCode(BigInteger.valueOf(bankAccount.getBranch()))
@@ -121,13 +116,8 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    private static CashAccountTypeChoice createCashAccountTypeChoice(BankAccount bankAccount) {
-        var mappedAccountType = switch (bankAccount.getType()) {
-            case CHECKING -> ExternalCashAccountTypeCode.CACC;
-            case SAVINGS -> ExternalCashAccountTypeCode.SVGS;
-            case SALARY -> ExternalCashAccountTypeCode.SLRY;
-            case PAYMENT -> ExternalCashAccountTypeCode.TRAN;
-        };
+    private CashAccountTypeChoice createCashAccountTypeChoice(BankAccount bankAccount) {
+        var mappedAccountType = codeMapping.mapBankAccountTypeToExternalCode(bankAccount.getType());
 
         return CashAccountTypeChoice.builder()
                 .accountTypeCode(mappedAccountType)
@@ -135,21 +125,27 @@ public class PaymentTransactionMapper {
     }
 
     private NmIdPrivateIdentification createPartyInformation(Party party) {
-        var taxId = GenericPersonIdentification.builder()
-                .cpfCnpj(party.getTaxId())
-                .build();
-
-        var wrappedTaxId = PersonIdentification.builder()
-                .other(taxId)
-                .build();
-
-        var privateId = PrivateIdentification.builder()
-                .personIdentification(wrappedTaxId)
-                .build();
-
         return NmIdPrivateIdentification.builder()
                 .name(party.getName())
-                .id(privateId)
+                .id(createPrivateIdentification(party))
+                .build();
+    }
+
+    private PrivateIdentification createPrivateIdentification(Party party) {
+        return PrivateIdentification.builder()
+                .personIdentification(createPersonIdentification(party))
+                .build();
+    }
+
+    private PersonIdentification createPersonIdentification(Party party) {
+        return PersonIdentification.builder()
+                .other(createGenericPersonIdentification(party))
+                .build();
+    }
+
+    private GenericPersonIdentification createGenericPersonIdentification(Party party) {
+        return GenericPersonIdentification.builder()
+                .cpfCnpj(party.getTaxId())
                 .build();
     }
 
@@ -166,30 +162,62 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    private PaymentTransaction fromCreditTransferTransaction(CreditTransferTransaction transaction) {
-        var sender = fromPartyInformation(transaction.getDebtorInformation(), transaction.getDebtorAccount());
-        var receiver = fromPartyInformation(transaction.getCreditorInformation(), transaction.getCreditorAccount());
+    private List<PaymentTransaction> mapCreditTransferTransactionsToPaymentTransactions(List<CreditTransferTransaction> creditTransferTransactions) {
+        return creditTransferTransactions.stream()
+                .map(this::mapCreditTransferTransactionToPaymentTransaction)
+                .toList();
+    }
 
+    private PaymentTransaction mapCreditTransferTransactionToPaymentTransaction(CreditTransferTransaction transaction) {
         return PaymentTransaction.builder()
-                .paymentId(transaction.getPaymentIdentification().getEndToEndId())
-                .amount(transaction.getAmountInformation().getValue())
-                .description(transaction.getRemittanceInformation().getAdditionalInformation())
-                .sender(sender)
-                .receiver(receiver)
+                .paymentId(extractEndToEndId(transaction.getPaymentIdentification()))
+                .amount(extractAmount(transaction.getAmountInformation()))
+                .description(extractDescription(transaction.getRemittanceInformation()))
+                .sender(mapToParty(transaction.getDebtorInformation(), transaction.getDebtorAccount()))
+                .receiver(mapToParty(transaction.getCreditorInformation(), transaction.getCreditorAccount()))
                 .build();
     }
 
-    private Party fromPartyInformation(NmIdPrivateIdentification partyInfo, CashAccountAccount account) {
-        var bankAccount = BankAccount.builder()
-                .number(account.getId().getOther().getId().longValue())
-                .branch(account.getId().getOther().getBranchCode().intValue())
-                .build();
+    private String extractEndToEndId(PaymentIdentification paymentIdentification) {
+        return paymentIdentification.getEndToEndId();
+    }
 
+    private BigDecimal extractAmount(ActiveCurrencyAndAmount amountInformation) {
+        return amountInformation.getValue();
+    }
+
+    private String extractDescription(RemittanceInformation remittanceInformation) {
+        return remittanceInformation.getAdditionalInformation();
+    }
+
+    private Party mapToParty(NmIdPrivateIdentification partyInfo, CashAccountAccount account) {
         return Party.builder()
                 .name(partyInfo.getName())
-                .taxId(partyInfo.getId().getPersonIdentification().getOther().getCpfCnpj())
-                .account(bankAccount)
+                .taxId(extractTaxId(partyInfo.getId()))
+                .account(mapToBankAccount(account))
                 .build();
+    }
+
+    private String extractTaxId(PrivateIdentification privateIdentification) {
+        return privateIdentification.getPersonIdentification().getOther().getCpfCnpj();
+    }
+
+    private BankAccount mapToBankAccount(CashAccountAccount account) {
+        var mappedAccountType = codeMapping.mapExternalAccountTypeToBankAccountType(account.getAccountType());
+
+        return BankAccount.builder()
+                .number(extractAccountNumber(account.getId()))
+                .branch(extractBranchCode(account.getId()))
+                .type(mappedAccountType)
+                .build();
+    }
+
+    private long extractAccountNumber(AccountIdentificationChoice accountId) {
+        return accountId.getOther().getId().longValue();
+    }
+
+    private int extractBranchCode(AccountIdentificationChoice accountId) {
+        return accountId.getOther().getBranchCode().intValue();
     }
 
     private Instant convertXmlGregorianCalendarToInstant(XMLGregorianCalendar xmlGregorianCalendar) {

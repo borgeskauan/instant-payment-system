@@ -1,31 +1,30 @@
 package br.kauan.spi.dtos.pacs;
 
-import br.kauan.spi.domain.entity.status.*;
 import br.kauan.spi.domain.entity.commons.BatchDetails;
+import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.Reason;
+import br.kauan.spi.domain.entity.status.StatusReport;
+import br.kauan.spi.domain.entity.status.StatusUpdate;
 import br.kauan.spi.dtos.pacs.commons.CommonsMapper;
 import br.kauan.spi.dtos.pacs.commons.GroupHeader;
 import br.kauan.spi.dtos.pacs.pacs002.*;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class StatusReportMapper {
 
     private final CommonsMapper commonsMapper;
-
-    public StatusReportMapper(CommonsMapper commonsMapper) {
-        this.commonsMapper = commonsMapper;
-    }
+    private final CodeMapping codeMapping;
 
     public FIToFIPaymentStatusReport toRegulatoryReport(StatusReport internalReport) {
         GroupHeader groupHeader = commonsMapper.createGroupHeader(internalReport.getReportDetails());
-        List<PaymentTransactionInfo> transactionInfoList = internalReport.getStatusUpdates().stream()
-                .map(this::toPaymentTransactionInfo)
-                .toList();
+        List<PaymentTransactionInfo> transactionInfoList = mapStatusUpdatesToTransactionInfo(internalReport.getStatusUpdates());
 
         return FIToFIPaymentStatusReport.builder()
                 .groupHeader(groupHeader)
@@ -34,39 +33,8 @@ public class StatusReportMapper {
     }
 
     public StatusReport fromRegulatoryReport(FIToFIPaymentStatusReport regulatoryReport) {
-        GroupHeader groupHeader = regulatoryReport.getGroupHeader();
-        List<PaymentTransactionInfo> transactionInfos = regulatoryReport.getTransactionInfo();
-
-        // Map group header to ReportDetails
-        BatchDetails reportDetails = BatchDetails.builder()
-                .id(groupHeader.getMessageId())
-                .createdAt(groupHeader.getCreationTimestamp().toGregorianCalendar().toInstant())
-                .build();
-
-        // Map transaction infos to StatusUpdates
-        List<StatusUpdate> statusUpdates = transactionInfos.stream().map(info -> {
-            // Map status code to internal status
-            PaymentStatus status = switch (info.getStatus()) {
-                case ACCC -> PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER;
-                case ACSC -> PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER;
-                case ACSP -> PaymentStatus.ACCEPTED_IN_PROCESS;
-                case RJCT -> PaymentStatus.REJECTED;
-            };
-
-            // Map status reason informations to reasons
-            List<Reason> reasons = info.getStatusReasonInformations().stream()
-                    .map(reasonInfo -> Reason.builder()
-                            .description(reasonInfo.getAdditionalInformation().isEmpty() ? "" : reasonInfo.getAdditionalInformation().getFirst())
-                            .build())
-                    .toList();
-
-            return StatusUpdate.builder()
-                    .originalRequestId(info.getOriginalMessageId())
-                    .originalPaymentId(info.getOriginalPaymentId())
-                    .status(status)
-                    .reasons(reasons)
-                    .build();
-        }).toList();
+        BatchDetails reportDetails = mapGroupHeaderToReportDetails(regulatoryReport.getGroupHeader());
+        List<StatusUpdate> statusUpdates = mapTransactionInfosToStatusUpdates(regulatoryReport.getTransactionInfo());
 
         return StatusReport.builder()
                 .reportDetails(reportDetails)
@@ -74,28 +42,75 @@ public class StatusReportMapper {
                 .build();
     }
 
-    private PaymentTransactionInfo toPaymentTransactionInfo(StatusUpdate statusUpdate) {
-        var status = switch (statusUpdate.getStatus()) {
-            case ACCEPTED_AND_SETTLED_FOR_RECEIVER -> ExternalPaymentTransactionStatusCode.ACCC;
-            case ACCEPTED_AND_SETTLED_FOR_SENDER -> ExternalPaymentTransactionStatusCode.ACSC;
-            case ACCEPTED_IN_PROCESS -> ExternalPaymentTransactionStatusCode.ACSP;
-            case REJECTED -> ExternalPaymentTransactionStatusCode.RJCT;
-        };
+    private BatchDetails mapGroupHeaderToReportDetails(GroupHeader groupHeader) {
+        return BatchDetails.builder()
+                .id(groupHeader.getMessageId())
+                .createdAt(groupHeader.getCreationTimestamp().toGregorianCalendar().toInstant())
+                .build();
+    }
 
-        List<StatusReasonInformation> statusReasonInformationList = statusUpdate.getReasons().stream()
-                .map(reason -> StatusReasonInformation.builder()
-                        .reason(StatusReason.builder()
-                                .code(ExternalStatusReasonCode.AB_03) // TODO: mapear corretamente
-                                .build())
-                        .additionalInformation(Collections.singletonList(reason.getDescription()))
-                        .build())
+    private List<StatusUpdate> mapTransactionInfosToStatusUpdates(List<PaymentTransactionInfo> transactionInfos) {
+        return transactionInfos.stream()
+                .map(this::mapTransactionInfoToStatusUpdate)
                 .toList();
+    }
+
+    private StatusUpdate mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
+        PaymentStatus status = codeMapping.mapExternalStatusCodeToPaymentStatus(info.getStatus());
+        List<Reason> reasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
+
+        return StatusUpdate.builder()
+                .originalRequestId(info.getOriginalMessageId())
+                .originalPaymentId(info.getOriginalPaymentId())
+                .status(status)
+                .reasons(reasons)
+                .build();
+    }
+
+    private List<Reason> mapStatusReasonInformationsToReasons(List<StatusReasonInformation> reasonInformations) {
+        return reasonInformations.stream()
+                .map(this::mapStatusReasonInformationToReason)
+                .toList();
+    }
+
+    private Reason mapStatusReasonInformationToReason(StatusReasonInformation reasonInfo) {
+        return Reason.builder()
+                .descriptions(reasonInfo.getAdditionalInformation())
+                .build();
+    }
+
+    private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfo(List<StatusUpdate> statusUpdates) {
+        return statusUpdates.stream()
+                .map(this::mapStatusUpdateToTransactionInfo)
+                .toList();
+    }
+
+    private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusUpdate statusUpdate) {
+        ExternalPaymentTransactionStatusCode status = codeMapping.mapPaymentStatusToExternalStatusCode(statusUpdate.getStatus());
+        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusUpdate.getReasons());
 
         return PaymentTransactionInfo.builder()
                 .originalMessageId(statusUpdate.getOriginalRequestId())
                 .originalPaymentId(statusUpdate.getOriginalPaymentId())
                 .status(status)
                 .statusReasonInformations(statusReasonInformationList)
+                .build();
+    }
+
+    private List<StatusReasonInformation> mapReasonsToStatusReasonInformation(List<Reason> reasons) {
+        return reasons.stream()
+                .map(this::mapReasonToStatusReasonInformation)
+                .toList();
+    }
+
+    private StatusReasonInformation mapReasonToStatusReasonInformation(Reason reason) {
+        var mappedCode = codeMapping.mapReasonCodeToExternalStatusReasonCode(reason.getCode());
+
+        return StatusReasonInformation.builder()
+                .reason(StatusReason.builder()
+                        .code(mappedCode)
+                        .build())
+                .additionalInformation(reason.getDescriptions())
                 .build();
     }
 }
