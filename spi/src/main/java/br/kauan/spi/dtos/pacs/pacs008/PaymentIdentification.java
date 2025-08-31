@@ -1,9 +1,10 @@
 package br.kauan.spi.dtos.pacs.pacs008;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Builder;
 import lombok.Data;
 
 @Data
+@Builder
 public class PaymentIdentification {
 
     @JsonPropertyCustom(value = "EndToEndId", required = true)

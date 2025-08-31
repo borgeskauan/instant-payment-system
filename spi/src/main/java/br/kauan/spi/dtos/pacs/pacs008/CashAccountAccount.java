@@ -1,9 +1,11 @@
 package br.kauan.spi.dtos.pacs.pacs008;
 
+import lombok.Builder;
 import lombok.Data;
 
 @Data
-public class CashAccountCreditorAccount {
+@Builder
+public class CashAccountAccount {
 
     @JsonPropertyCustom(value = "Id", required = true)
     protected AccountIdentificationChoice id;
