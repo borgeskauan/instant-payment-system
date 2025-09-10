@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs008;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -9,9 +10,9 @@ import java.math.BigInteger;
 @Builder
 public class GenericAccountIdentification {
 
-    @JsonPropertyCustom(value = "Id", required = true)
+    @JsonProperty(value = "Id", required = true)
     protected BigInteger id;
 
-    @JsonPropertyCustom(value = "Issr")
+    @JsonProperty(value = "Issr")
     protected BigInteger branchCode;
 }

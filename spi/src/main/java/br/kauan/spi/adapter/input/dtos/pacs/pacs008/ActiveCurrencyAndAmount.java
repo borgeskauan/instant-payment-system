@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs008;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -11,6 +12,6 @@ public class ActiveCurrencyAndAmount {
 
     protected BigDecimal value;
 
-    @JsonPropertyCustom(value = "Ccy", required = true)
+    @JsonProperty(value = "Ccy", required = true)
     protected ActiveCurrencyCode currencyCode;
 }

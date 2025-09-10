@@ -4,8 +4,7 @@ import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
-import br.kauan.spi.port.input.PaymentTransactionUseCase;
-import br.kauan.spi.port.input.StatusReportUseCase;
+import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -17,32 +16,27 @@ public class PaymentController {
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
 
-    private final PaymentTransactionUseCase paymentTransactionUseCase;
-    private final StatusReportUseCase statusReportUseCase;
+    private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
 
     public PaymentController(
             PaymentTransactionMapper paymentTransactionMapper,
-            StatusReportMapper statusReportMapper
-//            PaymentTransactionUseCase paymentTransactionUseCase,
-//            StatusReportUseCase statusReportUseCase
+            StatusReportMapper statusReportMapper,
+            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase
     ) {
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
-//        this.paymentTransactionUseCase = paymentTransactionUseCase;
-//        this.statusReportUseCase = statusReportUseCase;
-        this.paymentTransactionUseCase = null;
-        this.statusReportUseCase = null;
+        this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
     }
 
     @PostMapping("/{ispb}/transfer")
     public void transfer(@PathVariable String ispb, @RequestBody FIToFICustomerCreditTransfer request) {
         var transaction = paymentTransactionMapper.fromRegulatoryRequest(request);
-        paymentTransactionUseCase.processTransaction(ispb, transaction);
+        paymentTransactionProcessorUseCase.processTransactionBatch(ispb, transaction);
     }
 
     @PostMapping("/{ispb}/transfer/status")
     public void transferStatus(@PathVariable String ispb, @RequestBody FIToFIPaymentStatusReport statusReport) {
         var status = statusReportMapper.fromRegulatoryReport(statusReport);
-        statusReportUseCase.processStatusReport(ispb, status);
+        paymentTransactionProcessorUseCase.processStatusBatch(ispb, status);
     }
 }

@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.commons;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.JsonPropertyCustom;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -11,12 +11,12 @@ import java.math.BigInteger;
 @Builder
 public class GroupHeader {
 
-    @JsonPropertyCustom(value = "MsgId", required = true)
+    @JsonProperty(value = "MsgId", required = true)
     protected String messageId;
 
-    @JsonPropertyCustom(value = "CreDtTm", required = true)
+    @JsonProperty(value = "CreDtTm", required = true)
     protected XMLGregorianCalendar creationTimestamp;
 
-    @JsonPropertyCustom(value = "NbOfTxs", required = true)
+    @JsonProperty(value = "NbOfTxs", required = true)
     protected BigInteger numberOfTransactions;
 }

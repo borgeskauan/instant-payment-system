@@ -26,6 +26,7 @@ public class CodeMapping {
             case ACCEPTED_AND_SETTLED_FOR_SENDER -> ExternalPaymentTransactionStatusCode.ACSC;
             case ACCEPTED_IN_PROCESS -> ExternalPaymentTransactionStatusCode.ACSP;
             case REJECTED -> ExternalPaymentTransactionStatusCode.RJCT;
+            case WAITING_ACCEPTANCE, ACCEPTED_AND_SETTLED -> throw new IllegalArgumentException("No external mapping for status: " + paymentStatus);
         };
     }
 

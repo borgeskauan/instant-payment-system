@@ -75,10 +75,10 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    private CashAccountAccount createAccount(Party party) {
+    private CashAccount createAccount(Party party) {
         var bankAccount = party.getAccount();
 
-        return CashAccountAccount.builder()
+        return CashAccount.builder()
                 .id(createAccountIdentificationChoice(bankAccount))
                 .accountType(createCashAccountTypeChoice(bankAccount))
                 .proxyAccountIdentification(createProxyAccountIdentification(party))
@@ -169,12 +169,16 @@ public class PaymentTransactionMapper {
     }
 
     private PaymentTransaction mapCreditTransferTransactionToPaymentTransaction(CreditTransferTransaction transaction) {
+        var sender = mapToParty(transaction.getDebtorInformation(), transaction.getDebtorAccount(), transaction.getDebtorFinancialInstitution());
+        var receiver = mapToParty(transaction.getCreditorInformation(), transaction.getCreditorAccount(), transaction.getCreditorFinancialInstitution());
+
         return PaymentTransaction.builder()
                 .paymentId(extractEndToEndId(transaction.getPaymentIdentification()))
                 .amount(extractAmount(transaction.getAmountInformation()))
+                .currency(transaction.getAmountInformation().getCurrencyCode().name())
                 .description(extractDescription(transaction.getRemittanceInformation()))
-                .sender(mapToParty(transaction.getDebtorInformation(), transaction.getDebtorAccount()))
-                .receiver(mapToParty(transaction.getCreditorInformation(), transaction.getCreditorAccount()))
+                .sender(sender)
+                .receiver(receiver)
                 .build();
     }
 
@@ -190,11 +194,14 @@ public class PaymentTransactionMapper {
         return remittanceInformation.getAdditionalInformation();
     }
 
-    private Party mapToParty(NmIdPrivateIdentification partyInfo, CashAccountAccount account) {
+    private Party mapToParty(NmIdPrivateIdentification partyInfo, CashAccount account, FinancialInstitutionIdentification financialInstitutionIdentification) {
+        var pixKey = account.getProxyAccountIdentification() != null ? account.getProxyAccountIdentification().getPixKey() : null;
+
         return Party.builder()
                 .name(partyInfo.getName())
                 .taxId(extractTaxId(partyInfo.getId()))
-                .account(mapToBankAccount(account))
+                .account(mapToBankAccount(account, financialInstitutionIdentification))
+                .pixKey(pixKey)
                 .build();
     }
 
@@ -202,13 +209,16 @@ public class PaymentTransactionMapper {
         return privateIdentification.getPersonIdentification().getOther().getCpfCnpj();
     }
 
-    private BankAccount mapToBankAccount(CashAccountAccount account) {
+    private BankAccount mapToBankAccount(CashAccount account, FinancialInstitutionIdentification financialInstitutionIdentification) {
         var mappedAccountType = codeMapping.mapExternalAccountTypeToBankAccountType(account.getAccountType());
+        var bankCode = financialInstitutionIdentification.getFinancialInstitutionIdentification()
+                .getClearingSystemMemberIdentification().getIspb();
 
         return BankAccount.builder()
                 .number(extractAccountNumber(account.getId()))
                 .branch(extractBranchCode(account.getId()))
                 .type(mappedAccountType)
+                .bankCode(bankCode)
                 .build();
     }
 

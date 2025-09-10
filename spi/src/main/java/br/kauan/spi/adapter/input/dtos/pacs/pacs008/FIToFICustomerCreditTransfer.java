@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs008;
 
 import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -10,9 +11,9 @@ import java.util.List;
 @Builder
 public class FIToFICustomerCreditTransfer {
 
-    @JsonPropertyCustom(value = "GrpHdr", required = true)
+    @JsonProperty(value = "GrpHdr", required = true)
     protected GroupHeader groupHeader;
 
-    @JsonPropertyCustom(value = "CdtTrfTxInf", required = true)
+    @JsonProperty(value = "CdtTrfTxInf", required = true)
     protected List<CreditTransferTransaction> creditTransferTransactions;
 }

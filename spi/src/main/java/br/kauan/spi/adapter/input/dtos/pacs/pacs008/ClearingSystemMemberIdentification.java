@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs008;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -7,6 +8,6 @@ import lombok.Data;
 @Builder
 public class ClearingSystemMemberIdentification {
 
-    @JsonPropertyCustom(value = "MmbId", required = true)
+    @JsonProperty(value = "MmbId", required = true)
     protected String ispb;
 }

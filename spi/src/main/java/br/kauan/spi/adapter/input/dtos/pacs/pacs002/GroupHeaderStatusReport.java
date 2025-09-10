@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs002;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.JsonPropertyCustom;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -10,9 +10,9 @@ import javax.xml.datatype.XMLGregorianCalendar;
 @Builder
 public class GroupHeaderStatusReport {
 
-    @JsonPropertyCustom(value = "MsgId", required = true)
+    @JsonProperty(value = "MsgId", required = true)
     protected String messageId;
 
-    @JsonPropertyCustom(value = "CreDtTm", required = true)
+    @JsonProperty(value = "CreDtTm", required = true)
     protected XMLGregorianCalendar creationTimestamp;
 }

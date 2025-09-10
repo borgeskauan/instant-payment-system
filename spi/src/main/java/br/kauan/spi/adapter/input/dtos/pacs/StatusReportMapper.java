@@ -4,8 +4,8 @@ import br.kauan.spi.adapter.input.dtos.pacs.pacs002.*;
 import br.kauan.spi.domain.entity.commons.BatchDetails;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.Reason;
+import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.status.StatusReport;
-import br.kauan.spi.domain.entity.status.StatusUpdate;
 import br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
 import lombok.RequiredArgsConstructor;
@@ -22,9 +22,9 @@ public class StatusReportMapper {
     private final CommonsMapper commonsMapper;
     private final CodeMapping codeMapping;
 
-    public FIToFIPaymentStatusReport toRegulatoryReport(StatusReport internalReport) {
-        GroupHeader groupHeader = commonsMapper.createGroupHeader(internalReport.getReportDetails());
-        List<PaymentTransactionInfo> transactionInfoList = mapStatusUpdatesToTransactionInfo(internalReport.getStatusUpdates());
+    public FIToFIPaymentStatusReport toRegulatoryReport(StatusBatch internalReport) {
+        GroupHeader groupHeader = commonsMapper.createGroupHeader(internalReport.getBatchDetails());
+        List<PaymentTransactionInfo> transactionInfoList = mapStatusUpdatesToTransactionInfo(internalReport.getStatusReports());
 
         return FIToFIPaymentStatusReport.builder()
                 .groupHeader(groupHeader)
@@ -32,13 +32,13 @@ public class StatusReportMapper {
                 .build();
     }
 
-    public StatusReport fromRegulatoryReport(FIToFIPaymentStatusReport regulatoryReport) {
+    public StatusBatch fromRegulatoryReport(FIToFIPaymentStatusReport regulatoryReport) {
         BatchDetails reportDetails = mapGroupHeaderToReportDetails(regulatoryReport.getGroupHeader());
-        List<StatusUpdate> statusUpdates = mapTransactionInfosToStatusUpdates(regulatoryReport.getTransactionInfo());
+        List<StatusReport> statusReports = mapTransactionInfosToStatusUpdates(regulatoryReport.getTransactionInfo());
 
-        return StatusReport.builder()
-                .reportDetails(reportDetails)
-                .statusUpdates(statusUpdates)
+        return StatusBatch.builder()
+                .batchDetails(reportDetails)
+                .statusReports(statusReports)
                 .build();
     }
 
@@ -49,17 +49,17 @@ public class StatusReportMapper {
                 .build();
     }
 
-    private List<StatusUpdate> mapTransactionInfosToStatusUpdates(List<PaymentTransactionInfo> transactionInfos) {
+    private List<StatusReport> mapTransactionInfosToStatusUpdates(List<PaymentTransactionInfo> transactionInfos) {
         return transactionInfos.stream()
                 .map(this::mapTransactionInfoToStatusUpdate)
                 .toList();
     }
 
-    private StatusUpdate mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
+    private StatusReport mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
         PaymentStatus status = codeMapping.mapExternalStatusCodeToPaymentStatus(info.getStatus());
         List<Reason> reasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
 
-        return StatusUpdate.builder()
+        return StatusReport.builder()
                 .originalRequestId(info.getOriginalMessageId())
                 .originalPaymentId(info.getOriginalPaymentId())
                 .status(status)
@@ -79,19 +79,19 @@ public class StatusReportMapper {
                 .build();
     }
 
-    private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfo(List<StatusUpdate> statusUpdates) {
-        return statusUpdates.stream()
+    private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfo(List<StatusReport> statusReports) {
+        return statusReports.stream()
                 .map(this::mapStatusUpdateToTransactionInfo)
                 .toList();
     }
 
-    private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusUpdate statusUpdate) {
-        ExternalPaymentTransactionStatusCode status = codeMapping.mapPaymentStatusToExternalStatusCode(statusUpdate.getStatus());
-        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusUpdate.getReasons());
+    private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusReport statusReport) {
+        ExternalPaymentTransactionStatusCode status = codeMapping.mapPaymentStatusToExternalStatusCode(statusReport.getStatus());
+        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusReport.getReasons());
 
         return PaymentTransactionInfo.builder()
-                .originalMessageId(statusUpdate.getOriginalRequestId())
-                .originalPaymentId(statusUpdate.getOriginalPaymentId())
+                .originalMessageId(statusReport.getOriginalRequestId())
+                .originalPaymentId(statusReport.getOriginalPaymentId())
                 .status(status)
                 .statusReasonInformations(statusReasonInformationList)
                 .build();

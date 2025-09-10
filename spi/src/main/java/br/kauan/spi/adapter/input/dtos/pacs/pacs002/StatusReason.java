@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs002;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.JsonPropertyCustom;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -8,6 +8,6 @@ import lombok.Data;
 @Builder
 public class StatusReason {
 
-    @JsonPropertyCustom(value = "Cd")
+    @JsonProperty(value = "Cd")
     protected ExternalStatusReasonCode code;
 }

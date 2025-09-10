@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs002;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.JsonPropertyCustom;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;
 
@@ -10,15 +10,15 @@ import java.util.List;
 @Builder
 public class PaymentTransactionInfo {
 
-    @JsonPropertyCustom(value = "OrgnlInstrId", required = true)
+    @JsonProperty(value = "OrgnlInstrId", required = true)
     protected String originalMessageId;
 
-    @JsonPropertyCustom(value = "OrgnlEndToEndId", required = true)
+    @JsonProperty(value = "OrgnlEndToEndId", required = true)
     protected String originalPaymentId;
 
-    @JsonPropertyCustom(value = "TxSts", required = true)
+    @JsonProperty(value = "TxSts", required = true)
     protected ExternalPaymentTransactionStatusCode status;
 
-    @JsonPropertyCustom("StsRsnInf")
+    @JsonProperty("StsRsnInf")
     protected List<StatusReasonInformation> statusReasonInformations;
 }
