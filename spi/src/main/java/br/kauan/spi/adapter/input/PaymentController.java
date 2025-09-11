@@ -4,11 +4,12 @@ import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
+import br.kauan.spi.domain.services.SpiNotification;
+import br.kauan.spi.port.input.NotificationUseCase;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 public class PaymentController {
@@ -18,14 +19,18 @@ public class PaymentController {
 
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
 
+    private final NotificationUseCase notificationUseCase;
+
     public PaymentController(
             PaymentTransactionMapper paymentTransactionMapper,
             StatusReportMapper statusReportMapper,
-            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase
+            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
+            NotificationUseCase notificationUseCase
     ) {
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
+        this.notificationUseCase = notificationUseCase;
     }
 
     @PostMapping("/{ispb}/transfer")
@@ -38,5 +43,10 @@ public class PaymentController {
     public void transferStatus(@PathVariable String ispb, @RequestBody FIToFIPaymentStatusReport statusReport) {
         var status = statusReportMapper.fromRegulatoryReport(statusReport);
         paymentTransactionProcessorUseCase.processStatusBatch(ispb, status);
+    }
+
+    @GetMapping("/{ispb}/messages")
+    public List<SpiNotification> getMessages(@PathVariable String ispb) {
+        return notificationUseCase.getNotifications(ispb);
     }
 }

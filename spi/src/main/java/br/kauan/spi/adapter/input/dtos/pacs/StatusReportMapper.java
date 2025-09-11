@@ -60,7 +60,6 @@ public class StatusReportMapper {
         List<Reason> reasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
 
         return StatusReport.builder()
-                .originalRequestId(info.getOriginalMessageId())
                 .originalPaymentId(info.getOriginalPaymentId())
                 .status(status)
                 .reasons(reasons)
@@ -94,7 +93,6 @@ public class StatusReportMapper {
         List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusReport.getReasons());
 
         return PaymentTransactionInfo.builder()
-                .originalMessageId(statusReport.getOriginalRequestId())
                 .originalPaymentId(statusReport.getOriginalPaymentId())
                 .status(status)
                 .statusReasonInformations(statusReasonInformationList)

@@ -1,5 +1,6 @@
 package br.kauan.spi.domain.services;
 
+import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.FundsRepository;
 import jakarta.transaction.Transactional;
@@ -16,8 +17,8 @@ public class SettlementService {
     @Transactional
     public void makeSettlement(PaymentTransaction paymentTransaction) {
         var amount = paymentTransaction.getAmount();
-        var senderBankCode = paymentTransaction.getSender().getAccount().getBankCode();
-        var receiverBankCode = paymentTransaction.getReceiver().getAccount().getBankCode();
+        var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
+        var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
 
         var senderAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
         if (senderAvailableFunds.compareTo(amount) < 0) {

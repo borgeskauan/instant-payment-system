@@ -10,9 +10,6 @@ import java.util.List;
 @Builder
 public class PaymentTransactionInfo {
 
-    @JsonProperty(value = "OrgnlInstrId", required = true)
-    protected String originalMessageId;
-
     @JsonProperty(value = "OrgnlEndToEndId", required = true)
     protected String originalPaymentId;
 

@@ -45,8 +45,9 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     private void processTransaction(String ispb, PaymentTransaction paymentTransaction) {
         paymentServiceProviderRepository.sendPayment(ispb, paymentTransaction);
 
-        // Here you can add logic to save the transaction using paymentTransactionRepository if needed
         paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.WAITING_ACCEPTANCE);
+
+        notificationService.sendAcceptanceRequest(ispb, paymentTransaction);
     }
 
     private void processStatusReport(StatusReport statusReport) {
