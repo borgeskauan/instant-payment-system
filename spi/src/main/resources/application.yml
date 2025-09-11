@@ -9,3 +9,7 @@ spring:
 
   flyway:
     enabled: false
+
+
+spi:
+  default-initial-balance: 10000

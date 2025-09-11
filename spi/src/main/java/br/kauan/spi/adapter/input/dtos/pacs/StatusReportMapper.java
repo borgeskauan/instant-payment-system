@@ -68,6 +68,10 @@ public class StatusReportMapper {
     }
 
     private List<Reason> mapStatusReasonInformationsToReasons(List<StatusReasonInformation> reasonInformations) {
+        if (reasonInformations == null) {
+            return List.of();
+        }
+
         return reasonInformations.stream()
                 .map(this::mapStatusReasonInformationToReason)
                 .toList();

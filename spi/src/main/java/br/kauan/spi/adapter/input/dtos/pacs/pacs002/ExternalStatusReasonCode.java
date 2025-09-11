@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.input.dtos.pacs.pacs002;
 
+import com.fasterxml.jackson.annotation.JsonValue;
 import lombok.Getter;
 
 @Getter
@@ -46,6 +47,7 @@ public enum ExternalStatusReasonCode {
     SL_02("SL02"),
     UPAY("UPAY");
 
+    @JsonValue
     private final String value;
 
     ExternalStatusReasonCode(String v) {
