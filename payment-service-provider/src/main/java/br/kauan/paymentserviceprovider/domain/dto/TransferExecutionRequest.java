@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.domain.dto;
 
-import br.kauan.paymentserviceprovider.domain.entity.Party;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -13,4 +13,6 @@ public class TransferExecutionRequest {
     private Party receiver;
 
     private BigDecimal amount;
+
+    private String description;
 }

@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.domain.entity;
+package br.kauan.paymentserviceprovider.domain.entity.transfer;
 
 import lombok.Builder;
 import lombok.Data;
@@ -9,5 +9,6 @@ public class Party {
     private String name;
     private String taxId;
 
-    private BankAccount bankAccount;
+    private BankAccount account;
+    private String pixKey;
 }

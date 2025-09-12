@@ -1,8 +1,13 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs;
 
-import br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
-import br.kauan.spi.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.*;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -105,8 +110,8 @@ public class PaymentTransactionMapper {
 
     private AccountIdentificationChoice createAccountIdentificationChoice(BankAccount bankAccount) {
         var genericAccountId = GenericAccountIdentification.builder()
-                .id(BigInteger.valueOf(bankAccount.getNumber()))
-                .branchCode(BigInteger.valueOf(bankAccount.getBranch()))
+                .id(BigInteger.valueOf(Long.parseLong(bankAccount.getAccountNumber())))
+                .branchCode(BigInteger.valueOf(Long.parseLong(bankAccount.getAgencyNumber())))
                 .build();
 
         return AccountIdentificationChoice.builder()
@@ -213,19 +218,19 @@ public class PaymentTransactionMapper {
                 .getClearingSystemMemberIdentification().getIspb();
 
         return BankAccount.builder()
-                .number(extractAccountNumber(account.getId()))
-                .branch(extractBranchCode(account.getId()))
+                .accountNumber(extractAccountNumber(account.getId()))
+                .agencyNumber(extractBranchCode(account.getId()))
                 .type(mappedAccountType)
                 .bankCode(bankCode)
                 .build();
     }
 
-    private long extractAccountNumber(AccountIdentificationChoice accountId) {
-        return accountId.getOther().getId().longValue();
+    private String extractAccountNumber(AccountIdentificationChoice accountId) {
+        return String.valueOf(accountId.getOther().getId().intValue());
     }
 
-    private int extractBranchCode(AccountIdentificationChoice accountId) {
-        return accountId.getOther().getBranchCode().intValue();
+    private String extractBranchCode(AccountIdentificationChoice accountId) {
+        return String.valueOf(accountId.getOther().getBranchCode().intValue());
     }
 
     private Instant convertXmlGregorianCalendarToInstant(XMLGregorianCalendar xmlGregorianCalendar) {

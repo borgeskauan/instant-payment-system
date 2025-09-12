@@ -1,11 +1,11 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs002.ExternalPaymentTransactionStatusCode;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs002.ExternalStatusReasonCode;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.CashAccountTypeChoice;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.ExternalCashAccountTypeCode;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.transfer.BankAccountType;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.ExternalPaymentTransactionStatusCode;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.ExternalStatusReasonCode;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.CashAccountTypeChoice;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.ExternalCashAccountTypeCode;
+import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
 import org.springframework.stereotype.Service;
 
 @Service

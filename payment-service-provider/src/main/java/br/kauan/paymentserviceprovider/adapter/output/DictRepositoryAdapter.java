@@ -1,7 +1,7 @@
 package br.kauan.paymentserviceprovider.adapter.output;
 
-import br.kauan.paymentserviceprovider.domain.entity.BankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.Party;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
 import org.springframework.stereotype.Repository;
 
@@ -34,7 +34,7 @@ public class DictRepositoryAdapter implements ExternalPartyRepository {
         return Party.builder()
                 .name(owner.getName())
                 .taxId(owner.getTaxIdNumber())
-                .bankAccount(bankAccount)
+                .account(bankAccount)
                 .build();
     }
 }

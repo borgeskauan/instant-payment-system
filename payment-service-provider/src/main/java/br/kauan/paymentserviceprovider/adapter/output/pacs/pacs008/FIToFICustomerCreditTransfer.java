@@ -1,7 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008;
 
-import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.CreditTransferTransaction;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;

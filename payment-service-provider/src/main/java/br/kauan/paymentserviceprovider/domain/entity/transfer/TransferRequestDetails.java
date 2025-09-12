@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.domain.entity;
+package br.kauan.paymentserviceprovider.domain.entity.transfer;
 
 import lombok.Data;
 

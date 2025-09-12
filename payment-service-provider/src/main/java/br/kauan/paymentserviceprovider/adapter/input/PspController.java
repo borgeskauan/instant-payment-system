@@ -2,7 +2,7 @@ package br.kauan.paymentserviceprovider.adapter.input;
 
 import br.kauan.paymentserviceprovider.domain.dto.TransferExecutionRequest;
 import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
-import br.kauan.paymentserviceprovider.domain.entity.TransferPreviewDetails;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
 import br.kauan.paymentserviceprovider.port.input.PspUseCase;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
