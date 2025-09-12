@@ -2,6 +2,8 @@ package br.kauan.spi.domain.services;
 
 import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
+import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
+import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.spi.domain.entity.commons.BatchDetails;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusBatch;
@@ -9,7 +11,6 @@ import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.input.NotificationUseCase;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,11 +61,13 @@ public class NotificationService implements NotificationUseCase {
     }
 
     @Override
-    public List<SpiNotification> getNotifications(String ispb) {
+    public SpiNotification getNotifications(String ispb) {
         InstitutionMessages messages = notifications.remove(ispb);
 
         if (messages == null || messages.isEmpty()) {
-            return Collections.emptyList();
+            return SpiNotification.builder()
+                    .content(Collections.emptyList())
+                    .build();
         }
 
         return convertToSpiNotifications(messages);
@@ -85,43 +88,33 @@ public class NotificationService implements NotificationUseCase {
         getMessageContainer(ispb).statuses().add(statusReport);
     }
 
-    private List<SpiNotification> convertToSpiNotifications(InstitutionMessages messages) {
-        try {
-            SpiNotification statusNotification = createStatusBatchNotification(messages.statuses());
-            SpiNotification paymentNotification = createPaymentBatchNotification(messages.transactions());
+    private SpiNotification convertToSpiNotifications(InstitutionMessages messages) {
+        var statusNotification = createStatusBatchNotification(messages.statuses());
+        var paymentNotification = createPaymentBatchNotification(messages.transactions());
 
-            return List.of(statusNotification, paymentNotification);
-        } catch (JsonProcessingException e) {
-            logger.error("Failed to convert messages to SPI notifications", e);
-            throw new NotificationProcessingException("Failed to process notifications", e);
-        }
+        return SpiNotification.builder()
+                .content(List.of(statusNotification, paymentNotification))
+                .build();
     }
 
-    private SpiNotification createStatusBatchNotification(List<StatusReport> statusReports) throws JsonProcessingException {
+    private FIToFIPaymentStatusReport createStatusBatchNotification(List<StatusReport> statusReports) {
         BatchDetails batchDetails = BatchDetails.of(statusReports.size());
         StatusBatch statusBatch = StatusBatch.builder()
                 .batchDetails(batchDetails)
                 .statusReports(statusReports)
                 .build();
 
-        Object regulatoryReport = statusReportMapper.toRegulatoryReport(statusBatch);
-        return serializeToSpiNotification(regulatoryReport);
+        return statusReportMapper.toRegulatoryReport(statusBatch);
     }
 
-    private SpiNotification createPaymentBatchNotification(List<PaymentTransaction> transactions) throws JsonProcessingException {
+    private FIToFICustomerCreditTransfer createPaymentBatchNotification(List<PaymentTransaction> transactions) {
         BatchDetails batchDetails = BatchDetails.of(transactions.size());
         PaymentBatch paymentBatch = PaymentBatch.builder()
                 .batchDetails(batchDetails)
                 .transactions(transactions)
                 .build();
 
-        Object regulatoryTransactions = paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
-        return serializeToSpiNotification(regulatoryTransactions);
-    }
-
-    private SpiNotification serializeToSpiNotification(Object obj) throws JsonProcessingException {
-        String content = objectMapper.writeValueAsString(obj);
-        return SpiNotification.builder().content(content).build();
+        return paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
     }
 
     private InstitutionMessages getMessageContainer(String ispb) {

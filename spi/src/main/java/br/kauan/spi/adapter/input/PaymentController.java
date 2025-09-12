@@ -9,8 +9,6 @@ import br.kauan.spi.port.input.NotificationUseCase;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
 @RestController
 public class PaymentController {
 
@@ -46,7 +44,7 @@ public class PaymentController {
     }
 
     @GetMapping("/{ispb}/messages")
-    public List<SpiNotification> getMessages(@PathVariable String ispb) {
+    public SpiNotification getMessages(@PathVariable String ispb) {
         return notificationUseCase.getNotifications(ispb);
     }
 }

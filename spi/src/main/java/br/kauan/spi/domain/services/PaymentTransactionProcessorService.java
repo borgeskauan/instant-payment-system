@@ -1,5 +1,6 @@
 package br.kauan.spi.domain.services;
 
+import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.status.StatusReport;
@@ -31,7 +32,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     @Override
     public void processTransactionBatch(String ispb, PaymentBatch transactionBatch) {
         for (var payment : transactionBatch.getTransactions()) {
-            processTransaction(ispb, payment);
+            processTransaction(payment);
         }
     }
 
@@ -42,12 +43,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         }
     }
 
-    private void processTransaction(String ispb, PaymentTransaction paymentTransaction) {
-        paymentServiceProviderRepository.sendPayment(ispb, paymentTransaction);
-
+    private void processTransaction(PaymentTransaction paymentTransaction) {
         paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.WAITING_ACCEPTANCE);
 
-        notificationService.sendAcceptanceRequest(ispb, paymentTransaction);
+        notificationService.sendAcceptanceRequest(Utils.getBankCode(paymentTransaction.getReceiver()), paymentTransaction);
     }
 
     private void processStatusReport(StatusReport statusReport) {
