@@ -20,7 +20,8 @@ public class DictService implements DictUseCase {
 
     @Override
     public PixResponse buscarChavePix(String chavePix) {
-        return dictRepository.buscarChavePix(chavePix);
+        return dictRepository.buscarChavePix(chavePix)
+                .orElseThrow();
     }
 
     @Override
@@ -61,7 +62,7 @@ public class DictService implements DictUseCase {
     }
 
     private void verificarSeChaveJaExiste(String key) {
-        if (dictRepository.buscarChavePix(key) != null) {
+        if (dictRepository.buscarChavePix(key).isPresent()) {
             throw new IllegalArgumentException("Chave Pix já existe: " + key);
         }
     }

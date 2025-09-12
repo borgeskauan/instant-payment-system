@@ -5,6 +5,8 @@ import br.kauan.dict.domain.dtos.PixResponse;
 import br.kauan.dict.port.output.DictRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional;
+
 @Repository
 public class DictJpaAdapter implements DictRepository {
 
@@ -24,8 +26,8 @@ public class DictJpaAdapter implements DictRepository {
     }
 
     @Override
-    public PixResponse buscarChavePix(String chavePix) {
+    public Optional<PixResponse> buscarChavePix(String chavePix) {
         var entity = dictJpaRepository.findById(chavePix);
-        return entity.map(pixResponseMapper::fromEntity).orElse(null);
+        return entity.map(pixResponseMapper::fromEntity);
     }
 }
