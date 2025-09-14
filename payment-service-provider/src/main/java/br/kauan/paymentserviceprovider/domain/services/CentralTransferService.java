@@ -2,6 +2,7 @@ package br.kauan.paymentserviceprovider.domain.services;
 
 import br.kauan.paymentserviceprovider.adapter.output.CentralTransferRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.PaymentTransactionMapper;
+import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
@@ -11,8 +12,6 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
-
-import static br.kauan.paymentserviceprovider.config.GlobalVariables.BANK_CODE;
 
 @Service
 public class CentralTransferService {
@@ -30,7 +29,7 @@ public class CentralTransferService {
 
         var regulatoryBatch = paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
 
-        transferRestClient.requestTransfer(BANK_CODE, regulatoryBatch);
+        transferRestClient.requestTransfer(GlobalVariables.getBankCode(), regulatoryBatch);
     }
 
     private PaymentBatch buildPaymentBatch(Party sender, Party receiver, BigDecimal amount) {

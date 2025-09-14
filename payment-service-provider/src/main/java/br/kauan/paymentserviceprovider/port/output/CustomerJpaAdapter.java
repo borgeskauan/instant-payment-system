@@ -1,13 +1,12 @@
 package br.kauan.paymentserviceprovider.port.output;
 
+import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
-
-import static br.kauan.paymentserviceprovider.config.GlobalVariables.BANK_CODE;
 
 @Repository
 public class CustomerJpaAdapter implements CustomerRepository {
@@ -28,7 +27,7 @@ public class CustomerJpaAdapter implements CustomerRepository {
         var customerData = customerDataOptional.get();
 
         var bankAccount = BankAccount.builder()
-                .bankCode(BANK_CODE)
+                .bankCode(GlobalVariables.getBankCode())
                 .accountNumber(customerData.getAccountNumber())
                 .agencyNumber(customerData.getAccountNumber())
                 .type(BankAccountType.fromString(customerData.getAccountType()))

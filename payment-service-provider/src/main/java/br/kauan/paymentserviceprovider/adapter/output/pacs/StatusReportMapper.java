@@ -1,12 +1,13 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs;
 
-import br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
-import br.kauan.spi.domain.entity.commons.BatchDetails;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.Reason;
-import br.kauan.spi.domain.entity.status.StatusBatch;
-import br.kauan.spi.domain.entity.status.StatusReport;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.*;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
+import br.kauan.paymentserviceprovider.domain.entity.status.Reason;
+import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
+import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

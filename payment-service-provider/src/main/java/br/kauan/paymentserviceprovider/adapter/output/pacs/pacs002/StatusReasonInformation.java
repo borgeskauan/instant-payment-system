@@ -1,6 +1,5 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002;
 
-import br.kauan.spi.adapter.input.dtos.pacs.pacs002.StatusReason;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Data;

@@ -1,6 +1,5 @@
 package br.kauan.paymentserviceprovider.domain.entity.status;
 
-import br.kauan.spi.domain.entity.status.Reason;
 import lombok.Builder;
 import lombok.Data;
 

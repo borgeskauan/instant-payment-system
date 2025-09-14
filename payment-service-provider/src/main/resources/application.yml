@@ -1,3 +1,16 @@
 external:
   dict:
     url: http://localhost:8001
+  central-transfer:
+    url: http://localhost:8001
+
+spring:
+  h2:
+    console:
+      enabled: true
+
+  jpa:
+    defer-datasource-initialization: true
+
+bank:
+  code: 8888888
