@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.adapter.output;
+package br.kauan.paymentserviceprovider.adapter.output.dict;
 
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;

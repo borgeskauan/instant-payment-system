@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.adapter.output;
+package br.kauan.paymentserviceprovider.adapter.output.dict;
 
 import lombok.Data;
 

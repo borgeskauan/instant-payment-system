@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.adapter.output;
+package br.kauan.paymentserviceprovider.adapter.output.dict;
 
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;

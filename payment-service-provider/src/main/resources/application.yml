@@ -11,6 +11,3 @@ spring:
 
   jpa:
     defer-datasource-initialization: true
-
-bank:
-  code: 8888888
