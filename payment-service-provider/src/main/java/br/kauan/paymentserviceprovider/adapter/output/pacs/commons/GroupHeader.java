@@ -1,14 +1,18 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.commons;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import javax.xml.datatype.XMLGregorianCalendar;
 import java.math.BigInteger;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class GroupHeader {
 
     @JsonProperty(value = "MsgId", required = true)

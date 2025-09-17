@@ -5,7 +5,7 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.*;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
-import br.kauan.paymentserviceprovider.domain.entity.status.Reason;
+import br.kauan.paymentserviceprovider.domain.entity.status.ErrorReason;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import lombok.RequiredArgsConstructor;
@@ -58,16 +58,16 @@ public class StatusReportMapper {
 
     private StatusReport mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
         PaymentStatus status = codeMapping.mapExternalStatusCodeToPaymentStatus(info.getStatus());
-        List<Reason> reasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
+        List<ErrorReason> errorReasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
 
         return StatusReport.builder()
                 .originalPaymentId(info.getOriginalPaymentId())
                 .status(status)
-                .reasons(reasons)
+                .errorReasons(errorReasons)
                 .build();
     }
 
-    private List<Reason> mapStatusReasonInformationsToReasons(List<StatusReasonInformation> reasonInformations) {
+    private List<ErrorReason> mapStatusReasonInformationsToReasons(List<StatusReasonInformation> reasonInformations) {
         if (reasonInformations == null) {
             return List.of();
         }
@@ -77,8 +77,8 @@ public class StatusReportMapper {
                 .toList();
     }
 
-    private Reason mapStatusReasonInformationToReason(StatusReasonInformation reasonInfo) {
-        return Reason.builder()
+    private ErrorReason mapStatusReasonInformationToReason(StatusReasonInformation reasonInfo) {
+        return ErrorReason.builder()
                 .descriptions(reasonInfo.getAdditionalInformation())
                 .build();
     }
@@ -91,7 +91,7 @@ public class StatusReportMapper {
 
     private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusReport statusReport) {
         ExternalPaymentTransactionStatusCode status = codeMapping.mapPaymentStatusToExternalStatusCode(statusReport.getStatus());
-        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusReport.getReasons());
+        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusReport.getErrorReasons());
 
         return PaymentTransactionInfo.builder()
                 .originalPaymentId(statusReport.getOriginalPaymentId())
@@ -100,24 +100,24 @@ public class StatusReportMapper {
                 .build();
     }
 
-    private List<StatusReasonInformation> mapReasonsToStatusReasonInformation(List<Reason> reasons) {
-        if (reasons == null) {
+    private List<StatusReasonInformation> mapReasonsToStatusReasonInformation(List<ErrorReason> errorReasons) {
+        if (errorReasons == null) {
             return Collections.emptyList();
         }
 
-        return reasons.stream()
+        return errorReasons.stream()
                 .map(this::mapReasonToStatusReasonInformation)
                 .toList();
     }
 
-    private StatusReasonInformation mapReasonToStatusReasonInformation(Reason reason) {
-        var mappedCode = codeMapping.mapReasonCodeToExternalStatusReasonCode(reason.getCode());
+    private StatusReasonInformation mapReasonToStatusReasonInformation(ErrorReason errorReason) {
+        var mappedCode = codeMapping.mapReasonCodeToExternalStatusReasonCode(errorReason.getErrorCode());
 
         return StatusReasonInformation.builder()
                 .reason(StatusReason.builder()
                         .code(mappedCode)
                         .build())
-                .additionalInformation(reason.getDescriptions())
+                .additionalInformation(errorReason.getDescriptions())
                 .build();
     }
 }

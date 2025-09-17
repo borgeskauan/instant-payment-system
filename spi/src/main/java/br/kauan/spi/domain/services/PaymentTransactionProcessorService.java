@@ -65,6 +65,8 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         settlementService.makeSettlement(paymentTransaction);
 
         notificationService.sendConfirmationNotification(paymentTransaction);
+
+        paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
     }
 
     private void processRejectedPayment(PaymentTransaction paymentTransaction) {

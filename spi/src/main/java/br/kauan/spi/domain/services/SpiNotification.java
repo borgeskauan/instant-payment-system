@@ -8,5 +8,5 @@ import java.util.List;
 @Data
 @Builder
 public class SpiNotification {
-    private List<Object> content;
+    private List<String> content;
 }

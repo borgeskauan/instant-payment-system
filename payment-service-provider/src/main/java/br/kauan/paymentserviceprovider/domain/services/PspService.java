@@ -1,6 +1,7 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
 import br.kauan.paymentserviceprovider.domain.dto.TransferExecutionRequest;
+import br.kauan.paymentserviceprovider.domain.entity.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
 import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
 import br.kauan.paymentserviceprovider.port.output.CustomerRepository;
@@ -32,11 +33,11 @@ public class PspService implements PspUseCase {
     }
 
     @Override
-    public void executePayment(TransferExecutionRequest executionRequest) {
+    public TransferDetails requestTransfer(TransferExecutionRequest executionRequest) {
         var senderParty = customerRepository.getCustomerDetails(executionRequest.getSenderCustomerId())
                 .orElseThrow(); // TODO: Improve exception handling
 
         // TODO: Create object to pass all needed data
-        centralTransferService.requestTransfer(senderParty, executionRequest.getReceiver(), executionRequest.getAmount());
+        return centralTransferService.requestTransfer(senderParty, executionRequest.getReceiver(), executionRequest.getAmount());
     }
 }

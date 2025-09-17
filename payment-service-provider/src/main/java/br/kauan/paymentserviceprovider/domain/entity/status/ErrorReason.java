@@ -7,7 +7,7 @@ import java.util.List;
 
 @Data
 @Builder
-public class Reason {
-    private String code; // "AB03"
+public class ErrorReason {
+    private String errorCode; // "AB03"
     private List<String> descriptions; // "Invalid Creditor Account Number"
 }

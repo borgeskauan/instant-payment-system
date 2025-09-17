@@ -11,9 +11,8 @@ import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.input.NotificationUseCase;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -27,11 +26,10 @@ import static br.kauan.spi.Utils.getBankCode;
 @Service
 public class NotificationService implements NotificationUseCase {
 
-    private static final Logger logger = LoggerFactory.getLogger(NotificationService.class);
-
     private final Map<String, InstitutionMessages> notifications = new ConcurrentHashMap<>();
     private final StatusReportMapper statusReportMapper;
     private final PaymentTransactionMapper paymentTransactionMapper;
+
     private final ObjectMapper objectMapper;
 
     public NotificationService(StatusReportMapper statusReportMapper,
@@ -92,12 +90,18 @@ public class NotificationService implements NotificationUseCase {
         var statusNotification = createStatusBatchNotification(messages.statuses());
         var paymentNotification = createPaymentBatchNotification(messages.transactions());
 
+        var content = createContent(statusNotification, paymentNotification);
+
         return SpiNotification.builder()
-                .content(List.of(statusNotification, paymentNotification))
+                .content(content)
                 .build();
     }
 
     private FIToFIPaymentStatusReport createStatusBatchNotification(List<StatusReport> statusReports) {
+        if (statusReports.isEmpty()) {
+            return null;
+        }
+
         BatchDetails batchDetails = BatchDetails.of(statusReports.size());
         StatusBatch statusBatch = StatusBatch.builder()
                 .batchDetails(batchDetails)
@@ -108,6 +112,10 @@ public class NotificationService implements NotificationUseCase {
     }
 
     private FIToFICustomerCreditTransfer createPaymentBatchNotification(List<PaymentTransaction> transactions) {
+        if (transactions.isEmpty()) {
+            return null;
+        }
+
         BatchDetails batchDetails = BatchDetails.of(transactions.size());
         PaymentBatch paymentBatch = PaymentBatch.builder()
                 .batchDetails(batchDetails)
@@ -131,9 +139,20 @@ public class NotificationService implements NotificationUseCase {
         }
     }
 
-    private static class NotificationProcessingException extends RuntimeException {
-        NotificationProcessingException(String message, Throwable cause) {
-            super(message, cause);
+    private List<String> createContent(Object... objects) {
+        try {
+            List<String> content = new ArrayList<>();
+            for (Object obj : objects) {
+                if (obj != null) {
+                    var serializedObj = objectMapper.writeValueAsString(obj);
+                    content.add(serializedObj);
+                }
+            }
+
+            return content;
+
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Error serializing notification content", e);
         }
     }
 }

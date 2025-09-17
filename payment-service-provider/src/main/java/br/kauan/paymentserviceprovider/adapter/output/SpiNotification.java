@@ -6,5 +6,5 @@ import java.util.List;
 
 @Data
 public class SpiNotification {
-    private List<Object> content;
+    private List<String> content;
 }
