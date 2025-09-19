@@ -3,6 +3,7 @@ package br.kauan.paymentserviceprovider.adapter.output.pacs;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.*;
+import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
@@ -96,7 +97,7 @@ public class PaymentTransactionMapper {
 
     private FinancialInstitutionIdentification createFinancialInstitutionId(BankAccount bankAccount) {
         var clearingMemberId = ClearingSystemMemberIdentification.builder()
-                .ispb(bankAccount.getBankCode())
+                .ispb(bankAccount.getId().getBankCode())
                 .build();
 
         var financialIdInternal = FinancialInstitutionIdentificationInternal.builder()
@@ -109,9 +110,11 @@ public class PaymentTransactionMapper {
     }
 
     private AccountIdentificationChoice createAccountIdentificationChoice(BankAccount bankAccount) {
+        var bankAccountId = bankAccount.getId();
+
         var genericAccountId = GenericAccountIdentification.builder()
-                .id(BigInteger.valueOf(Long.parseLong(bankAccount.getAccountNumber())))
-                .branchCode(BigInteger.valueOf(Long.parseLong(bankAccount.getAgencyNumber())))
+                .id(BigInteger.valueOf(Long.parseLong(bankAccountId.getAccountNumber())))
+                .branchCode(BigInteger.valueOf(Long.parseLong(bankAccountId.getAgencyNumber())))
                 .build();
 
         return AccountIdentificationChoice.builder()
@@ -217,11 +220,15 @@ public class PaymentTransactionMapper {
         var bankCode = financialInstitutionIdentification.getFinancialInstitutionIdentification()
                 .getClearingSystemMemberIdentification().getIspb();
 
-        return BankAccount.builder()
+        var bankAccountId = BankAccountId.builder()
+                .bankCode(bankCode)
                 .accountNumber(extractAccountNumber(account.getId()))
                 .agencyNumber(extractBranchCode(account.getId()))
+                .build();
+
+        return BankAccount.builder()
+                .id(bankAccountId)
                 .type(mappedAccountType)
-                .bankCode(bankCode)
                 .build();
     }
 

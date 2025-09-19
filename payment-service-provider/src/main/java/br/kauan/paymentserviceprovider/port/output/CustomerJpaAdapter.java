@@ -1,6 +1,7 @@
 package br.kauan.paymentserviceprovider.port.output;
 
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
+import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
@@ -26,10 +27,14 @@ public class CustomerJpaAdapter implements CustomerRepository {
 
         var customerData = customerDataOptional.get();
 
-        var bankAccount = BankAccount.builder()
+        var bankAccountId = BankAccountId.builder()
                 .bankCode(GlobalVariables.getBankCode())
                 .accountNumber(customerData.getAccountNumber())
-                .agencyNumber(customerData.getAccountNumber())
+                .agencyNumber(customerData.getAccountAgency())
+                .build();
+
+        var bankAccount = BankAccount.builder()
+                .id(bankAccountId)
                 .type(BankAccountType.fromString(customerData.getAccountType()))
                 .build();
 

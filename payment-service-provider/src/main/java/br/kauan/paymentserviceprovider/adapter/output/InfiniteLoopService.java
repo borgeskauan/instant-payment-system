@@ -43,10 +43,9 @@ public class InfiniteLoopService {
                 }
             }
         });
-
     }
 
     public void stopLoop() {
-
+        isLoopActive = false;
     }
 }

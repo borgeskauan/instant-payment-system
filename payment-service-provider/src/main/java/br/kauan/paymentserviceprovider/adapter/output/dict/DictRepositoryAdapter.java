@@ -1,6 +1,8 @@
 package br.kauan.paymentserviceprovider.adapter.output.dict;
 
+import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
 import org.springframework.stereotype.Repository;
@@ -25,10 +27,15 @@ public class DictRepositoryAdapter implements ExternalPartyRepository {
         var owner = response.getOwner();
         var account = response.getAccount();
 
-        var bankAccount = BankAccount.builder()
+        var bankAccountId = BankAccountId.builder()
                 .bankCode(account.getParticipant())
                 .agencyNumber(account.getBranch())
                 .accountNumber(account.getNumber())
+                .build();
+
+        var bankAccount = BankAccount.builder()
+                .id(bankAccountId)
+                .type(BankAccountType.valueOf(account.getType()))
                 .build();
 
         return Party.builder()

@@ -5,17 +5,21 @@ import br.kauan.paymentserviceprovider.adapter.output.CentralTransferRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.PaymentTransactionMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.StatusReportMapper;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
+import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
+import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -23,23 +27,30 @@ import java.util.UUID;
 
 @Slf4j
 @Service
+@Transactional
 public class CentralTransferService {
 
-    private final CentralTransferRestClient transferRestClient;
+    private static final String CURRENCY_BRL = "BRL";
 
+    private final CentralTransferRestClient transferRestClient;
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
-
     private final CentralTransferNotificationListener notificationListener;
+    private final PaymentRepository paymentRepository;
+    private final CustomerService customerService;
 
     public CentralTransferService(CentralTransferRestClient transferRestClient,
                                   PaymentTransactionMapper paymentTransactionMapper,
                                   StatusReportMapper statusReportMapper,
-                                  CentralTransferNotificationListener notificationListener) {
+                                  CentralTransferNotificationListener notificationListener,
+                                  PaymentRepository paymentRepository,
+                                  CustomerService customerService) {
         this.transferRestClient = transferRestClient;
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
         this.notificationListener = notificationListener;
+        this.paymentRepository = paymentRepository;
+        this.customerService = customerService;
     }
 
     @PostConstruct
@@ -48,27 +59,29 @@ public class CentralTransferService {
     }
 
     public TransferDetails requestTransfer(Party sender, Party receiver, BigDecimal amount) {
-        var paymentBatch = buildPaymentBatch(sender, receiver, amount);
+        PaymentBatch paymentBatch = buildPaymentBatch(sender, receiver, amount);
+        PaymentTransaction transaction = paymentBatch.getTransactions().getFirst();
+
+        paymentRepository.save(transaction);
 
         var regulatoryBatch = paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
-
         transferRestClient.requestTransfer(GlobalVariables.getBankCode(), regulatoryBatch);
 
         return TransferDetails.builder()
-                .transferId(paymentBatch.getTransactions().getFirst().getPaymentId())
+                .transferId(transaction.getPaymentId())
                 .build();
     }
 
     private PaymentBatch buildPaymentBatch(Party sender, Party receiver, BigDecimal amount) {
-        var paymentTransaction = PaymentTransaction.builder()
+        PaymentTransaction paymentTransaction = PaymentTransaction.builder()
                 .paymentId(UUID.randomUUID().toString())
                 .amount(amount)
-                .currency("BRL")
+                .currency(CURRENCY_BRL)
                 .sender(sender)
                 .receiver(receiver)
                 .build();
 
-        var batchDetails = BatchDetails.of(1);
+        BatchDetails batchDetails = BatchDetails.of(1);
 
         return PaymentBatch.builder()
                 .batchDetails(batchDetails)
@@ -77,52 +90,77 @@ public class CentralTransferService {
     }
 
     private void handleStatusBatch(StatusBatch statusBatch) {
-        log.info("Received status batch: {}", statusBatch);
+        log.info("Received status batch with {} reports", statusBatch.getStatusReports().size());
 
-        for (var statusReport : statusBatch.getStatusReports()) {
-            log.info("Processing status report: {}", statusReport);
-
-            handleStatusReport(statusReport);
-        }
+        statusBatch.getStatusReports().forEach(this::processStatusReport);
     }
 
     private void handleTransferRequestBatch(PaymentBatch paymentBatch) {
-        log.info("Received payment batch: {}", paymentBatch);
+        log.info("Received payment batch with {} transactions", paymentBatch.getTransactions().size());
 
-        for (var transaction : paymentBatch.getTransactions()) {
-            log.info("Processing transaction: {}", transaction);
-
-            handleTransferRequest(transaction);
-        }
+        paymentBatch.getTransactions().forEach(this::processIncomingTransaction);
     }
 
-    private void handleTransferRequest(PaymentTransaction transaction) {
-        var statusReport = handleIncomingTransaction(transaction);
+    private void processIncomingTransaction(PaymentTransaction transaction) {
+        log.info("Processing incoming transaction: {}", transaction.getPaymentId());
 
-        var statusBatch = StatusBatch.builder()
-                .batchDetails(BatchDetails.of(1))
-                .statusReports(List.of(statusReport))
-                .build();
+        StatusReport statusReport = handleIncomingTransaction(transaction);
+        StatusBatch statusBatch = buildStatusBatch(statusReport);
 
         var regulatoryStatusBatch = statusReportMapper.toRegulatoryReport(statusBatch);
         transferRestClient.sendTransferStatus(GlobalVariables.getBankCode(), regulatoryStatusBatch);
     }
 
-    private void handleStatusReport(StatusReport statusReport) {
+    private StatusBatch buildStatusBatch(StatusReport statusReport) {
+        return StatusBatch.builder()
+                .batchDetails(BatchDetails.of(1))
+                .statusReports(List.of(statusReport))
+                .build();
+    }
+
+    private void processStatusReport(StatusReport statusReport) {
+        log.info("Processing status report for payment: {}", statusReport.getOriginalPaymentId());
+
         if (PaymentStatus.REJECTED.equals(statusReport.getStatus())) {
-            // Here you would implement the logic to handle rejected transactions
+            log.debug("Payment {} was rejected, no action required", statusReport.getOriginalPaymentId());
+            return;
         }
 
-        if (PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER.equals(statusReport.getStatus())) {
-            // Here you would implement the logic to credit the receiver's account
-        }
+        // TODO: Improve error handling with custom exception
+        PaymentTransaction payment = paymentRepository.findById(statusReport.getOriginalPaymentId())
+                .orElseThrow(() -> new IllegalArgumentException("Payment not found: " + statusReport.getOriginalPaymentId()));
 
-        if (PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER.equals(statusReport.getStatus())) {
-            // Here you would implement the logic to debit the sender's account
+        handleSettlement(statusReport.getStatus(), payment);
+    }
+
+    private void handleSettlement(PaymentStatus status, PaymentTransaction payment) {
+        if (PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER.equals(status)) {
+            creditReceiverAccount(payment);
+        } else if (PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER.equals(status)) {
+            debitSenderAccount(payment);
         }
     }
 
+    private void creditReceiverAccount(PaymentTransaction payment) {
+        var bankAccountId = getBankAccountId(payment.getReceiver().getAccount());
+        customerService.addAmountToAccount(bankAccountId, payment.getAmount());
+        log.info("Credited amount {} to receiver account {}", payment.getAmount(), bankAccountId);
+    }
+
+    private void debitSenderAccount(PaymentTransaction payment) {
+        var bankAccountId = getBankAccountId(payment.getSender().getAccount());
+        customerService.removeAmountFromAccount(bankAccountId, payment.getAmount());
+        log.info("Debited amount {} from sender account {}", payment.getAmount(), bankAccountId);
+    }
+
+    private BankAccountId getBankAccountId(BankAccount account) {
+        return account.getId();
+    }
+
     private StatusReport handleIncomingTransaction(PaymentTransaction transaction) {
+        paymentRepository.save(transaction);
+        log.info("Saved incoming transaction: {}", transaction.getPaymentId());
+
         // For demonstration, we assume all incoming transactions are approved
         return StatusReport.builder()
                 .originalPaymentId(transaction.getPaymentId())

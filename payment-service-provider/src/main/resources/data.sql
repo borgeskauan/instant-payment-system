@@ -1,7 +1,7 @@
 INSERT INTO CUSTOMER_ENTITY (ID, NAME, TAX_ID, ACCOUNT_NUMBER, ACCOUNT_AGENCY, ACCOUNT_TYPE)
 VALUES
     ('1', 'João Silva', '12345678900', '123456', '0001', 'CHECKING'),
-    ('2', 'Maria Santos', '98765432100', '543210', '0001', 'SAVINGS'),
+    ('2', 'Maria Santos', '98765432100', '123456', '5678', 'SAVINGS'),
     ('3', 'Pedro Oliveira', '11122233344', '987654', '0002', 'CHECKING'),
     ('4', 'Ana Costa', '55566677788', '456789', '0003', 'SALARY'),
     ('5', 'Carlos Pereira', '99988877766', '321987', '0001', 'SAVINGS');
