@@ -4,8 +4,10 @@ import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.FundsRepository;
 import jakarta.transaction.Transactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class SettlementService {
     private final FundsRepository fundsRepository;
@@ -32,5 +34,8 @@ public class SettlementService {
 
         fundsRepository.updateAvailableFunds(senderBankCode, senderSettledAvailableFunds);
         fundsRepository.updateAvailableFunds(receiverBankCode, receiverSettledAvailableFunds);
+
+        log.info("Settlement completed: {} from {} to {}", amount, senderBankCode, receiverBankCode);
+        log.info("New available funds - {}: {}, {}: {}", senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
     }
 }
