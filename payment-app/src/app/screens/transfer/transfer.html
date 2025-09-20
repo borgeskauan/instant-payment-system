@@ -1,0 +1,113 @@
+<div class="flex flex-col h-screen bg-gray-50">
+  <!-- Top Bar -->
+  <header class="flex items-center justify-between px-4 py-3 bg-blue-600 text-white shadow">
+    <h1 class="text-lg font-semibold">
+      <ng-container *ngIf="step === 'pix'">Make a Transfer</ng-container>
+      <ng-container *ngIf="step === 'amount'">Enter Amount</ng-container>
+      <ng-container *ngIf="step === 'confirm'">Confirm Transfer</ng-container>
+    </h1>
+
+    <button
+      *ngIf="step === 'amount'"
+      (click)="backToPix()"
+      class="text-sm underline hover:opacity-80"
+    >
+      Back
+    </button>
+
+    <button
+      *ngIf="step === 'confirm'"
+      (click)="backToAmount()"
+      class="text-sm underline hover:opacity-80"
+    >
+      Back
+    </button>
+  </header>
+
+  <main class="flex-grow p-4 space-y-4">
+    <!-- Error message -->
+    <div *ngIf="errorMessage" class="p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+      {{ errorMessage }}
+    </div>
+
+    <!-- Step 1: PIX Key -->
+    <div *ngIf="step === 'pix'" class="space-y-6">
+      <label class="block">
+        <span class="text-gray-700 font-medium">PIX Key</span>
+        <input
+          type="text"
+          [(ngModel)]="pixKey"
+          placeholder="Enter PIX key"
+          class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        />
+      </label>
+
+      <button
+        (click)="submitPixKey()"
+        [disabled]="!pixKey || loading"
+        class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold shadow hover:bg-blue-700 transition disabled:opacity-50"
+      >
+        <span *ngIf="!loading">Continue</span>
+        <span *ngIf="loading">Loading...</span>
+      </button>
+
+      <!-- Back to Home -->
+      <button
+        (click)="goHome()"
+        class="w-full py-3 rounded-xl bg-gray-300 text-gray-800 font-semibold shadow hover:bg-gray-400 transition"
+      >
+        Back to Home
+      </button>
+    </div>
+
+    <!-- Step 2: Amount -->
+    <div *ngIf="step === 'amount'" class="space-y-6">
+      <div class="bg-white rounded-xl shadow p-4 space-y-2">
+        <p class="text-gray-500 text-sm">Recipient</p>
+        <p class="text-lg font-semibold text-gray-800">{{ recipient.name }}</p>
+        <p class="text-gray-700 text-sm">Tax ID: {{ recipient.taxId }}</p>
+        <p class="text-gray-700 text-sm">Institution: {{ recipient.institution }}</p>
+      </div>
+
+      <label class="block">
+        <span class="text-gray-700 font-medium">Amount</span>
+        <input
+          type="number"
+          [(ngModel)]="amount"
+          placeholder="Enter amount"
+          class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        />
+      </label>
+
+      <button
+        (click)="proceedToConfirm()"
+        [disabled]="!amount"
+        class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold shadow hover:bg-blue-700 transition disabled:opacity-50"
+      >
+        Continue
+      </button>
+    </div>
+
+    <!-- Step 3: Confirm Transfer -->
+    <div *ngIf="step === 'confirm'" class="space-y-6">
+      <div class="bg-white rounded-xl shadow p-4 space-y-2">
+        <p class="text-gray-500 text-sm">Recipient</p>
+        <p class="text-lg font-semibold text-gray-800">{{ recipient.name }}</p>
+        <p class="text-gray-700 text-sm">Tax ID: {{ recipient.taxId }}</p>
+        <p class="text-gray-700 text-sm">Institution: {{ recipient.institution }}</p>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <p class="text-gray-500 text-sm">Amount</p>
+        <p class="text-2xl font-bold text-green-600">${{ amount }}</p>
+      </div>
+
+      <button
+        (click)="confirmTransfer()"
+        class="w-full py-3 rounded-xl bg-green-600 text-white font-semibold shadow hover:bg-green-700 transition"
+      >
+        Confirm Transfer
+      </button>
+    </div>
+  </main>
+</div>
