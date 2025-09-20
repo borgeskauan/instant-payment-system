@@ -1,13 +1,11 @@
 import { Component } from '@angular/core';
 import {FormsModule} from '@angular/forms';
-import {NgIf} from '@angular/common';
 import {Router} from '@angular/router';
 
 @Component({
   selector: 'app-transfer',
   imports: [
-    FormsModule,
-    NgIf
+    FormsModule
   ],
   templateUrl: './transfer.html',
   styleUrl: './transfer.css'
