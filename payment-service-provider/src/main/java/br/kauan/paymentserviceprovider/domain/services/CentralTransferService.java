@@ -5,7 +5,7 @@ import br.kauan.paymentserviceprovider.adapter.output.CentralTransferRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.PaymentTransactionMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.StatusReportMapper;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
-import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
@@ -37,20 +37,20 @@ public class CentralTransferService {
     private final StatusReportMapper statusReportMapper;
     private final CentralTransferNotificationListener notificationListener;
     private final PaymentRepository paymentRepository;
-    private final CustomerService customerService;
+    private final BankAccountCustomerService bankAccountCustomerService;
 
     public CentralTransferService(CentralTransferRestClient transferRestClient,
                                   PaymentTransactionMapper paymentTransactionMapper,
                                   StatusReportMapper statusReportMapper,
                                   CentralTransferNotificationListener notificationListener,
                                   PaymentRepository paymentRepository,
-                                  CustomerService customerService) {
+                                  BankAccountCustomerService bankAccountCustomerService) {
         this.transferRestClient = transferRestClient;
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
         this.notificationListener = notificationListener;
         this.paymentRepository = paymentRepository;
-        this.customerService = customerService;
+        this.bankAccountCustomerService = bankAccountCustomerService;
     }
 
     @PostConstruct
@@ -143,13 +143,13 @@ public class CentralTransferService {
 
     private void creditReceiverAccount(PaymentTransaction payment) {
         var bankAccountId = getBankAccountId(payment.getReceiver().getAccount());
-        customerService.addAmountToAccount(bankAccountId, payment.getAmount());
+        bankAccountCustomerService.addAmountToAccount(bankAccountId, payment.getAmount());
         log.info("Credited amount {} to receiver account {}", payment.getAmount(), bankAccountId);
     }
 
     private void debitSenderAccount(PaymentTransaction payment) {
         var bankAccountId = getBankAccountId(payment.getSender().getAccount());
-        customerService.removeAmountFromAccount(bankAccountId, payment.getAmount());
+        bankAccountCustomerService.removeAmountFromAccount(bankAccountId, payment.getAmount());
         log.info("Debited amount {} from sender account {}", payment.getAmount(), bankAccountId);
     }
 

@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.output.dict;
 
-import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;

@@ -2,6 +2,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    defer-datasource-initialization: true
 
   h2:
     console:
@@ -9,6 +10,7 @@ spring:
 
   flyway:
     enabled: false
+
 
 
 spi:

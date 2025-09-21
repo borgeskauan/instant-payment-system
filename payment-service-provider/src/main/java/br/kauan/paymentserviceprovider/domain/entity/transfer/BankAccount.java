@@ -1,6 +1,5 @@
 package br.kauan.paymentserviceprovider.domain.entity.transfer;
 
-import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
 import lombok.Builder;
 import lombok.Data;
 

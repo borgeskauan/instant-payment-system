@@ -27,7 +27,7 @@ public class DictJpaAdapter implements DictRepository {
 
     @Override
     public Optional<PixResponse> buscarChavePix(String chavePix) {
-        var entity = dictJpaRepository.findById(chavePix);
+        var entity = dictJpaRepository.findByPixKey(chavePix);
         return entity.map(pixResponseMapper::fromEntity);
     }
 }

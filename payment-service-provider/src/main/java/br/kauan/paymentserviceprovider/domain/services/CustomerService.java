@@ -1,54 +1,79 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
-import br.kauan.paymentserviceprovider.domain.entity.BankAccountId;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
-import br.kauan.paymentserviceprovider.port.output.BankAccountRepository;
-import br.kauan.paymentserviceprovider.port.output.CustomerRepository;
-import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
-import lombok.extern.slf4j.Slf4j;
+import br.kauan.paymentserviceprovider.config.GlobalVariables;
+import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
+import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.domain.entity.Customer;
+import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
+import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
+import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.Optional;
+import java.util.Random;
 
-@Slf4j
 @Service
 public class CustomerService {
 
-    private final ExternalPartyRepository externalPartyRepository;
     private final CustomerRepository customerRepository;
+    private final PixKeyRepository pixKeyRepository;
 
-    private final BankAccountRepository bankAccountRepository;
-
-    public CustomerService(ExternalPartyRepository externalPartyRepository,
-                           CustomerRepository customerRepository,
-                           BankAccountRepository bankAccountRepository) {
-        this.externalPartyRepository = externalPartyRepository;
+    public CustomerService(CustomerRepository customerRepository, PixKeyRepository pixKeyRepository) {
         this.customerRepository = customerRepository;
-        this.bankAccountRepository = bankAccountRepository;
+        this.pixKeyRepository = pixKeyRepository;
     }
 
-    public Optional<Party> getInternalCustomerDetails(String customerId) {
-        return customerRepository.getCustomerDetails(customerId);
+    public Customer loginCustomer(CustomerLoginRequest request) {
+        var existingCustomer = customerRepository.findByTaxId(request.getTaxId());
+        if (existingCustomer.isPresent()) {
+            return existingCustomer.get();
+        }
+
+        var generatedBankAccountId = BankAccount.builder().id(BankAccountId.builder()
+                        .accountNumber(generateRandomNumberString(8))
+                        .agencyNumber(generateRandomNumberString(4))
+                        .bankCode(GlobalVariables.getBankCode())
+                        .build())
+                .type(BankAccountType.CHECKING)
+                .build();
+
+        var customerBankAccount = CustomerBankAccount.builder()
+                .account(generatedBankAccountId)
+                .balance(BigDecimal.valueOf(10000))
+                .build();
+
+        var customer = Customer.builder()
+                .name(request.getName())
+                .taxId(request.getTaxId())
+                .bankAccount(customerBankAccount)
+                .build();
+
+        return customerRepository.save(customer);
     }
 
-    public Optional<Party> findCustomerDetailsByPixKey(String pixKey) {
-        return Optional.ofNullable(externalPartyRepository.getPartyDetails(pixKey));
+    public void createPixKey(PixKeyCreationRequest request) {
+        pixKeyRepository.save(request.getKey(), request.getCustomerId());
     }
 
-    public void addAmountToAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
-        var bankAccount = bankAccountRepository.findById(bankAccountId).orElseThrow();
+    private static String generateRandomNumberString(int length) {
+        if (length <= 0) {
+            throw new IllegalArgumentException("Length must be positive");
+        }
 
-        var newBalance = bankAccount.getBalance().add(amountToAdd);
-        bankAccount.setBalance(newBalance);
-        bankAccountRepository.save(bankAccount);
-    }
+        Random random = new Random();
+        StringBuilder sb = new StringBuilder();
 
-    public void removeAmountFromAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
-        var bankAccount = bankAccountRepository.findById(bankAccountId).orElseThrow();
+        // First digit can't be zero
+        sb.append(random.nextInt(9) + 1);
 
-        var newBalance = bankAccount.getBalance().subtract(amountToAdd);
-        bankAccount.setBalance(newBalance);
-        bankAccountRepository.save(bankAccount);
+        // Remaining digits can include zero
+        for (int i = 1; i < length; i++) {
+            sb.append(random.nextInt(10));
+        }
+
+        return sb.toString();
     }
 }

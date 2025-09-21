@@ -10,18 +10,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class PspService implements PspUseCase {
 
-    private final CustomerService customerService;
+    private final BankAccountCustomerService bankAccountCustomerService;
 
     private final CentralTransferService centralTransferService;
 
-    public PspService(CustomerService customerService, CentralTransferService centralTransferService) {
-        this.customerService = customerService;
+    public PspService(BankAccountCustomerService bankAccountCustomerService, CentralTransferService centralTransferService) {
+        this.bankAccountCustomerService = bankAccountCustomerService;
         this.centralTransferService = centralTransferService;
     }
 
     @Override
     public TransferPreviewDetails fetchPaymentPreview(TransferPreviewRequest previewRequest) {
-        var partyDetails = customerService.findCustomerDetailsByPixKey(previewRequest.getReceiverPixKey())
+        var partyDetails = bankAccountCustomerService.findCustomerDetailsByPixKey(previewRequest.getReceiverPixKey())
                 .orElseThrow(); // TODO: Improve exception handling
 
         return TransferPreviewDetails.builder()
@@ -31,7 +31,7 @@ public class PspService implements PspUseCase {
 
     @Override
     public TransferDetails requestTransfer(TransferExecutionRequest executionRequest) {
-        var senderParty = customerService.getInternalCustomerDetails(executionRequest.getSenderCustomerId())
+        var senderParty = bankAccountCustomerService.getInternalCustomerDetails(executionRequest.getSenderCustomerId())
                 .orElseThrow(); // TODO: Improve exception handling
 
         // TODO: Create object to pass all needed data

@@ -1,6 +1,7 @@
-import { Component } from '@angular/core';
+import {Component} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {Router} from '@angular/router';
+import {PspService} from '../../services/psp/psp.service';
 
 @Component({
   selector: 'app-transfer',
@@ -11,7 +12,8 @@ import {Router} from '@angular/router';
   styleUrl: './transfer.css'
 })
 export class Transfer {
-  constructor(private router: Router) {}
+  constructor(private router: Router, private pspService: PspService) {
+  }
 
   step: 'pix' | 'amount' | 'confirm' = 'pix';
   pixKey: string = '';
@@ -33,28 +35,29 @@ export class Transfer {
     this.errorMessage = '';
     this.loading = true;
 
-    setTimeout(() => {
-      this.loading = false;
-
-      if (this.pixKey === 'invalid@pix') {
-        this.errorMessage = 'PIX key not found. Please try again.';
-        return;
+    this.pspService.searchPixKey(this.pixKey).subscribe({
+      next: result => {
+        this.recipient = {
+          name: result.name,
+          taxId: result.taxId,
+          institution: result.institution,
+          found: true,
+        };
+        this.step = 'amount';
+        this.loading = false;
+      },
+      error: err => {
+        this.loading = false;
+        this.errorMessage = 'An error occurred while searching for the PIX key. Please try again.';
+        console.error('Error searching PIX key:', err);
       }
-
-      this.recipient = {
-        name: 'Alice Johnson',
-        taxId: '123.456.789-00',
-        institution: 'Bank of Angular',
-        found: true,
-      };
-      this.step = 'amount';
-    }, 1500);
+    });
   }
 
   backToPix() {
     this.step = 'pix';
     this.pixKey = '';
-    this.recipient = { name: '', taxId: '', institution: '', found: false };
+    this.recipient = {name: '', taxId: '', institution: '', found: false};
     this.amount = null;
     this.errorMessage = '';
   }
@@ -92,7 +95,7 @@ export class Transfer {
     this.step = 'pix';
     this.pixKey = '';
     this.amount = null;
-    this.recipient = { name: '', taxId: '', institution: '', found: false };
+    this.recipient = {name: '', taxId: '', institution: '', found: false};
   }
 
   goHome() {

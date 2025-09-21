@@ -1,6 +1,8 @@
 package br.kauan.dict.adapter.output;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import lombok.Data;
 
@@ -10,11 +12,11 @@ import java.time.Instant;
 @Entity
 public class DictEntity {
 
-    // Later, it is best to create a separate ID field, controlled by the database.
-    // And create indexes for the PIX key.
     @Id
-    private String pixKey;
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private String id;
 
+    private String pixKey;
     private String keyType;
 
     private Instant creationDate;
