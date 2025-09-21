@@ -3,8 +3,10 @@ import {Home} from './screens/home/home';
 import {Transfer} from './screens/transfer/transfer';
 
 export const routes: Routes = [
-  { path: '', redirectTo: '/home', pathMatch: 'full' }, // Default route
+  { path: '', redirectTo: '/login', pathMatch: 'full' }, // Default route
+  { path: 'login', loadComponent: () => import('./screens/login/login.component').then(m => m.LoginComponent) },
   { path: 'home', component: Home },
   { path: 'transfer', component: Transfer },
+  { path: 'create-pix-key', loadComponent: () => import('./screens/create-pix-key/create-pix-key.component').then(m => m.CreatePixKeyComponent) },
   { path: '**', redirectTo: '/home' } // Wildcard route for 404
 ];

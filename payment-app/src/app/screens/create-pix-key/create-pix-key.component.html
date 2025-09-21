@@ -1,0 +1,31 @@
+<div class="flex flex-col h-screen bg-gray-50">
+  <!-- Top Bar -->
+  <header class="flex items-center justify-between px-4 py-3 bg-blue-600 text-white shadow">
+    <h1 class="text-lg font-semibold">Create PIX Key</h1>
+    <button (click)="cancel()" class="text-sm underline hover:opacity-80">Cancel</button>
+  </header>
+
+  <main class="flex-grow p-4 space-y-6">
+    <!-- Error -->
+    <div *ngIf="errorMessage" class="p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+      {{ errorMessage }}
+    </div>
+
+    <label class="block">
+      <span class="text-gray-700 font-medium">Desired PIX Key</span>
+      <input
+        type="text"
+        [(ngModel)]="pixKey"
+        placeholder="Enter new PIX key"
+        class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+      />
+    </label>
+
+    <button
+      (click)="savePixKey()"
+      class="w-full py-3 rounded-xl bg-green-600 text-white font-semibold shadow hover:bg-green-700 transition"
+    >
+      Save PIX Key
+    </button>
+  </main>
+</div>

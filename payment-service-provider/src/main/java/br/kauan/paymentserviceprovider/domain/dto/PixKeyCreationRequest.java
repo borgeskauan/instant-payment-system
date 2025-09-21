@@ -5,5 +5,5 @@ import lombok.Data;
 @Data
 public class PixKeyCreationRequest {
     private String customerId;
-    private String key;
+    private String pixKey;
 }

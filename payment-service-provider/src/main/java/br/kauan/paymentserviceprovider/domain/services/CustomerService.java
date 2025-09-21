@@ -1,18 +1,20 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
+import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
 import br.kauan.paymentserviceprovider.domain.entity.Customer;
 import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.PixKey;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
-import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
 import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Random;
 
 @Service
@@ -55,7 +57,11 @@ public class CustomerService {
     }
 
     public void createPixKey(PixKeyCreationRequest request) {
-        pixKeyRepository.save(request.getKey(), request.getCustomerId());
+        pixKeyRepository.save(request.getPixKey(), request.getCustomerId());
+    }
+
+    public List<PixKey> getAllPixKeys(String customerId) {
+        return pixKeyRepository.findAllByCustomerId(customerId);
     }
 
     private static String generateRandomNumberString(int length) {

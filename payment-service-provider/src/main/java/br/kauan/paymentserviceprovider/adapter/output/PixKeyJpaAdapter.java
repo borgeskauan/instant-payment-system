@@ -1,7 +1,10 @@
 package br.kauan.paymentserviceprovider.adapter.output;
 
+import br.kauan.paymentserviceprovider.domain.entity.PixKey;
 import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
 import org.springframework.stereotype.Repository;
+
+import java.util.List;
 
 @Repository
 public class PixKeyJpaAdapter implements PixKeyRepository {
@@ -20,5 +23,15 @@ public class PixKeyJpaAdapter implements PixKeyRepository {
                 .build();
 
         pixKeyJpaClient.save(entity);
+    }
+
+    @Override
+    public List<PixKey> findAllByCustomerId(String customerId) {
+        var entities = pixKeyJpaClient.findAllByCustomerId(customerId);
+        return entities.stream()
+                .map(e -> PixKey.builder()
+                        .pixKey(e.getPixKey())
+                        .build())
+                .toList();
     }
 }

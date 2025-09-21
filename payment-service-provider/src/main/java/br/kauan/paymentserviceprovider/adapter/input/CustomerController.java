@@ -3,10 +3,11 @@ package br.kauan.paymentserviceprovider.adapter.input;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
 import br.kauan.paymentserviceprovider.domain.entity.Customer;
+import br.kauan.paymentserviceprovider.domain.entity.PixKey;
 import br.kauan.paymentserviceprovider.domain.services.CustomerService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 public class CustomerController {
@@ -22,8 +23,15 @@ public class CustomerController {
         return customerService.loginCustomer(request);
     }
 
-    @PostMapping("/customers/pix-keys")
-    public void createPixKey(@RequestBody PixKeyCreationRequest request) {
+    @PostMapping("/customers/{customerId}/pix-keys")
+    public void createPixKey(@PathVariable String customerId, @RequestBody PixKeyCreationRequest request) {
+        request.setCustomerId(customerId);
+
         customerService.createPixKey(request);
+    }
+
+    @GetMapping("/customers/{customerId}/pix-keys")
+    public List<PixKey> getPixKeys(@PathVariable String customerId) {
+        return customerService.getAllPixKeys(customerId);
     }
 }

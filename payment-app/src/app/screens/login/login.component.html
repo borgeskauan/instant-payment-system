@@ -1,0 +1,47 @@
+<div class="flex flex-col h-screen bg-gray-50">
+  <!-- Header -->
+  <header class="px-4 py-6 text-center bg-blue-600 text-white shadow">
+    <h1 class="text-2xl font-bold">Bank App</h1>
+    <p class="text-sm opacity-80">Login to your account</p>
+  </header>
+
+  <!-- Form -->
+  <main class="flex-grow flex items-center justify-center p-6">
+    <div class="w-full max-w-sm bg-white rounded-2xl shadow-md p-6 space-y-6">
+      <!-- Error -->
+      <div *ngIf="errorMessage" class="p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+        {{ errorMessage }}
+      </div>
+
+      <!-- Name -->
+      <label class="block">
+        <span class="text-gray-700 font-medium">Name</span>
+        <input
+          type="text"
+          [(ngModel)]="name"
+          placeholder="Enter your name"
+          class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        />
+      </label>
+
+      <!-- Tax ID -->
+      <label class="block">
+        <span class="text-gray-700 font-medium">Tax ID</span>
+        <input
+          type="text"
+          [(ngModel)]="taxId"
+          placeholder="Enter your tax ID"
+          class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        />
+      </label>
+
+      <!-- Login Button -->
+      <button
+        (click)="login()"
+        class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold shadow hover:bg-blue-700 transition"
+      >
+        Login
+      </button>
+    </div>
+  </main>
+</div>
