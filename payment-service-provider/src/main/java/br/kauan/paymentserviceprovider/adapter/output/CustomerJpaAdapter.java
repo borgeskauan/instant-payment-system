@@ -73,13 +73,13 @@ public class CustomerJpaAdapter implements CustomerRepository {
     @Override
     public Optional<Customer> findByTaxId(String taxId) {
         var customerDataOptional = customerJpaClient.findByTaxId(taxId);
-        if (customerDataOptional.isEmpty()) {
-            return Optional.empty();
-        }
+        return mapCustomerOptionalToDomain(customerDataOptional);
+    }
 
-        var customerEntity = customerDataOptional.get();
-
-        return Optional.ofNullable(createCustomerFromEntity(customerEntity));
+    @Override
+    public Optional<Customer> findById(String customerId) {
+        var customerDataOptional = customerJpaClient.findById(customerId);
+        return mapCustomerOptionalToDomain(customerDataOptional);
     }
 
     private CustomerBankAccount createCustomerBankAccount(CustomerEntity customerData) {
@@ -104,5 +104,15 @@ public class CustomerJpaAdapter implements CustomerRepository {
                 .id(bankAccountId)
                 .type(BankAccountType.fromString(customerData.getAccountType()))
                 .build();
+    }
+
+    private Optional<Customer> mapCustomerOptionalToDomain(Optional<CustomerEntity> customerDataOptional) {
+        if (customerDataOptional.isEmpty()) {
+            return Optional.empty();
+        }
+
+        var customerEntity = customerDataOptional.get();
+
+        return Optional.ofNullable(createCustomerFromEntity(customerEntity));
     }
 }

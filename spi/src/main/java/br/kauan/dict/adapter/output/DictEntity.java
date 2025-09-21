@@ -13,7 +13,7 @@ import java.time.Instant;
 public class DictEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
+    @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
     private String pixKey;

@@ -1,6 +1,9 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
 import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
+import br.kauan.paymentserviceprovider.adapter.output.dict.Account;
+import br.kauan.paymentserviceprovider.adapter.output.dict.DictPixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.adapter.output.dict.Owner;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
@@ -10,6 +13,7 @@ import br.kauan.paymentserviceprovider.domain.entity.PixKey;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
+import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
 import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
 import org.springframework.stereotype.Service;
 
@@ -23,9 +27,14 @@ public class CustomerService {
     private final CustomerRepository customerRepository;
     private final PixKeyRepository pixKeyRepository;
 
-    public CustomerService(CustomerRepository customerRepository, PixKeyRepository pixKeyRepository) {
+    private final ExternalPartyRepository externalPartyRepository;
+
+    public CustomerService(CustomerRepository customerRepository,
+                           PixKeyRepository pixKeyRepository,
+                           ExternalPartyRepository externalPartyRepository) {
         this.customerRepository = customerRepository;
         this.pixKeyRepository = pixKeyRepository;
+        this.externalPartyRepository = externalPartyRepository;
     }
 
     public Customer loginCustomer(CustomerLoginRequest request) {
@@ -57,6 +66,25 @@ public class CustomerService {
     }
 
     public void createPixKey(PixKeyCreationRequest request) {
+        var customer = customerRepository.findById(request.getCustomerId()).orElseThrow();
+
+        var externalPixKeyCreationRequest = DictPixKeyCreationRequest.builder()
+                .key(request.getPixKey())
+                .keyType("EMAIL")
+                .account(Account.builder()
+                        .participant(GlobalVariables.getBankCode())
+                        .branch(customer.getBankAccount().getAccount().getId().getAgencyNumber())
+                        .number(customer.getBankAccount().getAccount().getId().getAccountNumber())
+                        .type(BankAccountType.CHECKING.name())
+                        .build())
+                .owner(Owner.builder()
+                        .name(customer.getName())
+                        .taxIdNumber(customer.getTaxId())
+                        .build())
+                .build();
+
+        externalPartyRepository.createPixKey(externalPixKeyCreationRequest);
+
         pixKeyRepository.save(request.getPixKey(), request.getCustomerId());
     }
 

@@ -11,4 +11,6 @@ public interface CustomerRepository {
     Customer save(Customer customer);
 
     Optional<Customer> findByTaxId(String taxId);
+
+    Optional<Customer> findById(String customerId);
 }

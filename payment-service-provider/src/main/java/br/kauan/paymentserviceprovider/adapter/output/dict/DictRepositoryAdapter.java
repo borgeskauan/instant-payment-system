@@ -23,6 +23,11 @@ public class DictRepositoryAdapter implements ExternalPartyRepository {
         return convertToDomain(response);
     }
 
+    @Override
+    public void createPixKey(DictPixKeyCreationRequest externalPixKeyCreationRequest) {
+        dictClient.createPixKey(externalPixKeyCreationRequest);
+    }
+
     private Party convertToDomain(DictResponse response) {
         var owner = response.getOwner();
         var account = response.getAccount();
