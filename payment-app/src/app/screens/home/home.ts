@@ -1,29 +1,23 @@
-import {Component, OnInit} from '@angular/core';
-import {DecimalPipe, NgForOf, NgIf} from "@angular/common";
+import {Component, Signal} from '@angular/core';
 import {Router} from '@angular/router';
 import {User, UserService} from '../../services/user/user.service';
+import {DecimalPipe} from '@angular/common';
 
 @Component({
   selector: 'app-home',
-  imports: [
-    DecimalPipe,
-    NgForOf,
-    NgIf
-  ],
   templateUrl: './home.html',
-  styleUrl: './home.css'
+  imports: [DecimalPipe],
+  styleUrls: ['./home.css']
 })
-export class Home implements OnInit {
-  customer?: User;
-
-  pixKeys: string[] = [];
+export class Home {
+  customer: Signal<User>;
 
   constructor(private router: Router, private userService: UserService) {
-  }
-
-  ngOnInit(): void {
     this.customer = this.userService.getUser();
-    this.pixKeys = this.customer.pixKeys || [];
+
+    for (let key of this.customer().pixKeys) {
+      console.log(`Pix Key: ${key}`);
+    }
   }
 
   goToTransfer() {
@@ -36,5 +30,9 @@ export class Home implements OnInit {
 
   logout() {
     this.userService.logout();
+  }
+
+  getFirstLetter(name: string): string {
+    return name ? name.charAt(0).toUpperCase() : 'U';
   }
 }

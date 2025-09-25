@@ -1,8 +1,10 @@
-import {Injectable} from '@angular/core';
+import {Injectable, computed, signal, Signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
 import {AppConfigService} from '../config/app-config.service';
 import {map, switchMap, tap} from 'rxjs';
 import {Router} from '@angular/router';
+import {BehaviorSubject} from 'rxjs';
+import {toSignal} from '@angular/core/rxjs-interop';
 
 interface ExternalCustomer {
   id: string;
@@ -18,7 +20,7 @@ export interface User {
   name: string;
   taxId: string;
   balance: number;
-  pixKeys?: string[];
+  pixKeys: string[];
 }
 
 @Injectable({
@@ -26,31 +28,57 @@ export interface User {
 })
 export class UserService {
 
-  private loggedInUser: ExternalCustomer | null = null;
-  private pixKeys: string[] = [];
+  private loggedInUser = signal<ExternalCustomer | null>(null);
+  private pixKeys$ = new BehaviorSubject<string[]>([]);
+  private pixKeysSignal = toSignal(this.pixKeys$, {initialValue: []}); // Convert to signal
 
-  constructor(private http: HttpClient, private config: AppConfigService, private router: Router) {
+  private intervalId: number = 0;
+
+  constructor(
+    private http: HttpClient,
+    private config: AppConfigService,
+    private router: Router
+  ) {
   }
 
-  getUser() {
-    if (!this.loggedInUser) {
-      this.router.navigate(['/login']).catch(error => console.log(error));
+  getUser(): Signal<User> {
+    return computed(() => {
+      const user = this.loggedInUser();
+      if (!user) {
+        this.navigateToLogin();
+        throw new Error('User not logged in');
+      }
+
+      return {
+        id: user.id,
+        name: user.name,
+        taxId: user.taxId,
+        balance: user.bankAccount.balance,
+        pixKeys: this.pixKeysSignal()
+      };
+    });
+  }
+
+  private startUserPooling() {
+    if (this.intervalId) {
+      return;
     }
 
-    return {
-      id: this.loggedInUser?.id || '',
-      name: this.loggedInUser?.name || '',
-      taxId: this.loggedInUser?.taxId || '',
-      balance: this.loggedInUser?.bankAccount.balance || 0,
-      pixKeys: this.pixKeys
-    }
+    this.intervalId = window.setInterval(() => {
+      const user = this.loggedInUser();
+      if (!user) {
+        return;
+      }
+
+      this.login(user.name, user.taxId).subscribe();
+    }, 10000);
   }
 
   login(name: string, taxId: string) {
     return this.http.post<ExternalCustomer>(`${this.config.baseUrl}/customers`, {name, taxId}).pipe(
       switchMap((loginResponse) => {
-        this.loggedInUser = loginResponse;
-
+        this.loggedInUser.set(loginResponse);
+        this.startUserPooling();
         return this.fetchPixKeys().pipe(
           map(() => loginResponse)
         );
@@ -59,31 +87,39 @@ export class UserService {
   }
 
   createPixKey(pixKey: string) {
-    if (!this.loggedInUser) {
+    const user = this.loggedInUser();
+    if (!user) {
       throw new Error('User not logged in');
     }
-
-    return this.http.post(`${this.config.baseUrl}/customers/${this.loggedInUser?.id}/pix-keys`, {pixKey}).pipe(
-      tap(() => this.pixKeys.push(pixKey))
+    return this.http.post(`${this.config.baseUrl}/customers/${user.id}/pix-keys`, {pixKey}).pipe(
+      tap(() => {
+        const updatedKeys = [...this.pixKeys$.getValue(), pixKey];
+        this.pixKeys$.next(updatedKeys);
+      })
     );
   }
 
   fetchPixKeys() {
-    if (!this.loggedInUser) {
+    const user = this.loggedInUser();
+    if (!user) {
       throw new Error('User not logged in');
     }
-
-    return this.http.get<{
-      pixKey: string
-    }[]>(`${this.config.baseUrl}/customers/${this.loggedInUser?.id}/pix-keys`).pipe(
-      tap((keys) => this.pixKeys = keys.map(k => k.pixKey))
+    return this.http.get<{ pixKey: string }[]>(`${this.config.baseUrl}/customers/${user.id}/pix-keys`).pipe(
+      tap((keys) => this.pixKeys$.next(keys.map(k => k.pixKey)))
     );
   }
 
   logout() {
-    this.loggedInUser = null;
-    this.pixKeys = [];
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = 0;
+    }
+    this.loggedInUser.set(null);
+    this.pixKeys$.next([]);
+    this.navigateToLogin();
+  }
 
+  private navigateToLogin() {
     this.router.navigate(['/login']).catch(error => console.log(error));
   }
 }

@@ -20,8 +20,6 @@ export class Transfer {
   loading: boolean = false;
   errorMessage: string = '';
 
-  userBalance: number = 500;
-
   recipient = {
     name: '',
     taxId: '',
@@ -81,21 +79,28 @@ export class Transfer {
   confirmTransfer() {
     this.errorMessage = '';
 
-    if (this.amount && this.amount > this.userBalance) {
-      this.errorMessage = 'Insufficient funds to complete the transfer.';
+    if (!this.amount || this.amount <= 0) {
+      this.errorMessage = 'Invalid amount. Please enter a valid amount.';
       return;
     }
 
-    alert(`✅ Transfer of $${this.amount} to ${this.recipient.name} confirmed!`);
+    this.pspService.requestTransfer({amount: this.amount, receiverPixKey: this.pixKey}).subscribe({
+      next: () => {
+        alert(`✅ Transfer of $${this.amount} to ${this.recipient.name} confirmed!\nWithin minutes, your balance will be updated.`);
 
-    if (this.amount) {
-      this.userBalance -= this.amount;
-    }
+        // Reset state after successful transfer
+        this.step = 'pix';
+        this.pixKey = '';
+        this.amount = null;
+        this.recipient = {name: '', taxId: '', institution: '', found: false};
 
-    this.step = 'pix';
-    this.pixKey = '';
-    this.amount = null;
-    this.recipient = {name: '', taxId: '', institution: '', found: false};
+        this.router.navigate(['/home']).catch((error: any) => console.log(error));
+      },
+      error: (err: any) => {
+        this.errorMessage = 'An error occurred while processing the transfer. Please try again.';
+        console.error('Error confirming transfer:', err);
+      }
+    });
   }
 
   goHome() {

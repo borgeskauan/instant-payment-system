@@ -39,12 +39,14 @@ public class CentralTransferService {
     private final PaymentRepository paymentRepository;
     private final BankAccountCustomerService bankAccountCustomerService;
 
-    public CentralTransferService(CentralTransferRestClient transferRestClient,
-                                  PaymentTransactionMapper paymentTransactionMapper,
-                                  StatusReportMapper statusReportMapper,
-                                  CentralTransferNotificationListener notificationListener,
-                                  PaymentRepository paymentRepository,
-                                  BankAccountCustomerService bankAccountCustomerService) {
+    public CentralTransferService(
+            CentralTransferRestClient transferRestClient,
+            PaymentTransactionMapper paymentTransactionMapper,
+            StatusReportMapper statusReportMapper,
+            CentralTransferNotificationListener notificationListener,
+            PaymentRepository paymentRepository,
+            BankAccountCustomerService bankAccountCustomerService
+    ) {
         this.transferRestClient = transferRestClient;
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;

@@ -6,7 +6,7 @@ export interface TransferExecutionRequest {
   senderCustomerId: string;
   receiver: Party;
   amount: number; // or string if you prefer to handle BigDecimal as string
-  description: string;
+  description?: string;
 }
 
 export interface Party {
