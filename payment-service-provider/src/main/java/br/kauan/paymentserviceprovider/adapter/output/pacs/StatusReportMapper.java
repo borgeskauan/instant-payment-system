@@ -3,7 +3,7 @@ package br.kauan.paymentserviceprovider.adapter.output.pacs;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.*;
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.ErrorReason;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;

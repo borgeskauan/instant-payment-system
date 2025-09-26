@@ -1,4 +1,4 @@
-package br.kauan.paymentserviceprovider.domain.entity.commons;
+package br.kauan.paymentserviceprovider.domain.entity;
 
 import lombok.Builder;
 import lombok.Data;
@@ -19,9 +19,5 @@ public class BatchDetails {
                 .createdAt(Instant.now())
                 .totalTransactions(totalTransactions)
                 .build();
-    }
-
-    public static BatchDetails ofOne() {
-        return of(1);
     }
 }

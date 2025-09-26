@@ -16,10 +16,11 @@ public class PixKeyJpaAdapter implements PixKeyRepository {
     }
 
     @Override
-    public void save(String key, String customerId) {
+    public void save(PixKey key) {
         var entity = PixKeyEntity.builder()
-                .pixKey(key)
-                .customerId(customerId)
+                .pixKey(key.getPixKey())
+                .customerId(key.getCustomerId())
+                .type(key.getType())
                 .build();
 
         pixKeyJpaClient.save(entity);
@@ -31,6 +32,7 @@ public class PixKeyJpaAdapter implements PixKeyRepository {
         return entities.stream()
                 .map(e -> PixKey.builder()
                         .pixKey(e.getPixKey())
+                        .type(e.getType())
                         .build())
                 .toList();
     }

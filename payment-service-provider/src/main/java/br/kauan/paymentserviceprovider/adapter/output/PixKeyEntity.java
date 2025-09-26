@@ -22,4 +22,6 @@ public class PixKeyEntity {
 
     private String pixKey;
     private String customerId;
+
+    private String type;
 }

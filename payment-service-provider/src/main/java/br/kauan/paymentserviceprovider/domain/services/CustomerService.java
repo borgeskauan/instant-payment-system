@@ -1,113 +1,111 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
 import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
-import br.kauan.paymentserviceprovider.adapter.output.dict.Account;
-import br.kauan.paymentserviceprovider.adapter.output.dict.DictPixKeyCreationRequest;
-import br.kauan.paymentserviceprovider.adapter.output.dict.Owner;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
 import br.kauan.paymentserviceprovider.domain.entity.Customer;
 import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.PixKey;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
+import br.kauan.paymentserviceprovider.port.output.CustomerBankAccountRepository;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
 import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.List;
-import java.util.Random;
 
+@Slf4j
 @Service
 public class CustomerService {
 
+    private static final String DEFAULT_PIX_KEY_TYPE = "EMAIL";
+
     private final CustomerRepository customerRepository;
     private final PixKeyRepository pixKeyRepository;
-
     private final ExternalPartyRepository externalPartyRepository;
+    private final CustomerBankAccountRepository customerBankAccountRepository;
+    private final CustomerBankAccountService customerBankAccountService;
 
-    public CustomerService(CustomerRepository customerRepository,
-                           PixKeyRepository pixKeyRepository,
-                           ExternalPartyRepository externalPartyRepository) {
+    public CustomerService(
+            CustomerRepository customerRepository,
+            PixKeyRepository pixKeyRepository,
+            ExternalPartyRepository externalPartyRepository,
+            CustomerBankAccountRepository customerBankAccountRepository,
+            CustomerBankAccountService customerBankAccountService
+    ) {
         this.customerRepository = customerRepository;
         this.pixKeyRepository = pixKeyRepository;
         this.externalPartyRepository = externalPartyRepository;
+        this.customerBankAccountRepository = customerBankAccountRepository;
+        this.customerBankAccountService = customerBankAccountService;
     }
 
+    @Transactional
     public Customer loginCustomer(CustomerLoginRequest request) {
-        var existingCustomer = customerRepository.findByTaxId(request.getTaxId());
-        if (existingCustomer.isPresent()) {
-            return existingCustomer.get();
-        }
+        log.info("Attempting to login customer with taxId: {}", request.getTaxId());
 
-        var generatedBankAccountId = BankAccount.builder().id(BankAccountId.builder()
-                        .accountNumber(generateRandomNumberString(8))
-                        .agencyNumber(generateRandomNumberString(4))
-                        .bankCode(GlobalVariables.getBankCode())
-                        .build())
-                .type(BankAccountType.CHECKING)
-                .build();
-
-        var customerBankAccount = CustomerBankAccount.builder()
-                .account(generatedBankAccountId)
-                .balance(BigDecimal.valueOf(10000))
-                .build();
-
-        var customer = Customer.builder()
-                .name(request.getName())
-                .taxId(request.getTaxId())
-                .bankAccount(customerBankAccount)
-                .build();
-
-        return customerRepository.save(customer);
+        return customerRepository.findByTaxId(request.getTaxId())
+                .orElseGet(() -> createNewCustomer(request));
     }
 
+    @Transactional
     public void createPixKey(PixKeyCreationRequest request) {
-        var customer = customerRepository.findById(request.getCustomerId()).orElseThrow();
+        log.info("Creating PIX key for customer: {}", request.getCustomerId());
 
-        var externalPixKeyCreationRequest = DictPixKeyCreationRequest.builder()
-                .key(request.getPixKey())
-                .keyType("EMAIL")
-                .account(Account.builder()
-                        .participant(GlobalVariables.getBankCode())
-                        .branch(customer.getBankAccount().getAccount().getId().getAgencyNumber())
-                        .number(customer.getBankAccount().getAccount().getId().getAccountNumber())
-                        .type(BankAccountType.CHECKING.name())
-                        .build())
-                .owner(Owner.builder()
-                        .name(customer.getName())
-                        .taxIdNumber(customer.getTaxId())
-                        .build())
-                .build();
+        var customer = findCustomerById(request.getCustomerId());
+        var customerBankAccount = findCustomerBankAccount(request.getCustomerId());
 
-        externalPartyRepository.createPixKey(externalPixKeyCreationRequest);
+        var pixKey = buildPixKey(request, customer);
 
-        pixKeyRepository.save(request.getPixKey(), request.getCustomerId());
+        externalPartyRepository.createPixKey(pixKey, customer, customerBankAccount);
+        pixKeyRepository.save(pixKey);
+
+        log.info("PIX key created successfully for customer: {}", request.getCustomerId());
     }
 
     public List<PixKey> getAllPixKeys(String customerId) {
+        log.debug("Retrieving all PIX keys for customer: {}", customerId);
         return pixKeyRepository.findAllByCustomerId(customerId);
     }
 
-    private static String generateRandomNumberString(int length) {
-        if (length <= 0) {
-            throw new IllegalArgumentException("Length must be positive");
-        }
+    private Customer createNewCustomer(CustomerLoginRequest request) {
+        log.info("Creating new customer with taxId: {}", request.getTaxId());
 
-        Random random = new Random();
-        StringBuilder sb = new StringBuilder();
+        var customerBankAccount = customerBankAccountService.generateBankAccount();
+        var customer = buildCustomer(request);
 
-        // First digit can't be zero
-        sb.append(random.nextInt(9) + 1);
+        customerBankAccountRepository.save(customerBankAccount);
+        Customer savedCustomer = customerRepository.save(customer);
 
-        // Remaining digits can include zero
-        for (int i = 1; i < length; i++) {
-            sb.append(random.nextInt(10));
-        }
+        log.info("New customer created successfully with ID: {}", savedCustomer.getId());
+        return savedCustomer;
+    }
 
-        return sb.toString();
+    private Customer findCustomerById(String customerId) {
+        return customerRepository.findById(customerId)
+                .orElseThrow(() -> new IllegalArgumentException("Customer not found with ID: " + customerId));
+    }
+
+    private CustomerBankAccount findCustomerBankAccount(String customerId) {
+        return customerBankAccountRepository.findByCustomerId(customerId)
+                .stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account to link the Pix key."));
+    }
+
+    private PixKey buildPixKey(PixKeyCreationRequest request, Customer customer) {
+        return PixKey.builder()
+                .pixKey(request.getPixKey())
+                .customerId(customer.getId())
+                .type(DEFAULT_PIX_KEY_TYPE)
+                .build();
+    }
+
+    private Customer buildCustomer(CustomerLoginRequest request) {
+        return Customer.builder()
+                .name(request.getName())
+                .taxId(request.getTaxId())
+                .build();
     }
 }

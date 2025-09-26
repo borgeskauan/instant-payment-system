@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.input;
 
-import br.kauan.paymentserviceprovider.domain.dto.TransferExecutionRequest;
+import br.kauan.paymentserviceprovider.domain.dto.HttpTransferExecutionRequest;
 import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
 import br.kauan.paymentserviceprovider.domain.entity.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
@@ -22,13 +22,7 @@ public class PspController {
     }
 
     @PostMapping("/transfer/execute")
-    public TransferDetails requestTransfer(@RequestBody TransferExecutionRequest executionRequest) {
+    public TransferDetails requestTransfer(@RequestBody HttpTransferExecutionRequest executionRequest) {
         return pspUseCase.requestTransfer(executionRequest);
-    }
-
-    @GetMapping("/{transferId}/status")
-    public TransferDetails getTransferStatus(@PathVariable String transferId) {
-        // TODO: Implement this method
-        return null;
     }
 }

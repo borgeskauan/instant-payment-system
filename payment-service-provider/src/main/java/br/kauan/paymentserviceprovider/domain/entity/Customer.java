@@ -10,6 +10,4 @@ public class Customer {
 
     private String name;
     private String taxId;
-
-    private CustomerBankAccount bankAccount;
 }

@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
 @FeignClient(name = "central-transfer", url = "${external.central-transfer.url}")
-public interface CentralTransferRestClient {
+public interface CentralTransferSystemRestClient {
 
     @PostMapping("/{ispb}/transfer")
     void requestTransfer(@PathVariable String ispb, @RequestBody FIToFICustomerCreditTransfer transferRequest);

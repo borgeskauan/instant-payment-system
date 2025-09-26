@@ -19,13 +19,13 @@ import java.util.function.Consumer;
 @Service
 public class CentralTransferNotificationListener {
 
-    private final CentralTransferRestClient transferRestClient;
+    private final CentralTransferSystemRestClient transferRestClient;
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
 
     private final InfiniteLoopService infiniteLoopService;
 
-    public CentralTransferNotificationListener(CentralTransferRestClient transferRestClient,
+    public CentralTransferNotificationListener(CentralTransferSystemRestClient transferRestClient,
                                                PaymentTransactionMapper paymentTransactionMapper,
                                                StatusReportMapper statusReportMapper,
                                                InfiniteLoopService infiniteLoopService) {

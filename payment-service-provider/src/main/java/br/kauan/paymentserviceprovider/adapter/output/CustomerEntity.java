@@ -22,8 +22,4 @@ public class CustomerEntity {
 
     private String name;
     private String taxId;
-
-    private String accountNumber;
-    private String accountAgency;
-    private String accountType;
 }

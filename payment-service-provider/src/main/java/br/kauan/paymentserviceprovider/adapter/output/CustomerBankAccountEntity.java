@@ -20,6 +20,8 @@ public class CustomerBankAccountEntity {
     @EmbeddedId
     private CustomerBankAccountId id;
 
+    private String customerId;
+
     private String type;
 
     private BigDecimal balance;

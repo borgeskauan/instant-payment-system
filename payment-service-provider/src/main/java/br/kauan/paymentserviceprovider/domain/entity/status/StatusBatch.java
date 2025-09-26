@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.domain.entity.status;
 
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.BatchDetails;
 import lombok.Builder;
 import lombok.Data;
 

@@ -4,7 +4,7 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.*;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
