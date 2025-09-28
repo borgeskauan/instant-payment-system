@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.domain.entity.transfer;
 
-import br.kauan.paymentserviceprovider.domain.entity.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import lombok.Builder;
 import lombok.Data;
 

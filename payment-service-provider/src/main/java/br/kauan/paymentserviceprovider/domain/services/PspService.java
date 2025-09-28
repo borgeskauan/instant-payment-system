@@ -1,10 +1,11 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
-import br.kauan.paymentserviceprovider.domain.dto.HttpTransferExecutionRequest;
+import br.kauan.paymentserviceprovider.domain.dto.RawTransferExecutionRequest;
 import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
-import br.kauan.paymentserviceprovider.domain.entity.TransferDetails;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferRequest;
+import br.kauan.paymentserviceprovider.domain.services.cts.CentralTransferService;
 import br.kauan.paymentserviceprovider.port.input.PspUseCase;
 import org.springframework.stereotype.Service;
 
@@ -30,7 +31,7 @@ public class PspService implements PspUseCase {
     }
 
     @Override
-    public TransferDetails requestTransfer(HttpTransferExecutionRequest executionRequest) {
+    public TransferDetails requestTransfer(RawTransferExecutionRequest executionRequest) {
         var senderParty = bankAccountPartyService.getInternalPartyDetails(executionRequest.getSenderCustomerId())
                 .orElseThrow(); // TODO: Improve exception handling
 

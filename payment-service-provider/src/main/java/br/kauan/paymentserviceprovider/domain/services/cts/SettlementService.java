@@ -1,8 +1,8 @@
 package br.kauan.paymentserviceprovider.domain.services.cts;
 
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.domain.services.BankAccountPartyService;
 import jakarta.transaction.Transactional;

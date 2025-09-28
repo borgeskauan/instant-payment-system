@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.port.output;
 
-import br.kauan.paymentserviceprovider.domain.entity.PixKey;
+import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
 
 import java.util.List;
 

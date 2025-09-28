@@ -1,7 +1,7 @@
 package br.kauan.paymentserviceprovider.domain.services.cts;
 
-import br.kauan.paymentserviceprovider.adapter.output.CentralTransferSystemRestClient;
-import br.kauan.paymentserviceprovider.adapter.output.pacs.StatusReportMapper;
+import br.kauan.paymentserviceprovider.adapter.output.listener.CentralTransferSystemRestClient;
+import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportMapper;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.mappers.StatusReportFactory;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
@@ -28,7 +28,8 @@ public class IncomingTransactionService {
             PaymentRepository paymentRepository,
             StatusReportFactory statusReportFactory,
             StatusReportMapper statusReportMapper,
-            CentralTransferSystemRestClient transferRestClient) {
+            CentralTransferSystemRestClient transferRestClient
+    ) {
         this.paymentRepository = paymentRepository;
         this.statusReportFactory = statusReportFactory;
         this.statusReportMapper = statusReportMapper;

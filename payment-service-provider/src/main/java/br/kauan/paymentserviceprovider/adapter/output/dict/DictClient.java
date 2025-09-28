@@ -1,5 +1,7 @@
 package br.kauan.paymentserviceprovider.adapter.output.dict;
 
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.DictPixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.DictResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

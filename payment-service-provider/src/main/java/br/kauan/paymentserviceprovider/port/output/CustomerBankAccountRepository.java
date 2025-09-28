@@ -1,7 +1,7 @@
 package br.kauan.paymentserviceprovider.port.output;
 
-import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
 
 import java.util.List;
 import java.util.Optional;

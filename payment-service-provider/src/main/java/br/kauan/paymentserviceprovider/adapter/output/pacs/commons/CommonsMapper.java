@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.commons;
 
-import br.kauan.paymentserviceprovider.domain.entity.BatchDetails;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import org.springframework.stereotype.Service;
 
 import javax.xml.datatype.DatatypeConfigurationException;

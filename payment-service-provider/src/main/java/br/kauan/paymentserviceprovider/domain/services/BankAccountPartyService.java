@@ -1,8 +1,8 @@
 package br.kauan.paymentserviceprovider.domain.services;
 
-import br.kauan.paymentserviceprovider.adapter.output.CustomerRepository;
+import br.kauan.paymentserviceprovider.adapter.output.customer.CustomerRepository;
 import br.kauan.paymentserviceprovider.domain.entity.mappers.CustomerPartyMapper;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.port.output.CustomerBankAccountRepository;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;

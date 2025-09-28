@@ -1,12 +1,16 @@
 package br.kauan.paymentserviceprovider.adapter.output.dict;
 
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.Account;
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.DictPixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.DictResponse;
+import br.kauan.paymentserviceprovider.adapter.output.dict.dto.Owner;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
-import br.kauan.paymentserviceprovider.domain.entity.Customer;
-import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.PixKey;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountId;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccount;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.BankAccountType;
+import br.kauan.paymentserviceprovider.domain.entity.customer.Customer;
+import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
 import org.springframework.stereotype.Repository;

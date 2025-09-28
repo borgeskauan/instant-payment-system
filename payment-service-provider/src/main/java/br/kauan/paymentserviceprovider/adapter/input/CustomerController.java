@@ -2,9 +2,9 @@ package br.kauan.paymentserviceprovider.adapter.input;
 
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
-import br.kauan.paymentserviceprovider.domain.entity.Customer;
-import br.kauan.paymentserviceprovider.domain.entity.PixKey;
-import br.kauan.paymentserviceprovider.domain.services.CustomerService;
+import br.kauan.paymentserviceprovider.domain.entity.customer.Customer;
+import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
+import br.kauan.paymentserviceprovider.domain.services.customer.CustomerService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;

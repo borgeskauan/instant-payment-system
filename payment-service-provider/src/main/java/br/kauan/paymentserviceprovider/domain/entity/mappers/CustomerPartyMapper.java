@@ -1,7 +1,7 @@
 package br.kauan.paymentserviceprovider.domain.entity.mappers;
 
-import br.kauan.paymentserviceprovider.domain.entity.Customer;
-import br.kauan.paymentserviceprovider.domain.entity.CustomerBankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.customer.Customer;
+import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import org.springframework.stereotype.Component;
 
