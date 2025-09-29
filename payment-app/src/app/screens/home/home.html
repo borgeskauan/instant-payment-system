@@ -8,7 +8,7 @@
         </span>
       </div>
       <h1 class="text-lg font-semibold">
-        {{ customer()?.name || 'Unknown' }}
+        {{ customer().name || 'Unknown' }}
       </h1>
     </div>
     <button class="text-sm font-medium hover:underline" (click)="logout()">Logout</button>
@@ -20,7 +20,7 @@
     <div class="bg-white rounded-2xl shadow-md p-6 text-center">
       <p class="text-gray-500">Account Balance</p>
       <p class="mt-2 text-4xl font-bold text-green-600">
-        ${{ customer()?.balance | number:'1.2-2' }}
+        ${{ customer().balance | number:'1.2-2' }}
       </p>
     </div>
 
@@ -28,13 +28,13 @@
     <div class="bg-white rounded-2xl shadow-md p-6">
       <h2 class="text-lg font-semibold mb-3">Your PIX Keys</h2>
 
-      @if (!customer()?.pixKeys || customer().pixKeys.length === 0) {
+      @if (!customer().pixKeys || customer().pixKeys.length === 0) {
         <div class="text-gray-500 text-sm">
           You haven't created any PIX keys yet.
         </div>
       }
 
-      @if (customer()?.pixKeys && customer().pixKeys.length > 0) {
+      @if (customer().pixKeys && customer().pixKeys.length > 0) {
         <ul class="space-y-2">
           @for (key of customer().pixKeys; track key) {
             <li class="p-3 rounded-xl bg-gray-100 text-gray-800 font-mono text-sm">

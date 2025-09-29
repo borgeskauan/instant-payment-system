@@ -41,6 +41,7 @@ public class BankAccountMapper {
 
         return CustomerBankAccountEntity.builder()
                 .id(id)
+                .customerId(bankAccount.getCustomerId())
                 .type(bankAccount.getAccount().getType().name())
                 .balance(bankAccount.getBalance())
                 .build();

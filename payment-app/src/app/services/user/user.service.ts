@@ -7,9 +7,11 @@ import {BehaviorSubject} from 'rxjs';
 import {toSignal} from '@angular/core/rxjs-interop';
 
 interface ExternalCustomer {
-  id: string;
-  name: string;
-  taxId: string;
+  customer: {
+    id: string;
+    name: string;
+    taxId: string;
+  },
   bankAccount: {
     balance: number;
   }
@@ -50,9 +52,9 @@ export class UserService {
       }
 
       return {
-        id: user.id,
-        name: user.name,
-        taxId: user.taxId,
+        id: user.customer.id,
+        name: user.customer.name,
+        taxId: user.customer.taxId,
         balance: user.bankAccount.balance,
         pixKeys: this.pixKeysSignal()
       };
@@ -70,7 +72,7 @@ export class UserService {
         return;
       }
 
-      this.login(user.name, user.taxId).subscribe();
+      this.login(user.customer.name, user.customer.taxId).subscribe();
     }, 10000);
   }
 
@@ -91,7 +93,7 @@ export class UserService {
     if (!user) {
       throw new Error('User not logged in');
     }
-    return this.http.post(`${this.config.baseUrl}/customers/${user.id}/pix-keys`, {pixKey}).pipe(
+    return this.http.post(`${this.config.baseUrl}/customers/${user.customer.id}/pix-keys`, {pixKey}).pipe(
       tap(() => {
         const updatedKeys = [...this.pixKeys$.getValue(), pixKey];
         this.pixKeys$.next(updatedKeys);
@@ -104,7 +106,7 @@ export class UserService {
     if (!user) {
       throw new Error('User not logged in');
     }
-    return this.http.get<{ pixKey: string }[]>(`${this.config.baseUrl}/customers/${user.id}/pix-keys`).pipe(
+    return this.http.get<{ pixKey: string }[]>(`${this.config.baseUrl}/customers/${user.customer.id}/pix-keys`).pipe(
       tap((keys) => this.pixKeys$.next(keys.map(k => k.pixKey)))
     );
   }

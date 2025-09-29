@@ -2,6 +2,7 @@ package br.kauan.paymentserviceprovider.domain.services.customer;
 
 import br.kauan.paymentserviceprovider.adapter.output.customer.CustomerRepository;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
+import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginResponse;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
 import br.kauan.paymentserviceprovider.domain.entity.customer.Customer;
 import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
@@ -42,10 +43,11 @@ public class CustomerService {
     }
 
     @Transactional
-    public Customer loginCustomer(CustomerLoginRequest request) {
+    public CustomerLoginResponse loginCustomer(CustomerLoginRequest request) {
         log.info("Attempting to login customer with taxId: {}", request.getTaxId());
 
         return customerRepository.findByTaxId(request.getTaxId())
+                .map(this::handleExistingCustomer)
                 .orElseGet(() -> createNewCustomer(request));
     }
 
@@ -69,17 +71,31 @@ public class CustomerService {
         return pixKeyRepository.findAllByCustomerId(customerId);
     }
 
-    private Customer createNewCustomer(CustomerLoginRequest request) {
+    private CustomerLoginResponse handleExistingCustomer(Customer customer) {
+        var bankAccount = findCustomerBankAccount(customer.getId());
+
+        return CustomerLoginResponse.builder()
+                .customer(customer)
+                .bankAccount(bankAccount)
+                .build();
+    }
+
+    private CustomerLoginResponse createNewCustomer(CustomerLoginRequest request) {
         log.info("Creating new customer with taxId: {}", request.getTaxId());
 
         var customerBankAccount = customerBankAccountService.generateBankAccount();
         var customer = buildCustomer(request);
 
-        customerBankAccountRepository.save(customerBankAccount);
         Customer savedCustomer = customerRepository.save(customer);
 
+        customerBankAccount.setCustomerId(savedCustomer.getId());
+        customerBankAccountRepository.save(customerBankAccount);
+
         log.info("New customer created successfully with ID: {}", savedCustomer.getId());
-        return savedCustomer;
+        return CustomerLoginResponse.builder()
+                .customer(savedCustomer)
+                .bankAccount(customerBankAccount)
+                .build();
     }
 
     private Customer findCustomerById(String customerId) {
@@ -91,7 +107,7 @@ public class CustomerService {
         return customerBankAccountRepository.findByCustomerId(customerId)
                 .stream()
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account to link the Pix key."));
+                .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account."));
     }
 
     private PixKey buildPixKey(PixKeyCreationRequest request, Customer customer) {
