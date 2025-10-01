@@ -7,23 +7,21 @@ import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
-import br.kauan.spi.port.output.PaymentServiceProviderRepository;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.springframework.stereotype.Service;
 
 @Service
 public class PaymentTransactionProcessorService implements PaymentTransactionProcessorUseCase {
 
-    private final PaymentServiceProviderRepository paymentServiceProviderRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final NotificationService notificationService;
     private final SettlementService settlementService;
 
-    public PaymentTransactionProcessorService(PaymentServiceProviderRepository paymentServiceProviderRepository,
-                                              PaymentTransactionRepository paymentTransactionRepository,
-                                              NotificationService notificationService,
-                                              SettlementService settlementService) {
-        this.paymentServiceProviderRepository = paymentServiceProviderRepository;
+    public PaymentTransactionProcessorService(
+            PaymentTransactionRepository paymentTransactionRepository,
+            NotificationService notificationService,
+            SettlementService settlementService
+    ) {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.notificationService = notificationService;
         this.settlementService = settlementService;

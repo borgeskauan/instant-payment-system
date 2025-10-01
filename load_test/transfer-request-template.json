@@ -1,0 +1,80 @@
+{
+  "GrpHdr": {
+    "MsgId": "MSG1234567890",
+    "CreDtTm": "2025-09-10T14:30:45.000Z",
+    "NbOfTxs": 1
+  },
+  "CdtTrfTxInf": [
+    {
+      "PmtId": {
+        "EndToEndId": "PIX-TRANSFER-001"
+      },
+      "IntrBkSttlmAmt": {
+        "value": 1500.50,
+        "Ccy": "BRL"
+      },
+      "Dbtr": {
+        "Nm": "João Silva Santos",
+        "Id": {
+          "PrvtId": {
+            "Othr": {
+              "Id": "123.456.789-00"
+            }
+          }
+        }
+      },
+      "DbtrAcct": {
+        "Id": {
+          "Othr": {
+            "Id": 987654,
+            "Issr": 1234
+          }
+        },
+        "Tp": {
+          "Cd": "CACC"
+        }
+      },
+      "DbtrAgt": {
+        "FinInstnId": {
+          "ClrSysMmbId": {
+            "MmbId": "12345678"
+          }
+        }
+      },
+      "CdtrAgt": {
+        "FinInstnId": {
+          "ClrSysMmbId": {
+            "MmbId": "87654321"
+          }
+        }
+      },
+      "Cdtr": {
+        "Nm": "Maria Oliveira Lima",
+        "Id": {
+          "PrvtId": {
+            "Othr": {
+              "Id": "987.654.321-00"
+            }
+          }
+        }
+      },
+      "CdtrAcct": {
+        "Id": {
+          "Othr": {
+            "Id": 123456,
+            "Issr": 5678
+          }
+        },
+        "Tp": {
+          "Cd": "CACC"
+        },
+        "Prxy": {
+          "Id": "+5511999999999"
+        }
+      },
+      "RmtInf": {
+        "Ustrd": "Pagamento serviços prestados - Setembro/2025"
+      }
+    }
+  ]
+}

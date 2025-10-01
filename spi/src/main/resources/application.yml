@@ -12,9 +12,8 @@ spring:
     enabled: false
 
 
-
 spi:
-  default-initial-balance: 10000
+  default-initial-balance: 1_000_000
 
 server:
   port: 8001
