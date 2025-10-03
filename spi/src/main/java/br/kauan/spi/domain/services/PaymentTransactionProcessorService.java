@@ -6,10 +6,13 @@ import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.services.notification.NotificationService;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 public class PaymentTransactionProcessorService implements PaymentTransactionProcessorUseCase {
 
@@ -58,13 +61,21 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     private void processAcceptedPayment(PaymentTransaction paymentTransaction) {
-        paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_IN_PROCESS);
+        try {
+            paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_IN_PROCESS);
 
-        settlementService.makeSettlement(paymentTransaction);
+            settlementService.makeSettlement(paymentTransaction);
 
-        notificationService.sendConfirmationNotification(paymentTransaction);
+            notificationService.sendConfirmationNotification(paymentTransaction);
 
-        paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
+            paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
+
+        } catch (Exception e) {
+            log.error("An error ocurred while processing the payment with ID {}", paymentTransaction.getPaymentId(), e);
+
+            // TODO: Save as pending and send to retry queue instead of rejecting.
+            processRejectedPayment(paymentTransaction);
+        }
     }
 
     private void processRejectedPayment(PaymentTransaction paymentTransaction) {

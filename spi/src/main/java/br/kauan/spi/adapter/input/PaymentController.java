@@ -4,7 +4,7 @@ import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
-import br.kauan.spi.domain.services.SpiNotification;
+import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import br.kauan.spi.port.input.NotificationUseCase;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.springframework.web.bind.annotation.*;

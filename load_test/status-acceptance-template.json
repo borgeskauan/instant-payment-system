@@ -6,7 +6,6 @@
   },
   "TxInfAndSts": [
     {
-      "OrgnlInstrId": "MSG1234567891",
       "OrgnlEndToEndId": "5a775951-86c7-4c38-8ba8-0506e3c19521",
       "TxSts": "ACSP"
     }

@@ -1,15 +1,13 @@
 package br.kauan.spi.port.output;
 
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 
+@Slf4j
 @Repository
 public class FundsJpaAdapter implements FundsRepository {
-
-    @Value("${spi.default-initial-balance}")
-    private BigDecimal defaultInitialBalance;
 
     private final FundsJpaClient fundsJpaClient;
 
@@ -18,22 +16,44 @@ public class FundsJpaAdapter implements FundsRepository {
     }
 
     @Override
-    public BigDecimal getAvailableFunds(String senderBankCode) {
-        return fundsJpaClient.findById(senderBankCode)
-                .map(FundsEntity::getBalance)
-                .orElse(defaultInitialBalance);
+    public BigDecimal createAccountIfNotExists(String bankCode, BigDecimal amount) {
+        var ops = fundsJpaClient.findById(bankCode);
+        if (ops.isPresent()) {
+            return ops.get().getBalance();
+        }
+
+        var newEntity = new FundsEntity();
+        newEntity.setBankCode(bankCode);
+        newEntity.setBalance(amount);
+
+        try {
+            fundsJpaClient.save(newEntity);
+            return newEntity.getBalance();
+        } catch (Exception e) {
+            log.warn("An error ocurred when creating funds entity for {}", bankCode, e);
+
+            throw e;
+        }
     }
 
     @Override
-    public void updateAvailableFunds(String senderBankCode, BigDecimal funds) {
-        var fundsEntity = fundsJpaClient.findById(senderBankCode)
-                .orElseGet(() -> {
-                    var newEntity = new FundsEntity();
-                    newEntity.setBankCode(senderBankCode);
-                    return newEntity;
-                });
+    public BigDecimal getAvailableFunds(String bankCode) {
+        return createAccountIfNotExists(bankCode, BigDecimal.ZERO);
+    }
 
-        fundsEntity.setBalance(funds);
-        fundsJpaClient.save(fundsEntity);
+    @Override
+    public void deductFunds(String bankCode, BigDecimal amount) {
+        int updatedRows = fundsJpaClient.deductFunds(bankCode, amount);
+        if (updatedRows == 0) {
+            throw new RuntimeException("There was an error updating the balance for the given account");
+        }
+    }
+
+    @Override
+    public void addFunds(String bankCode, BigDecimal amount) {
+        int updatedRows = fundsJpaClient.addFunds(bankCode, amount);
+        if (updatedRows == 0) {
+            throw new RuntimeException("There was an error updating the balance for the given account");
+        }
     }
 }
