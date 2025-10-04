@@ -1,0 +1,1 @@
+k6 run --summary-export=summary_$(date +%Y%m%d_%H%M%S).json spi-test.js

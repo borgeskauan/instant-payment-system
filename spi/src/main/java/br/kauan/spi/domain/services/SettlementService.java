@@ -39,11 +39,11 @@ public class SettlementService {
         fundsRepository.deductFunds(senderBankCode, amount);
         fundsRepository.addFunds(receiverBankCode, amount);
 
-        var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-        var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
-
-        log.info("Settlement completed: {} from {} to {}", amount, senderBankCode, receiverBankCode);
-        log.info("New available funds - {}: {}, {}: {}", senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
+//        var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
+//        var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
+//
+//        log.info("Settlement completed: {} from {} to {}", amount, senderBankCode, receiverBankCode);
+//        log.info("New available funds - {}: {}, {}: {}", senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
     }
 
     private void createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {

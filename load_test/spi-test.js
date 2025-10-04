@@ -2,7 +2,7 @@ import http from 'k6/http';
 import {check, sleep} from 'k6';
 
 export let options = {
-    vus: 10,
+    vus: 20,
     duration: '2m',
 };
 
@@ -76,13 +76,12 @@ function getVusIspbPair(vuId) {
             pagador: ispbPagador,
             recebedor: ispbRecebedor
         };
-
-        // console.log(`VU ${vuId} assigned: Pagador=${ispbPagador}, Recebedor=${ispbRecebedor}`);
     }
     return vuIspbMapping[vuId];
 }
 
-function fetchMessagesWithRetry(ispb, transactionId, delayInMs) {
+function fetchMessagesWithRetry(ispb, transactionId) {
+    const delayInMs = 0.1;
     const maxRetries = 10;
     let retries = 0;
 
@@ -104,16 +103,10 @@ function fetchMessagesWithRetry(ispb, transactionId, delayInMs) {
                 });
 
                 if (ourMessages.length > 0) {
-                    // console.log(`VU ${__VU}: Found ${ourMessages.length} messages for transaction ${transactionId}`);
                     return {
                         success: true,
                         messages: ourMessages
                     };
-                }
-
-                // If there are messages but none are ours, log it
-                if (messages.length > 0 && ourMessages.length === 0) {
-                    // console.log(`VU ${__VU}: Found ${messages.length} messages for ISPB ${ispb}, but none match transaction ${transactionId}`);
                 }
 
             } catch (e) {
@@ -131,6 +124,8 @@ function fetchMessagesWithRetry(ispb, transactionId, delayInMs) {
         }
     }
 
+    console.error(`No messages found for transaction ${transactionId} after ${maxRetries} retries`);
+
     return {
         success: false,
         error: `No messages found for transaction ${transactionId} after ${maxRetries} retries`,
@@ -145,8 +140,6 @@ export default function () {
     const ispbPair = getVusIspbPair(__VU);
     const ispbPagador = ispbPair.pagador;
     const ispbRecebedor = ispbPair.recebedor;
-
-    // console.log(`VU ${__VU} starting transaction ${transactionId} with Pagador=${ispbPagador}, Recebedor=${ispbRecebedor}`);
 
     const pacs008 = generatePacs008(transactionId, ispbPagador, ispbRecebedor);
 
@@ -165,7 +158,7 @@ export default function () {
     }
 
     // 2. PSP Recebedor consulta mensagens com retry para verificar se existe um pedido de aceite (PACS.008)
-    const fetchResult = fetchMessagesWithRetry(ispbRecebedor, transactionId, 0.5);
+    const fetchResult = fetchMessagesWithRetry(ispbRecebedor, transactionId);
 
     if (fetchResult.success) {
         // Check if any message contains our transaction
@@ -196,7 +189,7 @@ export default function () {
     }
 
     // 4. PSP Pagador consulta mensagens de confirmação com retry
-    const confirmResult = fetchMessagesWithRetry(ispbPagador, transactionId, 0.5);
+    const confirmResult = fetchMessagesWithRetry(ispbPagador, transactionId);
 
     check(confirmResult, {
         'confirmation received': (result) => result.success
