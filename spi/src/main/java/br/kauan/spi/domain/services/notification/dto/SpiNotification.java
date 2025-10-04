@@ -17,10 +17,6 @@ public class SpiNotification {
         this.content = content != null ? new ArrayList<>(content) : new ArrayList<>();
     }
 
-    public List<String> getContent() {
-        return Collections.unmodifiableList(content);
-    }
-
     public static SpiNotification empty() {
         return SpiNotification.builder()
                 .content(Collections.emptyList())

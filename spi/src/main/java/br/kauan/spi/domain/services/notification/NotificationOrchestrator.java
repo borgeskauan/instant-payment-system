@@ -69,7 +69,7 @@ public class NotificationOrchestrator {
     public SpiNotification getNotifications(String ispb) {
         try {
             validator.validateIspb(ispb);
-            return notificationStorage.retrieveAndClearNotifications(ispb);
+            return notificationStorage.retrieveNotifications(ispb);
         } catch (Exception e) {
             log.error("Failed to get notifications for ISPB: {}", ispb, e);
             throw new NotificationException("Failed to retrieve notifications", e);

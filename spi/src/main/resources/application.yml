@@ -13,7 +13,7 @@ spring:
 
 
 spi:
-  default-initial-balance: 1_000_000
+  default-initial-balance: 100_000_000
 
 server:
   port: 8001

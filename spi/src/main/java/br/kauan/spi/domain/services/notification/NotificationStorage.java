@@ -46,7 +46,7 @@ public class NotificationStorage {
         getMessageContainer(ispb).transactions().add(paymentTransaction);
     }
 
-    public SpiNotification retrieveAndClearNotifications(String ispb) {
+    public SpiNotification retrieveNotifications(String ispb) {
         InstitutionMessages messages = notifications.remove(ispb);
 
         if (messages == null || messages.isEmpty()) {
