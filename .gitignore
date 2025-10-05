@@ -32,4 +32,4 @@ build/
 ### VS Code ###
 .vscode/
 
-summary_*.json
+/load_test/summary/
