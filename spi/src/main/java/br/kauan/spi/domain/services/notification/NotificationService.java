@@ -4,6 +4,7 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import br.kauan.spi.port.input.NotificationUseCase;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.async.DeferredResult;
 
 @Service
 public class NotificationService implements NotificationUseCase {
@@ -23,7 +24,7 @@ public class NotificationService implements NotificationUseCase {
     }
 
     @Override
-    public SpiNotification getNotifications(String ispb) {
+    public DeferredResult<SpiNotification> getNotifications(String ispb) {
         return notificationOrchestrator.getNotifications(ispb);
     }
 

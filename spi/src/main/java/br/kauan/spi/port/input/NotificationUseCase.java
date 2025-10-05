@@ -1,7 +1,8 @@
 package br.kauan.spi.port.input;
 
 import br.kauan.spi.domain.services.notification.dto.SpiNotification;
+import org.springframework.web.context.request.async.DeferredResult;
 
 public interface NotificationUseCase {
-    SpiNotification getNotifications(String ispb);
+    DeferredResult<SpiNotification> getNotifications(String ispb);
 }

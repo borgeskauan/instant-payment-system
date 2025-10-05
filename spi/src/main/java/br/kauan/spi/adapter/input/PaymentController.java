@@ -8,6 +8,7 @@ import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import br.kauan.spi.port.input.NotificationUseCase;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.async.DeferredResult;
 
 @RestController
 public class PaymentController {
@@ -44,7 +45,7 @@ public class PaymentController {
     }
 
     @GetMapping("/{ispb}/messages")
-    public SpiNotification getMessages(@PathVariable String ispb) {
+    public DeferredResult<SpiNotification> getMessages(@PathVariable String ispb) {
         return notificationUseCase.getNotifications(ispb);
     }
 }

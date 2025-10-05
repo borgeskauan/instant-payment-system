@@ -29,24 +29,36 @@ public class NotificationStorage {
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final NotificationContentSerializer contentSerializer;
 
+    private final DeferredNotificationService deferredNotificationService;
+
     public NotificationStorage(
             StatusReportMapper statusReportMapper,
-            PaymentTransactionMapper paymentTransactionMapper
+            PaymentTransactionMapper paymentTransactionMapper,
+            DeferredNotificationService deferredNotificationService
     ) {
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionMapper = paymentTransactionMapper;
+        this.deferredNotificationService = deferredNotificationService;
         this.contentSerializer = new NotificationContentSerializer();
     }
 
     public void addStatusNotification(String ispb, StatusReport statusReport) {
         getMessageContainer(ispb).statuses().add(statusReport);
+
+        if (deferredNotificationService.isWaitingForNotification(ispb)) {
+            deferredNotificationService.sendNotification(ispb, getNotifications(ispb));
+        }
     }
 
     public void addTransactionNotification(String ispb, PaymentTransaction paymentTransaction) {
         getMessageContainer(ispb).transactions().add(paymentTransaction);
+
+        if (deferredNotificationService.isWaitingForNotification(ispb)) {
+            deferredNotificationService.sendNotification(ispb, getNotifications(ispb));
+        }
     }
 
-    public SpiNotification retrieveNotifications(String ispb) {
+    public SpiNotification getNotifications(String ispb) {
         InstitutionMessages messages = notifications.remove(ispb);
 
         if (messages == null || messages.isEmpty()) {
