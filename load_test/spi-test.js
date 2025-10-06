@@ -1,9 +1,22 @@
 import http from 'k6/http';
-import {check, sleep} from 'k6';
+import { check, sleep } from 'k6';
+import { Trend, Counter } from 'k6/metrics';
+
+// Custom metrics - durations will be stored in seconds
+const transferRequestDuration = new Trend('transfer_request_duration', true); // true enables time conversion
+const fetchMessagesDuration = new Trend('fetch_messages_duration', true);
+const statusReportDuration = new Trend('status_report_duration', true);
+const confirmationCheckDuration = new Trend('confirmation_check_duration', true);
+const totalTransactionDuration = new Trend('total_transaction_duration', true);
+const transactionSuccess = new Counter('transaction_success');
+const transactionFailure = new Counter('transaction_failure');
 
 export let options = {
-    vus: 20,
+    vus: 8000,
     duration: '2m',
+    thresholds: {
+        total_transaction_duration: ['p(99)<4000']
+    }
 };
 
 // Static global variable for base URL
@@ -80,32 +93,21 @@ function getVusIspbPair(vuId) {
     return vuIspbMapping[vuId];
 }
 
-function fetchMessagesWithRetry(ispb, transactionId) {
+function fetchMessagesWithRetry(ispb) {
     const delayInMs = 0.1;
     const maxRetries = 10;
     let retries = 0;
 
     while (retries < maxRetries) {
-        let res = http.get(`${BASE_URL}/${ispb}/messages`);
+        let res = http.get(`${BASE_URL}/${ispb}/messages`, { tags: { name: 'fetch-messages' } });
 
         if (res.status === 200) {
             try {
                 const messages = JSON.parse(res.body).content;
-
-                // Flexible matching for our transaction
-                const ourMessages = messages.filter(msg => {
-                    const msgStr = JSON.stringify(msg).toLowerCase();
-                    const searchId = transactionId.toLowerCase();
-                    return msgStr.includes(searchId) ||
-                        (msg.OrgnlEndToEndId && msg.OrgnlEndToEndId.includes(transactionId)) ||
-                        (msg.EndToEndId && msg.EndToEndId.includes(transactionId)) ||
-                        (msg.originalEndToEndId && msg.originalEndToEndId.includes(transactionId));
-                });
-
-                if (ourMessages.length > 0) {
+                if (messages.length > 0) {
                     return {
                         success: true,
-                        messages: ourMessages
+                        messages: messages
                     };
                 }
 
@@ -124,16 +126,18 @@ function fetchMessagesWithRetry(ispb, transactionId) {
         }
     }
 
-    console.error(`No messages found for transaction ${transactionId} after ${maxRetries} retries`);
+    console.error(`No messages found after ${maxRetries} retries`);
 
     return {
         success: false,
-        error: `No messages found for transaction ${transactionId} after ${maxRetries} retries`,
+        error: `No messages found after ${maxRetries} retries`,
         messages: []
     };
 }
 
 export default function () {
+    const transactionStartTime = Date.now();
+    let operationStartTime;
     const transactionId = `${__VU}-${Date.now()}`;
 
     // Use VU-specific ISPB pairs
@@ -144,9 +148,12 @@ export default function () {
     const pacs008 = generatePacs008(transactionId, ispbPagador, ispbRecebedor);
 
     // 1. PSP Pagador envia PACS.008
+    operationStartTime = Date.now();
     let res = http.post(`${BASE_URL}/${ispbPagador}/transfer`, JSON.stringify(pacs008), {
-        headers: {'Content-Type': 'application/json'}
+        headers: { 'Content-Type': 'application/json' },
+        tags: { name: 'transfer-request' }
     });
+    transferRequestDuration.add(Date.now() - operationStartTime);
 
     const checkResult = check(res, {
         'transfer request accepted by SPI': (r) => r.status === 200
@@ -154,48 +161,54 @@ export default function () {
 
     if (!checkResult) {
         console.error(`VU ${__VU}: Transfer request failed for transaction ${transactionId}`);
+        transactionFailure.add(1);
         return;
     }
 
     // 2. PSP Recebedor consulta mensagens com retry para verificar se existe um pedido de aceite (PACS.008)
-    const fetchResult = fetchMessagesWithRetry(ispbRecebedor, transactionId);
+    operationStartTime = Date.now();
+    const fetchResult = fetchMessagesWithRetry(ispbRecebedor);
+    fetchMessagesDuration.add(Date.now() - operationStartTime);
 
     if (fetchResult.success) {
-        // Check if any message contains our transaction
-        const hasOurTransaction = fetchResult.messages.some(msg =>
-            msg.includes(transactionId) ||
-            (msg.OrgnlEndToEndId && msg.OrgnlEndToEndId.includes(transactionId)) ||
-            (msg.EndToEndId && msg.EndToEndId.includes(transactionId))
-        );
+        // 3. PSP Recebedor envia aceite PACS.002
+        const pacs002 = generatePacs002(transactionId);
 
-        if (hasOurTransaction) {
-            // 3. PSP Recebedor envia aceite PACS.002
-            const pacs002 = generatePacs002(transactionId);
+        operationStartTime = Date.now();
+        let ack = http.post(`${BASE_URL}/${ispbRecebedor}/transfer/status`, JSON.stringify(pacs002), {
+            headers: { 'Content-Type': 'application/json' },
+            tags: { name: 'status-report' }
+        });
+        statusReportDuration.add(Date.now() - operationStartTime);
 
-            let ack = http.post(`${BASE_URL}/${ispbRecebedor}/transfer/status`, JSON.stringify(pacs002), {
-                headers: {'Content-Type': 'application/json'}
-            });
+        const statusCheck = check(ack, {
+            'status report accepted by SPI': (r) => r.status === 200
+        });
 
-            const statusCheck = check(ack, {
-                'status report accepted by SPI': (r) => r.status === 200
-            });
-
-            if (!statusCheck) {
-                console.error(`VU ${__VU}: Status report failed for transaction ${transactionId}`);
-            }
+        if (!statusCheck) {
+            console.error(`VU ${__VU}: Status report failed for transaction ${transactionId}`);
         }
     } else {
         console.error(`VU ${__VU}: Failed to fetch messages for transaction ${transactionId}: ${fetchResult.error}`);
     }
 
     // 4. PSP Pagador consulta mensagens de confirmação com retry
-    const confirmResult = fetchMessagesWithRetry(ispbPagador, transactionId);
+    operationStartTime = Date.now();
+    const confirmResult = fetchMessagesWithRetry(ispbPagador);
+    confirmationCheckDuration.add(Date.now() - operationStartTime);
 
-    check(confirmResult, {
+    const confirmationCheck = check(confirmResult, {
         'confirmation received': (result) => result.success
     });
 
-    if (!confirmResult.success) {
+    // Record total transaction duration
+    const totalDuration = Date.now() - transactionStartTime;
+    totalTransactionDuration.add(totalDuration);
+
+    if (confirmationCheck) {
+        transactionSuccess.add(1);
+    } else {
         console.error(`VU ${__VU}: No confirmation received for transaction ${transactionId}`);
+        transactionFailure.add(1);
     }
 }
