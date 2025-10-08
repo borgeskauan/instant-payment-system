@@ -11,6 +11,11 @@ spring:
   flyway:
     enabled: false
 
+  jmx:
+    enabled: false
+  main:
+    lazy-initialization: true
+    web-application-type: reactive
 
 spi:
   default-initial-balance: 1_000_000_000
