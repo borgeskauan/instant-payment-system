@@ -68,9 +68,5 @@ public class PaymentController {
                 .build();
 
         return Mono.just(spiNotification);
-
-//        var deferredResult = new DeferredResult<SpiNotification>();
-//        deferredResult.setResult(spiNotification);
-//        return deferredResult;
     }
 }
