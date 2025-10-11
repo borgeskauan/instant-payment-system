@@ -1,15 +1,8 @@
 spring:
-  jpa:
-    hibernate:
-      ddl-auto: create-drop
-    defer-datasource-initialization: true
-
-  h2:
-    console:
-      enabled: true
-
-  flyway:
-    enabled: false
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: mysecretpassword
 
   jmx:
     enabled: false

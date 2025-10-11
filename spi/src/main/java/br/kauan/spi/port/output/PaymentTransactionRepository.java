@@ -2,12 +2,13 @@ package br.kauan.spi.port.output;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
-
-import java.util.Optional;
+import reactor.core.publisher.Mono;
 
 public interface PaymentTransactionRepository {
 
-    void saveTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus);
+    Mono<Void> createTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus);
 
-    Optional<PaymentTransaction> findById(String originalPaymentId);
+    Mono<Void> updateTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus);
+
+    Mono<PaymentTransaction> findById(String originalPaymentId);
 }

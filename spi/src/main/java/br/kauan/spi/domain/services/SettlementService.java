@@ -3,15 +3,17 @@ package br.kauan.spi.domain.services;
 import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.FundsRepository;
-import jakarta.transaction.Transactional;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SettlementService {
 
     @Value("${spi.default-initial-balance}")
@@ -19,35 +21,25 @@ public class SettlementService {
 
     private final FundsRepository fundsRepository;
 
-    public SettlementService(FundsRepository fundsRepository) {
-        this.fundsRepository = fundsRepository;
-    }
-
-    @Transactional
-    public void makeSettlement(PaymentTransaction paymentTransaction) {
+    public Mono<Void> makeSettlement(PaymentTransaction paymentTransaction) {
         var amount = paymentTransaction.getAmount();
         var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
         var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
 
-        createAccountsIfNotExists(senderBankCode, receiverBankCode);
-
-        var senderAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-        if (senderAvailableFunds.compareTo(amount) < 0) {
-            throw new IllegalStateException("Insufficient funds for settlement");
-        }
-
-        fundsRepository.deductFunds(senderBankCode, amount);
-        fundsRepository.addFunds(receiverBankCode, amount);
-
-//        var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-//        var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
-//
-//        log.info("Settlement completed: {} from {} to {}", amount, senderBankCode, receiverBankCode);
-//        log.info("New available funds - {}: {}, {}: {}", senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
+        return createAccountsIfNotExists(senderBankCode, receiverBankCode)
+                .then(Mono.defer(() -> fundsRepository.getAvailableFunds(senderBankCode)))
+                .flatMap(senderAvailableFunds -> {
+                    if (senderAvailableFunds.compareTo(amount) < 0) {
+                        return Mono.error(new IllegalStateException("Insufficient funds for settlement"));
+                    }
+                    return fundsRepository.deductFunds(senderBankCode, amount)
+                            .then(fundsRepository.addFunds(receiverBankCode, amount));
+                });
     }
 
-    private void createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {
-        fundsRepository.createAccountIfNotExists(senderBankCode, defaultInitialBalance);
-        fundsRepository.createAccountIfNotExists(receiverBankCode, defaultInitialBalance);
+    private Mono<Void> createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {
+        return fundsRepository.createAccountIfNotExists(senderBankCode, defaultInitialBalance)
+                .then(fundsRepository.createAccountIfNotExists(receiverBankCode, defaultInitialBalance))
+                .then();
     }
 }

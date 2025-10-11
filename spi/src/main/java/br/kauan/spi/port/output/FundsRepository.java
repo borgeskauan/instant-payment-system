@@ -1,13 +1,12 @@
 package br.kauan.spi.port.output;
 
+import reactor.core.publisher.Mono;
+
 import java.math.BigDecimal;
 
 public interface FundsRepository {
-    BigDecimal createAccountIfNotExists(String bankCode, BigDecimal amount);
-
-    BigDecimal getAvailableFunds(String bankCode);
-
-    void deductFunds(String bankCode, BigDecimal amount);
-
-    void addFunds(String bankCode, BigDecimal amount);
+    Mono<BigDecimal> createAccountIfNotExists(String bankCode, BigDecimal initialBalance);
+    Mono<BigDecimal> getAvailableFunds(String bankCode);
+    Mono<Void> deductFunds(String bankCode, BigDecimal amount);
+    Mono<Void> addFunds(String bankCode, BigDecimal amount);
 }

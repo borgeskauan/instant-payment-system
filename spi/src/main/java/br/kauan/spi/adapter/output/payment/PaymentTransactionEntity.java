@@ -1,13 +1,13 @@
-package br.kauan.spi.adapter.output;
+package br.kauan.spi.adapter.output.payment;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
 import lombok.Data;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
 
 @Data
-@Entity
+@Table("payment_transaction_entity")
 public class PaymentTransactionEntity {
 
     @Id

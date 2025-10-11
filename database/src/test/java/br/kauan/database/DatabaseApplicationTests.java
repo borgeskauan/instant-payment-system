@@ -1,10 +1,10 @@
-package br.kauan.spi;
+package br.kauan.database;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class SpiApplicationTests {
+class DatabaseApplicationTests {
 
     @Test
     void contextLoads() {

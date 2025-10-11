@@ -1,19 +1,17 @@
 package br.kauan.dict.adapter.output;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
 import lombok.Data;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Data
-@Entity
+@Table("dict_entity")
 public class DictEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
     private String pixKey;
@@ -31,4 +29,8 @@ public class DictEntity {
     private String ownerType;
     private String ownerTaxIdNumber;
     private String ownerName;
+
+    public DictEntity() {
+        this.id = UUID.randomUUID().toString();
+    }
 }

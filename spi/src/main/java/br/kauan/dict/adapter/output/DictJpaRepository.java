@@ -1,9 +1,8 @@
 package br.kauan.dict.adapter.output;
 
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Mono;
 
-import java.util.Optional;
-
-public interface DictJpaRepository extends JpaRepository<DictEntity, String> {
-    Optional<DictEntity> findByPixKey(String pixKey);
+public interface DictJpaRepository extends ReactiveCrudRepository<DictEntity, String> {
+    Mono<DictEntity> findByPixKey(String pixKey);
 }

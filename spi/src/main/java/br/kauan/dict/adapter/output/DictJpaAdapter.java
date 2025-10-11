@@ -21,13 +21,15 @@ public class DictJpaAdapter implements DictRepository {
     @Override
     public PixResponse createPixKey(PixKeyCreationInternalRequest request) {
         var entity = pixResponseMapper.toEntity(request);
-        var savedEntity = dictJpaRepository.save(entity);
+        var savedEntity = dictJpaRepository.save(entity).block(); // Block until completion
         return pixResponseMapper.fromEntity(savedEntity);
     }
 
     @Override
     public Optional<PixResponse> buscarChavePix(String chavePix) {
-        var entity = dictJpaRepository.findByPixKey(chavePix);
+        var entity = dictJpaRepository.findByPixKey(chavePix)
+                .blockOptional() // Returns Optional<DictEntity>
+                .or(Optional::empty); // Convert to Optional.empty() if not found
         return entity.map(pixResponseMapper::fromEntity);
     }
 }

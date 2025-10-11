@@ -4,31 +4,31 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import br.kauan.spi.port.input.NotificationUseCase;
 import org.springframework.stereotype.Service;
-import org.springframework.web.context.request.async.DeferredResult;
+import reactor.core.publisher.Mono;
 
 @Service
 public class NotificationService implements NotificationUseCase {
 
-    private final NotificationOrchestrator notificationOrchestrator;
+    private final ReactiveNotificationOrchestrator notificationOrchestrator;
 
-    public NotificationService(NotificationOrchestrator notificationOrchestrator) {
+    public NotificationService(ReactiveNotificationOrchestrator notificationOrchestrator) {
         this.notificationOrchestrator = notificationOrchestrator;
     }
 
-    public void sendConfirmationNotification(PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendConfirmationNotification(paymentTransaction);
+    public Mono<Void> sendConfirmationNotification(PaymentTransaction paymentTransaction) {
+        return notificationOrchestrator.sendConfirmationNotification(paymentTransaction);
     }
 
-    public void sendRejectionNotification(PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendRejectionNotification(paymentTransaction);
+    public Mono<Void> sendRejectionNotification(PaymentTransaction paymentTransaction) {
+        return notificationOrchestrator.sendRejectionNotification(paymentTransaction);
     }
 
     @Override
-    public DeferredResult<SpiNotification> getNotifications(String ispb) {
+    public Mono<SpiNotification> getNotifications(String ispb) {
         return notificationOrchestrator.getNotifications(ispb);
     }
 
-    public void sendAcceptanceRequest(String ispb, PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendAcceptanceRequest(ispb, paymentTransaction);
+    public Mono<Void> sendAcceptanceRequest(String ispb, PaymentTransaction paymentTransaction) {
+        return notificationOrchestrator.sendAcceptanceRequest(ispb, paymentTransaction);
     }
 }

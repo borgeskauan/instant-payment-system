@@ -1,4 +1,4 @@
-package br.kauan.spi.adapter.output;
+package br.kauan.spi.adapter.output.payment;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
