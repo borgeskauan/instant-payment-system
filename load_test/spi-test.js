@@ -149,8 +149,8 @@ export default function () {
 
     // 1. PSP Pagador envia PACS.008
     operationStartTime = Date.now();
-    let res = http.post(`${BASE_URL}/${ispbPagador}/transfer`, {}, {
-        headers: { 'Content-Type': 'application/json' },
+    let res = http.post(`${BASE_URL}/${ispbPagador}/transfer`, JSON.stringify(pacs008), {
+        headers: { 'Content-Type': 'application/octet-stream' },
         tags: { name: 'transfer-request' }
     });
     transferRequestDuration.add(Date.now() - operationStartTime);
@@ -175,8 +175,8 @@ export default function () {
         const pacs002 = generatePacs002(transactionId);
 
         operationStartTime = Date.now();
-        let ack = http.post(`${BASE_URL}/${ispbRecebedor}/transfer/status`, {}, {
-            headers: { 'Content-Type': 'application/json' },
+        let ack = http.post(`${BASE_URL}/${ispbRecebedor}/transfer/status`, JSON.stringify(pacs002), {
+            headers: { 'Content-Type': 'application/octet-stream' },
             tags: { name: 'status-report' }
         });
         statusReportDuration.add(Date.now() - operationStartTime);

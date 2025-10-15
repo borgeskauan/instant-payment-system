@@ -1,0 +1,20 @@
+spring:
+  jmx:
+    enabled: false
+  main:
+    lazy-initialization: true
+    web-application-type: reactive
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      properties:
+        linger.ms: 5  # Small linger for batching
+        batch.size: 32768  # 32KB batch size
+        compression.type: snappy  # Enable compression
+        buffer.memory: 67108864  # 64MB buffer
+
+server:
+  port: 8001
