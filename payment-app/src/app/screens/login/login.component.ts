@@ -1,6 +1,7 @@
 import {Component} from '@angular/core';
 import {Router} from '@angular/router';
 import {UserService} from '../../services/user/user.service';
+import {AppConfigService} from '../../services/config/app-config.service';
 import {FormsModule} from '@angular/forms';
 import {NgIf} from '@angular/common';
 
@@ -13,21 +14,28 @@ import {NgIf} from '@angular/common';
   ]
 })
 export class LoginComponent {
-  constructor(private userService: UserService, private router: Router) {
+  constructor(
+    private userService: UserService, 
+    private router: Router,
+    private appConfigService: AppConfigService
+  ) {
   }
 
   name: string = '';
   taxId: string = '';
+  apiUrl: string = 'http://localhost:8080';
   errorMessage: string = '';
 
   login() {
     this.errorMessage = '';
 
-    if (!this.name.trim() || !this.taxId.trim()) {
-      this.errorMessage = 'Please enter both name and tax ID.';
+    if (!this.name.trim() || !this.taxId.trim() || !this.apiUrl.trim()) {
+      this.errorMessage = 'Please enter name, tax ID, and API URL.';
       return;
     }
 
+    this.appConfigService.setBaseUrl(this.apiUrl.trim());
+    
     this.userService.login(this.name.trim(), this.taxId.trim()).subscribe(
       () => this.router.navigate(['/home']).catch(error => console.log(error))
     );

@@ -11,3 +11,7 @@ spring:
 
   jpa:
     defer-datasource-initialization: true
+
+
+bank:
+  code: ${BANK_CODE}
