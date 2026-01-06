@@ -1,0 +1,88 @@
+<div class="flex flex-col h-screen bg-gray-50">
+  <!-- Header -->
+  <header class="flex items-center justify-between px-4 py-3 bg-blue-600 text-white shadow">
+    <h1 class="text-lg font-semibold">PSP Information</h1>
+    <button (click)="goBack()" class="text-sm underline hover:opacity-80">Back</button>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-grow p-4 space-y-4">
+    <!-- Loading State -->
+    @if (loading()) {
+      <div class="flex items-center justify-center py-12">
+        <div class="text-gray-500">Loading PSP information...</div>
+      </div>
+    }
+
+    <!-- Error State -->
+    @if (errorMessage() && !loading()) {
+      <div class="p-3 rounded-lg bg-red-100 text-red-700 text-sm">
+        {{ errorMessage() }}
+      </div>
+    }
+
+    <!-- Content -->
+    @if (!loading() && !errorMessage()) {
+      <!-- API URL Card -->
+      <div class="bg-white rounded-2xl shadow-md p-6">
+        <div class="flex items-start justify-between mb-3">
+          <h2 class="text-lg font-semibold text-gray-800">API Configuration</h2>
+          <div class="w-3 h-3 bg-green-400 rounded-full" title="Connected"></div>
+        </div>
+        
+        <div class="space-y-3">
+          <div>
+            <p class="text-sm text-gray-500 mb-1">Base URL</p>
+            <p class="text-base font-mono text-gray-800 bg-gray-100 px-3 py-2 rounded-lg break-all">
+              {{ appConfigService.baseUrl }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- PSP Details Card -->
+      <div class="bg-white rounded-2xl shadow-md p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-3">Provider Details</h2>
+        
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Name</span>
+            <span class="font-medium text-gray-800">{{ pspInfo()?.name }}</span>
+          </div>
+          
+          <div class="flex justify-between">
+            <span class="text-gray-500">Bank Code</span>
+            <span class="font-medium text-gray-800">{{ pspInfo()?.bankCode }}</span>
+          </div>
+          
+          <div class="flex justify-between">
+            <span class="text-gray-500">Status</span>
+            <span class="font-medium text-green-600 capitalize">{{ pspInfo()?.status }}</span>
+          </div>
+          
+          <div class="flex justify-between">
+            <span class="text-gray-500">Version</span>
+            <span class="font-medium text-gray-800">{{ pspInfo()?.version }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- System Info Card -->
+      <div class="bg-white rounded-2xl shadow-md p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-3">System Information</h2>
+        
+        <div class="space-y-3 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">App Version</span>
+            <span class="font-medium text-gray-800">1.0.0</span>
+          </div>
+          
+          <div class="flex justify-between">
+            <span class="text-gray-500">Environment</span>
+            <span class="font-medium text-gray-800">Development</span>
+          </div>
+        </div>
+      </div>
+    }
+  </main>
+</div>

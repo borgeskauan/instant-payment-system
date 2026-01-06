@@ -1,11 +1,15 @@
 package br.kauan.paymentserviceprovider.adapter.input;
 
+import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.dto.RawTransferExecutionRequest;
 import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
 import br.kauan.paymentserviceprovider.port.input.PspUseCase;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
+import java.util.Map;
 
 @RestController
 public class PspController {
@@ -14,6 +18,16 @@ public class PspController {
 
     public PspController(PspUseCase pspUseCase) {
         this.pspUseCase = pspUseCase;
+    }
+
+    @GetMapping("/info")
+    public Map<String, Object> getInfo() {
+        Map<String, Object> info = new HashMap<>();
+        info.put("bankCode", GlobalVariables.getBankCode());
+        info.put("name", "Payment Service Provider");
+        info.put("status", "active");
+        info.put("version", "1.0.0");
+        return info;
     }
 
     @PostMapping("/transfer/preview")

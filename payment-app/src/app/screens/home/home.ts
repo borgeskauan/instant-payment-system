@@ -28,6 +28,10 @@ export class Home {
     this.router.navigate(['/create-pix-key']).catch(error => console.log(error));
   }
 
+  goToInfo() {
+    this.router.navigate(['/info']).catch(error => console.log(error));
+  }
+
   logout() {
     this.userService.logout();
   }

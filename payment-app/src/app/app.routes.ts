@@ -8,5 +8,6 @@ export const routes: Routes = [
   { path: 'home', component: Home },
   { path: 'transfer', component: Transfer },
   { path: 'create-pix-key', loadComponent: () => import('./screens/create-pix-key/create-pix-key.component').then(m => m.CreatePixKeyComponent) },
+  { path: 'info', loadComponent: () => import('./screens/info/info.component').then(m => m.InfoComponent) },
   { path: '**', redirectTo: '/home' } // Wildcard route for 404
 ];
