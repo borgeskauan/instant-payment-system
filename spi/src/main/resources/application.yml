@@ -11,6 +11,17 @@ spring:
   flyway:
     enabled: false
 
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: spi-consumer-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      properties:
+        max.poll.records: 100
+        fetch.min.bytes: 1024
+
   jmx:
     enabled: false
   main:
@@ -21,4 +32,4 @@ spi:
   default-initial-balance: 1_000_000_000
 
 server:
-  port: 8001
+  port: 8002

@@ -1,13 +1,9 @@
 package br.kauan.spi.adapter.input;
 
-import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
 import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import br.kauan.spi.port.input.NotificationUseCase;
-import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -16,42 +12,13 @@ import java.util.List;
 @RestController
 public class PaymentController {
 
-    private final PaymentTransactionMapper paymentTransactionMapper;
-    private final StatusReportMapper statusReportMapper;
-
-    private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
-
     private final NotificationUseCase notificationUseCase;
 
-    public PaymentController(
-            PaymentTransactionMapper paymentTransactionMapper,
-            StatusReportMapper statusReportMapper,
-            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
-            NotificationUseCase notificationUseCase
-    ) {
-        this.paymentTransactionMapper = paymentTransactionMapper;
-        this.statusReportMapper = statusReportMapper;
-        this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
+    public PaymentController(NotificationUseCase notificationUseCase) {
         this.notificationUseCase = notificationUseCase;
     }
 
-    @PostMapping("/{ispb}/transfer")
-    public Mono<Void> transfer(@PathVariable String ispb
-//                               @RequestBody FIToFICustomerCreditTransfer request
-    ) {
-        return Mono.empty();
-//        var transaction = paymentTransactionMapper.fromRegulatoryRequest(request);
-//        paymentTransactionProcessorUseCase.processTransactionBatch(ispb, transaction);
-    }
-
-    @PostMapping("/{ispb}/transfer/status")
-    public Mono<Void> transferStatus(@PathVariable String ispb
-//                                     @RequestBody FIToFIPaymentStatusReport statusReport
-    ) {
-        return Mono.empty();
-//        var status = statusReportMapper.fromRegulatoryReport(statusReport);
-//        paymentTransactionProcessorUseCase.processStatusBatch(ispb, status);
-    }
+    // POST endpoints removed - messages now consumed from Kafka via PaymentMessageConsumer
 
     @GetMapping("/{ispb}/messages")
     public Mono<SpiNotification> getMessages(@PathVariable String ispb) {
