@@ -46,40 +46,20 @@
         
         <div class="space-y-3 text-sm">
           <div class="flex justify-between">
-            <span class="text-gray-500">Name</span>
-            <span class="font-medium text-gray-800">{{ pspInfo()?.name }}</span>
-          </div>
-          
-          <div class="flex justify-between">
             <span class="text-gray-500">Bank Code</span>
             <span class="font-medium text-gray-800">{{ pspInfo()?.bankCode }}</span>
-          </div>
-          
-          <div class="flex justify-between">
-            <span class="text-gray-500">Status</span>
-            <span class="font-medium text-green-600 capitalize">{{ pspInfo()?.status }}</span>
-          </div>
-          
-          <div class="flex justify-between">
-            <span class="text-gray-500">Version</span>
-            <span class="font-medium text-gray-800">{{ pspInfo()?.version }}</span>
           </div>
         </div>
       </div>
 
-      <!-- System Info Card -->
+      <!-- Customer Info Card -->
       <div class="bg-white rounded-2xl shadow-md p-6">
-        <h2 class="text-lg font-semibold text-gray-800 mb-3">System Information</h2>
+        <h2 class="text-lg font-semibold text-gray-800 mb-3">Customer Information</h2>
         
         <div class="space-y-3 text-sm">
           <div class="flex justify-between">
-            <span class="text-gray-500">App Version</span>
-            <span class="font-medium text-gray-800">1.0.0</span>
-          </div>
-          
-          <div class="flex justify-between">
-            <span class="text-gray-500">Environment</span>
-            <span class="font-medium text-gray-800">Development</span>
+            <span class="text-gray-500">Tax ID</span>
+            <span class="font-medium text-gray-800">{{ userService.getUser()().taxId }}</span>
           </div>
         </div>
       </div>

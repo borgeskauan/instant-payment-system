@@ -24,9 +24,6 @@ public class PspController {
     public Map<String, Object> getInfo() {
         Map<String, Object> info = new HashMap<>();
         info.put("bankCode", GlobalVariables.getBankCode());
-        info.put("name", "Payment Service Provider");
-        info.put("status", "active");
-        info.put("version", "1.0.0");
         return info;
     }
 

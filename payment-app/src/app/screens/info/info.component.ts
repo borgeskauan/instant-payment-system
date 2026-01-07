@@ -2,6 +2,7 @@ import { Component, OnInit, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { AppConfigService } from '../../services/config/app-config.service';
 import { PspClientService, PspInfo } from '../../services/psp/client/psp-client.service';
+import { UserService } from '../../services/user/user.service';
 import { CommonModule } from '@angular/common';
 
 @Component({
@@ -19,7 +20,8 @@ export class InfoComponent implements OnInit {
   constructor(
     private router: Router,
     public appConfigService: AppConfigService,
-    private pspClient: PspClientService
+    private pspClient: PspClientService,
+    public userService: UserService
   ) {}
 
   ngOnInit() {
