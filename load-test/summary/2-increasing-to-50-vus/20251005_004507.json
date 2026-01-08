@@ -1,0 +1,141 @@
+{
+    "metrics": {
+        "http_req_blocked": {
+            "avg": 0.02933759476903788,
+            "min": 0.000628,
+            "med": 0.004854,
+            "max": 49.650149,
+            "p(90)": 0.007301,
+            "p(95)": 0.008539849999999977
+        },
+        "http_req_connecting": {
+            "avg": 0.015497348788986686,
+            "min": 0,
+            "med": 0,
+            "max": 41.227665,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "data_sent": {
+            "rate": 968272.6404910325,
+            "count": 116282163
+        },
+        "vus": {
+            "value": 50,
+            "min": 50,
+            "max": 50
+        },
+        "http_req_sending": {
+            "avg": 0.05262233024220253,
+            "min": 0.002198,
+            "med": 0.015822,
+            "max": 53.146043,
+            "p(90)": 0.02757470000000001,
+            "p(95)": 0.04267419999999972
+        },
+        "http_reqs": {
+            "count": 338064,
+            "rate": 2815.032963696766
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 17.09777587859384,
+            "min": 0.501239,
+            "med": 14.747759,
+            "max": 299.270833,
+            "p(90)": 29.600296500000002,
+            "p(95)": 37.38923659999998
+        },
+        "vus_max": {
+            "min": 50,
+            "max": 50,
+            "value": 50
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 253548,
+            "value": 1
+        },
+        "http_req_duration": {
+            "min": 0.501239,
+            "med": 14.747759,
+            "max": 299.270833,
+            "p(90)": 29.600296500000002,
+            "p(95)": 37.38923659999998,
+            "avg": 17.09777587859384
+        },
+        "data_received": {
+            "count": 145281862,
+            "rate": 1209750.9068023942
+        },
+        "http_req_waiting": {
+            "min": 0.419592,
+            "med": 14.5314895,
+            "max": 299.181087,
+            "p(90)": 29.1111293,
+            "p(95)": 36.76784829999997,
+            "avg": 16.814122858405273
+        },
+        "http_req_receiving": {
+            "med": 0.033639,
+            "max": 94.977951,
+            "p(90)": 0.1383984,
+            "p(95)": 0.32788839999999947,
+            "avg": 0.23103068994629397,
+            "min": 0.005059
+        },
+        "iterations": {
+            "rate": 703.7582409241915,
+            "count": 84516
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 338064,
+            "value": 0
+        },
+        "iteration_duration": {
+            "p(95)": 123.12524725,
+            "avg": 70.99754120242268,
+            "min": 9.048331,
+            "med": 65.9725385,
+            "max": 534.0825,
+            "p(90)": 104.8365075
+        }
+    },
+    "root_group": {
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "transfer request accepted by SPI": {
+                    "passes": 84516,
+                    "fails": 0,
+                    "name": "transfer request accepted by SPI",
+                    "path": "::transfer request accepted by SPI",
+                    "id": "419a96930eb7943bf5023905eacd3aa6"
+                },
+                "status report accepted by SPI": {
+                    "id": "b2cc99870d55467dc3b3f287d32c1531",
+                    "passes": 84516,
+                    "fails": 0,
+                    "name": "status report accepted by SPI",
+                    "path": "::status report accepted by SPI"
+                },
+                "confirmation received": {
+                    "name": "confirmation received",
+                    "path": "::confirmation received",
+                    "id": "cf2b25c1eee1a4f3338ef5954938a451",
+                    "passes": 84516,
+                    "fails": 0
+                }
+            },
+        "name": ""
+    }
+}

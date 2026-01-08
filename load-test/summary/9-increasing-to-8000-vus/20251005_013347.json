@@ -1,0 +1,141 @@
+{
+    "metrics": {
+        "data_received": {
+            "count": 175583279,
+            "rate": 1392348.1799596334
+        },
+        "http_req_waiting": {
+            "p(95)": 3564.5242174999994,
+            "avg": 1940.2047090959893,
+            "min": 0.975914,
+            "med": 1999.3142515,
+            "max": 5902.258321,
+            "p(90)": 3091.4341531
+        },
+        "iteration_duration": {
+            "p(95)": 12028.1201817,
+            "avg": 9483.67587118587,
+            "min": 3143.859841,
+            "med": 9803.931015,
+            "max": 14642.130482,
+            "p(90)": 11651.6780137
+        },
+        "http_reqs": {
+            "count": 411112,
+            "rate": 3260.0544210110397
+        },
+        "http_req_duration": {
+            "avg": 1951.253686608308,
+            "min": 1.262805,
+            "med": 2003.9863639999999,
+            "max": 5985.068469,
+            "p(90)": 3099.1895079,
+            "p(95)": 3581.85019635
+        },
+        "http_req_connecting": {
+            "min": 0,
+            "med": 0,
+            "max": 2048.273981,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 8.928535119150004
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "vus": {
+            "value": 3138,
+            "min": 3138,
+            "max": 8000
+        },
+        "http_req_receiving": {
+            "med": 0.02633,
+            "max": 3073.008394,
+            "p(90)": 0.31792900000000024,
+            "p(95)": 0.502746,
+            "avg": 5.645687150263176,
+            "min": 0.005848
+        },
+        "http_req_blocked": {
+            "med": 0.004785,
+            "max": 2048.303999,
+            "p(90)": 0.008069,
+            "p(95)": 0.010814449999999955,
+            "avg": 9.091442123501816,
+            "min": 0.000845
+        },
+        "http_req_failed": {
+            "fails": 411112,
+            "passes": 0,
+            "value": 0
+        },
+        "http_req_sending": {
+            "avg": 5.403290362098455,
+            "min": 0.003046,
+            "med": 0.014953,
+            "max": 3199.877763,
+            "p(90)": 0.09628970000000008,
+            "p(95)": 0.26950619999999925
+        },
+        "iterations": {
+            "count": 102778,
+            "rate": 815.0136052527599
+        },
+        "vus_max": {
+            "value": 8000,
+            "min": 8000,
+            "max": 8000
+        },
+        "checks": {
+            "passes": 308334,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 1.262805,
+            "med": 2003.9863639999999,
+            "max": 5985.068469,
+            "p(90)": 3099.1895079,
+            "p(95)": 3581.85019635,
+            "avg": 1951.253686608308
+        },
+        "data_sent": {
+            "count": 141810613,
+            "rate": 1124536.1747089252
+        }
+    },
+    "root_group": {
+        "groups": {},
+        "checks": {
+                "transfer request accepted by SPI": {
+                    "id": "419a96930eb7943bf5023905eacd3aa6",
+                    "passes": 102778,
+                    "fails": 0,
+                    "name": "transfer request accepted by SPI",
+                    "path": "::transfer request accepted by SPI"
+                },
+                "status report accepted by SPI": {
+                    "name": "status report accepted by SPI",
+                    "path": "::status report accepted by SPI",
+                    "id": "b2cc99870d55467dc3b3f287d32c1531",
+                    "passes": 102778,
+                    "fails": 0
+                },
+                "confirmation received": {
+                    "passes": 102778,
+                    "fails": 0,
+                    "name": "confirmation received",
+                    "path": "::confirmation received",
+                    "id": "cf2b25c1eee1a4f3338ef5954938a451"
+                }
+            },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e"
+    }
+}

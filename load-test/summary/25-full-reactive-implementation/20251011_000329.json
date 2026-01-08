@@ -1,0 +1,40 @@
+{
+    "metrics": {
+        "data_received": {
+            "count": 0,
+            "rate": 0
+        },
+        "total_transaction_duration": {
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "thresholds": {
+                "p(99)<4000": false
+            }
+        },
+        "vus": {
+            "value": 4331,
+            "min": 0,
+            "max": 4331
+        },
+        "vus_max": {
+            "value": 8000,
+            "min": 6591,
+            "max": 8000
+        },
+        "data_sent": {
+            "rate": 667217.5186540046,
+            "count": 2929964
+        }
+    },
+    "root_group": {
+        "groups": {},
+        "checks": {},
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e"
+    }
+}
