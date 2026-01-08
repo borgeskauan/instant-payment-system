@@ -28,21 +28,25 @@ public class StatusProcessingService {
     }
 
     public void handleStatusBatch(StatusBatch statusBatch) {
-        log.info("Received status batch with {} reports", statusBatch.getStatusReports().size());
+        log.info("[PIX FLOW - Step 8] PSP Pagador received status batch with {} reports from SPI", 
+                statusBatch.getStatusReports().size());
         statusBatch.getStatusReports().forEach(this::processStatusReport);
     }
 
     private void processStatusReport(StatusReport statusReport) {
         String paymentId = statusReport.getOriginalPaymentId();
-        log.info("Processing status report for payment: {}", paymentId);
+        log.info("[PIX FLOW - Step 8] PSP Pagador processing status report for payment: {}, Status: {}", 
+                paymentId, statusReport.getStatus());
 
         if (PaymentStatus.REJECTED.equals(statusReport.getStatus())) {
-            log.warn("Payment {} was rejected", paymentId);
+            log.warn("[PIX FLOW - Step 8] Payment {} was rejected", paymentId);
             rejectedPaymentHandler.handleRejectedPayment(statusReport);
             return;
         }
 
         PaymentTransaction payment = findPaymentById(paymentId);
+        log.info("[PIX FLOW - Step 8/9] PSP Pagador processing settlement based on status: {}", 
+                statusReport.getStatus());
         settlementService.handleSettlement(statusReport.getStatus(), payment);
     }
 

@@ -41,12 +41,14 @@ public class IncomingTransactionService {
     }
 
     public void handleTransferRequestBatch(PaymentBatch paymentBatch) {
-        log.info("Received payment batch with {} transactions", paymentBatch.getTransactions().size());
+        log.info("[PIX FLOW - Step 4] PSP Recebedor received payment batch with {} transactions from SPI", 
+                paymentBatch.getTransactions().size());
         paymentBatch.getTransactions().forEach(this::processIncomingTransaction);
     }
 
     private void processIncomingTransaction(PaymentTransaction transaction) {
-        log.info("Processing incoming transaction: {}", transaction.getPaymentId());
+        log.info("[PIX FLOW - Step 4] PSP Recebedor processing incoming transaction: {}, Amount: {}", 
+                transaction.getPaymentId(), transaction.getAmount());
 
         StatusReport statusReport = handleIncomingTransaction(transaction);
         StatusBatch statusBatch = statusReportFactory.createStatusBatch(statusReport);
@@ -54,18 +56,22 @@ public class IncomingTransactionService {
         try {
             var regulatoryStatusBatch = statusReportMapper.toRegulatoryReport(statusBatch);
             byte[] statusBytes = objectMapper.writeValueAsBytes(regulatoryStatusBatch);
+            log.info("[PIX FLOW - Step 5] PSP Recebedor sending acceptance (PACS.002) to SPI. Status: {}", 
+                    statusReport.getStatus());
             transferRestClient.sendTransferStatus(GlobalVariables.getBankCode(), statusBytes);
+            log.info("[PIX FLOW - Step 5] Acceptance sent successfully to kafka-producer (will be forwarded to SPI)");
         } catch (Exception e) {
-            log.error("Failed to serialize status report", e);
+            log.error("[PIX FLOW - Error] Failed to serialize status report", e);
             throw new RuntimeException("Failed to send status report", e);
         }
 
-        log.debug("Sent status report for transaction: {}", transaction.getPaymentId());
+        log.debug("[PIX FLOW - Step 5] Sent status report for transaction: {}", transaction.getPaymentId());
     }
 
     private StatusReport handleIncomingTransaction(PaymentTransaction transaction) {
         paymentRepository.save(transaction);
-        log.info("Saved incoming transaction: {}", transaction.getPaymentId());
+        log.info("[PIX FLOW - Step 4] PSP Recebedor saved incoming transaction: {}. Auto-approving payment.", 
+                transaction.getPaymentId());
 
         // TODO: Implement proper business logic for transaction approval
         return buildApprovedStatusReport(transaction.getPaymentId());

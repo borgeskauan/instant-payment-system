@@ -6,11 +6,13 @@ import br.kauan.paymentserviceprovider.domain.dto.TransferPreviewRequest;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferPreviewDetails;
 import br.kauan.paymentserviceprovider.port.input.PspUseCase;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @RestController
 public class PspController {
 
@@ -29,11 +31,17 @@ public class PspController {
 
     @PostMapping("/transfer/preview")
     public TransferPreviewDetails processPayment(@RequestBody TransferPreviewRequest previewRequest) {
+        log.info("=== [PIX FLOW START - Preview] Cliente Pagador requesting transfer preview for PIX key: {} ===", 
+                previewRequest.getReceiverPixKey());
         return pspUseCase.fetchPaymentPreview(previewRequest);
     }
 
     @PostMapping("/transfer/execute")
     public TransferDetails requestTransfer(@RequestBody RawTransferExecutionRequest executionRequest) {
-        return pspUseCase.requestTransfer(executionRequest);
+        log.info("=== [PIX FLOW START - Execution] Cliente Pagador executing transfer. Amount: {}, Receiver: {} ===", 
+                executionRequest.getAmount(), executionRequest.getReceiver().getName());
+        var result = pspUseCase.requestTransfer(executionRequest);
+        log.info("=== [PIX FLOW] Transfer request initiated successfully. Transfer ID: {} ===", result.getTransferId());
+        return result;
     }
 }

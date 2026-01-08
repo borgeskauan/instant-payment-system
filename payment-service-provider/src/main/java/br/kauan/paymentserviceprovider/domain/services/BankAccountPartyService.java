@@ -42,22 +42,40 @@ public class BankAccountPartyService {
     }
 
     public Optional<Party> findPartyDetailsByPixKey(String pixKey) {
-        return Optional.ofNullable(externalPartyRepository.getPartyDetails(pixKey));
+        log.info("[PIX FLOW - DICT Query] Querying DICT for PIX key: {}", pixKey);
+        var partyDetails = Optional.ofNullable(externalPartyRepository.getPartyDetails(pixKey));
+        
+        if (partyDetails.isPresent()) {
+            log.info("[PIX FLOW - DICT Query] PIX key found. Bank: {}, Account holder: {}", 
+                    partyDetails.get().getAccount().getBankCode(), partyDetails.get().getName());
+        } else {
+            log.warn("[PIX FLOW - DICT Query] PIX key not found: {}", pixKey);
+        }
+        
+        return partyDetails;
     }
 
     public void addAmountToAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
         var bankAccount = customerBankAccountRepository.findById(bankAccountId).orElseThrow();
+        var oldBalance = bankAccount.getBalance();
 
         var newBalance = bankAccount.getBalance().add(amountToAdd);
         bankAccount.setBalance(newBalance);
         customerBankAccountRepository.save(bankAccount);
+        
+        log.info("[PIX FLOW - Settlement] Credited amount {} to account {}. Balance: {} -> {}", 
+                amountToAdd, bankAccountId, oldBalance, newBalance);
     }
 
     public void removeAmountFromAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
         var bankAccount = customerBankAccountRepository.findById(bankAccountId).orElseThrow();
+        var oldBalance = bankAccount.getBalance();
 
         var newBalance = bankAccount.getBalance().subtract(amountToAdd);
         bankAccount.setBalance(newBalance);
         customerBankAccountRepository.save(bankAccount);
+        
+        log.info("[PIX FLOW - Settlement] Debited amount {} from account {}. Balance: {} -> {}", 
+                amountToAdd, bankAccountId, oldBalance, newBalance);
     }
 }

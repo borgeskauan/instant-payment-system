@@ -39,23 +39,24 @@ public class TransferRequestService {
     }
 
     public TransferDetails requestTransfer(TransferRequest transferRequest) {
-        log.info("Requesting transfer for amount: {}", transferRequest.getAmount());
+        log.info("[PIX FLOW - Step 3] PSP Pagador preparing transfer request. Amount: {}, Receiver: {}", 
+                transferRequest.getAmount(), transferRequest.getReceiver().getName());
 
         PaymentBatch paymentBatch = paymentTransactionFactory.createPaymentBatch(transferRequest);
         PaymentTransaction transaction = paymentBatch.getTransactions().getFirst();
 
         paymentRepository.save(transaction);
-        log.debug("Saved payment transaction with ID: {}", transaction.getPaymentId());
+        log.debug("[PIX FLOW - Step 3] Saved payment transaction with ID: {}", transaction.getPaymentId());
 
         try {
             var regulatoryBatch = paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
             byte[] requestBytes = objectMapper.writeValueAsBytes(regulatoryBatch);
-            log.info("Sending transfer request to kafka-producer for bank: {}, payload size: {} bytes", 
+            log.info("[PIX FLOW - Step 3] Sending PACS.008 transfer request to kafka-producer for bank: {}, payload size: {} bytes", 
                     GlobalVariables.getBankCode(), requestBytes.length);
             transferRestClient.requestTransfer(GlobalVariables.getBankCode(), requestBytes);
-            log.info("Transfer request sent successfully to kafka-producer");
+            log.info("[PIX FLOW - Step 3] Transfer request sent successfully to kafka-producer (will be forwarded to SPI)");
         } catch (Exception e) {
-            log.error("Failed to serialize or send transfer request", e);
+            log.error("[PIX FLOW - Error] Failed to serialize or send transfer request", e);
             throw new RuntimeException("Failed to send transfer request", e);
         }
 
