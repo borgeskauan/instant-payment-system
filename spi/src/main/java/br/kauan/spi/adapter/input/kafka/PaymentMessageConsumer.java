@@ -30,6 +30,7 @@ public class PaymentMessageConsumer {
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
         this.objectMapper = new ObjectMapper();
+        log.info("PaymentMessageConsumer initialized - ready to consume from topic 'high-load-binary-topic'");
     }
 
     @KafkaListener(

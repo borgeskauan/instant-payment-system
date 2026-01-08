@@ -33,7 +33,7 @@ spring:
   jmx:
     enabled: false
   main:
-    lazy-initialization: true
+    lazy-initialization: false
     web-application-type: reactive
 
 spi:
