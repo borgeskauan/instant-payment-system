@@ -10,6 +10,7 @@ import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,17 +24,20 @@ public class IncomingTransactionService {
     private final StatusReportFactory statusReportFactory;
     private final StatusReportMapper statusReportMapper;
     private final CentralTransferSystemRestClient transferRestClient;
+    private final ObjectMapper objectMapper;
 
     public IncomingTransactionService(
             PaymentRepository paymentRepository,
             StatusReportFactory statusReportFactory,
             StatusReportMapper statusReportMapper,
-            CentralTransferSystemRestClient transferRestClient
+            CentralTransferSystemRestClient transferRestClient,
+            ObjectMapper objectMapper
     ) {
         this.paymentRepository = paymentRepository;
         this.statusReportFactory = statusReportFactory;
         this.statusReportMapper = statusReportMapper;
         this.transferRestClient = transferRestClient;
+        this.objectMapper = objectMapper;
     }
 
     public void handleTransferRequestBatch(PaymentBatch paymentBatch) {
@@ -47,8 +51,14 @@ public class IncomingTransactionService {
         StatusReport statusReport = handleIncomingTransaction(transaction);
         StatusBatch statusBatch = statusReportFactory.createStatusBatch(statusReport);
 
-        var regulatoryStatusBatch = statusReportMapper.toRegulatoryReport(statusBatch);
-        transferRestClient.sendTransferStatus(GlobalVariables.getBankCode(), regulatoryStatusBatch);
+        try {
+            var regulatoryStatusBatch = statusReportMapper.toRegulatoryReport(statusBatch);
+            byte[] statusBytes = objectMapper.writeValueAsBytes(regulatoryStatusBatch);
+            transferRestClient.sendTransferStatus(GlobalVariables.getBankCode(), statusBytes);
+        } catch (Exception e) {
+            log.error("Failed to serialize status report", e);
+            throw new RuntimeException("Failed to send status report", e);
+        }
 
         log.debug("Sent status report for transaction: {}", transaction.getPaymentId());
     }

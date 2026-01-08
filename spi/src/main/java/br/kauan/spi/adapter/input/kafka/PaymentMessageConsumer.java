@@ -39,7 +39,7 @@ public class PaymentMessageConsumer {
     )
     public void consumeMessage(byte[] payload) {
         try {
-            log.debug("Received message from Kafka, size: {} bytes", payload.length);
+            log.info("Received message from Kafka topic 'high-load-binary-topic', size: {} bytes", payload.length);
             
             // Deserialize the payload to determine message type
             String jsonString = new String(payload);
@@ -48,12 +48,14 @@ public class PaymentMessageConsumer {
             // Determine message type and process accordingly
             if (jsonNode.has("TxInfAndSts")) {
                 // This is a status report (pacs.002)
+                log.info("Detected status report (pacs.002) message");
                 processStatusReport(jsonString);
             } else if (jsonNode.has("CdtTrfTxInf")) {
                 // This is a payment transaction (pacs.008)
+                log.info("Detected payment transaction (pacs.008) message");
                 processPaymentTransaction(jsonString);
             } else {
-                log.warn("Unknown message type received from Kafka");
+                log.warn("Unknown message type received from Kafka. JSON keys: {}", jsonNode.fieldNames());
             }
             
         } catch (Exception e) {
