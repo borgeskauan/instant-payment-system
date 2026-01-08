@@ -3,10 +3,8 @@ package br.kauan.spi.domain.services.notification;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
-import br.kauan.spi.domain.services.notification.dto.SpiNotification;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.context.request.async.DeferredResult;
 
 import static br.kauan.spi.Utils.getBankCode;
 
@@ -18,18 +16,14 @@ public class NotificationOrchestrator {
     private final NotificationValidator validator;
     private final NotificationBuilder notificationBuilder;
 
-    private final DeferredNotificationService deferredNotificationService;
-
     public NotificationOrchestrator(
             NotificationStorage notificationStorage,
             NotificationValidator validator,
-            NotificationBuilder notificationBuilder,
-            DeferredNotificationService deferredNotificationService
+            NotificationBuilder notificationBuilder
     ) {
         this.notificationStorage = notificationStorage;
         this.validator = validator;
         this.notificationBuilder = notificationBuilder;
-        this.deferredNotificationService = deferredNotificationService;
     }
 
     public void sendConfirmationNotification(PaymentTransaction paymentTransaction) {
@@ -68,24 +62,6 @@ public class NotificationOrchestrator {
         } catch (Exception e) {
             log.error("Failed to send rejection notification for payment: {}", paymentTransaction.getPaymentId(), e);
             throw new NotificationException("Failed to send rejection notification", e);
-        }
-    }
-
-    public DeferredResult<SpiNotification> getNotifications(String ispb) {
-        try {
-            validator.validateIspb(ispb);
-
-            var deferredNotification = deferredNotificationService.getNotification(ispb);
-            var notification = notificationStorage.getNotifications(ispb);
-
-            if (!notification.getContent().isEmpty()) {
-                deferredNotification.setResult(notification);
-            }
-
-            return deferredNotification;
-        } catch (Exception e) {
-            log.error("Failed to get notifications for ISPB: {}", ispb, e);
-            throw new NotificationException("Failed to retrieve notifications", e);
         }
     }
 

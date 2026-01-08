@@ -1,6 +1,6 @@
 external:
   dict:
-    url: http://localhost:8001
+    url: http://localhost:8002
   central-transfer:
     url: http://localhost:8001
 
@@ -11,6 +11,17 @@ spring:
 
   jpa:
     defer-datasource-initialization: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: psp-notification-consumer-${BANK_CODE:default}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.records: 100
+        fetch.min.bytes: 1024
 
 bank:
   code: ${BANK_CODE}
