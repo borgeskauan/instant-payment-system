@@ -47,7 +47,7 @@ public class BankAccountPartyService {
         
         if (partyDetails.isPresent()) {
             log.info("[PIX FLOW - DICT Query] PIX key found. Bank: {}, Account holder: {}", 
-                    partyDetails.get().getAccount().getBankCode(), partyDetails.get().getName());
+                    partyDetails.get().getAccount().getId().getBankCode(), partyDetails.get().getName());
         } else {
             log.warn("[PIX FLOW - DICT Query] PIX key not found: {}", pixKey);
         }
