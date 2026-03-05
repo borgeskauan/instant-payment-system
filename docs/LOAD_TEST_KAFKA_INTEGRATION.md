@@ -29,7 +29,6 @@ A new **`notification-gateway`** service acts as the boundary between the intern
 
 - **`payment-service-provider`**: `NotificationConsumer` (direct Kafka) → replace with gRPC client to gateway
 - **`load-test/spi-test.js`**: `GET /{ispb}/messages` endpoint has been **removed** from SPI → replace with gRPC streaming client
-- **`spi`**: `PaymentController` and `NotificationUseCase` removed ✅
 
 ## Next Steps
 
