@@ -26,14 +26,20 @@ public class NotificationService implements NotificationUseCase {
     }
 
     /**
-     * Deprecated: Notifications are now pushed via Kafka.
-     * This method is kept for backwards compatibility but returns empty result.
-     * PSPs should consume from the notifications-topic Kafka topic instead.
+     * DEPRECATED: Returns empty results immediately.
+     * 
+     * Replaced by Kafka notifications on 'notifications-topic'.
+     * K6 tests still use this endpoint - migration in progress.
+     * 
+     * @param ispb The ISPB requesting notifications
+     * @return Empty result
+     * @deprecated Use Kafka consumer instead
+     * @see docs/LOAD_TEST_KAFKA_INTEGRATION.md
      */
     @Override
     @Deprecated
     public DeferredResult<SpiNotification> getNotifications(String ispb) {
-        log.warn("HTTP polling endpoint called for ISPB: {}. This is deprecated - use Kafka consumer instead.", ispb);
+        log.warn("Deprecated endpoint called for ISPB: {}. Use Kafka notifications-topic instead.", ispb);
         DeferredResult<SpiNotification> result = new DeferredResult<>();
         result.setResult(SpiNotification.empty());
         return result;

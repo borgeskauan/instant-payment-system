@@ -1,3 +1,10 @@
+/**
+ * K6 Load Test for Instant Payment System
+ * 
+ * ⚠️  Uses deprecated endpoint GET /{ispb}/messages (returns empty)
+ * See: docs/LOAD_TEST_KAFKA_INTEGRATION.md
+ */
+
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Trend, Counter } from 'k6/metrics';
@@ -93,6 +100,7 @@ function getVusIspbPair(vuId) {
     return vuIspbMapping[vuId];
 }
 
+// TODO: Replace deprecated endpoint - see docs/LOAD_TEST_KAFKA_INTEGRATION.md
 function fetchMessagesWithRetry(ispb) {
     const delayInMs = 0.1;
     const maxRetries = 10;
