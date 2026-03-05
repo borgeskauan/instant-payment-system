@@ -18,6 +18,9 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
+// TODO: Replace direct Kafka consumption with gRPC client to notification-gateway.
+// PSPs should not connect to internal Kafka topics directly.
+// See: docs/LOAD_TEST_KAFKA_INTEGRATION.md
 @Slf4j
 @Component
 public class NotificationConsumer {

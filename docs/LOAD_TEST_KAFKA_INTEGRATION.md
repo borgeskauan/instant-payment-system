@@ -1,46 +1,44 @@
-# K6 Load Test - Kafka Integration Challenge
+# Notification Gateway
 
-## Problem
+## Context
 
-The K6 load test uses a **deprecated HTTP polling endpoint** `GET /{ispb}/messages` that now returns empty results immediately. Production uses Kafka push notifications instead.
+PSPs currently consume notifications by directly connecting to the internal `notifications-topic` Kafka topic. This is a security and coupling concern — external parties should not have access to internal infrastructure.
 
-**Impact:**
-- Test requires 10 retries with delays (artificial latency)
-- Doesn't reflect real architecture
-- High failure rates
+## Solution: `notification-gateway` microservice ✅
 
-## Solutions Being Evaluated
+A new **`notification-gateway`** service acts as the boundary between the internal Kafka topic and all external consumers (PSPs in production, K6 in load tests). It consumes from Kafka internally and exposes a gRPC server-side streaming API.
 
-We need to bridge K6 tests with Kafka notifications. Evaluating **performance** of two approaches:
+```
+                          internal                        │                   external
+                                                          │
+┌─────┐   notifications-topic   ┌──────────────────────┐  │ gRPC stream  ┌────────────────┐
+│ SPI │ ───────────────────────>│ notification-gateway │  │ ────────────>│  PSP (prod)    │
+└─────┘                         │   (Kafka → gRPC)     │  │              ├────────────────┤
+                                └──────────────────────┘  │              │  K6 (load test)│
+                                                          │              └────────────────┘
+                                                   network boundary
+```
 
-### Option 1: HTTP Long Polling
-Suspend the HTTP request until notification arrives (or timeout).
+**Benefits:**
+- PSPs never touch internal Kafka — clean network boundary
+- `payment-service-provider` migrates from Kafka consumer to gRPC client
+- K6 connects to the same gateway as production (accurate load testing)
+- Gateway can be scaled, secured, and versioned independently
 
-**Pros:** Simple K6 integration, native HTTP  
-**Cons:** Keeps connections open, resource-intensive at scale
+## Impact on Existing Services
 
-### Option 2: gRPC Streaming
-Real-time bidirectional streaming for notifications.
-
-**Pros:** High performance (HTTP/2), efficient, built-in backpressure  
-**Cons:** More complex, requires K6 gRPC support
-
-## Performance Metrics to Compare
-
-- **Latency:** P50, P95, P99 from notification to K6 receipt
-- **Throughput:** Notifications/second under 8000 VUs
-- **Resources:** CPU, memory, connection count on SPI
-- **Reliability:** Message delivery success rate
+- **`payment-service-provider`**: `NotificationConsumer` (direct Kafka) → replace with gRPC client to gateway
+- **`load-test/spi-test.js`**: `GET /{ispb}/messages` endpoint has been **removed** from SPI → replace with gRPC streaming client
+- **`spi`**: `PaymentController` and `NotificationUseCase` removed ✅
 
 ## Next Steps
 
-1. ✅ Document issue
-2. ✅ Implement both approaches
-3. ✅ Run comparative performance tests (identical load: 8000 VUs, 2min)
-4. ⏳ Choose winner based on metrics
-5. ⏳ Update load tests
+1. ✅ Document architecture decision
+2. ⏳ Create `notification-gateway` (Spring Boot + Kafka consumer + gRPC server)
+3. ⏳ Migrate `payment-service-provider` to gRPC client
+4. ⏳ Update K6 load test to use gRPC
+5. ⏳ Update `docker-compose.yml` with new service
 
 ---
 
-**Status:** Planning Phase | **Updated:** March 4, 2026  
-**Files:** [load-test/spi-test.js](../load-test/spi-test.js), [NotificationService.java](../spi/src/main/java/br/kauan/spi/domain/services/notification/NotificationService.java)
+**Status:** In Progress | **Updated:** March 5, 2026

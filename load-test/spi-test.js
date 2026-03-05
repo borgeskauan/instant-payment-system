@@ -100,13 +100,16 @@ function getVusIspbPair(vuId) {
     return vuIspbMapping[vuId];
 }
 
-// TODO: Replace deprecated endpoint - see docs/LOAD_TEST_KAFKA_INTEGRATION.md
+// TODO: /${ispb}/messages endpoint has been REMOVED from SPI.
+// Replace this function with gRPC streaming client against notification-gateway.
+// See: docs/LOAD_TEST_KAFKA_INTEGRATION.md
 function fetchMessagesWithRetry(ispb) {
     const delayInMs = 0.1;
     const maxRetries = 10;
     let retries = 0;
 
     while (retries < maxRetries) {
+        // ⚠️ ENDPOINT REMOVED - always returns 404. Replace with gRPC.
         let res = http.get(`${BASE_URL}/${ispb}/messages`, { tags: { name: 'fetch-messages' } });
 
         if (res.status === 200) {
