@@ -28,7 +28,7 @@ spring:
       properties:
         linger.ms: 5
         batch.size: 16384
-        compression.type: snappy
+        compression.type: lz4
 
   jmx:
     enabled: false

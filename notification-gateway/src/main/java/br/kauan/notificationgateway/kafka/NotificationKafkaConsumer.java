@@ -37,7 +37,7 @@ public class NotificationKafkaConsumer {
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
             @Header(KafkaHeaders.OFFSET) long offset
     ) {
-        log.debug("Received notification — ISPB: {}, partition: {}, offset: {}", ispb, partition, offset);
+        log.info("Received notification — ISPB: {}, partition: {}, offset: {}", ispb, partition, offset);
         subscriberRegistry.dispatch(ispb, payload);
     }
 }

@@ -1,6 +1,7 @@
 package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.grpc.proto.Notification;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -74,7 +75,11 @@ public class SubscriberRegistry {
 
         for (StreamObserver<Notification> observer : list) {
             try {
+                if (observer instanceof ServerCallStreamObserver<?> scs) {
+                    log.debug("Pre-dispatch state for ISPB: {} — isCancelled: {}, isReady: {}", ispb, scs.isCancelled(), scs.isReady());
+                }
                 observer.onNext(notification);
+                log.debug("onNext completed successfully for ISPB: {}", ispb);
             } catch (Exception e) {
                 log.warn("Failed to send notification to subscriber for ISPB: {} — removing", ispb, e);
                 list.remove(observer);

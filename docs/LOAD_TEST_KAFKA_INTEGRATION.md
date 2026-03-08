@@ -34,7 +34,7 @@ A new **`notification-gateway`** service acts as the boundary between the intern
 
 1. ✅ Document architecture decision
 2. ✅ Create `notification-gateway` (Spring Boot + Kafka consumer + gRPC server)
-3. ⏳ Update K6 load test to use gRPC
+3. ✅ Update K6 load test to use gRPC
 4. ⏳ Migrate `payment-service-provider` to gRPC client
 
 

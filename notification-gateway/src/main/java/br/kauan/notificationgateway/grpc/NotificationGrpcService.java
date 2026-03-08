@@ -49,12 +49,13 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
         // without sending an explicit cancel (e.g. process crash, network drop).
         if (responseObserver instanceof ServerCallStreamObserver<Notification> serverObserver) {
             serverObserver.setOnCancelHandler(() -> {
-                log.info("Client cancelled stream — ISPB: {}", ispb);
+                log.info("Client cancelled stream — ISPB: {} (isCancelled: {})", ispb, serverObserver.isCancelled());
                 subscriberRegistry.unregister(ispb, responseObserver);
             });
         }
 
         subscriberRegistry.register(ispb, responseObserver);
+        log.info("streamNotifications handler returning — stream stays open for ISPB: {}", ispb);
         // Stream stays open — onCompleted is intentionally NOT called here.
         // The Kafka consumer pushes messages via SubscriberRegistry#dispatch.
     }

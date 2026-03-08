@@ -90,6 +90,35 @@ run_k6_test() {
     echo "Test completed successfully. Results saved to: $output_file"
 }
 
+# Function to check k6 version meets minimum requirement
+check_k6_version() {
+    local required_major=0
+    local required_minor=49
+
+    if ! command -v k6 &>/dev/null; then
+        error_exit "k6 not found. Install k6 >= 0.${required_minor}.0 from https://k6.io/docs/get-started/installation/"
+    fi
+
+    local version_string
+    version_string=$(k6 version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+
+    if [[ -z "$version_string" ]]; then
+        echo "Warning: Could not determine k6 version. Proceeding anyway."
+        return
+    fi
+
+    local major minor
+    major=$(echo "$version_string" | cut -d. -f1)
+    minor=$(echo "$version_string" | cut -d. -f2)
+
+    if [[ "$major" -lt "$required_major" ]] || \
+       { [[ "$major" -eq "$required_major" ]] && [[ "$minor" -lt "$required_minor" ]]; }; then
+        error_exit "k6 ${version_string} is too old. gRPC streaming requires k6 >= 0.${required_minor}.0 (k6/net/grpc module)."
+    fi
+
+    echo "k6 version ${version_string} — OK"
+}
+
 # Main execution
 main() {
     # Validate input
@@ -105,6 +134,7 @@ main() {
         error_exit "Invalid run tag format. Use only alphanumeric characters, dots, dashes, and underscores."
     fi
 
+    check_k6_version
     setup_target_folder "$run_tag"
     run_k6_test
 }

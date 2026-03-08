@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+option java_package = "br.kauan.notificationgateway.grpc.proto";
+option java_outer_classname = "NotificationProto";
+option java_multiple_files = true;
+
+package notification;
+
+// A client subscribes with its ISPB and receives a stream of notifications
+// routed to that ISPB.
+service NotificationGateway {
+  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+}
+
+// The ISPB identifies which PSP wants to receive notifications.
+message StreamRequest {
+  string ispb = 1;
+}
+
+// A single notification forwarded from the internal Kafka topic.
+// - ispb:    the destination bank code (same as the Kafka record key)
+// - payload: the raw JSON string (pacs.008 or pacs.002)
+message Notification {
+  string ispb    = 1;
+  string payload = 2;
+}

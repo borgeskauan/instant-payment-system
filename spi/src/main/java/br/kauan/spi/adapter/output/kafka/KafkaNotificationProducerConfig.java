@@ -30,7 +30,7 @@ public class KafkaNotificationProducerConfig {
         config.put(ProducerConfig.ACKS_CONFIG, "1"); // Leader acknowledgment only for lower latency
         config.put(ProducerConfig.LINGER_MS_CONFIG, 5); // Small linger for batching
         config.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384); // 16KB batch size
-        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy"); // Enable compression
+        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4"); // lz4 has pure-Java fallback — no native lib dependency
         config.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432); // 32MB buffer
         
         return new DefaultKafkaProducerFactory<>(config);
