@@ -20,8 +20,8 @@ export const options = {
   scenarios: {
     psp_sessions: {
       executor: 'constant-vus',
-      vus: 1,
-      duration: '2m',
+      vus: 200,
+      duration: '1m',
       gracefulStop: '5s',
     },
   },
@@ -116,7 +116,7 @@ function resetHolder(holder) {
 }
 
 function waitForNextMessage(ispb, holder, timeoutMs) {
-  console.log(`VU ${__VU}: awaiting notification for ISPB ${ispb} (timeout: ${timeoutMs}ms)`);
+  console.debug(`VU ${__VU}: awaiting notification for ISPB ${ispb} (timeout: ${timeoutMs}ms)`);
   const deadline = Date.now() + timeoutMs;
 
   return new Promise((resolve) => {
@@ -124,7 +124,7 @@ function waitForNextMessage(ispb, holder, timeoutMs) {
       if (holder.message !== null) {
         const msg = holder.message;
         holder.message = null;
-        console.log(`VU ${__VU}: received notification for ISPB ${ispb}`);
+        console.debug(`VU ${__VU}: received notification for ISPB ${ispb}`);
         resolve(msg);
         return;
       }
@@ -154,7 +154,7 @@ export default async function () {
   const recebedorStream = openNotificationStream(ispbRecebedor, recebedorHolder, 'recebedor');
   const pagadorStream = openNotificationStream(ispbPagador, pagadorHolder, 'pagador');
 
-  console.log(`VU ${__VU}: PSP session started. pagador=${ispbPagador}, recebedor=${ispbRecebedor}`);
+  console.debug(`VU ${__VU}: PSP session started. pagador=${ispbPagador}, recebedor=${ispbRecebedor}`);
 
   try {
     while (exec.scenario.progress < 0.98) {
@@ -168,7 +168,7 @@ export default async function () {
       const pacs008 = generatePacs008(transactionId, ispbPagador, ispbRecebedor);
 
       operationStartTime = Date.now();
-      console.log(`VU ${__VU}: sending pacs.008`);
+      console.debug(`VU ${__VU}: sending pacs.008`);
       const transferRes = http.post(
         `${BASE_URL}/${ispbPagador}/transfer`,
         JSON.stringify(pacs008),
@@ -178,7 +178,7 @@ export default async function () {
         }
       );
       transferRequestDuration.add(Date.now() - operationStartTime);
-      console.log(`VU ${__VU}: pacs.008 response status=${transferRes.status}`);
+      console.debug(`VU ${__VU}: pacs.008 response status=${transferRes.status}`);
 
       const transferOk = check(transferRes, {
         'transfer request accepted by SPI': (r) => r.status === 200,
