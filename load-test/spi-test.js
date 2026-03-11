@@ -20,7 +20,7 @@ export const options = {
   scenarios: {
     psp_sessions: {
       executor: 'constant-vus',
-      vus: 50,
+      vus: 100,
       duration: '1m',
       gracefulStop: '5s',
     },

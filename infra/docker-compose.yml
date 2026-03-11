@@ -63,3 +63,35 @@ services:
     healthcheck:
       test: nc -z localhost 9090 || exit 1
       <<: *default-healthcheck
+
+  spi:
+    build:
+      context: ../spi
+      dockerfile: Dockerfile
+    container_name: spi
+    ports:
+      - "8002:8002"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: nc -z localhost 8002 || exit 1
+      <<: *default-healthcheck
+
+  kafka-producer:
+    build:
+      context: ../kafka-producer
+      dockerfile: Dockerfile
+    container_name: kafka-producer
+    ports:
+      - "8001:8001"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: nc -z localhost 8001 || exit 1
+      <<: *default-healthcheck
