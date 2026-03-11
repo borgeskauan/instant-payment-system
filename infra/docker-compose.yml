@@ -3,10 +3,18 @@ x-common-healthcheck: &default-healthcheck
   timeout: 5s
   retries: 12
 
+x-low-resource: &low-resource
+  mem_swappiness: 0
+
 services:
   postgres:
     image: postgres:17-alpine
     container_name: my-postgres
+    cpus: 0.75
+    mem_limit: 384m
+    mem_reservation: 256m
+    memswap_limit: 384m
+    <<: *low-resource
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
     ports:
@@ -17,8 +25,13 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
+    cpus: 1.00
+    mem_limit: 768m
+    mem_reservation: 512m
+    memswap_limit: 768m
+    <<: *low-resource
     ports:
-      - "9092:29092"  # Map host 9092 to container 29092
+      - "9092:29092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENERS: CONTAINER_INTERNAL://${KAFKA_BOOTSTRAP_SERVERS},HOST://0.0.0.0:29092,CONTROLLER://kafka:9093
@@ -30,33 +43,39 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1      # Auto-create __consumer_offsets
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     healthcheck:
       test: nc -z kafka ${KAFKA_PORT} || exit 1
       <<: *default-healthcheck
 
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    ports:
-      - "8090:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: kraft-cluster
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-    depends_on:
-      kafka:
-        condition: service_healthy
+  # kafka-ui:
+  #   image: provectuslabs/kafka-ui:latest
+  #   container_name: kafka-ui
+  #   ports:
+  #     - "8090:8080"
+  #   environment:
+  #     KAFKA_CLUSTERS_0_NAME: kraft-cluster
+  #     KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+  #   depends_on:
+  #     kafka:
+  #       condition: service_healthy
 
   notification-gateway:
     build:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
+    cpus: 1.00
+    mem_limit: 384m
+    mem_reservation: 256m
+    memswap_limit: 384m
+    <<: *low-resource
     ports:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       LOGGING_LEVEL_BR_KAUAN_NOTIFICATIONGATEWAY: DEBUG
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
     depends_on:
       kafka:
         condition: service_healthy
@@ -69,10 +88,15 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
+    cpus: 1.00
+    mem_limit: 768m
+    memswap_limit: 768m
+    mem_swappiness: 0
     ports:
       - "8002:8002"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m"
     depends_on:
       kafka:
         condition: service_healthy
@@ -85,10 +109,16 @@ services:
       context: ../kafka-producer
       dockerfile: Dockerfile
     container_name: kafka-producer
+    cpus: 1.00
+    mem_limit: 384m
+    mem_reservation: 256m
+    memswap_limit: 384m
+    <<: *low-resource
     ports:
       - "8001:8001"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
     depends_on:
       kafka:
         condition: service_healthy

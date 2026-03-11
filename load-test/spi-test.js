@@ -6,9 +6,9 @@ import { Trend, Counter, Gauge } from 'k6/metrics';
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8001';
 const GATEWAY_ADDR = __ENV.GATEWAY_ADDR || 'localhost:9090';
-const MSG_TIMEOUT_MS = parseInt(__ENV.MSG_TIMEOUT_MS || '3000', 10);
-const NEW_TX_EVERY_MS = parseInt(__ENV.NEW_TX_EVERY_MS || '200', 10);
-const MAX_IN_FLIGHT = parseInt(__ENV.MAX_IN_FLIGHT || '20', 10);
+const MSG_TIMEOUT_MS = parseInt(__ENV.MSG_TIMEOUT_MS || '10000', 10);
+const NEW_TX_EVERY_MS = parseInt(__ENV.NEW_TX_EVERY_MS || '20', 10);
+const MAX_IN_FLIGHT = parseInt(__ENV.MAX_IN_FLIGHT || '500', 10);
 
 const client = new grpc.Client();
 client.load([__ENV.PROTO_DIR || '.'], 'notification.proto');
@@ -20,7 +20,7 @@ export const options = {
   scenarios: {
     psp_sessions: {
       executor: 'constant-vus',
-      vus: 100,
+      vus: 50,
       duration: '1m',
       gracefulStop: '5s',
     },
