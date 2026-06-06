@@ -1,26 +1,4 @@
-# Atividades
-
-Este arquivo guarda o histórico curto de atividades. A tarefa ativa fica em `docs/board/agora.md`.
-
-## Feitas
-
-- [x] Implementar tópico Kafka para notificações
-
-- [x] Criar microserviço de protótipo usando gRPC streaming
-- [x] Realizar comparação com HTTP long polling usando K6
-
-- [x] Criar microserviço para conectar no tópico de notificações Kafka expondo endpoint gRPC de server-streaming
-- [x] Adequar teste para se integrar com microserviço gRPC
-
-- [x] Implementar limite de recursos no teste de load balancer (CPU e RAM)
-
-## Ativa
-
-- [ ] Ver `docs/board/agora.md`
-
-## Pausadas
-
-### Adequar PSP para se integrar com microserviço gRPC
+# Adequar PSP para se integrar com microserviço gRPC
 
 - [ ] Substituir o consumo direto de Kafka no PSP por cliente gRPC para o `notification-gateway`.
 

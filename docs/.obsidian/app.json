@@ -10,6 +10,8 @@
     "downscalePercent": 100
   },
   "readableLineLength": false,
-  "showInlineTitle": true,
-  "alwaysUpdateLinks": true
+  "showInlineTitle": false,
+  "alwaysUpdateLinks": true,
+  "propertiesInDocument": "hidden",
+  "foldHeading": true
 }

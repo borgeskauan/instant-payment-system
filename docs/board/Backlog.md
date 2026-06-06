@@ -1,25 +1,8 @@
 # Backlog
 
-Este arquivo guarda trabalho possível, mas ainda não priorizado. Tarefas ativas ficam em `docs/board/agora.md`; tarefas já priorizadas ficam em `docs/board/atividades.md`.
+Este arquivo guarda trabalho possível, mas ainda não priorizado. Tarefas ativas ou pausadas já priorizadas ficam em `docs/board/Atividades`.
 
 ## Backlog
-
-### Observabilidade e métricas
-
-**Por que existe**
-
-A investigação de performance do SPI depende de visibilidade sobre CPU, memória, latência, throughput e erros. Sem métricas, fica difícil separar gargalo real de hipótese.
-
-**Relação com o agora**
-
-Ajuda diretamente a tarefa ativa de reduzir o consumo de CPU do container SPI.
-
-**Tarefas**
-
-- [ ] Identificar gargalos do SPI.
-- [ ] Adicionar ou validar métricas com Micrometer.
-- [ ] Criar coleta de métricas com Prometheus.
-- [ ] Criar visualização mínima com Grafana.
 
 ### Validações do DICT
 
@@ -135,9 +118,17 @@ O projeto tem documentação espalhada sobre descoberta, fluxo Pix, testes de ca
 
 ### Kafka e notificações
 
+- [x] Implementar tópico Kafka para notificações.
+- [x] Criar microserviço de protótipo usando gRPC streaming.
+- [x] Realizar comparação com HTTP long polling usando K6.
 - [x] Implementar primeiro sem Kafka.
 - [x] Desacoplar recebimento e processamento.
 - [x] Criar microserviço para receber e postar no Kafka o pedido de transferência.
 - [x] Integrar consumo do tópico Kafka no SPI para realizar processamento.
 - [x] Criar tópico Kafka para tratar notificações.
 - [x] Criar microserviço para conectar no tópico de notificações Kafka e expor endpoint gRPC de server-streaming.
+- [x] Adequar teste para se integrar com microserviço gRPC.
+
+### Infraestrutura
+
+- [x] Implementar limite de recursos no teste de load balancer: CPU e RAM.
