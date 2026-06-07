@@ -7,6 +7,9 @@ import { Trend, Counter, Gauge } from 'k6/metrics';
 const BASE_URL = 'http://localhost:8001';
 const GATEWAY_ADDR = 'localhost:9090';
 const MSG_TIMEOUT_MS = 10000;
+const LATE_DRAIN_MS = 30000;
+const GRACEFUL_STOP = '60s';
+const ACTIVE_DURATION_SECONDS = 60;
 
 const HOT_VUS = 10;
 const HOT_TX_EVERY_MS = 6;
@@ -28,14 +31,14 @@ export const options = {
       executor: 'constant-vus',
       vus: HOT_VUS,
       duration: '1m',
-      gracefulStop: '5s',
+      gracefulStop: GRACEFUL_STOP,
       exec: 'hotPspSession',
     },
     cold_psps: {
       executor: 'constant-vus',
       vus: COLD_VUS,
       duration: '1m',
-      gracefulStop: '5s',
+      gracefulStop: GRACEFUL_STOP,
       exec: 'coldPspSession',
     },
   },
@@ -56,6 +59,9 @@ const transactionsStarted = new Counter('transactions_started');
 const notificationTimeouts = new Counter('notification_timeouts');
 const confirmationTimeouts = new Counter('confirmation_timeouts');
 const streamMessagesUnmatched = new Counter('stream_messages_unmatched');
+const latePacs008Notifications = new Counter('late_pacs008_notifications');
+const latePacs002Confirmations = new Counter('late_pacs002_confirmations');
+const lateTransactions = new Counter('late_transactions');
 const inFlightGauge = new Gauge('transactions_in_flight');
 
 function delay(ms) {
@@ -152,7 +158,7 @@ function extractTxId(msg) {
   return null;
 }
 
-function openNotificationStream(ispb, inbox, streamName) {
+function openNotificationStream(ispb, inbox, timedOut, lateCounter, streamName) {
   const stream = new grpc.Stream(
     client,
     'notification.NotificationGateway/StreamNotifications'
@@ -164,6 +170,13 @@ function openNotificationStream(ispb, inbox, streamName) {
     if (!txId) {
       streamMessagesUnmatched.add(1);
       console.warn(`VU ${__VU}: ${streamName} stream received message without txId: ${JSON.stringify(msg)}`);
+      return;
+    }
+
+    if (timedOut[txId]) {
+      lateCounter.add(1);
+      lateTransactions.add(1);
+      delete timedOut[txId];
       return;
     }
 
@@ -184,7 +197,7 @@ function openNotificationStream(ispb, inbox, streamName) {
   return stream;
 }
 
-function waitForMatch(inbox, txId, timeoutMs) {
+function waitForMatch(inbox, txId, timeoutMs, onTimeout) {
   const deadline = Date.now() + timeoutMs;
 
   return new Promise((resolve) => {
@@ -197,6 +210,7 @@ function waitForMatch(inbox, txId, timeoutMs) {
       }
 
       if (Date.now() >= deadline) {
+        onTimeout?.();
         resolve(null);
         return;
       }
@@ -209,7 +223,14 @@ function waitForMatch(inbox, txId, timeoutMs) {
 }
 
 async function runTransactionFlow(state, txId) {
-  const { ispbPagador, ispbRecebedor, recebedorInbox, pagadorInbox } = state;
+  const {
+    ispbPagador,
+    ispbRecebedor,
+    recebedorInbox,
+    pagadorInbox,
+    recebedorTimedOut,
+    pagadorTimedOut,
+  } = state;
 
   const transactionStartTime = Date.now();
   let operationStartTime;
@@ -237,7 +258,14 @@ async function runTransactionFlow(state, txId) {
   }
 
   operationStartTime = Date.now();
-  const incomingPayment = await waitForMatch(recebedorInbox, txId, MSG_TIMEOUT_MS);
+  const incomingPayment = await waitForMatch(
+    recebedorInbox,
+    txId,
+    MSG_TIMEOUT_MS,
+    () => {
+      recebedorTimedOut[txId] = Date.now();
+    }
+  );
   fetchMessagesDuration.add(Date.now() - operationStartTime);
 
   const receivedOk = check(incomingPayment, {
@@ -273,7 +301,14 @@ async function runTransactionFlow(state, txId) {
   }
 
   operationStartTime = Date.now();
-  const confirmation = await waitForMatch(pagadorInbox, txId, MSG_TIMEOUT_MS);
+  const confirmation = await waitForMatch(
+    pagadorInbox,
+    txId,
+    MSG_TIMEOUT_MS,
+    () => {
+      pagadorTimedOut[txId] = Date.now();
+    }
+  );
   confirmationCheckDuration.add(Date.now() - operationStartTime);
 
   const confirmedOk = check(confirmation, {
@@ -298,12 +333,33 @@ async function runPspSession(newTxEveryMs) {
 
   const recebedorInbox = Object.create(null);
   const pagadorInbox = Object.create(null);
+  const recebedorTimedOut = Object.create(null);
+  const pagadorTimedOut = Object.create(null);
   const inFlight = new Map();
 
-  const recebedorStream = openNotificationStream(ispbRecebedor, recebedorInbox, 'recebedor');
-  const pagadorStream = openNotificationStream(ispbPagador, pagadorInbox, 'pagador');
+  const recebedorStream = openNotificationStream(
+    ispbRecebedor,
+    recebedorInbox,
+    recebedorTimedOut,
+    latePacs008Notifications,
+    'recebedor'
+  );
+  const pagadorStream = openNotificationStream(
+    ispbPagador,
+    pagadorInbox,
+    pagadorTimedOut,
+    latePacs002Confirmations,
+    'pagador'
+  );
 
-  const state = { ispbPagador, ispbRecebedor, recebedorInbox, pagadorInbox };
+  const state = {
+    ispbPagador,
+    ispbRecebedor,
+    recebedorInbox,
+    pagadorInbox,
+    recebedorTimedOut,
+    pagadorTimedOut,
+  };
   let txSeq = 0;
 
   try {
@@ -334,6 +390,8 @@ async function runPspSession(newTxEveryMs) {
     while (inFlight.size > 0) {
       await Promise.all(Array.from(inFlight.values()));
     }
+
+    await delay(LATE_DRAIN_MS);
   } finally {
     try { recebedorStream.end(); } catch (_) {}
     try { pagadorStream.end(); } catch (_) {}
@@ -347,4 +405,54 @@ export async function hotPspSession() {
 
 export async function coldPspSession() {
   await runPspSession(COLD_TX_EVERY_MS);
+}
+
+function count(data, metricName) {
+  return data.metrics[metricName]?.values?.count || 0;
+}
+
+function percentile(data, metricName, percentileName) {
+  const value = data.metrics[metricName]?.values?.[percentileName];
+  if (value === undefined) return 'n/a';
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
+export function handleSummary(data) {
+  const transactionsStarted = count(data, 'transactions_started');
+  const transactionSuccesses = count(data, 'transaction_success');
+  const transactionFailures = count(data, 'transaction_failure');
+  const notificationTimeoutCount = count(data, 'notification_timeouts');
+  const confirmationTimeoutCount = count(data, 'confirmation_timeouts');
+  const latePacs008Count = count(data, 'late_pacs008_notifications');
+  const latePacs002Count = count(data, 'late_pacs002_confirmations');
+  const lateTransactionCount = count(data, 'late_transactions');
+  const neverArrivedTransactionCount = transactionFailures - lateTransactionCount;
+  const httpRequests = count(data, 'http_reqs');
+  const activeTxStartRate = transactionsStarted / ACTIVE_DURATION_SECONDS;
+  const activeHttpRequestRate = httpRequests / ACTIVE_DURATION_SECONDS;
+
+  return {
+    stdout: `
+PIX LOAD SUMMARY
+active duration: ${ACTIVE_DURATION_SECONDS}s
+transactions started: ${transactionsStarted}
+active tx start rate: ${activeTxStartRate.toFixed(2)} tx/s
+HTTP requests: ${httpRequests}
+active HTTP request rate: ${activeHttpRequestRate.toFixed(2)} req/s
+
+transactions succeeded: ${transactionSuccesses}
+transactions missed SLA: ${transactionFailures}
+transactions late: ${lateTransactionCount}
+transactions never arrived: ${neverArrivedTransactionCount}
+notification timeouts: ${notificationTimeoutCount}
+confirmation timeouts: ${confirmationTimeoutCount}
+late pacs.008 notifications: ${latePacs008Count}
+late pacs.002 confirmations: ${latePacs002Count}
+
+total transaction duration p50: ${percentile(data, 'total_transaction_duration', 'med')}
+total transaction duration p95: ${percentile(data, 'total_transaction_duration', 'p(95)')}
+total transaction duration p99: ${percentile(data, 'total_transaction_duration', 'p(99)')}
+threshold target: p99 < 4.60s
+`,
+  };
 }
