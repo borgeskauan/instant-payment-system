@@ -11,7 +11,7 @@ import java.util.concurrent.CompletableFuture;
 @Service
 public class NotificationPublisher {
 
-    private static final String NOTIFICATION_TOPIC = "notifications-topic";
+    private static final String NOTIFICATION_TOPIC = "psp-notifications";
     
     private final KafkaTemplate<String, String> kafkaTemplate;
 

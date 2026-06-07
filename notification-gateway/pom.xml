@@ -13,7 +13,7 @@
     <artifactId>notification-gateway</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>notification-gateway</name>
-    <description>Notification Gateway — bridges internal Kafka notifications-topic to external gRPC consumers</description>
+    <description>Notification Gateway — bridges internal Kafka psp-notifications to external gRPC consumers</description>
 
     <properties>
         <java.version>21</java.version>

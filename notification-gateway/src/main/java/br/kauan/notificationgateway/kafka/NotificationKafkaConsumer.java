@@ -10,7 +10,7 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes every message from {@code notifications-topic} and fans it out
+ * Consumes every message from {@code psp-notifications} and fans it out
  * to all registered gRPC subscribers whose ISPB matches the Kafka record key.
  *
  * <p>No business logic lives here — the gateway is intentionally transparent.
@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class NotificationKafkaConsumer {
 
-    private static final String NOTIFICATIONS_TOPIC = "notifications-topic";
+    private static final String NOTIFICATIONS_TOPIC = "psp-notifications";
 
     private final SubscriberRegistry subscriberRegistry;
 

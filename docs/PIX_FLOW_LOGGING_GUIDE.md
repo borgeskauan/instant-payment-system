@@ -67,7 +67,7 @@ All logs follow a structured format with **[PIX FLOW - Step X]** prefix to easil
 
 **Service:** `QueueService.sendBytes()`
 ```
-Sending {bytes} bytes to Kafka topic: high-load-binary-topic
+Sending {bytes} bytes to Kafka topic: spi-payment-requests
 Successfully sent message to Kafka, partition: {partition}, offset: {offset}
 ```
 
@@ -77,7 +77,7 @@ Successfully sent message to Kafka, partition: {partition}, offset: {offset}
 
 **Consumer:** `PaymentMessageConsumer.consumeMessage()` (SPI)
 ```
-Received message from Kafka topic 'high-load-binary-topic', size: {bytes} bytes
+Received message from Kafka topic 'spi-payment-requests', size: {bytes} bytes
 Detected payment transaction (pacs.008) message
 Processing payment transaction batch for ISPB: {ispb}, transactions: {count}
 ```

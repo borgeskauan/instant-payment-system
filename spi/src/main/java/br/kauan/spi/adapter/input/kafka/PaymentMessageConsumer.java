@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class PaymentMessageConsumer {
 
+    private static final String PAYMENT_REQUESTS_TOPIC = "spi-payment-requests";
+
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
@@ -30,17 +32,17 @@ public class PaymentMessageConsumer {
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
         this.objectMapper = new ObjectMapper();
-        log.info("PaymentMessageConsumer initialized - ready to consume from topic 'high-load-binary-topic'");
+        log.info("PaymentMessageConsumer initialized - ready to consume from topic '{}'", PAYMENT_REQUESTS_TOPIC);
     }
 
     @KafkaListener(
-            topics = "high-load-binary-topic",
+            topics = PAYMENT_REQUESTS_TOPIC,
             groupId = "spi-consumer-group",
             containerFactory = "kafkaListenerContainerFactory"
     )
     public void consumeMessage(byte[] payload) {
         try {
-            log.info("Received message from Kafka topic 'high-load-binary-topic', size: {} bytes", payload.length);
+            log.info("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
             
             // Deserialize the payload to determine message type
             String jsonString = new String(payload);

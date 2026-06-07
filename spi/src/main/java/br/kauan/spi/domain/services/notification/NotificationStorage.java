@@ -38,7 +38,7 @@ public class NotificationStorage {
 
     /**
      * Publishes a status notification directly to Kafka.
-     * No longer stores in-memory - immediately publishes to notifications-topic.
+     * No longer stores in-memory - immediately publishes to psp-notifications.
      */
     public void addStatusNotification(String ispb, StatusReport statusReport) {
         log.debug("Publishing status notification for ISPB: {}", ispb);
@@ -54,7 +54,7 @@ public class NotificationStorage {
 
     /**
      * Publishes a transaction notification directly to Kafka.
-     * No longer stores in-memory - immediately publishes to notifications-topic.
+     * No longer stores in-memory - immediately publishes to psp-notifications.
      */
     public void addTransactionNotification(String ispb, PaymentTransaction paymentTransaction) {
         log.debug("Publishing transaction notification for ISPB: {}", ispb);

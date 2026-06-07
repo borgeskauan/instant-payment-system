@@ -27,6 +27,32 @@ O fluxo Pix real depende de consultas e validações auxiliares, como CPF/CNPJ. 
 - [ ] Decidir onde ficará a consulta/validação de CPF/CNPJ.
 - [ ] Implementar consulta simulada de CPF/CNPJ, se ainda fizer sentido para o escopo.
 
+### Separar DICT em um microserviço próprio
+
+**Por que existe**
+
+DICT e SPI são sistemas distintos na infraestrutura real do Banco Central. Hoje ambos rodam na mesma aplicação Spring Boot (`SpiApplication`), compartilhando JVM, banco de dados e porta.
+
+**Tarefas**
+
+- [ ] Extrair `br.kauan.dict.*` para um novo módulo `dict`.
+- [ ] Criar `pom.xml`, `application.yml` e Dockerfile próprios para o DICT.
+- [ ] Adicionar o DICT como serviço separado no ambiente local.
+- [ ] Fazer o SPI chamar o DICT por HTTP em vez de chamada em processo.
+
+### Padronizar PostgreSQL nos ambientes
+
+**Por que existe**
+
+O SPI ainda tem configuração de H2 em `application.yml`, apesar de o projeto já ter PostgreSQL no `docker-compose.yml`. Usar PostgreSQL de forma consistente reduz diferença entre ambiente local, testes e execução real.
+
+**Tarefas**
+
+- [ ] Remover ou isolar a configuração H2 do SPI.
+- [ ] Configurar PostgreSQL como banco padrão do SPI.
+- [ ] Habilitar e revisar migrations com Flyway.
+- [ ] Garantir que o ambiente local suba com PostgreSQL sem passos manuais extras.
+
 ### Contrato de preview e execução no PSP
 
 **Por que existe**

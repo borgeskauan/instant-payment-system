@@ -9,7 +9,7 @@ import reactor.core.publisher.Mono;
 @Service
 public class QueueService {
 
-    private static final String TOPIC = "high-load-binary-topic";
+    private static final String TOPIC = "spi-payment-requests";
 
     private final KafkaTemplate<String, byte[]> kafkaTemplate;
 

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "board/Atividades/agora/integracao-grpc-psp.md",
+                "file": "KAFKA_MESSAGE_FLOW.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "integracao-grpc-psp"
+              "title": "KAFKA_MESSAGE_FLOW"
             }
           }
         ]
@@ -78,7 +78,8 @@
       }
     ],
     "direction": "horizontal",
-    "width": 239.5
+    "width": 239.5,
+    "collapsed": true
   },
   "right": {
     "id": "6edabe98d8d127d1",
@@ -171,11 +172,16 @@
   },
   "active": "6d38264d01b55efa",
   "lastOpenFiles": [
+    "board/Atividades/agora/integracao-grpc-psp.md",
+    "board/Atividades/concluidas/integracao-grpc-psp.md",
+    "board/Atividades/concluidas",
+    "KAFKA_MESSAGE_FLOW.md",
+    "board/Atividades/done",
+    "IMPROVEMENTS.md",
     "LOAD_TEST_KAFKA_INTEGRATION.md",
     "PIX_FLOW_LOGGING_GUIDE.md",
     "discovery/escopo_inicial.md",
     "discovery/aprendizado_inicial.md",
-    "board/Atividades/agora/integracao-grpc-psp.md",
     "requests/demo.http",
     "requests",
     "collection/environments/local.yml",
@@ -185,8 +191,6 @@
     "collection/05 Execute transfer.yml",
     "collection/04 Preview transfer.yml",
     "collection/03 Create receiver PIX key.yml",
-    "collection/02 Create receiver customer.yml",
-    "collection/opencollection.yml",
     "board/Atividades/reduzir-consumo-cpu-spi.md",
     "board/Atividades/Atividades.md",
     "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
@@ -204,10 +208,7 @@
     "Programming/Projects/Completed (kindaof)/AI Support/Tasks specifications.md",
     "Programming/Projects/Completed (kindaof)/AI Support/Project idea.md",
     "Roteiro de palestra.md",
-    "Roteiro de palestra 2.0.md",
     "MK/image.png",
-    "MK/Diagramas.md",
-    "MK/Anotações resumidas.md",
     "Imagens/Pasted image 20250227184342.png",
     "Imagens/Pasted image 20260103151227.png",
     "Imagens/Pasted image desktop.png",
