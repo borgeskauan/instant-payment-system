@@ -1,0 +1,29 @@
+info:
+  name: 04 Preview transfer
+  type: http
+  seq: 4
+
+http:
+  method: post
+  url: "{{senderPspUrl}}/transfer/preview"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "receiverPixKey": "{{receiverPixKey}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: bru.setVar("previewReceiverJson", JSON.stringify(res.body.receiver));
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

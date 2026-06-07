@@ -4,6 +4,12 @@ external:
   central-transfer:
     url: http://localhost:8001
 
+notification:
+  gateway:
+    host: ${NOTIFICATION_GATEWAY_HOST:localhost}
+    port: ${NOTIFICATION_GATEWAY_PORT:9090}
+    reconnect-delay: ${NOTIFICATION_GATEWAY_RECONNECT_DELAY:1s}
+
 spring:
   h2:
     console:
@@ -11,17 +17,6 @@ spring:
 
   jpa:
     defer-datasource-initialization: true
-
-  kafka:
-    bootstrap-servers: localhost:9092
-    consumer:
-      group-id: psp-notification-consumer-${BANK_CODE:default}
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      properties:
-        max.poll.records: 100
-        fetch.min.bytes: 1024
 
 bank:
   code: ${BANK_CODE}

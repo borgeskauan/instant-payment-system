@@ -1,0 +1,33 @@
+info:
+  name: 01 Create sender customer
+  type: http
+  seq: 1
+
+http:
+  method: post
+  url: "{{senderPspUrl}}/customers"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "name": "Alice",
+        "taxId": "11111111111"
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: senderPspUrl
+      value: http://localhost:8081
+  scripts:
+    - type: after-response
+      code: bru.setVar("senderCustomerId", res.body.customer.id);
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

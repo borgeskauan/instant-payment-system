@@ -1,0 +1,134 @@
+package br.kauan.paymentserviceprovider.adapter.input.grpc;
+
+import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
+import br.kauan.notificationgateway.grpc.proto.StreamRequest;
+import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
+import br.kauan.paymentserviceprovider.config.GlobalVariables;
+import io.grpc.ManagedChannel;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.stub.StreamObserver;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+
+class NotificationGatewayGrpcClientTest {
+
+    private io.grpc.Server server;
+    private ManagedChannel channel;
+    private ScheduledExecutorService executor;
+
+    @AfterEach
+    void tearDown() throws InterruptedException {
+        if (channel != null) {
+            channel.shutdownNow();
+        }
+        if (server != null) {
+            server.shutdownNow();
+            server.awaitTermination(1, TimeUnit.SECONDS);
+        }
+        if (executor != null) {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void subscribesWithBankCodeAndForwardsReceivedNotifications() throws Exception {
+        new GlobalVariables().setBankCode("12345678");
+        CountDownLatch subscribed = new CountDownLatch(1);
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicReference<String> subscribedIspb = new AtomicReference<>();
+        NotificationProcessor processor = mock(NotificationProcessor.class);
+        doAnswer(invocation -> {
+            processed.countDown();
+            return null;
+        }).when(processor).process(eq("12345678"), eq("{\"CdtTrfTxInf\":[]}"));
+
+        startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
+            @Override
+            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
+                subscribedIspb.set(request.getIspb());
+                subscribed.countDown();
+                responseObserver.onNext(Notification.newBuilder()
+                        .setIspb(request.getIspb())
+                        .setPayload("{\"CdtTrfTxInf\":[]}")
+                        .build());
+            }
+        });
+
+        NotificationGatewayGrpcClient client = new NotificationGatewayGrpcClient(
+                new NotificationGatewayProperties("unused", 0, Duration.ofMillis(10)),
+                processor,
+                channel,
+                executor
+        );
+
+        client.start();
+
+        assertThat(subscribed.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(processed.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(subscribedIspb.get()).isEqualTo("12345678");
+        verify(processor).process("12345678", "{\"CdtTrfTxInf\":[]}");
+    }
+
+    @Test
+    void reconnectsWhenStreamFails() throws Exception {
+        new GlobalVariables().setBankCode("12345678");
+        CountDownLatch secondSubscription = new CountDownLatch(1);
+        AtomicInteger subscriptions = new AtomicInteger();
+
+        startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
+            @Override
+            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
+                int current = subscriptions.incrementAndGet();
+                if (current == 2) {
+                    secondSubscription.countDown();
+                }
+                responseObserver.onError(new RuntimeException("boom"));
+            }
+        });
+
+        NotificationGatewayGrpcClient client = new NotificationGatewayGrpcClient(
+                new NotificationGatewayProperties("unused", 0, Duration.ofMillis(10)),
+                mock(NotificationProcessor.class),
+                channel,
+                executor
+        );
+
+        client.start();
+
+        assertThat(secondSubscription.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(subscriptions.get()).isGreaterThanOrEqualTo(2);
+    }
+
+    private void startServer(NotificationGatewayGrpc.NotificationGatewayImplBase service) throws IOException {
+        String serverName = "notification-gateway-test-" + UUID.randomUUID();
+        executor = Executors.newSingleThreadScheduledExecutor();
+        server = InProcessServerBuilder
+                .forName(serverName)
+                .directExecutor()
+                .addService(service)
+                .build()
+                .start();
+        channel = InProcessChannelBuilder
+                .forName(serverName)
+                .directExecutor()
+                .build();
+    }
+}

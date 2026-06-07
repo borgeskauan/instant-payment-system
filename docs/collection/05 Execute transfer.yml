@@ -1,0 +1,27 @@
+info:
+  name: 05 Execute transfer
+  type: http
+  seq: 5
+
+http:
+  method: post
+  url: "{{senderPspUrl}}/transfer/execute"
+  headers:
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "senderCustomerId": "{{senderCustomerId}}",
+        "receiver": {{previewReceiverJson}},
+        "amount": 25.50,
+        "description": "Bruno transfer flow test"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: false
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

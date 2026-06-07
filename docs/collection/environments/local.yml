@@ -1,0 +1,8 @@
+name: local
+variables:
+  - name: senderPspUrl
+    value: http://localhost:8081
+  - name: receiverPspUrl
+    value: http://localhost:8082
+  - name: receiverPixKey
+    value: bob@example.com

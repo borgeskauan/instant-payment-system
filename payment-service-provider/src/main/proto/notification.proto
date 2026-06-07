@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option java_package = "br.kauan.notificationgateway.grpc.proto";
+option java_outer_classname = "NotificationProto";
+option java_multiple_files = true;
+
+package notification;
+
+service NotificationGateway {
+  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+}
+
+message StreamRequest {
+  string ispb = 1;
+}
+
+message Notification {
+  string ispb    = 1;
+  string payload = 2;
+}

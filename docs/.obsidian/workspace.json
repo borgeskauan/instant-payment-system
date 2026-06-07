@@ -4,26 +4,6 @@
     "type": "split",
     "children": [
       {
-        "id": "8c240b62ee575936",
-        "type": "tabs",
-        "children": [
-          {
-            "id": "f2bac1354622eca2",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "board/Atividades/reduzir-consumo-cpu-spi.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "reduzir-consumo-cpu-spi"
-            }
-          }
-        ]
-      },
-      {
         "id": "f98ca61c80eed63c",
         "type": "tabs",
         "children": [
@@ -191,17 +171,30 @@
   },
   "active": "6d38264d01b55efa",
   "lastOpenFiles": [
-    "board/Atividades/reduzir-consumo-cpu-spi.md",
+    "LOAD_TEST_KAFKA_INTEGRATION.md",
+    "PIX_FLOW_LOGGING_GUIDE.md",
+    "discovery/escopo_inicial.md",
+    "discovery/aprendizado_inicial.md",
     "board/Atividades/agora/integracao-grpc-psp.md",
+    "requests/demo.http",
+    "requests",
+    "collection/environments/local.yml",
+    "collection/environments",
+    "collection/01 Create sender customer.yml",
+    "collection/README.md",
+    "collection/05 Execute transfer.yml",
+    "collection/04 Preview transfer.yml",
+    "collection/03 Create receiver PIX key.yml",
+    "collection/02 Create receiver customer.yml",
+    "collection/opencollection.yml",
+    "board/Atividades/reduzir-consumo-cpu-spi.md",
     "board/Atividades/Atividades.md",
     "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
     "board/Atividades/agora/Agora.md",
-    "board/Atividades/agora",
     "board/Atividades/integracao-gprc-psp.md",
     "board/Agora.md",
     "board/Atividades/Agora.md",
     "board/Atividades.md",
-    "board/Atividades",
     "board/Backlog.md",
     "Programming/Pix/Anotações de aprendizado.md",
     "Programming/Pix/Documentação inicial.md",
@@ -215,28 +208,15 @@
     "MK/image.png",
     "MK/Diagramas.md",
     "MK/Anotações resumidas.md",
-    "MK/Criação de conta de usuário.md",
-    "MK/Operacional.md",
-    "MK/Visão geral da empresa.md",
-    "MK",
-    "Carrer/Mestrado.md",
-    "Carrer/Marketing pessoal.md",
     "Imagens/Pasted image 20250227184342.png",
     "Imagens/Pasted image 20260103151227.png",
     "Imagens/Pasted image desktop.png",
     "Pasted image 20260404230145.png",
     "Pasted image 20260404230018.png",
-    "Programming/Projects/Completed (kindaof)/AI Support",
     "Pasted image 20260305213424.png",
     "Imagens/Pasted image 20260103151227 1.png",
-    "Financeiro/Mom",
-    "Archived/Financiamento",
-    "Archived",
     "Imagens/Pasted image 20251116220838.png",
     "Imagens/Pasted image 20250901205444.png",
-    "Imagens",
-    "Financeiro",
-    "Carrer/cv-en.yaml",
     "Untitled.canvas"
   ]
 }
