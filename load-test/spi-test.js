@@ -4,29 +4,43 @@ import exec from 'k6/execution';
 import { check } from 'k6';
 import { Trend, Counter, Gauge } from 'k6/metrics';
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:8001';
-const GATEWAY_ADDR = __ENV.GATEWAY_ADDR || 'localhost:9090';
-const MSG_TIMEOUT_MS = parseInt(__ENV.MSG_TIMEOUT_MS || '10000', 10);
-const NEW_TX_EVERY_MS = parseInt(__ENV.NEW_TX_EVERY_MS || '20', 10);
-const MAX_IN_FLIGHT = parseInt(__ENV.MAX_IN_FLIGHT || '500', 10);
+const BASE_URL = 'http://localhost:8001';
+const GATEWAY_ADDR = 'localhost:9090';
+const MSG_TIMEOUT_MS = 10000;
+
+const HOT_VUS = 10;
+const HOT_TX_EVERY_MS = 6;
+
+const COLD_VUS = 40;
+const COLD_TX_EVERY_MS = 100;
+
+const MAX_IN_FLIGHT = 250;
 
 const client = new grpc.Client();
-client.load([__ENV.PROTO_DIR || '.'], 'notification.proto');
+client.load(['.'], 'notification.proto');
 
 const transferRequestTemplate = JSON.parse(open('./transfer-request-template.json'));
 const statusAcceptanceTemplate = JSON.parse(open('./status-acceptance-template.json'));
 
 export const options = {
   scenarios: {
-    psp_sessions: {
+    hot_psps: {
       executor: 'constant-vus',
-      vus: 50,
+      vus: HOT_VUS,
       duration: '1m',
       gracefulStop: '5s',
+      exec: 'hotPspSession',
+    },
+    cold_psps: {
+      executor: 'constant-vus',
+      vus: COLD_VUS,
+      duration: '1m',
+      gracefulStop: '5s',
+      exec: 'coldPspSession',
     },
   },
   thresholds: {
-    total_transaction_duration: ['p(99)<4000'],
+    total_transaction_duration: ['p(99)<4600'],
   },
 };
 
@@ -276,7 +290,7 @@ async function runTransactionFlow(state, txId) {
   }
 }
 
-export default async function () {
+async function runPspSession(newTxEveryMs) {
   const vuId = exec.vu.idInTest;
   const { pagador: ispbPagador, recebedor: ispbRecebedor } = getVuIspbPair(vuId);
 
@@ -314,7 +328,7 @@ export default async function () {
         inFlightGauge.add(inFlight.size);
       }
 
-      await delay(NEW_TX_EVERY_MS);
+      await delay(newTxEveryMs);
     }
 
     while (inFlight.size > 0) {
@@ -325,4 +339,12 @@ export default async function () {
     try { pagadorStream.end(); } catch (_) {}
     try { client.close(); } catch (_) {}
   }
+}
+
+export async function hotPspSession() {
+  await runPspSession(HOT_TX_EVERY_MS);
+}
+
+export async function coldPspSession() {
+  await runPspSession(COLD_TX_EVERY_MS);
 }

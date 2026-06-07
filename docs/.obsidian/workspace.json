@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
+                "file": "discovery/escopo_inicial.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "reduzir-consumo-cpu-spi"
+              "title": "escopo_inicial"
             }
           }
         ]
@@ -171,6 +171,7 @@
   },
   "active": "f2bac1354622eca2",
   "lastOpenFiles": [
+    "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
     "Programming/Pix/Documentação inicial.md",
     "Programming/Pix/Anotações de aprendizado.md",
     "Programming/Projects/Completed (kindaof)/AI Support/UI prompt.md",
@@ -203,7 +204,6 @@
     "README-support-knowledge-copilot(1).md",
     "support-knowledge-copilot-spec.md",
     "Untitled 1.md",
-    "Financeiro/Metas.md",
     "Programming/Projects/Completed (kindaof)/AI Support",
     "Pasted image 20260305213424.png",
     "Imagens/Pasted image 20260103151227 1.png",
