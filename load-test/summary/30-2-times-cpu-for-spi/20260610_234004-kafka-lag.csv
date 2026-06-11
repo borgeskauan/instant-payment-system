@@ -1,0 +1,17 @@
+timestamp,group,topic,partition,current_offset,log_end_offset,lag
+2026-06-10T23:40:04-03:00,spi-consumer-group,high-load-binary-topic,0,327117,327603,486
+2026-06-10T23:40:04-03:00,notification-gateway-group,notifications-topic,0,451810,452034,224
+2026-06-10T23:40:18-03:00,spi-consumer-group,high-load-binary-topic,0,338568,344122,5554
+2026-06-10T23:40:18-03:00,notification-gateway-group,notifications-topic,0,470715,470870,155
+2026-06-10T23:40:41-03:00,spi-consumer-group,high-load-binary-topic,0,351742,357910,6168
+2026-06-10T23:40:41-03:00,notification-gateway-group,notifications-topic,0,489944,490105,161
+2026-06-10T23:41:02-03:00,spi-consumer-group,high-load-binary-topic,0,363621,367243,3622
+2026-06-10T23:41:02-03:00,notification-gateway-group,notifications-topic,0,504040,504040,0
+2026-06-10T23:41:21-03:00,spi-consumer-group,high-load-binary-topic,0,367243,367243,0
+2026-06-10T23:41:21-03:00,notification-gateway-group,notifications-topic,0,504040,504040,0
+2026-06-10T23:41:30-03:00,spi-consumer-group,high-load-binary-topic,0,367243,367243,0
+2026-06-10T23:41:30-03:00,notification-gateway-group,notifications-topic,0,504040,504040,0
+2026-06-10T23:41:38-03:00,spi-consumer-group,high-load-binary-topic,0,367243,367243,0
+2026-06-10T23:41:38-03:00,notification-gateway-group,notifications-topic,0,504040,504040,0
+2026-06-10T23:41:44-03:00,spi-consumer-group,high-load-binary-topic,0,367243,367243,0
+2026-06-10T23:41:44-03:00,notification-gateway-group,notifications-topic,0,504040,504040,0
