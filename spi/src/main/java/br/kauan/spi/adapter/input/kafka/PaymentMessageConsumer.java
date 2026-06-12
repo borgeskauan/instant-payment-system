@@ -7,6 +7,7 @@ import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer
 import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -43,20 +44,18 @@ public class PaymentMessageConsumer {
     public void consumeMessage(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
-            
-            // Deserialize the payload to determine message type
-            String jsonString = new String(payload);
-            var jsonNode = objectMapper.readTree(jsonString);
-            
+
+            var jsonNode = objectMapper.readTree(payload);
+
             // Determine message type and process accordingly
             if (jsonNode.has("TxInfAndSts")) {
                 // This is a status report (pacs.002)
                 log.debug("Detected status report (pacs.002) message");
-                processStatusReport(jsonString);
+                processStatusReport(jsonNode);
             } else if (jsonNode.has("CdtTrfTxInf")) {
                 // This is a payment transaction (pacs.008)
                 log.debug("Detected payment transaction (pacs.008) message");
-                processPaymentTransaction(jsonString);
+                processPaymentTransaction(jsonNode);
             } else {
                 log.warn("Unknown message type received from Kafka. JSON keys: {}", jsonNode.fieldNames());
             }
@@ -67,10 +66,10 @@ public class PaymentMessageConsumer {
         }
     }
 
-    private void processPaymentTransaction(String jsonString) {
+    private void processPaymentTransaction(JsonNode jsonNode) {
         try {
-            FIToFICustomerCreditTransfer request = objectMapper.readValue(
-                    jsonString, 
+            FIToFICustomerCreditTransfer request = objectMapper.treeToValue(
+                    jsonNode,
                     FIToFICustomerCreditTransfer.class
             );
             
@@ -88,10 +87,10 @@ public class PaymentMessageConsumer {
         }
     }
 
-    private void processStatusReport(String jsonString) {
+    private void processStatusReport(JsonNode jsonNode) {
         try {
-            FIToFIPaymentStatusReport statusReport = objectMapper.readValue(
-                    jsonString, 
+            FIToFIPaymentStatusReport statusReport = objectMapper.treeToValue(
+                    jsonNode,
                     FIToFIPaymentStatusReport.class
             );
             
