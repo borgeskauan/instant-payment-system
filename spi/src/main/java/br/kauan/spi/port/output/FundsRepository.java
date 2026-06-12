@@ -3,7 +3,7 @@ package br.kauan.spi.port.output;
 import java.math.BigDecimal;
 
 public interface FundsRepository {
-    BigDecimal createAccountIfNotExists(String bankCode, BigDecimal amount);
+    BigDecimal ensureAccountExistsAndGetBalance(String bankCode, BigDecimal initialBalance);
 
     BigDecimal getAvailableFunds(String bankCode);
 

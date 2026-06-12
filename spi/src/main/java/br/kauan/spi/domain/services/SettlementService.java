@@ -29,9 +29,9 @@ public class SettlementService {
         var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
         var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
 
-        createAccountsIfNotExists(senderBankCode, receiverBankCode);
+        var senderAvailableFunds = fundsRepository.ensureAccountExistsAndGetBalance(senderBankCode, defaultInitialBalance);
+        fundsRepository.ensureAccountExistsAndGetBalance(receiverBankCode, defaultInitialBalance);
 
-        var senderAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
         if (senderAvailableFunds.compareTo(amount) < 0) {
             throw new IllegalStateException("Insufficient funds for settlement");
         }
@@ -41,10 +41,5 @@ public class SettlementService {
 
         log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}", 
                 amount, senderBankCode, receiverBankCode);
-    }
-
-    private void createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {
-        fundsRepository.createAccountIfNotExists(senderBankCode, defaultInitialBalance);
-        fundsRepository.createAccountIfNotExists(receiverBankCode, defaultInitialBalance);
     }
 }

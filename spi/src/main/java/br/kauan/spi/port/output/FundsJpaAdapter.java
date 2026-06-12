@@ -16,7 +16,7 @@ public class FundsJpaAdapter implements FundsRepository {
     }
 
     @Override
-    public BigDecimal createAccountIfNotExists(String bankCode, BigDecimal amount) {
+    public BigDecimal ensureAccountExistsAndGetBalance(String bankCode, BigDecimal initialBalance) {
         var ops = fundsJpaClient.findById(bankCode);
         if (ops.isPresent()) {
             return ops.get().getBalance();
@@ -24,7 +24,7 @@ public class FundsJpaAdapter implements FundsRepository {
 
         var newEntity = new FundsEntity();
         newEntity.setBankCode(bankCode);
-        newEntity.setBalance(amount);
+        newEntity.setBalance(initialBalance);
 
         try {
             fundsJpaClient.save(newEntity);
@@ -38,7 +38,7 @@ public class FundsJpaAdapter implements FundsRepository {
 
     @Override
     public BigDecimal getAvailableFunds(String bankCode) {
-        return createAccountIfNotExists(bankCode, BigDecimal.ZERO);
+        return ensureAccountExistsAndGetBalance(bankCode, BigDecimal.ZERO);
     }
 
     @Override
