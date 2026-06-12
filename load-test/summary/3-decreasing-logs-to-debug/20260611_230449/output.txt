@@ -1,0 +1,38 @@
+
+         /\      Grafana   /‾‾/
+    /\  /  \     |\  __   /  /
+   /  \/    \    | |/ /  /   ‾‾\
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/
+
+     execution: local
+        script: spi-test.js
+        output: -
+
+     scenarios: (100.00%) 2 scenarios, 50 max VUs, 2m0s max duration (incl. graceful stop):
+              * cold_psps: 40 looping VUs for 1m0s (exec: coldPspSession, gracefulStop: 1m0s)
+              * hot_psps: 10 looping VUs for 1m0s (exec: hotPspSession, gracefulStop: 1m0s)
+
+PIX LOAD SUMMARY
+active duration: 60s
+transactions started: 24334
+active tx start rate: 405.57 tx/s
+HTTP requests: 25126
+active HTTP request rate: 418.77 req/s
+
+transactions succeeded: 38
+transactions missed SLA: 24296
+transactions late: 24296
+transactions never arrived: 0
+notification timeouts: 23542
+confirmation timeouts: 754
+late pacs.008 notifications: 23542
+late pacs.002 confirmations: 754
+
+total transaction duration p50: 13.04s
+total transaction duration p95: 19.74s
+total transaction duration p99: n/a
+threshold target: p99 < 4.60s
+
+ERRO[0099] thresholds on metrics 'total_transaction_duration' have been crossed
+

@@ -32,7 +32,7 @@ public class PaymentMessageConsumer {
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
         this.objectMapper = new ObjectMapper();
-        log.info("PaymentMessageConsumer initialized - ready to consume from topic '{}'", PAYMENT_REQUESTS_TOPIC);
+        log.debug("PaymentMessageConsumer initialized - ready to consume from topic '{}'", PAYMENT_REQUESTS_TOPIC);
     }
 
     @KafkaListener(
@@ -42,7 +42,7 @@ public class PaymentMessageConsumer {
     )
     public void consumeMessage(byte[] payload) {
         try {
-            log.info("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
+            log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
             
             // Deserialize the payload to determine message type
             String jsonString = new String(payload);
@@ -51,11 +51,11 @@ public class PaymentMessageConsumer {
             // Determine message type and process accordingly
             if (jsonNode.has("TxInfAndSts")) {
                 // This is a status report (pacs.002)
-                log.info("Detected status report (pacs.002) message");
+                log.debug("Detected status report (pacs.002) message");
                 processStatusReport(jsonString);
             } else if (jsonNode.has("CdtTrfTxInf")) {
                 // This is a payment transaction (pacs.008)
-                log.info("Detected payment transaction (pacs.008) message");
+                log.debug("Detected payment transaction (pacs.008) message");
                 processPaymentTransaction(jsonString);
             } else {
                 log.warn("Unknown message type received from Kafka. JSON keys: {}", jsonNode.fieldNames());
@@ -77,7 +77,7 @@ public class PaymentMessageConsumer {
             PaymentBatch paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(request);
             String ispb = extractIspbFromTransaction(request);
             
-            log.info("Processing payment transaction batch for ISPB: {}, transactions: {}", 
+            log.debug("Processing payment transaction batch for ISPB: {}, transactions: {}", 
                     ispb, paymentBatch.getTransactions().size());
             
             paymentTransactionProcessorUseCase.processTransactionBatch(ispb, paymentBatch);
@@ -98,7 +98,7 @@ public class PaymentMessageConsumer {
             StatusBatch statusBatch = statusReportMapper.fromRegulatoryReport(statusReport);
             String ispb = extractIspbFromStatusReport(statusReport);
             
-            log.info("Processing status report batch for ISPB: {}, reports: {}", 
+            log.debug("Processing status report batch for ISPB: {}, reports: {}", 
                     ispb, statusBatch.getStatusReports().size());
             
             paymentTransactionProcessorUseCase.processStatusBatch(ispb, statusBatch);

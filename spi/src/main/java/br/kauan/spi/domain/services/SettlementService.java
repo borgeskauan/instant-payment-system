@@ -42,9 +42,9 @@ public class SettlementService {
         var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
         var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
 
-        log.info("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}", 
+        log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}", 
                 amount, senderBankCode, receiverBankCode);
-        log.info("[PIX FLOW - Step 6] Updated PI account balances - {}: {}, {}: {}", 
+        log.debug("[PIX FLOW - Step 6] Updated PI account balances - {}: {}, {}: {}", 
                 senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
     }
 

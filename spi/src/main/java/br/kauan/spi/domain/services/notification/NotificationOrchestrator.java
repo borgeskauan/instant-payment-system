@@ -33,7 +33,7 @@ public class NotificationOrchestrator {
             String receiverIspb = getBankCode(paymentTransaction.getReceiver());
             String senderIspb = getBankCode(paymentTransaction.getSender());
 
-            log.info("[PIX FLOW - Step 7] Building confirmation notifications for payment: {}", 
+            log.debug("[PIX FLOW - Step 7] Building confirmation notifications for payment: {}", 
                     paymentTransaction.getPaymentId());
             log.debug("[PIX FLOW - Step 7] Receiver ISPB: {}, Sender ISPB: {}", receiverIspb, senderIspb);
 
@@ -43,10 +43,10 @@ public class NotificationOrchestrator {
                     paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
 
             notificationStorage.addStatusNotification(receiverIspb, receiverNotification);
-            log.info("[PIX FLOW - Step 7] Confirmation notification sent to PSP Recebedor ({})", receiverIspb);
+            log.debug("[PIX FLOW - Step 7] Confirmation notification sent to PSP Recebedor ({})", receiverIspb);
             
             notificationStorage.addStatusNotification(senderIspb, senderNotification);
-            log.info("[PIX FLOW - Step 7] Confirmation notification sent to PSP Pagador ({})", senderIspb);
+            log.debug("[PIX FLOW - Step 7] Confirmation notification sent to PSP Pagador ({})", senderIspb);
 
         } catch (Exception e) {
             log.error("[PIX FLOW - Error] Failed to send confirmation notification for payment: {}", 
@@ -77,7 +77,7 @@ public class NotificationOrchestrator {
             validator.validateIspb(ispb);
             validator.validatePaymentTransaction(paymentTransaction);
 
-            log.info("[PIX FLOW - Step 4] Sending acceptance request (PACS.008) to PSP Recebedor. ISPB: {}, Payment ID: {}",
+            log.debug("[PIX FLOW - Step 4] Sending acceptance request (PACS.008) to PSP Recebedor. ISPB: {}, Payment ID: {}",
                     ispb, paymentTransaction.getPaymentId());
             notificationStorage.addTransactionNotification(ispb, paymentTransaction);
             log.debug("[PIX FLOW - Step 4] Acceptance request queued for delivery via Kafka");
