@@ -39,13 +39,8 @@ public class SettlementService {
         fundsRepository.deductFunds(senderBankCode, amount);
         fundsRepository.addFunds(receiverBankCode, amount);
 
-        var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-        var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
-
         log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}", 
                 amount, senderBankCode, receiverBankCode);
-        log.debug("[PIX FLOW - Step 6] Updated PI account balances - {}: {}, {}: {}", 
-                senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
     }
 
     private void createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {

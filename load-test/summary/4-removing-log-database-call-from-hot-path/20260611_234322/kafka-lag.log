@@ -1,0 +1,2 @@
+Sampling Kafka lag every 2s into summary/4-removing-log-database-call-from-hot-path/20260611_234322/kafka-lag.csv
+Groups: spi-consumer-group notification-gateway-group
