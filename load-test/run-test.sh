@@ -6,22 +6,34 @@ set -euo pipefail
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly SUMMARY_DIR="summary"
 readonly KAFKA_LAG_SAMPLE_INTERVAL_SECONDS=2
+readonly SYSTEM_STATS_SAMPLE_INTERVAL_SECONDS=5
+readonly SYSTEM_STATS_PRE_TEST_SECONDS=10
+readonly PROCESS_STATS_SAMPLE_INTERVAL_SECONDS=5
+readonly PROCESS_STATS_TOP_N=20
 
 # Global variables
 TARGET_FOLDER=""
 KAFKA_LAG_SAMPLER_PID=""
+SYSTEM_STATS_SAMPLER_PID=""
+PROCESS_STATS_SAMPLER_PID=""
 ENABLE_KAFKA_LAG_SAMPLING=true
+ENABLE_SYSTEM_STATS_SAMPLING=true
+ENABLE_PROCESS_STATS_SAMPLING=true
 ENABLE_FUNDS_PROVISIONING=true
 RUN_TAG=""
 
 # Function to display usage information
 usage() {
-    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] [--system-stats|--no-system-stats] [--process-stats|--no-process-stats] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "  run-tag: Identifier for the test run"
     echo
     echo "Options:"
     echo "  --kafka-lag           Enable Kafka lag sampling (default)"
     echo "  --no-kafka-lag        Disable Kafka lag sampling"
+    echo "  --system-stats        Enable host/container stats sampling (default)"
+    echo "  --no-system-stats     Disable host/container stats sampling"
+    echo "  --process-stats       Enable top host process stats sampling (default)"
+    echo "  --no-process-stats    Disable top host process stats sampling"
     echo "  --provision-funds     Provision deterministic load-test funds before running k6 (default)"
     echo "  --no-provision-funds  Disable funds provisioning"
 }
@@ -40,6 +52,26 @@ stop_kafka_lag_sampler() {
     fi
 
     KAFKA_LAG_SAMPLER_PID=""
+}
+
+# Function to stop the system stats sampler if it is running
+stop_system_stats_sampler() {
+    if [[ -n "$SYSTEM_STATS_SAMPLER_PID" ]] && kill -0 "$SYSTEM_STATS_SAMPLER_PID" 2>/dev/null; then
+        kill "$SYSTEM_STATS_SAMPLER_PID" 2>/dev/null || true
+        wait "$SYSTEM_STATS_SAMPLER_PID" 2>/dev/null || true
+    fi
+
+    SYSTEM_STATS_SAMPLER_PID=""
+}
+
+# Function to stop the process stats sampler if it is running
+stop_process_stats_sampler() {
+    if [[ -n "$PROCESS_STATS_SAMPLER_PID" ]] && kill -0 "$PROCESS_STATS_SAMPLER_PID" 2>/dev/null; then
+        kill "$PROCESS_STATS_SAMPLER_PID" 2>/dev/null || true
+        wait "$PROCESS_STATS_SAMPLER_PID" 2>/dev/null || true
+    fi
+
+    PROCESS_STATS_SAMPLER_PID=""
 }
 
 # Function to turn the pseudo-terminal capture into readable text
@@ -79,6 +111,22 @@ parse_args() {
                 ;;
             --no-kafka-lag)
                 ENABLE_KAFKA_LAG_SAMPLING=false
+                shift
+                ;;
+            --system-stats)
+                ENABLE_SYSTEM_STATS_SAMPLING=true
+                shift
+                ;;
+            --no-system-stats)
+                ENABLE_SYSTEM_STATS_SAMPLING=false
+                shift
+                ;;
+            --process-stats)
+                ENABLE_PROCESS_STATS_SAMPLING=true
+                shift
+                ;;
+            --no-process-stats)
+                ENABLE_PROCESS_STATS_SAMPLING=false
                 shift
                 ;;
             --provision-funds)
@@ -179,6 +227,10 @@ run_k6_test() {
     local raw_console_output_file="$run_folder/.output.raw.txt"
     local kafka_lag_file="$run_folder/kafka-lag.csv"
     local kafka_lag_log_file="$run_folder/kafka-lag.log"
+    local system_stats_file="$run_folder/system-stats.csv"
+    local system_stats_log_file="$run_folder/system-stats.log"
+    local process_stats_file="$run_folder/process-stats.csv"
+    local process_stats_log_file="$run_folder/process-stats.log"
     local funds_provisioning_log_file="$run_folder/provision-funds.log"
     local k6_command=""
     local k6_exit_code=0
@@ -217,6 +269,44 @@ run_k6_test() {
         echo "Kafka lag sampler disabled."
     fi
 
+    if [[ "$ENABLE_SYSTEM_STATS_SAMPLING" == true ]]; then
+        echo "Starting system stats sampler..."
+        ./sample-system-stats.sh "$SYSTEM_STATS_SAMPLE_INTERVAL_SECONDS" "" "$system_stats_file" > "$system_stats_log_file" 2>&1 &
+        SYSTEM_STATS_SAMPLER_PID=$!
+        sleep 1
+
+        if ! kill -0 "$SYSTEM_STATS_SAMPLER_PID" 2>/dev/null; then
+            echo "System stats sampler failed to start. Log output:" >&2
+            cat "$system_stats_log_file" >&2
+            SYSTEM_STATS_SAMPLER_PID=""
+            error_exit "System stats sampler failed"
+        fi
+
+    else
+        echo "System stats sampler disabled."
+    fi
+
+    if [[ "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
+        echo "Starting process stats sampler..."
+        ./sample-process-stats.sh "$PROCESS_STATS_SAMPLE_INTERVAL_SECONDS" "" "$process_stats_file" "$PROCESS_STATS_TOP_N" > "$process_stats_log_file" 2>&1 &
+        PROCESS_STATS_SAMPLER_PID=$!
+        sleep 1
+
+        if ! kill -0 "$PROCESS_STATS_SAMPLER_PID" 2>/dev/null; then
+            echo "Process stats sampler failed to start. Log output:" >&2
+            cat "$process_stats_log_file" >&2
+            PROCESS_STATS_SAMPLER_PID=""
+            error_exit "Process stats sampler failed"
+        fi
+    else
+        echo "Process stats sampler disabled."
+    fi
+
+    if [[ "$ENABLE_SYSTEM_STATS_SAMPLING" == true || "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
+        echo "Collecting ${SYSTEM_STATS_PRE_TEST_SECONDS}s of pre-test host stats..."
+        sleep "$SYSTEM_STATS_PRE_TEST_SECONDS"
+    fi
+
     echo "Starting k6 test..."
     printf -v k6_command 'k6 run --summary-export=%q spi-test.js' "$output_file"
     if script -q -e -c "$k6_command" "$raw_console_output_file"; then
@@ -230,18 +320,34 @@ run_k6_test() {
 
     if [[ "$k6_exit_code" -ne 0 ]]; then
         stop_kafka_lag_sampler
+        stop_system_stats_sampler
+        stop_process_stats_sampler
         if [[ "$ENABLE_KAFKA_LAG_SAMPLING" == true ]]; then
             echo "Kafka lag samples saved to: $kafka_lag_file"
+        fi
+        if [[ "$ENABLE_SYSTEM_STATS_SAMPLING" == true ]]; then
+            echo "System stats samples saved to: $system_stats_file"
+        fi
+        if [[ "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
+            echo "Process stats samples saved to: $process_stats_file"
         fi
         echo "Console output saved to: $console_output_file"
         error_exit "k6 test execution failed"
     fi
 
     stop_kafka_lag_sampler
+    stop_system_stats_sampler
+    stop_process_stats_sampler
     echo "Test completed successfully. Results saved to: $output_file"
     echo "Console output saved to: $console_output_file"
     if [[ "$ENABLE_KAFKA_LAG_SAMPLING" == true ]]; then
         echo "Kafka lag samples saved to: $kafka_lag_file"
+    fi
+    if [[ "$ENABLE_SYSTEM_STATS_SAMPLING" == true ]]; then
+        echo "System stats samples saved to: $system_stats_file"
+    fi
+    if [[ "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
+        echo "Process stats samples saved to: $process_stats_file"
     fi
 }
 
@@ -297,7 +403,7 @@ main() {
     check_k6_version
     check_required_commands
     setup_target_folder "$RUN_TAG"
-    trap stop_kafka_lag_sampler EXIT
+    trap 'stop_kafka_lag_sampler; stop_system_stats_sampler; stop_process_stats_sampler' EXIT
     run_k6_test
 }
 

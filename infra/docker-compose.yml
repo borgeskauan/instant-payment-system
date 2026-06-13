@@ -10,7 +10,7 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: postgres
-    cpus: 0.75
+    cpus: 0.25
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m
@@ -25,10 +25,10 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
-    cpus: 1.00
-    mem_limit: 768m
-    mem_reservation: 512m
-    memswap_limit: 768m
+    cpus: 0.75
+    mem_limit: 1024m
+    mem_reservation: 768m
+    memswap_limit: 1024m
     <<: *low-resource
     ports:
       - "9092:29092"
@@ -51,6 +51,8 @@ services:
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    profiles:
+      - ui
     ports:
       - "8090:8080"
     environment:
@@ -65,7 +67,7 @@ services:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
-    cpus: 1.00
+    cpus: 0.35
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m
@@ -86,7 +88,7 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
-    cpus: 1.00
+    cpus: 0.75
     mem_limit: 768m
     memswap_limit: 768m
     mem_swappiness: 0
@@ -104,7 +106,7 @@ services:
       context: ../kafka-producer
       dockerfile: Dockerfile
     container_name: kafka-producer
-    cpus: 1.00
+    cpus: 0.55
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m
