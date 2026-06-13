@@ -1,7 +1,7 @@
 info:
   name: 02 Create receiver customer
   type: http
-  seq: 2
+  seq: 1
 
 http:
   method: post
@@ -21,8 +21,7 @@ http:
 runtime:
   scripts:
     - type: after-response
-      code: |-
-        bru.setVar("receiverCustomerId", res.body.customer.id);
+      code: bru.setVar("receiverCustomerId", res.body.customer.id);
 
 settings:
   encodeUrl: false

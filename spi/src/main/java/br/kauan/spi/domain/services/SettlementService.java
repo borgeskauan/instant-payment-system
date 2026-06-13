@@ -5,17 +5,11 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.FundsRepository;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
-import java.math.BigDecimal;
 
 @Slf4j
 @Service
 public class SettlementService {
-
-    @Value("${spi.default-initial-balance}")
-    private BigDecimal defaultInitialBalance;
 
     private final FundsRepository fundsRepository;
 
@@ -28,13 +22,6 @@ public class SettlementService {
         var amount = paymentTransaction.getAmount();
         var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
         var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
-
-        var senderAvailableFunds = fundsRepository.ensureAccountExistsAndGetBalance(senderBankCode, defaultInitialBalance);
-        fundsRepository.ensureAccountExistsAndGetBalance(receiverBankCode, defaultInitialBalance);
-
-        if (senderAvailableFunds.compareTo(amount) < 0) {
-            throw new IllegalStateException("Insufficient funds for settlement");
-        }
 
         fundsRepository.deductFunds(senderBankCode, amount);
         fundsRepository.addFunds(receiverBankCode, amount);

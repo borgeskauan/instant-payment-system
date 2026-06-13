@@ -1,11 +1,11 @@
 info:
-  name: 05 Execute transfer
+  name: 03 Create receiver PIX key
   type: http
-  seq: 5
+  seq: 1
 
 http:
   method: post
-  url: "{{senderPspUrl}}/transfer/execute"
+  url: "{{receiverPspUrl}}/customers/{{receiverCustomerId}}/pix-keys"
   headers:
     - name: Content-Type
       value: application/json
@@ -13,10 +13,7 @@ http:
     type: json
     data: |-
       {
-        "senderCustomerId": "{{senderCustomerId}}",
-        "receiver": {{previewReceiverJson}},
-        "amount": 25.50,
-        "description": "Bruno transfer flow test"
+        "pixKey": "{{receiverPixKey}}"
       }
   auth: inherit
 

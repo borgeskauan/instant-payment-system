@@ -6,36 +6,27 @@ import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.FundsRepository;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class SettlementServiceTest {
 
     @Test
-    void makeSettlementUsesSenderBalanceReturnedWhenEnsuringAccountExists() {
+    void makeSettlementOnlyDebitsAndCreditsProvisionedAccounts() {
         FundsRepository fundsRepository = mock(FundsRepository.class);
         SettlementService settlementService = new SettlementService(fundsRepository);
-        ReflectionTestUtils.setField(settlementService, "defaultInitialBalance", BigDecimal.valueOf(1_000_000));
 
         PaymentTransaction paymentTransaction = paymentTransaction();
-        when(fundsRepository.ensureAccountExistsAndGetBalance("11111111", BigDecimal.valueOf(1_000_000)))
-                .thenReturn(BigDecimal.valueOf(1_000));
-        when(fundsRepository.getAvailableFunds("11111111")).thenReturn(BigDecimal.valueOf(1_000));
 
         settlementService.makeSettlement(paymentTransaction);
 
-        verify(fundsRepository).ensureAccountExistsAndGetBalance("11111111", BigDecimal.valueOf(1_000_000));
-        verify(fundsRepository).ensureAccountExistsAndGetBalance("22222222", BigDecimal.valueOf(1_000_000));
-        verify(fundsRepository, never()).getAvailableFunds("11111111");
-        verify(fundsRepository, never()).getAvailableFunds("22222222");
         verify(fundsRepository).deductFunds("11111111", BigDecimal.TEN);
         verify(fundsRepository).addFunds("22222222", BigDecimal.TEN);
+        verifyNoMoreInteractions(fundsRepository);
     }
 
     private static PaymentTransaction paymentTransaction() {

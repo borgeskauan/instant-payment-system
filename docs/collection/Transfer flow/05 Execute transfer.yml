@@ -1,11 +1,11 @@
 info:
-  name: 04 Preview transfer
+  name: 05 Execute transfer
   type: http
-  seq: 4
+  seq: 1
 
 http:
   method: post
-  url: "{{senderPspUrl}}/transfer/preview"
+  url: "{{senderPspUrl}}/transfer/execute"
   headers:
     - name: Content-Type
       value: application/json
@@ -13,14 +13,12 @@ http:
     type: json
     data: |-
       {
-        "receiverPixKey": "{{receiverPixKey}}"
+        "senderCustomerId": "{{senderCustomerId}}",
+        "receiver": {{previewReceiverJson}},
+        "amount": 25.50,
+        "description": "Bruno transfer flow test"
       }
   auth: inherit
-
-runtime:
-  scripts:
-    - type: after-response
-      code: bru.setVar("previewReceiverJson", JSON.stringify(res.body.receiver));
 
 settings:
   encodeUrl: false

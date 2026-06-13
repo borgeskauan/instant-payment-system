@@ -9,7 +9,7 @@ x-low-resource: &low-resource
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: my-postgres
+    container_name: postgres
     cpus: 0.75
     mem_limit: 384m
     mem_reservation: 256m

@@ -11,16 +11,19 @@ readonly KAFKA_LAG_SAMPLE_INTERVAL_SECONDS=2
 TARGET_FOLDER=""
 KAFKA_LAG_SAMPLER_PID=""
 ENABLE_KAFKA_LAG_SAMPLING=true
+ENABLE_FUNDS_PROVISIONING=true
 RUN_TAG=""
 
 # Function to display usage information
 usage() {
-    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] <run-tag>"
+    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "  run-tag: Identifier for the test run"
     echo
     echo "Options:"
-    echo "  --kafka-lag      Enable Kafka lag sampling (default)"
-    echo "  --no-kafka-lag   Disable Kafka lag sampling"
+    echo "  --kafka-lag           Enable Kafka lag sampling (default)"
+    echo "  --no-kafka-lag        Disable Kafka lag sampling"
+    echo "  --provision-funds     Provision deterministic load-test funds before running k6 (default)"
+    echo "  --no-provision-funds  Disable funds provisioning"
 }
 
 # Function to display error messages and exit
@@ -76,6 +79,14 @@ parse_args() {
                 ;;
             --no-kafka-lag)
                 ENABLE_KAFKA_LAG_SAMPLING=false
+                shift
+                ;;
+            --provision-funds)
+                ENABLE_FUNDS_PROVISIONING=true
+                shift
+                ;;
+            --no-provision-funds)
+                ENABLE_FUNDS_PROVISIONING=false
                 shift
                 ;;
             -h|--help)
@@ -168,6 +179,7 @@ run_k6_test() {
     local raw_console_output_file="$run_folder/.output.raw.txt"
     local kafka_lag_file="$run_folder/kafka-lag.csv"
     local kafka_lag_log_file="$run_folder/kafka-lag.log"
+    local funds_provisioning_log_file="$run_folder/provision-funds.log"
     local k6_command=""
     local k6_exit_code=0
 
@@ -176,6 +188,18 @@ run_k6_test() {
     fi
 
     echo "Run artifacts folder: $run_folder"
+
+    if [[ "$ENABLE_FUNDS_PROVISIONING" == true ]]; then
+        echo "Provisioning load-test settlement accounts..."
+        if ! ./provision-funds.sh > "$funds_provisioning_log_file" 2>&1; then
+            echo "Funds provisioning failed. Log output:" >&2
+            cat "$funds_provisioning_log_file" >&2
+            error_exit "Funds provisioning failed"
+        fi
+        echo "Funds provisioning log saved to: $funds_provisioning_log_file"
+    else
+        echo "Funds provisioning disabled."
+    fi
 
     if [[ "$ENABLE_KAFKA_LAG_SAMPLING" == true ]]; then
         echo "Starting Kafka lag sampler..."

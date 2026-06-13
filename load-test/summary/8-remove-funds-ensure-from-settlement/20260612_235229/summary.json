@@ -1,0 +1,224 @@
+{
+    "root_group": {
+        "checks": {
+            "transfer request accepted by SPI": {
+                "name": "transfer request accepted by SPI",
+                "path": "::transfer request accepted by SPI",
+                "id": "419a96930eb7943bf5023905eacd3aa6",
+                "passes": 28201,
+                "fails": 0
+            },
+            "pacs.008 notification received by recebedor": {
+                "passes": 28201,
+                "fails": 0,
+                "name": "pacs.008 notification received by recebedor",
+                "path": "::pacs.008 notification received by recebedor",
+                "id": "93435e0f0af7a25ea42491fbb759fdea"
+            },
+            "status report accepted by SPI": {
+                "name": "status report accepted by SPI",
+                "path": "::status report accepted by SPI",
+                "id": "b2cc99870d55467dc3b3f287d32c1531",
+                "passes": 28201,
+                "fails": 0
+            },
+            "pacs.002 confirmation received by pagador": {
+                "name": "pacs.002 confirmation received by pagador",
+                "path": "::pacs.002 confirmation received by pagador",
+                "id": "76c74b03eb4032f43e40bf459d63e6fe",
+                "passes": 28201,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {}
+    },
+    "metrics": {
+        "http_reqs": {
+            "count": 56402,
+            "rate": 626.0640839380802
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 112804,
+            "value": 1
+        },
+        "transaction_success": {
+            "count": 28201,
+            "rate": 313.0320419690401
+        },
+        "data_sent": {
+            "count": 35837785,
+            "rate": 397800.6105527264
+        },
+        "confirmation_check_duration": {
+            "avg": 944.0997482358781,
+            "min": 10,
+            "med": 917,
+            "max": 2752,
+            "p(90)": 1854,
+            "p(95)": 1955
+        },
+        "grpc_streams": {
+            "count": 100,
+            "rate": 1.1100033401972984
+        },
+        "transactions_started": {
+            "count": 28201,
+            "rate": 313.0320419690401
+        },
+        "http_req_blocked": {
+            "avg": 0.021042720187227634,
+            "min": 0.001146,
+            "med": 0.007255,
+            "max": 59.680385,
+            "p(90)": 0.011,
+            "p(95)": 0.013186
+        },
+        "http_req_sending": {
+            "avg": 0.41547482177937384,
+            "min": 0.003658,
+            "med": 0.025115,
+            "max": 182.957545,
+            "p(90)": 0.3686811000000001,
+            "p(95)": 1.3222863999999974
+        },
+        "status_report_duration": {
+            "avg": 25.25172866210418,
+            "min": 1,
+            "med": 18,
+            "max": 274,
+            "p(90)": 56,
+            "p(95)": 66
+        },
+        "http_req_tls_handshaking": {
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0
+        },
+        "total_transaction_duration": {
+            "min": 27,
+            "med": 1943,
+            "max": 4787,
+            "p(90)": 3774,
+            "p(95)": 3918,
+            "avg": 1966.7655756888053,
+            "thresholds": {
+                "p(99)<4600": false
+            }
+        },
+        "transactions_in_flight": {
+            "value": 0,
+            "min": 0,
+            "max": 74
+        },
+        "http_req_receiving": {
+            "avg": 0.29513954912946705,
+            "min": 0.005192,
+            "med": 0.0337315,
+            "max": 151.744677,
+            "p(90)": 0.09237590000000001,
+            "p(95)": 0.4559975999999969
+        },
+        "grpc_req_duration": {
+            "avg": 90059.67060191998,
+            "min": 90032.794228,
+            "med": 90057.38826,
+            "max": 90083.546054,
+            "p(90)": 90076.1496085,
+            "p(95)": 90077.4598679
+        },
+        "http_req_waiting": {
+            "p(95)": 63.52139804999996,
+            "avg": 24.015792733147727,
+            "min": 0.822733,
+            "med": 17.037,
+            "max": 273.985274,
+            "p(90)": 53.0148092
+        },
+        "vus": {
+            "value": 50,
+            "min": 50,
+            "max": 50
+        },
+        "vus_max": {
+            "min": 50,
+            "max": 50,
+            "value": 50
+        },
+        "grpc_streams_msgs_received": {
+            "rate": 939.0961259071203,
+            "count": 84603
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 24.72640710405678,
+            "min": 0.852354,
+            "med": 17.664578,
+            "max": 274.060049,
+            "p(90)": 54.0916432,
+            "p(95)": 64.53082599999998
+        },
+        "http_req_connecting": {
+            "med": 0,
+            "max": 5.625401,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0005225431544980673,
+            "min": 0
+        },
+        "http_req_duration": {
+            "min": 0.852354,
+            "med": 17.664578,
+            "max": 274.060049,
+            "p(90)": 54.0916432,
+            "p(95)": 64.53082599999998,
+            "avg": 24.72640710405678
+        },
+        "data_received": {
+            "rate": 411452.4750336125,
+            "count": 37067679
+        },
+        "iterations": {
+            "count": 50,
+            "rate": 0.5550016700986492
+        },
+        "fetch_messages_duration": {
+            "avg": 970.425481365909,
+            "min": 10,
+            "med": 939,
+            "max": 3070,
+            "p(90)": 1899,
+            "p(95)": 1992
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 56402,
+            "value": 0
+        },
+        "transfer_request_duration": {
+            "min": 1,
+            "med": 18,
+            "max": 272,
+            "p(90)": 54,
+            "p(95)": 64,
+            "avg": 25.21467323853764
+        },
+        "iteration_duration": {
+            "avg": 90072.68492475997,
+            "min": 90055.557675,
+            "med": 90072.388042,
+            "max": 90089.44559,
+            "p(90)": 90084.7755881,
+            "p(95)": 90085.507361
+        },
+        "grpc_streams_msgs_sent": {
+            "count": 100,
+            "rate": 1.1100033401972984
+        }
+    }
+}

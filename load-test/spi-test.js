@@ -68,19 +68,13 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function generateRandomIspb() {
-  return Math.floor(10000000 + Math.random() * 90000000).toString();
-}
-
-const vuIspbMapping = {};
 function getVuIspbPair(vuId) {
-  if (!vuIspbMapping[vuId]) {
-    const pagador = generateRandomIspb();
-    let recebedor = generateRandomIspb();
-    while (recebedor === pagador) recebedor = generateRandomIspb();
-    vuIspbMapping[vuId] = { pagador, recebedor };
-  }
-  return vuIspbMapping[vuId];
+  const suffix = String(vuId).padStart(6, '0');
+
+  return {
+    pagador: `10${suffix}`,
+    recebedor: `20${suffix}`,
+  };
 }
 
 function generatePacs008(id, ispbPagador, ispbRecebedor) {

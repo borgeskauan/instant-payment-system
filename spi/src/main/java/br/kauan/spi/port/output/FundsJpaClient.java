@@ -14,6 +14,6 @@ public interface FundsJpaClient extends JpaRepository<FundsEntity, String> {
     int deductFunds(@Param("bankCode") String bankCode, @Param("amount") BigDecimal amount);
 
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE FundsEntity f SET f.balance = f.balance + :amount WHERE f.bankCode = :bankCode AND f.balance >= :amount")
+    @Query("UPDATE FundsEntity f SET f.balance = f.balance + :amount WHERE f.bankCode = :bankCode")
     int addFunds(@Param("bankCode") String bankCode, @Param("amount") BigDecimal amount);
 }

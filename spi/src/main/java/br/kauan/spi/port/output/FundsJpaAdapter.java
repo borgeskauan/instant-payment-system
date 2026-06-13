@@ -1,11 +1,9 @@
 package br.kauan.spi.port.output;
 
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 
-@Slf4j
 @Repository
 public class FundsJpaAdapter implements FundsRepository {
 
@@ -16,29 +14,28 @@ public class FundsJpaAdapter implements FundsRepository {
     }
 
     @Override
-    public BigDecimal ensureAccountExistsAndGetBalance(String bankCode, BigDecimal initialBalance) {
-        var ops = fundsJpaClient.findById(bankCode);
-        if (ops.isPresent()) {
-            return ops.get().getBalance();
+    public void provisionAccount(String bankCode, BigDecimal balance, boolean resetIfExists) {
+        var existing = fundsJpaClient.findById(bankCode);
+        if (existing.isPresent()) {
+            if (resetIfExists) {
+                var entity = existing.get();
+                entity.setBalance(balance);
+                fundsJpaClient.save(entity);
+            }
+            return;
         }
 
         var newEntity = new FundsEntity();
         newEntity.setBankCode(bankCode);
-        newEntity.setBalance(initialBalance);
-
-        try {
-            fundsJpaClient.save(newEntity);
-            return newEntity.getBalance();
-        } catch (Exception e) {
-            log.warn("An error ocurred when creating funds entity for {}", bankCode, e);
-
-            throw e;
-        }
+        newEntity.setBalance(balance);
+        fundsJpaClient.save(newEntity);
     }
 
     @Override
     public BigDecimal getAvailableFunds(String bankCode) {
-        return ensureAccountExistsAndGetBalance(bankCode, BigDecimal.ZERO);
+        return fundsJpaClient.findById(bankCode)
+                .map(FundsEntity::getBalance)
+                .orElseThrow(() -> new IllegalStateException("Settlement account not found"));
     }
 
     @Override

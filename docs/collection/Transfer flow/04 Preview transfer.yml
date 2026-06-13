@@ -1,11 +1,11 @@
 info:
-  name: 03 Create receiver PIX key
+  name: 04 Preview transfer
   type: http
-  seq: 3
+  seq: 1
 
 http:
   method: post
-  url: "{{receiverPspUrl}}/customers/{{receiverCustomerId}}/pix-keys"
+  url: "{{senderPspUrl}}/transfer/preview"
   headers:
     - name: Content-Type
       value: application/json
@@ -13,9 +13,14 @@ http:
     type: json
     data: |-
       {
-        "pixKey": "{{receiverPixKey}}"
+        "receiverPixKey": "{{receiverPixKey}}"
       }
   auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: bru.setVar("previewReceiverJson", JSON.stringify(res.body.receiver));
 
 settings:
   encodeUrl: false
