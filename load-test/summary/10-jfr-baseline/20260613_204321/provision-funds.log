@@ -1,0 +1,6 @@
+Provisioning funds through SPI admin API...
+SPI base URL: http://localhost:8002
+VUs: 50
+Balance: 1000000000
+Reset if exists: true
+Provisioned 100 settlement accounts.

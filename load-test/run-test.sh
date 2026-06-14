@@ -10,6 +10,10 @@ readonly SYSTEM_STATS_SAMPLE_INTERVAL_SECONDS=5
 readonly SYSTEM_STATS_PRE_TEST_SECONDS=10
 readonly PROCESS_STATS_SAMPLE_INTERVAL_SECONDS=5
 readonly PROCESS_STATS_TOP_N=20
+readonly JFR_CONTAINER_NAME="spi"
+readonly JFR_RECORDING_NAME="spi-load-test"
+readonly JFR_DEFAULT_DELAY="5s"
+readonly JFR_DEFAULT_DURATION="120s"
 
 # Global variables
 TARGET_FOLDER=""
@@ -20,11 +24,17 @@ ENABLE_KAFKA_LAG_SAMPLING=true
 ENABLE_SYSTEM_STATS_SAMPLING=true
 ENABLE_PROCESS_STATS_SAMPLING=true
 ENABLE_FUNDS_PROVISIONING=true
+ENABLE_JFR=true
+JFR_DELAY="$JFR_DEFAULT_DELAY"
+JFR_DURATION="$JFR_DEFAULT_DURATION"
+ACTIVE_JFR_CONTAINER_FILE=""
+ACTIVE_JFR_OUTPUT_FILE=""
+ACTIVE_JFR_LOG_FILE=""
 RUN_TAG=""
 
 # Function to display usage information
 usage() {
-    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] [--system-stats|--no-system-stats] [--process-stats|--no-process-stats] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $SCRIPT_NAME [--kafka-lag|--no-kafka-lag] [--system-stats|--no-system-stats] [--process-stats|--no-process-stats] [--provision-funds|--no-provision-funds] [--jfr|--no-jfr] [--jfr-delay <duration>] [--jfr-duration <duration>] <run-tag>"
     echo "  run-tag: Identifier for the test run"
     echo
     echo "Options:"
@@ -36,6 +46,10 @@ usage() {
     echo "  --no-process-stats    Disable top host process stats sampling"
     echo "  --provision-funds     Provision deterministic load-test funds before running k6 (default)"
     echo "  --no-provision-funds  Disable funds provisioning"
+    echo "  --jfr                 Record a Java Flight Recorder profile from the spi container (default)"
+    echo "  --no-jfr              Disable Java Flight Recorder profiling"
+    echo "  --jfr-delay VALUE     Delay before JFR recording starts (default: $JFR_DEFAULT_DELAY)"
+    echo "  --jfr-duration VALUE  Maximum JFR recording duration (default: $JFR_DEFAULT_DURATION)"
 }
 
 # Function to display error messages and exit
@@ -137,6 +151,30 @@ parse_args() {
                 ENABLE_FUNDS_PROVISIONING=false
                 shift
                 ;;
+            --jfr)
+                ENABLE_JFR=true
+                shift
+                ;;
+            --no-jfr)
+                ENABLE_JFR=false
+                shift
+                ;;
+            --jfr-delay)
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    usage
+                    error_exit "--jfr-delay requires a value, for example: 5s"
+                fi
+                JFR_DELAY="$2"
+                shift 2
+                ;;
+            --jfr-duration)
+                if [[ $# -lt 2 || "$2" == --* ]]; then
+                    usage
+                    error_exit "--jfr-duration requires a value, for example: 120s"
+                fi
+                JFR_DURATION="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -159,6 +197,73 @@ parse_args() {
     if [[ -z "$RUN_TAG" ]]; then
         usage
         error_exit "Run tag is required."
+    fi
+}
+
+# Function to start a Java Flight Recorder capture in the SPI container
+start_jfr_recording() {
+    local container_file="$1"
+    local output_file="$2"
+    local jfr_log_file="$3"
+
+    echo "Starting SPI JFR recording..."
+
+    if ! docker exec "$JFR_CONTAINER_NAME" sh -c 'command -v jcmd >/dev/null' > "$jfr_log_file" 2>&1; then
+        cat "$jfr_log_file" >&2
+        error_exit "jcmd not found in '$JFR_CONTAINER_NAME'. Use a JDK runtime image for SPI and rebuild the container."
+    fi
+
+    if ! docker exec "$JFR_CONTAINER_NAME" jcmd 1 JFR.start \
+        name="$JFR_RECORDING_NAME" \
+        settings=profile \
+        delay="$JFR_DELAY" \
+        duration="$JFR_DURATION" \
+        filename="$container_file" \
+        dumponexit=true >> "$jfr_log_file" 2>&1; then
+        cat "$jfr_log_file" >&2
+        error_exit "Failed to start JFR recording in '$JFR_CONTAINER_NAME'"
+    fi
+
+    ACTIVE_JFR_CONTAINER_FILE="$container_file"
+    ACTIVE_JFR_OUTPUT_FILE="$output_file"
+    ACTIVE_JFR_LOG_FILE="$jfr_log_file"
+
+    echo "JFR recording started. Log saved to: $jfr_log_file"
+}
+
+# Function to stop a Java Flight Recorder capture and copy it to the run folder
+finish_jfr_recording() {
+    local container_file="$1"
+    local output_file="$2"
+    local jfr_log_file="$3"
+
+    if [[ "$ENABLE_JFR" != true ]]; then
+        return
+    fi
+
+    echo "Stopping SPI JFR recording..."
+
+    if ! docker exec "$JFR_CONTAINER_NAME" jcmd 1 JFR.stop \
+        name="$JFR_RECORDING_NAME" \
+        filename="$container_file" >> "$jfr_log_file" 2>&1; then
+        echo "Warning: Failed to stop JFR recording. It may have already ended; trying to copy the recording file." | tee -a "$jfr_log_file" >&2
+    fi
+
+    if docker cp "${JFR_CONTAINER_NAME}:${container_file}" "$output_file" >> "$jfr_log_file" 2>&1; then
+        echo "SPI JFR recording saved to: $output_file"
+    else
+        echo "Warning: Failed to copy SPI JFR recording from ${JFR_CONTAINER_NAME}:${container_file}. See: $jfr_log_file" >&2
+    fi
+
+    ACTIVE_JFR_CONTAINER_FILE=""
+    ACTIVE_JFR_OUTPUT_FILE=""
+    ACTIVE_JFR_LOG_FILE=""
+}
+
+# Function to stop the active Java Flight Recorder capture if one is running
+finish_active_jfr_recording() {
+    if [[ -n "$ACTIVE_JFR_CONTAINER_FILE" && -n "$ACTIVE_JFR_OUTPUT_FILE" && -n "$ACTIVE_JFR_LOG_FILE" ]]; then
+        finish_jfr_recording "$ACTIVE_JFR_CONTAINER_FILE" "$ACTIVE_JFR_OUTPUT_FILE" "$ACTIVE_JFR_LOG_FILE"
     fi
 }
 
@@ -232,6 +337,9 @@ run_k6_test() {
     local process_stats_file="$run_folder/process-stats.csv"
     local process_stats_log_file="$run_folder/process-stats.log"
     local funds_provisioning_log_file="$run_folder/provision-funds.log"
+    local jfr_file="$run_folder/spi-load-test.jfr"
+    local jfr_log_file="$run_folder/spi-jfr.log"
+    local jfr_container_file="/tmp/spi-load-test-${timestamp}.jfr"
     local k6_command=""
     local k6_exit_code=0
 
@@ -302,6 +410,10 @@ run_k6_test() {
         echo "Process stats sampler disabled."
     fi
 
+    if [[ "$ENABLE_JFR" == true ]]; then
+        start_jfr_recording "$jfr_container_file" "$jfr_file" "$jfr_log_file"
+    fi
+
     if [[ "$ENABLE_SYSTEM_STATS_SAMPLING" == true || "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
         echo "Collecting ${SYSTEM_STATS_PRE_TEST_SECONDS}s of pre-test host stats..."
         sleep "$SYSTEM_STATS_PRE_TEST_SECONDS"
@@ -319,6 +431,7 @@ run_k6_test() {
     rm -f "$raw_console_output_file"
 
     if [[ "$k6_exit_code" -ne 0 ]]; then
+        finish_jfr_recording "$jfr_container_file" "$jfr_file" "$jfr_log_file"
         stop_kafka_lag_sampler
         stop_system_stats_sampler
         stop_process_stats_sampler
@@ -331,10 +444,14 @@ run_k6_test() {
         if [[ "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
             echo "Process stats samples saved to: $process_stats_file"
         fi
+        if [[ "$ENABLE_JFR" == true ]]; then
+            echo "SPI JFR log saved to: $jfr_log_file"
+        fi
         echo "Console output saved to: $console_output_file"
         error_exit "k6 test execution failed"
     fi
 
+    finish_jfr_recording "$jfr_container_file" "$jfr_file" "$jfr_log_file"
     stop_kafka_lag_sampler
     stop_system_stats_sampler
     stop_process_stats_sampler
@@ -349,6 +466,9 @@ run_k6_test() {
     if [[ "$ENABLE_PROCESS_STATS_SAMPLING" == true ]]; then
         echo "Process stats samples saved to: $process_stats_file"
     fi
+    if [[ "$ENABLE_JFR" == true ]]; then
+        echo "SPI JFR log saved to: $jfr_log_file"
+    fi
 }
 
 # Function to check required command-line tools
@@ -359,6 +479,10 @@ check_required_commands() {
 
     if ! command -v perl &>/dev/null; then
         error_exit "'perl' command not found. It is required to clean the captured k6 terminal output."
+    fi
+
+    if [[ "$ENABLE_JFR" == true ]] && ! command -v docker &>/dev/null; then
+        error_exit "'docker' command not found. It is required to record SPI JFR profiles."
     fi
 }
 
@@ -403,7 +527,7 @@ main() {
     check_k6_version
     check_required_commands
     setup_target_folder "$RUN_TAG"
-    trap 'stop_kafka_lag_sampler; stop_system_stats_sampler; stop_process_stats_sampler' EXIT
+    trap 'finish_active_jfr_recording; stop_kafka_lag_sampler; stop_system_stats_sampler; stop_process_stats_sampler' EXIT
     run_k6_test
 }
 
