@@ -1,0 +1,10 @@
+Picked up JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m
+1:
+Recording 2 scheduled to start in 5 s. The result will be written to:
+
+/tmp/spi-load-test-20260613_211713.jfr
+Picked up JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m
+1:
+Stopped recording "spi-load-test", 2.5 MB written to:
+
+/tmp/spi-load-test-20260613_211713.jfr

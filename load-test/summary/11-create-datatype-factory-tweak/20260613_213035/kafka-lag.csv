@@ -1,0 +1,17 @@
+timestamp,group,topic,partition,current_offset,log_end_offset,lag
+2026-06-13T21:30:36-03:00,spi-consumer-group,spi-payment-requests,0,1355727,1355727,0
+2026-06-13T21:30:36-03:00,notification-gateway-group,psp-notifications,0,1966609,1966609,0
+2026-06-13T21:30:47-03:00,spi-consumer-group,spi-payment-requests,0,1355727,1355727,0
+2026-06-13T21:30:47-03:00,notification-gateway-group,psp-notifications,0,1978045,1978503,458
+2026-06-13T21:31:01-03:00,spi-consumer-group,spi-payment-requests,0,1374463,1374755,292
+2026-06-13T21:31:01-03:00,notification-gateway-group,psp-notifications,0,2007080,2007520,440
+2026-06-13T21:31:20-03:00,spi-consumer-group,spi-payment-requests,0,1394006,1394270,264
+2026-06-13T21:31:20-03:00,notification-gateway-group,psp-notifications,0,2035988,2036378,390
+2026-06-13T21:31:38-03:00,spi-consumer-group,spi-payment-requests,0,1412379,1413587,1208
+2026-06-13T21:31:38-03:00,notification-gateway-group,psp-notifications,0,2056933,2056933,0
+2026-06-13T21:31:54-03:00,spi-consumer-group,spi-payment-requests,0,1415943,1415943,0
+2026-06-13T21:31:54-03:00,notification-gateway-group,psp-notifications,0,2056933,2056933,0
+2026-06-13T21:32:02-03:00,spi-consumer-group,spi-payment-requests,0,1415943,1415943,0
+2026-06-13T21:32:02-03:00,notification-gateway-group,psp-notifications,0,2056933,2056933,0
+2026-06-13T21:32:11-03:00,spi-consumer-group,spi-payment-requests,0,1415943,1415943,0
+2026-06-13T21:32:11-03:00,notification-gateway-group,psp-notifications,0,2056933,2056933,0
