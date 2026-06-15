@@ -89,8 +89,8 @@ services:
       dockerfile: Dockerfile
     container_name: spi
     cpus: 0.75
-    mem_limit: 768m
-    memswap_limit: 768m
+    mem_limit: 1024m
+    memswap_limit: 1024m
     mem_swappiness: 0
     ports:
       - "8002:8002"

@@ -1,0 +1,10 @@
+{
+  "targetTxRate": 750,
+  "hotPspCount": 10,
+  "coldPspCount": 40,
+  "hotTrafficShare": 0.8,
+  "maxTxRatePerHotSession": 12,
+  "maxTxRatePerColdSession": 10,
+  "maxInFlightPerSession": 250,
+  "lateDrainMs": 30000
+}

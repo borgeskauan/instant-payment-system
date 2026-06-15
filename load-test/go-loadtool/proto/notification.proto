@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb";
+
+package notification;
+
+service NotificationGateway {
+  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+}
+
+message StreamRequest {
+  string ispb = 1;
+}
+
+message Notification {
+  string ispb    = 1;
+  string payload = 2;
+}

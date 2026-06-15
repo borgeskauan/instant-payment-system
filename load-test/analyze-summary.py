@@ -18,6 +18,8 @@ OUTPUT_PATTERNS = {
     "p50": re.compile(r"total transaction duration p50:\s*([0-9.]+)s"),
     "p95": re.compile(r"total transaction duration p95:\s*([0-9.]+)s"),
     "p99": re.compile(r"total transaction duration p99:\s*([0-9.]+)s"),
+    "hot_pacing_skips": re.compile(r"hot pacing skips:\s*(\d+)"),
+    "cold_pacing_skips": re.compile(r"cold pacing skips:\s*(\d+)"),
 }
 
 CONTAINER_COLUMNS = [
@@ -45,12 +47,16 @@ def number(value, default=0):
 
 
 def metric(summary, name, field, default=0):
-    return summary.get("metrics", {}).get(name, {}).get(field, default)
+    metric_data = summary.get("metrics", {}).get(name, {})
+    return metric_data.get(field, metric_data.get("values", {}).get(field, default))
 
 
 def percentile(summary, name, field, default=0):
     metric_data = summary.get("metrics", {}).get(name, {})
-    return metric_data.get(field, metric_data.get("percentiles", {}).get(field, default))
+    return metric_data.get(
+        field,
+        metric_data.get("values", {}).get(field, metric_data.get("percentiles", {}).get(field, default)),
+    )
 
 
 def parse_output(path):
@@ -134,7 +140,17 @@ def run_row(run_dir, active_seconds):
         "run": run_dir.name,
         "started": metric(summary, "transactions_started", "count"),
         "active_rate": metric(summary, "transactions_started", "count") / active_seconds,
+        "hot_rate": metric(summary, "hot_transactions_started", "count") / active_seconds,
+        "cold_rate": metric(summary, "cold_transactions_started", "count") / active_seconds,
+        "hot_interval_p95": percentile(summary, "hot_start_interval", "p(95)", None),
+        "cold_interval_p95": percentile(summary, "cold_start_interval", "p(95)", None),
+        "hot_delay_p95": percentile(summary, "hot_start_delay", "p(95)", None),
+        "cold_delay_p95": percentile(summary, "cold_start_delay", "p(95)", None),
+        "hot_pacing_skips": output["hot_pacing_skips"] or metric(summary, "hot_pacing_skips", "count"),
+        "cold_pacing_skips": output["cold_pacing_skips"] or metric(summary, "cold_pacing_skips", "count"),
         "summary_rate": metric(summary, "transactions_started", "rate"),
+        "dropped": metric(summary, "dropped_iterations", "count"),
+        "backpressure": metric(summary, "backpressure_skips", "count"),
         "succeeded": output["succeeded"] or metric(summary, "transactions_succeeded", "count"),
         "missed": output["missed"] or metric(summary, "transactions_missed_sla", "count"),
         "late": output["late"] or metric(summary, "transactions_late", "count"),
@@ -167,7 +183,8 @@ def collect_rows(summary_dir, active_seconds):
 
 def print_table(rows):
     print(
-        "run              tx/s started succeeded p50    p95    p99 missed late never "
+        "run              tx/s hot/s cold/s hotInt95 coldInt95 hotDelay95 coldDelay95 hotSkip coldSkip "
+        "started dropped backpres succeeded p50    p95    p99 missed late never "
         "spiLag notifLag hostAvg hostMax kafkaAvg kafkaMax spiAvg spiMax k6Avg k6Max jfrMB"
     )
 
@@ -175,7 +192,17 @@ def print_table(rows):
         print(
             f"{row['run']} "
             f"{row['active_rate']:7.2f} "
+            f"{row['hot_rate']:5.1f} "
+            f"{row['cold_rate']:6.1f} "
+            f"{format_ms(row['hot_interval_p95'], 8)} "
+            f"{format_ms(row['cold_interval_p95'], 9)} "
+            f"{format_ms(row['hot_delay_p95'], 10)} "
+            f"{format_ms(row['cold_delay_p95'], 11)} "
+            f"{row['hot_pacing_skips']:7.0f} "
+            f"{row['cold_pacing_skips']:8.0f} "
             f"{row['started']:7.0f} "
+            f"{row['dropped']:7.0f} "
+            f"{row['backpressure']:8.0f} "
             f"{row['succeeded']:9.0f} "
             f"{row['p50']:6.2f} "
             f"{row['p95']:6.2f} "
@@ -201,7 +228,17 @@ def print_aggregates(rows):
     print("\nAGGREGATES")
     keys = [
         "active_rate",
+        "hot_rate",
+        "cold_rate",
+        "hot_interval_p95",
+        "cold_interval_p95",
+        "hot_delay_p95",
+        "cold_delay_p95",
+        "hot_pacing_skips",
+        "cold_pacing_skips",
         "started",
+        "dropped",
+        "backpressure",
         "succeeded",
         "p50",
         "p95",
@@ -218,7 +255,7 @@ def print_aggregates(rows):
     ]
 
     for key in keys:
-        values = [row[key] for row in rows]
+        values = [row[key] for row in rows if row[key] is not None]
         if not values:
             continue
 
@@ -236,6 +273,13 @@ def format_optional(value, width):
         return "n/a".rjust(width)
 
     return f"{value:{width}.2f}"
+
+
+def format_ms(value, width):
+    if value is None:
+        return "n/a".rjust(width)
+
+    return f"{value:{width}.0f}"
 
 
 def latest_jfr(summary_dir):

@@ -7,17 +7,24 @@ import { Trend, Counter, Gauge } from 'k6/metrics';
 const BASE_URL = 'http://localhost:8001';
 const GATEWAY_ADDR = 'localhost:9090';
 const MSG_TIMEOUT_MS = 10000;
-const LATE_DRAIN_MS = 30000;
 const GRACEFUL_STOP = '60s';
 const ACTIVE_DURATION_SECONDS = 60;
 
-const HOT_VUS = 10;
-const HOT_TX_EVERY_MS = 6;
-
-const COLD_VUS = 40;
-const COLD_TX_EVERY_MS = 100;
-
-const MAX_IN_FLIGHT = 250;
+const loadProfile = JSON.parse(open('./load-profile.json'));
+const TARGET_TX_RATE = loadProfile.targetTxRate;
+const HOT_PSP_COUNT = loadProfile.hotPspCount;
+const COLD_PSP_COUNT = loadProfile.coldPspCount;
+const HOT_TRAFFIC_SHARE = loadProfile.hotTrafficShare;
+const MAX_TX_RATE_PER_HOT_SESSION = loadProfile.maxTxRatePerHotSession;
+const MAX_TX_RATE_PER_COLD_SESSION = loadProfile.maxTxRatePerColdSession;
+const MAX_IN_FLIGHT_PER_SESSION = loadProfile.maxInFlightPerSession;
+const LATE_DRAIN_MS = loadProfile.lateDrainMs;
+const HOT_TX_RATE = TARGET_TX_RATE * HOT_TRAFFIC_SHARE;
+const COLD_TX_RATE = TARGET_TX_RATE * (1 - HOT_TRAFFIC_SHARE);
+const HOT_SESSION_COUNT = Math.max(HOT_PSP_COUNT, Math.ceil(HOT_TX_RATE / MAX_TX_RATE_PER_HOT_SESSION));
+const COLD_SESSION_COUNT = Math.max(COLD_PSP_COUNT, Math.ceil(COLD_TX_RATE / MAX_TX_RATE_PER_COLD_SESSION));
+const HOT_TX_EVERY_MS = 1000 / (HOT_TX_RATE / HOT_SESSION_COUNT);
+const COLD_TX_EVERY_MS = 1000 / (COLD_TX_RATE / COLD_SESSION_COUNT);
 
 const client = new grpc.Client();
 client.load(['.'], 'notification.proto');
@@ -29,15 +36,15 @@ export const options = {
   scenarios: {
     hot_psps: {
       executor: 'constant-vus',
-      vus: HOT_VUS,
-      duration: '1m',
+      vus: HOT_SESSION_COUNT,
+      duration: `${ACTIVE_DURATION_SECONDS}s`,
       gracefulStop: GRACEFUL_STOP,
       exec: 'hotPspSession',
     },
     cold_psps: {
       executor: 'constant-vus',
-      vus: COLD_VUS,
-      duration: '1m',
+      vus: COLD_SESSION_COUNT,
+      duration: `${ACTIVE_DURATION_SECONDS}s`,
       gracefulStop: GRACEFUL_STOP,
       exec: 'coldPspSession',
     },
@@ -45,6 +52,7 @@ export const options = {
   thresholds: {
     total_transaction_duration: ['p(99)<4600'],
   },
+  summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 };
 
 const transferRequestDuration = new Trend('transfer_request_duration', true);
@@ -62,19 +70,41 @@ const streamMessagesUnmatched = new Counter('stream_messages_unmatched');
 const latePacs008Notifications = new Counter('late_pacs008_notifications');
 const latePacs002Confirmations = new Counter('late_pacs002_confirmations');
 const lateTransactions = new Counter('late_transactions');
+const backpressureSkips = new Counter('backpressure_skips');
+const hotTransactionsStarted = new Counter('hot_transactions_started');
+const coldTransactionsStarted = new Counter('cold_transactions_started');
+const hotStartInterval = new Trend('hot_start_interval', true);
+const coldStartInterval = new Trend('cold_start_interval', true);
+const hotStartDelay = new Trend('hot_start_delay', true);
+const coldStartDelay = new Trend('cold_start_delay', true);
+const hotPacingSkips = new Counter('hot_pacing_skips');
+const coldPacingSkips = new Counter('cold_pacing_skips');
 const inFlightGauge = new Gauge('transactions_in_flight');
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getVuIspbPair(vuId) {
-  const suffix = String(vuId).padStart(6, '0');
+function getPspPair(pspNumber) {
+  const suffix = String(pspNumber).padStart(6, '0');
 
   return {
     pagador: `10${suffix}`,
     recebedor: `20${suffix}`,
   };
+}
+
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function getHotPspNumber() {
+  return positiveModulo(exec.vu.idInTest - 1, HOT_PSP_COUNT) + 1;
+}
+
+function getColdPspNumber() {
+  const coldIndex = positiveModulo(exec.vu.idInTest - HOT_PSP_COUNT - 1, COLD_PSP_COUNT);
+  return HOT_PSP_COUNT + coldIndex + 1;
 }
 
 function generatePacs008(id, ispbPagador, ispbRecebedor) {
@@ -217,6 +247,8 @@ function waitForMatch(inbox, txId, timeoutMs, onTimeout) {
 }
 
 async function runTransactionFlow(state, txId) {
+  await delay(0);
+
   const {
     ispbPagador,
     ispbRecebedor,
@@ -319,9 +351,8 @@ async function runTransactionFlow(state, txId) {
   }
 }
 
-async function runPspSession(newTxEveryMs) {
-  const vuId = exec.vu.idInTest;
-  const { pagador: ispbPagador, recebedor: ispbRecebedor } = getVuIspbPair(vuId);
+async function runPspSession(pspNumber, newTxEveryMs, metrics) {
+  const { pagador: ispbPagador, recebedor: ispbRecebedor } = getPspPair(pspNumber);
 
   client.connect(GATEWAY_ADDR, { plaintext: true });
 
@@ -329,7 +360,6 @@ async function runPspSession(newTxEveryMs) {
   const pagadorInbox = Object.create(null);
   const recebedorTimedOut = Object.create(null);
   const pagadorTimedOut = Object.create(null);
-  const inFlight = new Map();
 
   const recebedorStream = openNotificationStream(
     ispbRecebedor,
@@ -353,32 +383,66 @@ async function runPspSession(newTxEveryMs) {
     pagadorInbox,
     recebedorTimedOut,
     pagadorTimedOut,
+    recebedorStream,
+    pagadorStream,
   };
+  const inFlight = new Map();
   let txSeq = 0;
+  let lastStartAt = null;
+  let nextExpectedStartAt = Date.now();
 
   try {
     while (exec.scenario.progress < 0.98) {
-      if (inFlight.size < MAX_IN_FLIGHT) {
-        const txId = `${__VU}-${Date.now()}-${txSeq++}`;
-        transactionsStarted.add(1);
-
-        const promise = runTransactionFlow(state, txId)
-          .catch((err) => {
-            transactionFailure.add(1);
-            console.error(`VU ${__VU}: transaction ${txId} failed with error: ${String(err)}`);
-          })
-          .finally(() => {
-            inFlight.delete(txId);
-            delete recebedorInbox[txId];
-            delete pagadorInbox[txId];
-            inFlightGauge.add(inFlight.size);
-          });
-
-        inFlight.set(txId, promise);
-        inFlightGauge.add(inFlight.size);
+      const waitUntilNextStartMs = nextExpectedStartAt - Date.now();
+      if (waitUntilNextStartMs > 0) {
+        await delay(waitUntilNextStartMs);
       }
 
-      await delay(newTxEveryMs);
+      let scheduledStartAt = nextExpectedStartAt;
+      const now = Date.now();
+      const startDelayMs = Math.max(0, now - scheduledStartAt);
+
+      if (startDelayMs > newTxEveryMs) {
+        const skippedStarts = Math.floor(startDelayMs / newTxEveryMs);
+        metrics.pacingSkips.add(skippedStarts);
+        scheduledStartAt = now;
+        nextExpectedStartAt = now + newTxEveryMs;
+      } else {
+        nextExpectedStartAt = scheduledStartAt + newTxEveryMs;
+      }
+
+      if (inFlight.size >= MAX_IN_FLIGHT_PER_SESSION) {
+        backpressureSkips.add(1);
+        inFlightGauge.add(inFlight.size);
+        continue;
+      }
+
+      const txId = `${__VU}-${now}-${txSeq++}`;
+      transactionsStarted.add(1);
+      metrics.transactionsStarted.add(1);
+
+      if (lastStartAt !== null) {
+        metrics.startInterval.add(now - lastStartAt);
+      }
+
+      metrics.startDelay.add(startDelayMs);
+
+      lastStartAt = now;
+
+      const promise = runTransactionFlow(state, txId)
+        .catch((err) => {
+          transactionFailure.add(1);
+          console.error(`VU ${__VU}: transaction ${txId} failed with error: ${String(err)}`);
+        })
+        .finally(() => {
+          inFlight.delete(txId);
+          delete recebedorInbox[txId];
+          delete pagadorInbox[txId];
+          inFlightGauge.add(inFlight.size);
+        });
+
+      inFlight.set(txId, promise);
+      inFlightGauge.add(inFlight.size);
     }
 
     while (inFlight.size > 0) {
@@ -386,6 +450,7 @@ async function runPspSession(newTxEveryMs) {
     }
 
     await delay(LATE_DRAIN_MS);
+    inFlightGauge.add(0);
   } finally {
     try { recebedorStream.end(); } catch (_) {}
     try { pagadorStream.end(); } catch (_) {}
@@ -394,11 +459,21 @@ async function runPspSession(newTxEveryMs) {
 }
 
 export async function hotPspSession() {
-  await runPspSession(HOT_TX_EVERY_MS);
+  await runPspSession(getHotPspNumber(), HOT_TX_EVERY_MS, {
+    transactionsStarted: hotTransactionsStarted,
+    startInterval: hotStartInterval,
+    startDelay: hotStartDelay,
+    pacingSkips: hotPacingSkips,
+  });
 }
 
 export async function coldPspSession() {
-  await runPspSession(COLD_TX_EVERY_MS);
+  await runPspSession(getColdPspNumber(), COLD_TX_EVERY_MS, {
+    transactionsStarted: coldTransactionsStarted,
+    startInterval: coldStartInterval,
+    startDelay: coldStartDelay,
+    pacingSkips: coldPacingSkips,
+  });
 }
 
 function count(data, metricName) {
@@ -411,8 +486,18 @@ function percentile(data, metricName, percentileName) {
   return `${(value / 1000).toFixed(2)}s`;
 }
 
+function percentileMs(data, metricName, percentileName) {
+  const value = data.metrics[metricName]?.values?.[percentileName];
+  if (value === undefined) return 'n/a';
+  return `${value.toFixed(2)}ms`;
+}
+
 export function handleSummary(data) {
   const transactionsStarted = count(data, 'transactions_started');
+  const hotStarted = count(data, 'hot_transactions_started');
+  const coldStarted = count(data, 'cold_transactions_started');
+  const hotPacingSkipCount = count(data, 'hot_pacing_skips');
+  const coldPacingSkipCount = count(data, 'cold_pacing_skips');
   const transactionSuccesses = count(data, 'transaction_success');
   const transactionFailures = count(data, 'transaction_failure');
   const notificationTimeoutCount = count(data, 'notification_timeouts');
@@ -422,15 +507,28 @@ export function handleSummary(data) {
   const lateTransactionCount = count(data, 'late_transactions');
   const neverArrivedTransactionCount = transactionFailures - lateTransactionCount;
   const httpRequests = count(data, 'http_reqs');
+  const droppedIterations = count(data, 'dropped_iterations');
+  const backpressureSkipCount = count(data, 'backpressure_skips');
   const activeTxStartRate = transactionsStarted / ACTIVE_DURATION_SECONDS;
+  const hotTxStartRate = hotStarted / ACTIVE_DURATION_SECONDS;
+  const coldTxStartRate = coldStarted / ACTIVE_DURATION_SECONDS;
   const activeHttpRequestRate = httpRequests / ACTIVE_DURATION_SECONDS;
 
   return {
     stdout: `
 PIX LOAD SUMMARY
 active duration: ${ACTIVE_DURATION_SECONDS}s
+target tx start rate: ${TARGET_TX_RATE.toFixed(2)} tx/s
 transactions started: ${transactionsStarted}
 active tx start rate: ${activeTxStartRate.toFixed(2)} tx/s
+hot transactions started: ${hotStarted}
+hot tx start rate: ${hotTxStartRate.toFixed(2)} tx/s
+cold transactions started: ${coldStarted}
+cold tx start rate: ${coldTxStartRate.toFixed(2)} tx/s
+hot pacing skips: ${hotPacingSkipCount}
+cold pacing skips: ${coldPacingSkipCount}
+dropped iterations: ${droppedIterations}
+backpressure skips: ${backpressureSkipCount}
 HTTP requests: ${httpRequests}
 active HTTP request rate: ${activeHttpRequestRate.toFixed(2)} req/s
 
@@ -446,6 +544,10 @@ late pacs.002 confirmations: ${latePacs002Count}
 total transaction duration p50: ${percentile(data, 'total_transaction_duration', 'med')}
 total transaction duration p95: ${percentile(data, 'total_transaction_duration', 'p(95)')}
 total transaction duration p99: ${percentile(data, 'total_transaction_duration', 'p(99)')}
+hot start interval p50/p95/p99: ${percentileMs(data, 'hot_start_interval', 'med')} / ${percentileMs(data, 'hot_start_interval', 'p(95)')} / ${percentileMs(data, 'hot_start_interval', 'p(99)')}
+cold start interval p50/p95/p99: ${percentileMs(data, 'cold_start_interval', 'med')} / ${percentileMs(data, 'cold_start_interval', 'p(95)')} / ${percentileMs(data, 'cold_start_interval', 'p(99)')}
+hot start delay p50/p95/p99: ${percentileMs(data, 'hot_start_delay', 'med')} / ${percentileMs(data, 'hot_start_delay', 'p(95)')} / ${percentileMs(data, 'hot_start_delay', 'p(99)')}
+cold start delay p50/p95/p99: ${percentileMs(data, 'cold_start_delay', 'med')} / ${percentileMs(data, 'cold_start_delay', 'p(95)')} / ${percentileMs(data, 'cold_start_delay', 'p(99)')}
 threshold target: p99 < 4.60s
 `,
   };
