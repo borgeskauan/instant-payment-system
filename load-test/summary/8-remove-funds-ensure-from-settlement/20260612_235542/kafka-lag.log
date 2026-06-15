@@ -1,2 +1,0 @@
-Sampling Kafka lag every 2s into summary/8-remove-funds-ensure-from-settlement/20260612_235542/kafka-lag.csv
-Groups: spi-consumer-group notification-gateway-group

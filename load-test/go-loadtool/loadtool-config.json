@@ -7,6 +7,6 @@
   "hotPspCount": 10,
   "coldPspCount": 40,
   "hotTrafficShare": 0.8,
-  "outputDir": "summary/go-loadtool/manual",
+  "outputDir": "results/go-loadtool/manual",
   "slaThresholdMs": 4600
 }

@@ -1,2 +1,0 @@
-Sampling Kafka lag every 2s into summary/3-decreasing-logs-to-debug/20260611_230936/kafka-lag.csv
-Groups: spi-consumer-group notification-gateway-group

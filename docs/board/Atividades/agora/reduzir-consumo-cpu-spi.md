@@ -15,7 +15,7 @@ O objetivo é identificar a causa principal do consumo de CPU do SPI e reduzir e
 - [x] Criado fluxo Pix simulado com SPI, PSPs e Kafka.
 - [x] Criados testes de carga com K6.
 - [x] Implementado limite de recursos no teste de load balancer: CPU e RAM.
-- [x] Registrados resultados anteriores em `load-test/summary/`.
+- [x] Registrados resultados anteriores em `load-test/results/`.
 - [x] Documentado o fluxo Pix em `docs/PIX_FLOW_LOGGING_GUIDE.md`.
 
 **O que falta**

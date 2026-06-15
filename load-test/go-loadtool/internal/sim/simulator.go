@@ -66,7 +66,7 @@ func DefaultConfig() Config {
 		HotPSPs:        10,
 		ColdPSPs:       40,
 		HotShare:       0.80,
-		OutputDir:      "summary/go-loadtool/manual",
+		OutputDir:      "results/go-loadtool/manual",
 	}
 }
 

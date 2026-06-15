@@ -1,2 +1,0 @@
-Sampling Kafka lag every 2s into summary/11-create-datatype-factory-tweak/20260613_213035/kafka-lag.csv
-Groups: spi-consumer-group notification-gateway-group

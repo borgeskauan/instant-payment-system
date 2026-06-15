@@ -18,7 +18,7 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
   "hotPspCount": 7,
   "coldPspCount": 13,
   "hotTrafficShare": 0.75,
-  "outputDir": "summary/custom",
+  "outputDir": "results/custom",
   "slaThresholdMs": 3200
 }`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -54,7 +54,7 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	if cfg.Sim.HotShare != 0.75 {
 		t.Fatalf("HotShare = %f", cfg.Sim.HotShare)
 	}
-	if cfg.Sim.OutputDir != "summary/custom" {
+	if cfg.Sim.OutputDir != "results/custom" {
 		t.Fatalf("OutputDir = %q", cfg.Sim.OutputDir)
 	}
 	if cfg.SLAThresholdMs != 3200 {
