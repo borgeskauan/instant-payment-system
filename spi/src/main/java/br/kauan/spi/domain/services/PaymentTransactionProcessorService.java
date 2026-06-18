@@ -77,7 +77,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     private void processAcceptedPayment(PaymentTransaction paymentTransaction) {
         try {
-            paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_IN_PROCESS);
+            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
             log.debug("[PIX FLOW - Step 6] Payment status updated to ACCEPTED_IN_PROCESS");
 
             log.debug("[PIX FLOW - Step 6] SPI initiating settlement via PI accounts at BCB. Payment ID: {}, Amount: {}", 
@@ -88,7 +88,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             log.debug("[PIX FLOW - Step 7] SPI sending confirmation notifications to both PSPs");
             notificationService.sendConfirmationNotification(paymentTransaction);
 
-            paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
+            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_AND_SETTLED);
             log.debug("[PIX FLOW - Complete] Payment {} fully settled and confirmed", paymentTransaction.getPaymentId());
 
         } catch (Exception e) {
@@ -104,7 +104,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         log.warn("[PIX FLOW - Rejection] Processing rejected payment. Payment ID: {}", 
                 paymentTransaction.getPaymentId());
         
-        paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.REJECTED);
+        paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.REJECTED);
         log.debug("[PIX FLOW - Rejection] Sending rejection notification to PSP Pagador");
         notificationService.sendRejectionNotification(paymentTransaction);
     }

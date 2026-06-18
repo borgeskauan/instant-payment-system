@@ -9,5 +9,7 @@ public interface PaymentTransactionRepository {
 
     void saveTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus);
 
+    void updateStatus(String paymentId, PaymentStatus paymentStatus);
+
     Optional<PaymentTransaction> findById(String originalPaymentId);
 }

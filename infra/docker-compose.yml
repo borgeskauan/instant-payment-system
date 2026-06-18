@@ -96,7 +96,7 @@ services:
       - "8002:8002"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m"
+      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx768m"
     depends_on:
       kafka:
         condition: service_healthy

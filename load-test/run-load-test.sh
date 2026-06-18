@@ -8,15 +8,21 @@ readonly PROCESS_STATS_INTERVAL_SECONDS=5
 readonly KAFKA_LAG_INTERVAL_SECONDS=2
 readonly GO_LOADTOOL_CONFIG="go-loadtool/loadtool-config.json"
 readonly SCRIPTS_DIR="scripts"
+readonly SPI_CONTAINER="spi"
+readonly SPI_JFR_CONTAINER_FILE="/tmp/spi-load-test.jfr"
+readonly SPI_JFR_NAME="spi-load-test"
 
 RUN_TAG=""
 PROVISION_FUNDS=true
+ENABLE_JFR=false
+JFR_ACTIVE=false
+JFR_TARGET_DIR=""
 SYSTEM_STATS_PID=""
 PROCESS_STATS_PID=""
 KAFKA_LAG_PID=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--jfr] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
 }
 
@@ -33,6 +39,13 @@ stop_samplers() {
     done
 }
 
+cleanup() {
+    if [[ "$JFR_ACTIVE" == true && -n "$JFR_TARGET_DIR" ]]; then
+        stop_spi_jfr "$JFR_TARGET_DIR" || true
+    fi
+    stop_samplers
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -42,6 +55,10 @@ parse_args() {
                 ;;
             --no-provision-funds)
                 PROVISION_FUNDS=false
+                shift
+                ;;
+            --jfr)
+                ENABLE_JFR=true
                 shift
                 ;;
             -h|--help)
@@ -90,6 +107,41 @@ print(match.group(1))
 ' "$GO_LOADTOOL_CONFIG" "$key"
 }
 
+run_spi_jcmd() {
+    docker exec "$SPI_CONTAINER" jcmd 1 "$@"
+}
+
+start_spi_jfr() {
+    local log_file="$1"
+
+    log_phase "starting SPI JFR recording"
+    {
+        echo "Starting SPI JFR recording at $(date --iso-8601=seconds)"
+        run_spi_jcmd JFR.stop name="$SPI_JFR_NAME" || true
+        docker exec "$SPI_CONTAINER" rm -f "$SPI_JFR_CONTAINER_FILE" || true
+        run_spi_jcmd JFR.start \
+            name="$SPI_JFR_NAME" \
+            settings=profile \
+            filename="$SPI_JFR_CONTAINER_FILE" \
+            dumponexit=true
+    } > "$log_file" 2>&1
+    JFR_ACTIVE=true
+}
+
+stop_spi_jfr() {
+    local target_dir="$1"
+    local log_file="$target_dir/spi-jfr.log"
+
+    log_phase "stopping SPI JFR recording"
+    {
+        echo "Stopping SPI JFR recording at $(date --iso-8601=seconds)"
+        run_spi_jcmd JFR.stop name="$SPI_JFR_NAME" filename="$SPI_JFR_CONTAINER_FILE"
+        docker cp "${SPI_CONTAINER}:${SPI_JFR_CONTAINER_FILE}" "$target_dir/spi-load-test.jfr"
+    } >> "$log_file" 2>&1
+    JFR_ACTIVE=false
+    log_phase "SPI JFR saved: ${target_dir}/spi-load-test.jfr"
+}
+
 main() {
     parse_args "$@"
 
@@ -103,10 +155,13 @@ main() {
 
     mkdir -p "$tool_out"
     cp "$GO_LOADTOOL_CONFIG" "${target_dir}/loadtool-config.json"
-    trap stop_samplers EXIT
+    trap cleanup EXIT
 
     log_phase "starting load test: tag=${RUN_TAG} output=${target_dir}"
     log_phase "using config: ${GO_LOADTOOL_CONFIG}"
+    if [[ "$ENABLE_JFR" == true ]]; then
+        log_phase "SPI JFR enabled"
+    fi
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
@@ -126,12 +181,21 @@ main() {
     "${SCRIPTS_DIR}/sample-kafka-lag.sh" "$KAFKA_LAG_INTERVAL_SECONDS" "$sampler_duration" "${target_dir}/kafka-lag.csv" > "${target_dir}/kafka-lag.log" 2>&1 &
     KAFKA_LAG_PID="$!"
 
+    if [[ "$ENABLE_JFR" == true ]]; then
+        JFR_TARGET_DIR="$target_dir"
+        start_spi_jfr "${target_dir}/spi-jfr.log"
+    fi
+
     log_phase "starting simulator"
     (
         cd go-loadtool
         GOPATH="${GOPATH:-/tmp/go}" GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go run ./cmd/go-loadtool simulate \
             --out "../${tool_out}"
     ) | tee "${target_dir}/go-loadtool-output.txt"
+
+    if [[ "$ENABLE_JFR" == true ]]; then
+        stop_spi_jfr "$target_dir"
+    fi
 
     log_phase "simulator finished; generating SLA report"
     (

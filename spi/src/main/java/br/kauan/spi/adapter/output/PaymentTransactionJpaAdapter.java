@@ -25,6 +25,14 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
     }
 
     @Override
+    public void updateStatus(String paymentId, PaymentStatus paymentStatus) {
+        int updatedRows = paymentTransactionJpaClient.updateStatus(paymentId, paymentStatus.name());
+        if (updatedRows == 0) {
+            throw new IllegalStateException("Payment transaction not found: " + paymentId);
+        }
+    }
+
+    @Override
     public Optional<PaymentTransaction> findById(String originalPaymentId) {
         return paymentTransactionJpaClient.findById(originalPaymentId).map(repositoryMapper::toDomain);
     }
