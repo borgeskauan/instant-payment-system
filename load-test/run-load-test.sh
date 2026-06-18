@@ -9,6 +9,9 @@ readonly KAFKA_LAG_INTERVAL_SECONDS=2
 readonly GO_LOADTOOL_CONFIG="go-loadtool/loadtool-config.json"
 readonly SCRIPTS_DIR="scripts"
 readonly SPI_CONTAINER="spi"
+readonly KAFKA_CONTAINER="kafka"
+readonly SPI_CONSUMER_GROUP="spi-consumer-group"
+readonly SPI_INPUT_TOPIC="spi-payment-requests"
 readonly SPI_JFR_CONTAINER_FILE="/tmp/spi-load-test.jfr"
 readonly SPI_JFR_NAME="spi-load-test"
 
@@ -107,6 +110,25 @@ print(match.group(1))
 ' "$GO_LOADTOOL_CONFIG" "$key"
 }
 
+current_spi_input_lag() {
+    docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
+        --bootstrap-server kafka:9092 \
+        --describe \
+        --group "$SPI_CONSUMER_GROUP" 2>/dev/null |
+        awk -v topic="$SPI_INPUT_TOPIC" '$2 == topic && $6 ~ /^[0-9]+$/ { lag += $6 } END { print lag + 0 }'
+}
+
+assert_no_initial_spi_lag() {
+    local lag
+    lag="$(current_spi_input_lag)"
+
+    if (( lag > 0 )); then
+        echo "Refusing to start load test: ${SPI_CONSUMER_GROUP} has ${lag} messages of lag on ${SPI_INPUT_TOPIC}." >&2
+        echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
+        exit 1
+    fi
+}
+
 run_spi_jcmd() {
     docker exec "$SPI_CONTAINER" jcmd 1 "$@"
 }
@@ -162,6 +184,10 @@ main() {
     if [[ "$ENABLE_JFR" == true ]]; then
         log_phase "SPI JFR enabled"
     fi
+
+    log_phase "checking initial SPI Kafka lag"
+    assert_no_initial_spi_lag
+    log_phase "initial SPI Kafka lag is zero"
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"

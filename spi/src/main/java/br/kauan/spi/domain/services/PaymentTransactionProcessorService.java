@@ -77,26 +77,28 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     private void processAcceptedPayment(PaymentTransaction paymentTransaction) {
         try {
-            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
-            log.debug("[PIX FLOW - Step 6] Payment status updated to ACCEPTED_IN_PROCESS");
-
             log.debug("[PIX FLOW - Step 6] SPI initiating settlement via PI accounts at BCB. Payment ID: {}, Amount: {}", 
                     paymentTransaction.getPaymentId(), paymentTransaction.getAmount());
-            settlementService.makeSettlement(paymentTransaction);
+
+            boolean settled = settlementService.tryMakeSettlement(paymentTransaction);
+            if (!settled) {
+                log.warn("[PIX FLOW - Step 6] Payment accepted by receiver, but settlement did not complete. Payment ID: {}",
+                        paymentTransaction.getPaymentId());
+                paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
+                return;
+            }
+
             log.debug("[PIX FLOW - Step 6] Settlement completed successfully at SPI");
 
             log.debug("[PIX FLOW - Step 7] SPI sending confirmation notifications to both PSPs");
             notificationService.sendConfirmationNotification(paymentTransaction);
 
-            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_AND_SETTLED);
             log.debug("[PIX FLOW - Complete] Payment {} fully settled and confirmed", paymentTransaction.getPaymentId());
 
         } catch (Exception e) {
-            log.error("[PIX FLOW - Error] An error occurred while processing the payment with ID {}", 
+            log.error("[PIX FLOW - Error] An error occurred while settling the payment with ID {}",
                     paymentTransaction.getPaymentId(), e);
-
-            // TODO: Save as pending and send to retry queue instead of rejecting.
-            processRejectedPayment(paymentTransaction);
+            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
         }
     }
 

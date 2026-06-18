@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
 class PaymentTransactionProcessorServiceTest {
 
     @Test
-    void acceptedStatusUpdatesOnlyThePaymentStatusForAuditMilestones() {
+    void acceptedStatusSettlesDirectlyAndSendsConfirmationWhenSettlementSucceeds() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationService notificationService = mock(NotificationService.class);
         SettlementService settlementService = mock(SettlementService.class);
@@ -34,6 +34,7 @@ class PaymentTransactionProcessorServiceTest {
         );
         PaymentTransaction paymentTransaction = paymentTransaction();
         when(paymentTransactionRepository.findById("E2E-1")).thenReturn(Optional.of(paymentTransaction));
+        when(settlementService.tryMakeSettlement(paymentTransaction)).thenReturn(true);
 
         service.processStatusBatch("00000000", StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder()
@@ -42,12 +43,39 @@ class PaymentTransactionProcessorServiceTest {
                         .build()))
                 .build());
 
-        verify(paymentTransactionRepository).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
-        verify(settlementService).makeSettlement(paymentTransaction);
+        verify(settlementService).tryMakeSettlement(paymentTransaction);
         verify(notificationService).sendConfirmationNotification(paymentTransaction);
-        verify(paymentTransactionRepository).updateStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED);
+        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
+        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED);
         verify(paymentTransactionRepository, never()).saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_IN_PROCESS);
         verify(paymentTransactionRepository, never()).saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
+    }
+
+    @Test
+    void acceptedStatusLeavesAcceptedInProcessAndSkipsConfirmationWhenSettlementFails() {
+        PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
+        NotificationService notificationService = mock(NotificationService.class);
+        SettlementService settlementService = mock(SettlementService.class);
+        PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
+                paymentTransactionRepository,
+                notificationService,
+                settlementService
+        );
+        PaymentTransaction paymentTransaction = paymentTransaction();
+        when(paymentTransactionRepository.findById("E2E-1")).thenReturn(Optional.of(paymentTransaction));
+        when(settlementService.tryMakeSettlement(paymentTransaction)).thenReturn(false);
+
+        service.processStatusBatch("00000000", StatusBatch.builder()
+                .statusReports(List.of(StatusReport.builder()
+                        .originalPaymentId("E2E-1")
+                        .status(PaymentStatus.ACCEPTED_IN_PROCESS)
+                        .build()))
+                .build());
+
+        verify(settlementService).tryMakeSettlement(paymentTransaction);
+        verify(paymentTransactionRepository).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
+        verify(notificationService, never()).sendConfirmationNotification(paymentTransaction);
+        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED);
     }
 
     private static PaymentTransaction paymentTransaction() {

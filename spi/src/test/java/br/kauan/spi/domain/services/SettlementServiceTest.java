@@ -1,32 +1,42 @@
 package br.kauan.spi.domain.services;
 
+import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
-import br.kauan.spi.port.output.FundsRepository;
+import br.kauan.spi.port.output.SettlementRepository;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 class SettlementServiceTest {
 
     @Test
-    void makeSettlementOnlyDebitsAndCreditsProvisionedAccounts() {
-        FundsRepository fundsRepository = mock(FundsRepository.class);
-        SettlementService settlementService = new SettlementService(fundsRepository);
+    void tryMakeSettlementDelegatesToDirectSettlementRepository() {
+        SettlementRepository settlementRepository = mock(SettlementRepository.class);
+        SettlementService settlementService = new SettlementService(settlementRepository);
 
         PaymentTransaction paymentTransaction = paymentTransaction();
+        when(settlementRepository.settleAcceptedPayment(
+                "E2E-1",
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        )).thenReturn(true);
 
-        settlementService.makeSettlement(paymentTransaction);
+        boolean settled = settlementService.tryMakeSettlement(paymentTransaction);
 
-        verify(fundsRepository).deductFunds("11111111", BigDecimal.TEN);
-        verify(fundsRepository).addFunds("22222222", BigDecimal.TEN);
-        verifyNoMoreInteractions(fundsRepository);
+        assertTrue(settled);
+        verify(settlementRepository).settleAcceptedPayment(
+                "E2E-1",
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        );
     }
 
     private static PaymentTransaction paymentTransaction() {

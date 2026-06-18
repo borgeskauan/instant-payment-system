@@ -1,15 +1,18 @@
 spring:
   jpa:
     hibernate:
-      ddl-auto: create-drop
-    defer-datasource-initialization: true
-
-  h2:
-    console:
-      enabled: true
+      ddl-auto: validate
 
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: mysecretpassword
 
   kafka:
     bootstrap-servers: localhost:9092
