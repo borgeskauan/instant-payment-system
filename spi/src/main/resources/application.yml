@@ -21,15 +21,6 @@ spring:
       properties:
         max.poll.records: 100
         fetch.min.bytes: 1024
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      acks: 1
-      properties:
-        linger.ms: 5
-        batch.size: 16384
-        compression.type: lz4
-
   jmx:
     enabled: false
   main:
