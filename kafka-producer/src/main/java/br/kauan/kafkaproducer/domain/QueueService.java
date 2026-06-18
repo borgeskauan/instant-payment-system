@@ -18,9 +18,9 @@ public class QueueService {
     }
 
     public Mono<Void> sendBytes(byte[] data) {
-        log.info("Sending {} bytes to Kafka topic: {}", data.length, TOPIC);
+        log.debug("Sending {} bytes to Kafka topic: {}", data.length, TOPIC);
         return Mono.fromFuture(() -> kafkaTemplate.send(TOPIC, data))
-                .doOnSuccess(result -> log.info("Successfully sent message to Kafka, partition: {}, offset: {}", 
+                .doOnSuccess(result -> log.debug("Successfully sent message to Kafka, partition: {}, offset: {}",
                         result.getRecordMetadata().partition(), 
                         result.getRecordMetadata().offset()))
                 .doOnError(error -> log.error("Failed to send message to Kafka", error))
