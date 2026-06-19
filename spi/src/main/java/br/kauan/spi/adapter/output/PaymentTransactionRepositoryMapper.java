@@ -65,7 +65,7 @@ public class PaymentTransactionRepositoryMapper {
     }
 
     public static Party getSender(PaymentTransactionEntity entity) {
-        if (entity.getSenderName() == null) {
+        if (entity.getSenderName() == null && entity.getSenderBankCode() == null) {
             return null;
         }
 
@@ -78,7 +78,7 @@ public class PaymentTransactionRepositoryMapper {
     }
 
     public static Party getReceiver(PaymentTransactionEntity entity) {
-        if (entity.getReceiverName() == null) {
+        if (entity.getReceiverName() == null && entity.getReceiverBankCode() == null) {
             return null;
         }
 
@@ -91,27 +91,31 @@ public class PaymentTransactionRepositoryMapper {
     }
 
     private static BankAccount getSenderAccount(PaymentTransactionEntity entity) {
-        if (entity.getSenderAccountNumber() == null) {
+        if (entity.getSenderAccountNumber() == null && entity.getSenderBankCode() == null) {
             return null;
         }
 
         return BankAccount.builder()
                 .number(entity.getSenderAccountNumber())
                 .branch(entity.getSenderAccountBranch())
-                .type(BankAccountType.fromString(entity.getSenderAccountType()))
+                .type(entity.getSenderAccountType() == null
+                        ? null
+                        : BankAccountType.fromString(entity.getSenderAccountType()))
                 .bankCode(entity.getSenderBankCode())
                 .build();
     }
 
     private static BankAccount getReceiverAccount(PaymentTransactionEntity entity) {
-        if (entity.getReceiverAccountNumber() == null) {
+        if (entity.getReceiverAccountNumber() == null && entity.getReceiverBankCode() == null) {
             return null;
         }
 
         return BankAccount.builder()
                 .number(entity.getReceiverAccountNumber())
                 .branch(entity.getReceiverAccountBranch())
-                .type(BankAccountType.fromString(entity.getReceiverAccountType()))
+                .type(entity.getReceiverAccountType() == null
+                        ? null
+                        : BankAccountType.fromString(entity.getReceiverAccountType()))
                 .bankCode(entity.getReceiverBankCode())
                 .build();
     }

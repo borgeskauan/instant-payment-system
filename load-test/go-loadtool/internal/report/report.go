@@ -10,19 +10,51 @@ import (
 )
 
 type Summary struct {
-	Started                           int     `json:"started"`
-	Accepted                          int     `json:"accepted"`
-	Confirmed                         int     `json:"confirmed"`
-	NeverConfirmed                    int     `json:"never_confirmed"`
-	MissedSLA                         int     `json:"missed_sla"`
-	ActualStartedPerConfiguredSecond  float64 `json:"actual_started_per_configured_second"`
-	StartWindowSeconds                float64 `json:"start_window_seconds"`
-	ActualStartedPerStartWindowSecond float64 `json:"actual_started_per_start_window_second"`
-	StartRateAchievementPct           float64 `json:"start_rate_achievement_pct"`
-	P50Ms                             float64 `json:"p50_ms"`
-	P95Ms                             float64 `json:"p95_ms"`
-	P99Ms                             float64 `json:"p99_ms"`
-	MaxMs                             float64 `json:"max_ms"`
+	Transactions        TransactionSummary `json:"transactions"`
+	ThroughputPerSecond ThroughputSummary  `json:"throughput_per_second"`
+	Windows             WindowSummary      `json:"windows"`
+	SLA                 SLASummary         `json:"sla"`
+	LatencyMs           LatencySummary     `json:"latency_ms"`
+}
+
+type TransactionSummary struct {
+	Started        int                   `json:"started"`
+	Accepted       int                   `json:"accepted"`
+	Completion     CompletionSummary     `json:"completion"`
+	CompletedBySLA CompletedBySLASummary `json:"completed_by_sla"`
+}
+
+type CompletionSummary struct {
+	Completed    int `json:"completed"`
+	NotCompleted int `json:"not_completed"`
+}
+
+type CompletedBySLASummary struct {
+	WithinSLA int `json:"within_sla"`
+	AfterSLA  int `json:"after_sla"`
+}
+
+type ThroughputSummary struct {
+	Started                 float64 `json:"started"`
+	StartedActualWindow     float64 `json:"started_actual_window"`
+	CompletedDuringActive   float64 `json:"completed_during_active"`
+	CompletedIncludingDrain float64 `json:"completed_including_drain"`
+}
+
+type WindowSummary struct {
+	ConfiguredActiveSeconds  float64 `json:"configured_active_seconds"`
+	ActualStartWindowSeconds float64 `json:"actual_start_window_seconds"`
+}
+
+type SLASummary struct {
+	ThresholdMs int64 `json:"threshold_ms"`
+}
+
+type LatencySummary struct {
+	P50 float64 `json:"p50"`
+	P95 float64 `json:"p95"`
+	P99 float64 `json:"p99"`
+	Max float64 `json:"max"`
 }
 
 type Options struct {
@@ -37,47 +69,73 @@ func Build(starts []events.Start, notifications []events.Notification, slaThresh
 
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
 	var summary Summary
-	summary.Started = len(starts)
-	if options.TargetTxRate > 0 && options.Duration > 0 {
-		summary.ActualStartedPerConfiguredSecond = float64(summary.Started) / options.Duration.Seconds()
-		summary.StartRateAchievementPct = summary.ActualStartedPerConfiguredSecond / float64(options.TargetTxRate) * 100
+	summary.Transactions.Started = len(starts)
+	summary.SLA.ThresholdMs = options.SLAThresholdMs
+	if options.Duration > 0 {
+		summary.Windows.ConfiguredActiveSeconds = options.Duration.Seconds()
+		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
 	}
 	if startWindowSeconds := startWindowSeconds(starts); startWindowSeconds > 0 {
-		summary.StartWindowSeconds = startWindowSeconds
-		summary.ActualStartedPerStartWindowSecond = float64(summary.Started) / startWindowSeconds
+		summary.Windows.ActualStartWindowSeconds = startWindowSeconds
+		summary.ThroughputPerSecond.StartedActualWindow = float64(summary.Transactions.Started) / startWindowSeconds
 	}
 
 	confirmations := payerConfirmations(notifications)
+	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Duration)
+	completedDuringActive := 0
 	var durations []float64
 	for _, start := range starts {
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
 			continue
 		}
-		summary.Accepted++
+		summary.Transactions.Accepted++
 		receivedAt, ok := confirmations[confirmationKey{
 			endToEndID: start.EndToEndID,
 			ispb:       start.PayerISPB,
 		}]
 		if !ok {
-			summary.NeverConfirmed++
+			summary.Transactions.Completion.NotCompleted++
 			continue
 		}
 		durationMs := float64(receivedAt-start.CreatedAtNS) / 1_000_000
 		durations = append(durations, durationMs)
-		summary.Confirmed++
-		if durationMs > float64(options.SLAThresholdMs) {
-			summary.MissedSLA++
+		summary.Transactions.Completion.Completed++
+		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
+			completedDuringActive++
 		}
+		if durationMs > float64(options.SLAThresholdMs) {
+			summary.Transactions.CompletedBySLA.AfterSLA++
+		} else {
+			summary.Transactions.CompletedBySLA.WithinSLA++
+		}
+	}
+	if options.Duration > 0 {
+		durationSeconds := options.Duration.Seconds()
+		summary.ThroughputPerSecond.CompletedDuringActive = float64(completedDuringActive) / durationSeconds
+		summary.ThroughputPerSecond.CompletedIncludingDrain = float64(summary.Transactions.Completion.Completed) / durationSeconds
 	}
 
 	sort.Float64s(durations)
-	summary.P50Ms = percentile(durations, 0.50)
-	summary.P95Ms = percentile(durations, 0.95)
-	summary.P99Ms = percentile(durations, 0.99)
+	summary.LatencyMs.P50 = percentile(durations, 0.50)
+	summary.LatencyMs.P95 = percentile(durations, 0.95)
+	summary.LatencyMs.P99 = percentile(durations, 0.99)
 	if len(durations) > 0 {
-		summary.MaxMs = durations[len(durations)-1]
+		summary.LatencyMs.Max = durations[len(durations)-1]
 	}
 	return summary
+}
+
+func configuredActiveWindowEndNS(starts []events.Start, duration time.Duration) int64 {
+	if len(starts) == 0 || duration <= 0 {
+		return 0
+	}
+	minStartedAt := starts[0].CreatedAtNS
+	for _, start := range starts[1:] {
+		if start.CreatedAtNS < minStartedAt {
+			minStartedAt = start.CreatedAtNS
+		}
+	}
+	return minStartedAt + duration.Nanoseconds()
 }
 
 func startWindowSeconds(starts []events.Start) float64 {

@@ -21,7 +21,7 @@ public class PaymentController {
         log.debug("[PIX FLOW - Step 3] Kafka Producer received transfer request for ISPB: {}, payload size: {} bytes",
                 ispb, payload.length);
         log.debug("[PIX FLOW - Step 3] Forwarding PACS.008 message to Kafka topic");
-        return queueService.sendBytes(payload);
+        return queueService.sendPaymentRequest(payload);
     }
 
     @PostMapping(value = "/{ispb}/transfer/status", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
@@ -29,6 +29,6 @@ public class PaymentController {
         log.debug("[PIX FLOW - Step 5] Kafka Producer received status report for ISPB: {}, payload size: {} bytes",
                 ispb, payload.length);
         log.debug("[PIX FLOW - Step 5] Forwarding PACS.002 message to Kafka topic");
-        return queueService.sendBytes(payload);
+        return queueService.sendStatusReport(payload);
     }
 }

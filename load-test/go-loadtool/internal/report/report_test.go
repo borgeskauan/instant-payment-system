@@ -21,20 +21,23 @@ func TestSummaryCountsSLA(t *testing.T) {
 
 	summary := Build(starts, notifications, 4600)
 
-	if summary.Started != 3 {
-		t.Fatalf("Started = %d, want 3", summary.Started)
+	if summary.Transactions.Started != 3 {
+		t.Fatalf("Started = %d, want 3", summary.Transactions.Started)
 	}
-	if summary.Accepted != 2 {
-		t.Fatalf("Accepted = %d, want 2", summary.Accepted)
+	if summary.Transactions.Accepted != 2 {
+		t.Fatalf("Accepted = %d, want 2", summary.Transactions.Accepted)
 	}
-	if summary.Confirmed != 2 {
-		t.Fatalf("Confirmed = %d, want 2", summary.Confirmed)
+	if summary.Transactions.Completion.Completed != 2 {
+		t.Fatalf("Completed = %d, want 2", summary.Transactions.Completion.Completed)
 	}
-	if summary.MissedSLA != 1 {
-		t.Fatalf("MissedSLA = %d, want 1", summary.MissedSLA)
+	if summary.Transactions.CompletedBySLA.AfterSLA != 1 {
+		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.CompletedBySLA.AfterSLA)
 	}
-	if summary.NeverConfirmed != 0 {
-		t.Fatalf("NeverConfirmed = %d, want 0", summary.NeverConfirmed)
+	if summary.Transactions.CompletedBySLA.WithinSLA != 1 {
+		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.CompletedBySLA.WithinSLA)
+	}
+	if summary.Transactions.Completion.NotCompleted != 0 {
+		t.Fatalf("NotCompleted = %d, want 0", summary.Transactions.Completion.NotCompleted)
 	}
 }
 
@@ -45,8 +48,8 @@ func TestSummaryCountsNeverConfirmed(t *testing.T) {
 
 	summary := Build(starts, nil, 4600)
 
-	if summary.NeverConfirmed != 1 {
-		t.Fatalf("NeverConfirmed = %d, want 1", summary.NeverConfirmed)
+	if summary.Transactions.Completion.NotCompleted != 1 {
+		t.Fatalf("NotCompleted = %d, want 1", summary.Transactions.Completion.NotCompleted)
 	}
 }
 
@@ -62,8 +65,8 @@ func TestSummaryUsesEarliestPayerConfirmation(t *testing.T) {
 
 	summary := Build(starts, notifications, 4600)
 
-	if summary.P50Ms != 1000 {
-		t.Fatalf("P50Ms = %f, want 1000", summary.P50Ms)
+	if summary.LatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
 	}
 }
 
@@ -80,16 +83,42 @@ func TestSummaryReportsActualStartRate(t *testing.T) {
 		Duration:       2 * time.Second,
 	})
 
-	if summary.ActualStartedPerConfiguredSecond != 1.5 {
-		t.Fatalf("ActualStartedPerConfiguredSecond = %f, want 1.5", summary.ActualStartedPerConfiguredSecond)
+	if summary.ThroughputPerSecond.Started != 1.5 {
+		t.Fatalf("Started throughput = %f, want 1.5", summary.ThroughputPerSecond.Started)
 	}
-	if summary.StartWindowSeconds != 1 {
-		t.Fatalf("StartWindowSeconds = %f, want 1", summary.StartWindowSeconds)
+	if summary.Windows.ActualStartWindowSeconds != 1 {
+		t.Fatalf("ActualStartWindowSeconds = %f, want 1", summary.Windows.ActualStartWindowSeconds)
 	}
-	if summary.ActualStartedPerStartWindowSecond != 3 {
-		t.Fatalf("ActualStartedPerStartWindowSecond = %f, want 3", summary.ActualStartedPerStartWindowSecond)
+	if summary.ThroughputPerSecond.StartedActualWindow != 3 {
+		t.Fatalf("StartedActualWindow = %f, want 3", summary.ThroughputPerSecond.StartedActualWindow)
 	}
-	if summary.StartRateAchievementPct != 75 {
-		t.Fatalf("StartRateAchievementPct = %f, want 75", summary.StartRateAchievementPct)
+	if summary.Windows.ConfiguredActiveSeconds != 2 {
+		t.Fatalf("ConfiguredActiveSeconds = %f, want 2", summary.Windows.ConfiguredActiveSeconds)
+	}
+}
+
+func TestSummaryReportsConfirmedRatesForActiveWindowAndDrain(t *testing.T) {
+	starts := []events.Start{
+		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
+		{EndToEndID: "tx-2", PayerISPB: "10000002", CreatedAtNS: 0, HTTPStatus: 200},
+		{EndToEndID: "tx-3", PayerISPB: "10000003", CreatedAtNS: 0, HTTPStatus: 200},
+		{EndToEndID: "tx-4", PayerISPB: "10000004", CreatedAtNS: 0, HTTPStatus: 200},
+	}
+	notifications := []events.Notification{
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
+		{EndToEndID: "tx-2", ISPB: "10000002", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
+		{EndToEndID: "tx-3", ISPB: "10000003", EventType: events.EventPacs002Received, ReceivedAtNS: 3_000_000_000},
+	}
+
+	summary := BuildWithOptions(starts, notifications, Options{
+		SLAThresholdMs: 4600,
+		Duration:       2 * time.Second,
+	})
+
+	if summary.ThroughputPerSecond.CompletedDuringActive != 1 {
+		t.Fatalf("CompletedDuringActive = %f, want 1", summary.ThroughputPerSecond.CompletedDuringActive)
+	}
+	if summary.ThroughputPerSecond.CompletedIncludingDrain != 1.5 {
+		t.Fatalf("CompletedIncludingDrain = %f, want 1.5", summary.ThroughputPerSecond.CompletedIncludingDrain)
 	}
 }

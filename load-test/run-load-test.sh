@@ -11,13 +11,17 @@ readonly SCRIPTS_DIR="scripts"
 readonly SPI_CONTAINER="spi"
 readonly KAFKA_CONTAINER="kafka"
 readonly SPI_CONSUMER_GROUP="spi-consumer-group"
-readonly SPI_INPUT_TOPIC="spi-payment-requests"
+readonly SPI_INPUT_TOPICS=("spi-payment-requests" "spi-payment-status-reports")
 readonly SPI_JFR_CONTAINER_FILE="/tmp/spi-load-test.jfr"
 readonly SPI_JFR_NAME="spi-load-test"
+readonly SPI_TRACE_CONTAINER_FILE="/tmp/spi-trace.csv"
+readonly SPI_INTERNAL_BASE_URL="${SPI_INTERNAL_BASE_URL:-http://localhost:8002}"
 
 RUN_TAG=""
 PROVISION_FUNDS=true
 ENABLE_JFR=false
+ENABLE_SPI_TRACE=false
+SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 JFR_TARGET_DIR=""
 SYSTEM_STATS_PID=""
@@ -25,7 +29,7 @@ PROCESS_STATS_PID=""
 KAFKA_LAG_PID=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--jfr] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
 }
 
@@ -43,6 +47,9 @@ stop_samplers() {
 }
 
 cleanup() {
+    if [[ "$SPI_TRACE_ACTIVE" == true ]]; then
+        stop_spi_trace "" || true
+    fi
     if [[ "$JFR_ACTIVE" == true && -n "$JFR_TARGET_DIR" ]]; then
         stop_spi_jfr "$JFR_TARGET_DIR" || true
     fi
@@ -62,6 +69,10 @@ parse_args() {
                 ;;
             --jfr)
                 ENABLE_JFR=true
+                shift
+                ;;
+            --spi-trace)
+                ENABLE_SPI_TRACE=true
                 shift
                 ;;
             -h|--help)
@@ -115,7 +126,16 @@ current_spi_input_lag() {
         --bootstrap-server kafka:9092 \
         --describe \
         --group "$SPI_CONSUMER_GROUP" 2>/dev/null |
-        awk -v topic="$SPI_INPUT_TOPIC" '$2 == topic && $6 ~ /^[0-9]+$/ { lag += $6 } END { print lag + 0 }'
+        awk -v topics="${SPI_INPUT_TOPICS[*]}" '
+            BEGIN {
+                split(topics, topic_list, " ")
+                for (i in topic_list) {
+                    watched[topic_list[i]] = 1
+                }
+            }
+            watched[$2] && $6 ~ /^[0-9]+$/ { lag += $6 }
+            END { print lag + 0 }
+        '
 }
 
 assert_no_initial_spi_lag() {
@@ -123,7 +143,7 @@ assert_no_initial_spi_lag() {
     lag="$(current_spi_input_lag)"
 
     if (( lag > 0 )); then
-        echo "Refusing to start load test: ${SPI_CONSUMER_GROUP} has ${lag} messages of lag on ${SPI_INPUT_TOPIC}." >&2
+        echo "Refusing to start load test: ${SPI_CONSUMER_GROUP} has ${lag} messages of lag on SPI input topics: ${SPI_INPUT_TOPICS[*]}." >&2
         echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
         exit 1
     fi
@@ -131,6 +151,49 @@ assert_no_initial_spi_lag() {
 
 run_spi_jcmd() {
     docker exec "$SPI_CONTAINER" jcmd 1 "$@"
+}
+
+start_spi_trace() {
+    local log_file="$1"
+
+    log_phase "starting SPI trace collection"
+    {
+        echo "Starting SPI trace at $(date --iso-8601=seconds)"
+        curl -fsS -X POST "${SPI_INTERNAL_BASE_URL}/internal/spi-trace/start"
+    } > "$log_file" 2>&1
+    SPI_TRACE_ACTIVE=true
+}
+
+stop_spi_trace() {
+    local target_dir="$1"
+    local log_file="/dev/null"
+    if [[ -n "$target_dir" ]]; then
+        log_file="$target_dir/spi-trace.log"
+    fi
+
+    log_phase "stopping SPI trace collection"
+    {
+        echo "Stopping SPI trace at $(date --iso-8601=seconds)"
+        curl -fsS -X POST "${SPI_INTERNAL_BASE_URL}/internal/spi-trace/stop"
+    } >> "$log_file" 2>&1
+    SPI_TRACE_ACTIVE=false
+}
+
+copy_spi_trace() {
+    local target_dir="$1"
+    local log_file="$target_dir/spi-trace.log"
+
+    log_phase "copying SPI trace"
+    {
+        echo "Copying SPI trace at $(date --iso-8601=seconds)"
+        if docker exec "$SPI_CONTAINER" test -s "$SPI_TRACE_CONTAINER_FILE"; then
+            docker cp "${SPI_CONTAINER}:${SPI_TRACE_CONTAINER_FILE}" "$target_dir/spi-trace.csv"
+            echo "SPI trace copied to ${target_dir}/spi-trace.csv"
+        else
+            echo "SPI trace file was not created or is empty."
+            echo "Make sure SPI trace was started successfully before the simulator ran."
+        fi
+    } >> "$log_file" 2>&1
 }
 
 start_spi_jfr() {
@@ -184,10 +247,16 @@ main() {
     if [[ "$ENABLE_JFR" == true ]]; then
         log_phase "SPI JFR enabled"
     fi
+    if [[ "$ENABLE_SPI_TRACE" == true ]]; then
+        log_phase "SPI trace collection enabled"
+    fi
 
     log_phase "checking initial SPI Kafka lag"
     assert_no_initial_spi_lag
     log_phase "initial SPI Kafka lag is zero"
+
+    log_phase "ensuring SPI trace is stopped"
+    stop_spi_trace ""
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
@@ -212,6 +281,10 @@ main() {
         start_spi_jfr "${target_dir}/spi-jfr.log"
     fi
 
+    if [[ "$ENABLE_SPI_TRACE" == true ]]; then
+        start_spi_trace "${target_dir}/spi-trace.log"
+    fi
+
     log_phase "starting simulator"
     (
         cd go-loadtool
@@ -221,6 +294,11 @@ main() {
 
     if [[ "$ENABLE_JFR" == true ]]; then
         stop_spi_jfr "$target_dir"
+    fi
+
+    if [[ "$ENABLE_SPI_TRACE" == true ]]; then
+        stop_spi_trace "$target_dir"
+        copy_spi_trace "$target_dir"
     fi
 
     log_phase "simulator finished; generating SLA report"

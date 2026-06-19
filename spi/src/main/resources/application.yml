@@ -32,6 +32,10 @@ spring:
 
 spi:
   default-initial-balance: 1_000_000_000
+  kafka:
+    listener-concurrency: 8
+  trace:
+    file: /tmp/spi-trace.csv
 
 server:
   port: 8002

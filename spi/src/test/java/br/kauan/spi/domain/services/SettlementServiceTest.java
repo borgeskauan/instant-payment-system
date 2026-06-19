@@ -9,8 +9,9 @@ import br.kauan.spi.port.output.SettlementRepository;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,7 +19,7 @@ import static org.mockito.Mockito.when;
 class SettlementServiceTest {
 
     @Test
-    void tryMakeSettlementDelegatesToDirectSettlementRepository() {
+    void tryMakeSettlementDelegatesByPaymentIdAndReturnsSettledTransaction() {
         SettlementRepository settlementRepository = mock(SettlementRepository.class);
         SettlementService settlementService = new SettlementService(settlementRepository);
 
@@ -27,11 +28,11 @@ class SettlementServiceTest {
                 "E2E-1",
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
-        )).thenReturn(true);
+        )).thenReturn(Optional.of(paymentTransaction));
 
-        boolean settled = settlementService.tryMakeSettlement(paymentTransaction);
+        Optional<PaymentTransaction> settled = settlementService.tryMakeSettlement("E2E-1");
 
-        assertTrue(settled);
+        assertSame(paymentTransaction, settled.orElseThrow());
         verify(settlementRepository).settleAcceptedPayment(
                 "E2E-1",
                 PaymentStatus.WAITING_ACCEPTANCE,

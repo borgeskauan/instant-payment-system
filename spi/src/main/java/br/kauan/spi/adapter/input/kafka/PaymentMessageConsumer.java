@@ -6,6 +6,8 @@ import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
+import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
+import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,22 +20,27 @@ import org.springframework.stereotype.Component;
 public class PaymentMessageConsumer {
 
     private static final String PAYMENT_REQUESTS_TOPIC = "spi-payment-requests";
+    private static final String PAYMENT_STATUS_REPORTS_TOPIC = "spi-payment-status-reports";
 
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
+    private final SpiTraceRecorder traceRecorder;
     private final ObjectMapper objectMapper;
 
     public PaymentMessageConsumer(
             PaymentTransactionMapper paymentTransactionMapper,
             StatusReportMapper statusReportMapper,
-            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase
+            PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
+            SpiTraceRecorder traceRecorder
     ) {
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
+        this.traceRecorder = traceRecorder;
         this.objectMapper = new ObjectMapper();
-        log.debug("PaymentMessageConsumer initialized - ready to consume from topic '{}'", PAYMENT_REQUESTS_TOPIC);
+        log.debug("PaymentMessageConsumer initialized - ready to consume from topics '{}' and '{}'",
+                PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
 
     @KafkaListener(
@@ -41,28 +48,28 @@ public class PaymentMessageConsumer {
             groupId = "spi-consumer-group",
             containerFactory = "kafkaListenerContainerFactory"
     )
-    public void consumeMessage(byte[] payload) {
+    public void consumePaymentRequest(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
-
             var jsonNode = objectMapper.readTree(payload);
-
-            // Determine message type and process accordingly
-            if (jsonNode.has("TxInfAndSts")) {
-                // This is a status report (pacs.002)
-                log.debug("Detected status report (pacs.002) message");
-                processStatusReport(jsonNode);
-            } else if (jsonNode.has("CdtTrfTxInf")) {
-                // This is a payment transaction (pacs.008)
-                log.debug("Detected payment transaction (pacs.008) message");
-                processPaymentTransaction(jsonNode);
-            } else {
-                log.warn("Unknown message type received from Kafka. JSON keys: {}", jsonNode.fieldNames());
-            }
-            
+            processPaymentTransaction(jsonNode);
         } catch (Exception e) {
-            log.error("Error processing message from Kafka", e);
-            // Consider implementing dead letter queue or retry logic here
+            log.error("Error processing payment transaction from Kafka", e);
+        }
+    }
+
+    @KafkaListener(
+            topics = PAYMENT_STATUS_REPORTS_TOPIC,
+            groupId = "spi-consumer-group",
+            containerFactory = "kafkaListenerContainerFactory"
+    )
+    public void consumeStatusReport(byte[] payload) {
+        try {
+            log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_STATUS_REPORTS_TOPIC, payload.length);
+            var jsonNode = objectMapper.readTree(payload);
+            processStatusReport(jsonNode);
+        } catch (Exception e) {
+            log.error("Error processing status report from Kafka", e);
         }
     }
 
@@ -75,6 +82,8 @@ public class PaymentMessageConsumer {
             
             PaymentBatch paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(request);
             String ispb = extractIspbFromTransaction(request);
+            paymentBatch.getTransactions().forEach(payment ->
+                    traceRecorder.record(payment.getPaymentId(), SpiTraceEvent.REQUEST_CONSUMED));
             
             log.debug("Processing payment transaction batch for ISPB: {}, transactions: {}", 
                     ispb, paymentBatch.getTransactions().size());
@@ -96,6 +105,8 @@ public class PaymentMessageConsumer {
             
             StatusBatch statusBatch = statusReportMapper.fromRegulatoryReport(statusReport);
             String ispb = extractIspbFromStatusReport(statusReport);
+            statusBatch.getStatusReports().forEach(report ->
+                    traceRecorder.record(report.getOriginalPaymentId(), SpiTraceEvent.STATUS_CONSUMED));
             
             log.debug("Processing status report batch for ISPB: {}, reports: {}", 
                     ispb, statusBatch.getStatusReports().size());

@@ -27,6 +27,9 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.auto-offset-reset}")
     private String autoOffsetReset;
 
+    @Value("${spi.kafka.listener-concurrency:8}")
+    private int listenerConcurrency;
+
     @Bean
     public ConsumerFactory<String, byte[]> consumerFactory() {
         Map<String, Object> config = new HashMap<>();
@@ -47,12 +50,14 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, byte[]> kafkaListenerContainerFactory() {
+    public ConcurrentKafkaListenerContainerFactory<String, byte[]> kafkaListenerContainerFactory(
+            ConsumerFactory<String, byte[]> consumerFactory
+    ) {
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory = 
                 new ConcurrentKafkaListenerContainerFactory<>();
         
-        factory.setConsumerFactory(consumerFactory());
-        factory.setConcurrency(3); // Number of concurrent consumer threads
+        factory.setConsumerFactory(consumerFactory);
+        factory.setConcurrency(listenerConcurrency);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
         
         return factory;

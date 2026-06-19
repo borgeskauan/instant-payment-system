@@ -70,6 +70,24 @@ Os testes de carga atuais em `load-test/` chamam diretamente o fluxo SPI/Kafka p
 - [ ] Atualizar Bruno e REST Client para o novo contrato.
 - [ ] Manter os testes de carga atuais compatíveis, já que eles exercitam SPI/Kafka diretamente.
 
+### Auditoria completa das transações no SPI sem pesar o hot path
+
+**Por que existe**
+
+Para reduzir pressão no PostgreSQL durante os testes de carga, o SPI passou a persistir no caminho quente apenas os campos necessários para liquidação e roteamento da confirmação: `payment_id`, `amount`, `status`, `sender_bank_code` e `receiver_bank_code`.
+
+Isso ajuda a medir o impacto de uma tabela operacional estreita, mas não resolve a necessidade real de auditoria. Em produção, o sistema precisa conseguir reconstituir a transação completa, incluindo payload recebido, dados das partes e metadados de origem. Essa auditoria não deve voltar a bloquear a liquidação dentro do SLA.
+
+**Tarefas**
+
+- [ ] Definir o modelo de auditoria completo da transação.
+- [ ] Decidir se a fonte auditável principal será Kafka, tabela dedicada, outbox ou combinação desses mecanismos.
+- [ ] Criar fluxo assíncrono para persistir payload/dados completos sem bloquear o settlement.
+- [ ] Registrar metadados de origem: tópico, partição, offset, timestamp de consumo e identificador fim a fim.
+- [ ] Manter tabela operacional estreita para o caminho quente de liquidação.
+- [ ] Definir política de retenção e consulta para dados de auditoria.
+- [ ] Medir o impacto da auditoria assíncrona no load test antes de considerá-la parte do fluxo padrão.
+
 ### Infraestrutura e deploy
 
 **Por que existe**

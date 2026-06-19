@@ -10,6 +10,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,7 +38,7 @@ class PaymentTransactionJpaAdapterTest {
     }
 
     @Test
-    void saveTransactionUsesDirectJdbcInsertInsteadOfJpaSave() {
+    void saveTransactionPersistsOnlySettlementFieldsUsingJdbcInsert() {
         PaymentTransactionJpaClient paymentTransactionJpaClient = mock(PaymentTransactionJpaClient.class);
         PaymentTransactionRepositoryMapper repositoryMapper = new PaymentTransactionRepositoryMapper();
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
@@ -49,10 +51,28 @@ class PaymentTransactionJpaAdapterTest {
         adapter.saveTransaction(paymentTransaction(), PaymentStatus.WAITING_ACCEPTANCE);
 
         verify(jdbcTemplate).update(
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.any(Object[].class)
+                org.mockito.ArgumentMatchers.contains("sender_bank_code"),
+                org.mockito.ArgumentMatchers.eq("E2E-1"),
+                org.mockito.ArgumentMatchers.eq(BigDecimal.TEN),
+                org.mockito.ArgumentMatchers.eq(PaymentStatus.WAITING_ACCEPTANCE.name()),
+                org.mockito.ArgumentMatchers.eq("11111111"),
+                org.mockito.ArgumentMatchers.eq("22222222")
         );
-        verify(paymentTransactionJpaClient, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(paymentTransactionJpaClient, never()).save(any());
+    }
+
+    @Test
+    void mapperBuildsPartiesWhenOnlyBankCodesAreAvailable() {
+        PaymentTransactionEntity entity = new PaymentTransactionEntity();
+        entity.setPaymentId("E2E-1");
+        entity.setAmount(BigDecimal.TEN);
+        entity.setSenderBankCode("11111111");
+        entity.setReceiverBankCode("22222222");
+
+        PaymentTransaction transaction = new PaymentTransactionRepositoryMapper().toDomain(entity);
+
+        assertThat(transaction.getSender().getAccount().getBankCode()).isEqualTo("11111111");
+        assertThat(transaction.getReceiver().getAccount().getBankCode()).isEqualTo("22222222");
     }
 
     private static PaymentTransaction paymentTransaction() {

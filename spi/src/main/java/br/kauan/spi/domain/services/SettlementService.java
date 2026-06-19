@@ -8,6 +8,8 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Slf4j
 @Service
 public class SettlementService {
@@ -19,22 +21,22 @@ public class SettlementService {
     }
 
     @Transactional
-    public boolean tryMakeSettlement(PaymentTransaction paymentTransaction) {
-        var amount = paymentTransaction.getAmount();
-        var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
-        var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
-
-        boolean settled = settlementRepository.settleAcceptedPayment(
-                paymentTransaction.getPaymentId(),
+    public Optional<PaymentTransaction> tryMakeSettlement(String paymentId) {
+        Optional<PaymentTransaction> settledPayment = settlementRepository.settleAcceptedPayment(
+                paymentId,
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
-        if (settled) {
+        settledPayment.ifPresent(paymentTransaction -> {
+            var amount = paymentTransaction.getAmount();
+            var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
+            var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
+
             log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}",
                     amount, senderBankCode, receiverBankCode);
-        }
+        });
 
-        return settled;
+        return settledPayment;
     }
 }
