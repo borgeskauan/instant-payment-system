@@ -35,3 +35,4 @@ build/
 .vscode/
 
 /load_test/summary/
+/load-test/results/
