@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +39,7 @@ class PaymentTransactionJpaAdapterTest {
     }
 
     @Test
-    void saveTransactionPersistsOnlySettlementFieldsUsingJdbcInsert() {
+    void saveTransactionPersistsOnlySettlementFieldsUsingJdbcBatchInsert() {
         PaymentTransactionJpaClient paymentTransactionJpaClient = mock(PaymentTransactionJpaClient.class);
         PaymentTransactionRepositoryMapper repositoryMapper = new PaymentTransactionRepositoryMapper();
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
@@ -50,13 +51,35 @@ class PaymentTransactionJpaAdapterTest {
 
         adapter.saveTransaction(paymentTransaction(), PaymentStatus.WAITING_ACCEPTANCE);
 
-        verify(jdbcTemplate).update(
+        verify(jdbcTemplate).batchUpdate(
                 org.mockito.ArgumentMatchers.contains("sender_bank_code"),
-                org.mockito.ArgumentMatchers.eq("E2E-1"),
-                org.mockito.ArgumentMatchers.eq(BigDecimal.TEN),
-                org.mockito.ArgumentMatchers.eq(PaymentStatus.WAITING_ACCEPTANCE.name()),
-                org.mockito.ArgumentMatchers.eq("11111111"),
-                org.mockito.ArgumentMatchers.eq("22222222")
+                org.mockito.ArgumentMatchers.eq(List.of(paymentTransaction())),
+                org.mockito.ArgumentMatchers.eq(1),
+                org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.ParameterizedPreparedStatementSetter.class)
+        );
+        verify(paymentTransactionJpaClient, never()).save(any());
+    }
+
+    @Test
+    void saveTransactionsPersistsSettlementFieldsUsingJdbcBatchInsert() {
+        PaymentTransactionJpaClient paymentTransactionJpaClient = mock(PaymentTransactionJpaClient.class);
+        PaymentTransactionRepositoryMapper repositoryMapper = new PaymentTransactionRepositoryMapper();
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        PaymentTransactionJpaAdapter adapter = new PaymentTransactionJpaAdapter(
+                paymentTransactionJpaClient,
+                repositoryMapper,
+                jdbcTemplate
+        );
+        PaymentTransaction first = paymentTransaction("E2E-1", "11111111", "22222222");
+        PaymentTransaction second = paymentTransaction("E2E-2", "33333333", "44444444");
+
+        adapter.saveTransactions(List.of(first, second), PaymentStatus.WAITING_ACCEPTANCE);
+
+        verify(jdbcTemplate).batchUpdate(
+                org.mockito.ArgumentMatchers.contains("sender_bank_code"),
+                org.mockito.ArgumentMatchers.eq(List.of(first, second)),
+                org.mockito.ArgumentMatchers.eq(2),
+                org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.ParameterizedPreparedStatementSetter.class)
         );
         verify(paymentTransactionJpaClient, never()).save(any());
     }
@@ -76,13 +99,17 @@ class PaymentTransactionJpaAdapterTest {
     }
 
     private static PaymentTransaction paymentTransaction() {
+        return paymentTransaction("E2E-1", "11111111", "22222222");
+    }
+
+    private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
         return PaymentTransaction.builder()
-                .paymentId("E2E-1")
+                .paymentId(paymentId)
                 .amount(BigDecimal.TEN)
                 .currency("BRL")
                 .description("test")
-                .sender(party("11111111"))
-                .receiver(party("22222222"))
+                .sender(party(senderBankCode))
+                .receiver(party(receiverBankCode))
                 .build();
     }
 

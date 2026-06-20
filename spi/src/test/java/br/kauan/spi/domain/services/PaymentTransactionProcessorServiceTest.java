@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,7 +42,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransaction paymentTransaction = paymentTransaction();
         when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of(paymentTransaction));
 
-        service.processStatusBatch("00000000", StatusBatch.builder()
+        service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder()
                         .originalPaymentId("E2E-1")
                         .status(PaymentStatus.ACCEPTED_IN_PROCESS)
@@ -77,7 +78,7 @@ class PaymentTransactionProcessorServiceTest {
         when(settlementService.tryMakeSettlements(List.of("E2E-1", "E2E-2")))
                 .thenReturn(List.of(firstPayment, secondPayment));
 
-        service.processStatusBatch("00000000", StatusBatch.builder()
+        service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(
                         StatusReport.builder()
                                 .originalPaymentId("E2E-1")
@@ -116,7 +117,7 @@ class PaymentTransactionProcessorServiceTest {
         );
         when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of());
 
-        service.processStatusBatch("00000000", StatusBatch.builder()
+        service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder()
                         .originalPaymentId("E2E-1")
                         .status(PaymentStatus.ACCEPTED_IN_PROCESS)
@@ -132,7 +133,7 @@ class PaymentTransactionProcessorServiceTest {
     }
 
     @Test
-    void transactionRequestSavesPaymentAndEnqueuesAcceptanceNotification() {
+    void transactionRequestSavesPaymentsInBatchAndEnqueuesAcceptanceNotifications() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationService notificationService = mock(NotificationService.class);
         SettlementService settlementService = mock(SettlementService.class);
@@ -143,16 +144,25 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        PaymentTransaction paymentTransaction = paymentTransaction();
+        PaymentTransaction firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
+        PaymentTransaction secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
 
-        service.processTransactionBatch("00000000", PaymentBatch.builder()
-                .transactions(List.of(paymentTransaction))
+        service.processTransactionBatch(PaymentBatch.builder()
+                .transactions(List.of(firstPayment, secondPayment))
                 .build());
 
-        verify(paymentTransactionRepository).saveTransaction(paymentTransaction, PaymentStatus.WAITING_ACCEPTANCE);
+        verify(paymentTransactionRepository).saveTransactions(
+                List.of(firstPayment, secondPayment),
+                PaymentStatus.WAITING_ACCEPTANCE
+        );
+        verify(paymentTransactionRepository, never())
+                .saveTransaction(any(PaymentTransaction.class), any(PaymentStatus.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
-        verify(notificationService).sendAcceptanceRequest("20000001", paymentTransaction);
+        verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
+        verify(notificationService).sendAcceptanceRequest("20000001", firstPayment);
+        verify(notificationService).sendAcceptanceRequest("20000002", secondPayment);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+        verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
 
     private static PaymentTransaction paymentTransaction() {
@@ -160,11 +170,15 @@ class PaymentTransactionProcessorServiceTest {
     }
 
     private static PaymentTransaction paymentTransaction(String paymentId) {
+        return paymentTransaction(paymentId, "10000001", "20000001");
+    }
+
+    private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
         return PaymentTransaction.builder()
                 .paymentId(paymentId)
                 .amount(BigDecimal.TEN)
-                .sender(party("10000001"))
-                .receiver(party("20000001"))
+                .sender(party(senderBankCode))
+                .receiver(party(receiverBankCode))
                 .build();
     }
 

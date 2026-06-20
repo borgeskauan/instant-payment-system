@@ -7,6 +7,7 @@ import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -38,13 +39,26 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
 
     @Override
     public void saveTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus) {
-        jdbcTemplate.update(
+        saveTransactions(List.of(paymentTransaction), paymentStatus);
+    }
+
+    @Override
+    public void saveTransactions(List<PaymentTransaction> paymentTransactions, PaymentStatus paymentStatus) {
+        if (paymentTransactions.isEmpty()) {
+            return;
+        }
+
+        jdbcTemplate.batchUpdate(
                 INSERT_PAYMENT_TRANSACTION_SQL,
-                paymentTransaction.getPaymentId(),
-                paymentTransaction.getAmount(),
-                paymentStatus.name(),
-                Utils.getBankCode(paymentTransaction.getSender()),
-                Utils.getBankCode(paymentTransaction.getReceiver())
+                paymentTransactions,
+                paymentTransactions.size(),
+                (statement, paymentTransaction) -> {
+                    statement.setString(1, paymentTransaction.getPaymentId());
+                    statement.setBigDecimal(2, paymentTransaction.getAmount());
+                    statement.setString(3, paymentStatus.name());
+                    statement.setString(4, Utils.getBankCode(paymentTransaction.getSender()));
+                    statement.setString(5, Utils.getBankCode(paymentTransaction.getReceiver()));
+                }
         );
     }
 

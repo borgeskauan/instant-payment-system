@@ -28,6 +28,17 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
+    void paymentRequestKafkaListenerContainerFactoryUsesBatchListener() {
+        KafkaConsumerConfig config = new KafkaConsumerConfig();
+        ReflectionTestUtils.setField(config, "listenerConcurrency", 8);
+
+        var factory = config.paymentRequestKafkaListenerContainerFactory(mock(ConsumerFactory.class));
+
+        assertThat(factory.isBatchListener()).isTrue();
+        assertThat(factory.getContainerProperties().getAckMode()).isEqualTo(ContainerProperties.AckMode.BATCH);
+    }
+
+    @Test
     void statusReportKafkaListenerContainerFactoryUsesBatchListener() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "listenerConcurrency", 8);

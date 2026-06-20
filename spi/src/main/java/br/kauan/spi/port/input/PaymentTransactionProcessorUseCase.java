@@ -4,7 +4,7 @@ import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 
 public interface PaymentTransactionProcessorUseCase {
-    void processTransactionBatch(String ispb, PaymentBatch transaction);
+    void processTransactionBatch(PaymentBatch transaction);
 
-    void processStatusBatch(String ispb, StatusBatch statusBatch);
+    void processStatusBatch(StatusBatch statusBatch);
 }

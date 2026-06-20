@@ -7,6 +7,7 @@ import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer
 import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
+import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
@@ -51,8 +52,31 @@ public class PaymentMessageConsumer {
     @KafkaListener(
             topics = PAYMENT_REQUESTS_TOPIC,
             groupId = "spi-consumer-group",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "paymentRequestKafkaListenerContainerFactory"
     )
+    public void consumePaymentRequests(List<byte[]> payloads) {
+        try {
+            log.debug("Received batch from Kafka topic '{}', records: {}", PAYMENT_REQUESTS_TOPIC, payloads.size());
+            var payments = new ArrayList<PaymentTransaction>();
+
+            for (byte[] payload : payloads) {
+                JsonNode jsonNode = objectMapper.readTree(payload);
+                PaymentBatch paymentBatch = toPaymentBatch(jsonNode);
+                payments.addAll(paymentBatch.getTransactions());
+            }
+
+            if (payments.isEmpty()) {
+                return;
+            }
+
+            paymentTransactionProcessorUseCase.processTransactionBatch(PaymentBatch.builder()
+                    .transactions(payments)
+                    .build());
+        } catch (Exception e) {
+            log.error("Error processing payment transaction batch from Kafka", e);
+        }
+    }
+
     public void consumePaymentRequest(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
@@ -72,7 +96,6 @@ public class PaymentMessageConsumer {
         try {
             log.debug("Received batch from Kafka topic '{}', records: {}", PAYMENT_STATUS_REPORTS_TOPIC, payloads.size());
             var statusReports = new ArrayList<StatusReport>();
-            String ispb = "00000000";
 
             for (byte[] payload : payloads) {
                 JsonNode jsonNode = objectMapper.readTree(payload);
@@ -83,13 +106,10 @@ public class PaymentMessageConsumer {
             statusReports.forEach(report ->
                     traceRecorder.record(report.getOriginalPaymentId(), SpiTraceEvent.STATUS_CONSUMED));
 
-            log.debug("Processing status report batch for ISPB: {}, reports: {}", ispb, statusReports.size());
-            paymentTransactionProcessorUseCase.processStatusBatch(
-                    ispb,
-                    StatusBatch.builder()
-                            .statusReports(statusReports)
-                            .build()
-            );
+            log.debug("Processing status report batch. reports={}", statusReports.size());
+            paymentTransactionProcessorUseCase.processStatusBatch(StatusBatch.builder()
+                    .statusReports(statusReports)
+                    .build());
             acknowledgment.acknowledge();
         } catch (Exception e) {
             log.error("Error processing status report batch from Kafka", e);
@@ -113,39 +133,46 @@ public class PaymentMessageConsumer {
 
     private void processPaymentTransaction(JsonNode jsonNode) {
         try {
-            FIToFICustomerCreditTransfer request = objectMapper.treeToValue(
-                    jsonNode,
-                    FIToFICustomerCreditTransfer.class
-            );
-            
-            PaymentBatch paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(request);
-            String ispb = extractIspbFromTransaction(request);
-            paymentBatch.getTransactions().forEach(payment ->
-                    traceRecorder.record(payment.getPaymentId(), SpiTraceEvent.REQUEST_CONSUMED));
-            
-            log.debug("Processing payment transaction batch for ISPB: {}, transactions: {}", 
-                    ispb, paymentBatch.getTransactions().size());
-            
-            paymentTransactionProcessorUseCase.processTransactionBatch(ispb, paymentBatch);
-            
+            PaymentBatch paymentBatch = toPaymentBatch(jsonNode);
+
+            log.debug("Processing payment transaction batch. transactions={}",
+                    paymentBatch.getTransactions().size());
+
+            paymentTransactionProcessorUseCase.processTransactionBatch(paymentBatch);
+
         } catch (Exception e) {
             log.error("Error processing payment transaction from Kafka", e);
             throw new RuntimeException("Failed to process payment transaction", e);
         }
     }
 
+    private PaymentBatch toPaymentBatch(JsonNode jsonNode) {
+        try {
+            FIToFICustomerCreditTransfer request = objectMapper.treeToValue(
+                    jsonNode,
+                    FIToFICustomerCreditTransfer.class
+            );
+
+            PaymentBatch paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(request);
+            paymentBatch.getTransactions().forEach(payment ->
+                    traceRecorder.record(payment.getPaymentId(), SpiTraceEvent.REQUEST_CONSUMED));
+            return paymentBatch;
+        } catch (Exception e) {
+            log.error("Error parsing payment transaction from Kafka", e);
+            throw new RuntimeException("Failed to parse payment transaction", e);
+        }
+    }
+
     private void processStatusReport(JsonNode jsonNode) {
         try {
             StatusBatch statusBatch = toStatusBatch(jsonNode);
-            String ispb = "00000000";
             statusBatch.getStatusReports().forEach(report ->
                     traceRecorder.record(report.getOriginalPaymentId(), SpiTraceEvent.STATUS_CONSUMED));
-            
-            log.debug("Processing status report batch for ISPB: {}, reports: {}", 
-                    ispb, statusBatch.getStatusReports().size());
-            
-            paymentTransactionProcessorUseCase.processStatusBatch(ispb, statusBatch);
-            
+
+            log.debug("Processing status report batch. reports={}", statusBatch.getStatusReports().size());
+
+            paymentTransactionProcessorUseCase.processStatusBatch(statusBatch);
+
         } catch (Exception e) {
             log.error("Error processing status report from Kafka", e);
             throw new RuntimeException("Failed to process status report", e);
@@ -159,20 +186,6 @@ public class PaymentMessageConsumer {
         );
 
         return statusReportMapper.fromRegulatoryReport(statusReport);
-    }
-
-    private String extractIspbFromTransaction(FIToFICustomerCreditTransfer request) {
-        // Extract ISPB from the creditor agent (receiving bank)
-        if (request.getCreditTransferTransactions() != null && !request.getCreditTransferTransactions().isEmpty()) {
-            var firstTransaction = request.getCreditTransferTransactions().get(0);
-            if (firstTransaction.getCreditorFinancialInstitution() != null 
-                    && firstTransaction.getCreditorFinancialInstitution().getFinancialInstitutionIdentification() != null
-                    && firstTransaction.getCreditorFinancialInstitution().getFinancialInstitutionIdentification().getClearingSystemMemberIdentification() != null) {
-                return firstTransaction.getCreditorFinancialInstitution().getFinancialInstitutionIdentification().getClearingSystemMemberIdentification().getIspb();
-            }
-        }
-        log.warn("Could not extract ISPB from transaction, using default");
-        return "00000000";
     }
 
 }

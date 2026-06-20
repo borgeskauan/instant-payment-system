@@ -81,6 +81,21 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, byte[]> paymentRequestKafkaListenerContainerFactory(
+            @Qualifier("consumerFactory") ConsumerFactory<String, byte[]> consumerFactory
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+
+        factory.setConsumerFactory(consumerFactory);
+        factory.setConcurrency(listenerConcurrency);
+        factory.setBatchListener(true);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.BATCH);
+
+        return factory;
+    }
+
+    @Bean
     public ConcurrentKafkaListenerContainerFactory<String, byte[]> statusReportKafkaListenerContainerFactory(
             @Qualifier("statusReportConsumerFactory") ConsumerFactory<String, byte[]> consumerFactory
     ) {

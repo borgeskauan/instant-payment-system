@@ -40,14 +40,24 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
-    public void processTransactionBatch(String ispb, PaymentBatch transactionBatch) {
-        for (var payment : transactionBatch.getTransactions()) {
-            processTransaction(payment);
+    public void processTransactionBatch(PaymentBatch transactionBatch) {
+        List<PaymentTransaction> transactions = transactionBatch.getTransactions();
+        if (transactions.isEmpty()) {
+            return;
+        }
+
+        log.debug("[PIX FLOW - Step 3] SPI received transaction request batch. payments={}",
+                transactions.size());
+        paymentTransactionRepository.saveTransactions(transactions, PaymentStatus.WAITING_ACCEPTANCE);
+
+        for (var paymentTransaction : transactions) {
+            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
+            sendAcceptanceRequest(paymentTransaction);
         }
     }
 
     @Override
-    public void processStatusBatch(String ispb, StatusBatch statusBatch) {
+    public void processStatusBatch(StatusBatch statusBatch) {
         List<StatusReport> acceptedReports = statusBatch.getStatusReports().stream()
                 .filter(statusReport -> statusReport.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS)
                 .toList();
@@ -73,6 +83,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
         log.debug("[PIX FLOW - Step 3] Transaction saved with status WAITING_ACCEPTANCE");
 
+        sendAcceptanceRequest(paymentTransaction);
+    }
+
+    private void sendAcceptanceRequest(PaymentTransaction paymentTransaction) {
         String receiverBank = Utils.getBankCode(paymentTransaction.getReceiver());
         log.debug("[PIX FLOW - Step 4] SPI forwarding acceptance request to PSP Recebedor (Bank: {})", receiverBank);
         notificationService.sendAcceptanceRequest(receiverBank, paymentTransaction);
