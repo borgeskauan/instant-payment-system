@@ -5,6 +5,7 @@ import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.spi.domain.entity.status.StatusBatch;
+import br.kauan.spi.domain.entity.status.StatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentBatch;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
@@ -13,7 +14,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Component
@@ -61,8 +66,41 @@ public class PaymentMessageConsumer {
     @KafkaListener(
             topics = PAYMENT_STATUS_REPORTS_TOPIC,
             groupId = "spi-consumer-group",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "statusReportKafkaListenerContainerFactory"
     )
+    public void consumeStatusReports(List<byte[]> payloads, Acknowledgment acknowledgment) {
+        try {
+            log.debug("Received batch from Kafka topic '{}', records: {}", PAYMENT_STATUS_REPORTS_TOPIC, payloads.size());
+            var statusReports = new ArrayList<StatusReport>();
+            String ispb = "00000000";
+
+            for (byte[] payload : payloads) {
+                JsonNode jsonNode = objectMapper.readTree(payload);
+                StatusBatch statusBatch = toStatusBatch(jsonNode);
+                statusReports.addAll(statusBatch.getStatusReports());
+            }
+
+            statusReports.forEach(report ->
+                    traceRecorder.record(report.getOriginalPaymentId(), SpiTraceEvent.STATUS_CONSUMED));
+
+            log.debug("Processing status report batch for ISPB: {}, reports: {}", ispb, statusReports.size());
+            paymentTransactionProcessorUseCase.processStatusBatch(
+                    ispb,
+                    StatusBatch.builder()
+                            .statusReports(statusReports)
+                            .build()
+            );
+            acknowledgment.acknowledge();
+        } catch (Exception e) {
+            log.error("Error processing status report batch from Kafka", e);
+        }
+    }
+
+    public void consumeStatusReports(List<byte[]> payloads) {
+        consumeStatusReports(payloads, () -> {
+        });
+    }
+
     public void consumeStatusReport(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_STATUS_REPORTS_TOPIC, payload.length);
@@ -98,13 +136,8 @@ public class PaymentMessageConsumer {
 
     private void processStatusReport(JsonNode jsonNode) {
         try {
-            FIToFIPaymentStatusReport statusReport = objectMapper.treeToValue(
-                    jsonNode,
-                    FIToFIPaymentStatusReport.class
-            );
-            
-            StatusBatch statusBatch = statusReportMapper.fromRegulatoryReport(statusReport);
-            String ispb = extractIspbFromStatusReport(statusReport);
+            StatusBatch statusBatch = toStatusBatch(jsonNode);
+            String ispb = "00000000";
             statusBatch.getStatusReports().forEach(report ->
                     traceRecorder.record(report.getOriginalPaymentId(), SpiTraceEvent.STATUS_CONSUMED));
             
@@ -117,6 +150,15 @@ public class PaymentMessageConsumer {
             log.error("Error processing status report from Kafka", e);
             throw new RuntimeException("Failed to process status report", e);
         }
+    }
+
+    private StatusBatch toStatusBatch(JsonNode jsonNode) throws com.fasterxml.jackson.core.JsonProcessingException {
+        FIToFIPaymentStatusReport statusReport = objectMapper.treeToValue(
+                jsonNode,
+                FIToFIPaymentStatusReport.class
+        );
+
+        return statusReportMapper.fromRegulatoryReport(statusReport);
     }
 
     private String extractIspbFromTransaction(FIToFICustomerCreditTransfer request) {
@@ -133,10 +175,4 @@ public class PaymentMessageConsumer {
         return "00000000";
     }
 
-    private String extractIspbFromStatusReport(FIToFIPaymentStatusReport statusReport) {
-        // Extract ISPB from the status report - this might need adjustment based on your domain model
-        // For now, returning a placeholder since the structure isn't clear
-        log.debug("Extracting ISPB from status report");
-        return "00000000";
-    }
 }

@@ -8,6 +8,7 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 @Slf4j
@@ -38,5 +39,19 @@ public class SettlementService {
         });
 
         return settledPayment;
+    }
+
+    @Transactional
+    public List<PaymentTransaction> tryMakeSettlements(List<String> paymentIds) {
+        List<PaymentTransaction> settledPayments = settlementRepository.settleAcceptedPayments(
+                paymentIds,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        );
+
+        log.debug("[PIX FLOW - Step 6] Batch settlement completed in SPI. requested={}, settled={}",
+                paymentIds.size(), settledPayments.size());
+
+        return settledPayments;
     }
 }

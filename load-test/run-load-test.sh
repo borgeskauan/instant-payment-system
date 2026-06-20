@@ -16,20 +16,25 @@ readonly SPI_JFR_CONTAINER_FILE="/tmp/spi-load-test.jfr"
 readonly SPI_JFR_NAME="spi-load-test"
 readonly SPI_TRACE_CONTAINER_FILE="/tmp/spi-trace.csv"
 readonly SPI_INTERNAL_BASE_URL="${SPI_INTERNAL_BASE_URL:-http://localhost:8002}"
+readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
+readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 
 RUN_TAG=""
 PROVISION_FUNDS=true
 ENABLE_JFR=false
 ENABLE_SPI_TRACE=false
+ENABLE_POSTGRES_STATEMENTS=false
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
+POSTGRES_STATEMENTS_ACTIVE=false
 JFR_TARGET_DIR=""
+POSTGRES_STATEMENTS_TARGET_DIR=""
 SYSTEM_STATS_PID=""
 PROCESS_STATS_PID=""
 KAFKA_LAG_PID=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
 }
 
@@ -53,6 +58,9 @@ cleanup() {
     if [[ "$JFR_ACTIVE" == true && -n "$JFR_TARGET_DIR" ]]; then
         stop_spi_jfr "$JFR_TARGET_DIR" || true
     fi
+    if [[ "$POSTGRES_STATEMENTS_ACTIVE" == true ]]; then
+        disable_postgres_statement_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
+    fi
     stop_samplers
 }
 
@@ -73,6 +81,10 @@ parse_args() {
                 ;;
             --spi-trace)
                 ENABLE_SPI_TRACE=true
+                shift
+                ;;
+            --postgres-statements)
+                ENABLE_POSTGRES_STATEMENTS=true
                 shift
                 ;;
             -h|--help)
@@ -196,6 +208,47 @@ copy_spi_trace() {
     } >> "$log_file" 2>&1
 }
 
+enable_postgres_statement_stats() {
+    local target_dir="$1"
+    local log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+
+    log_phase "enabling Postgres statement stats"
+    {
+        echo "Enabling Postgres statement stats at $(date --iso-8601=seconds)"
+        "${SCRIPTS_DIR}/postgres-statements.sh" enable-and-reset
+    } > "$log_file" 2>&1
+    POSTGRES_STATEMENTS_ACTIVE=true
+    POSTGRES_STATEMENTS_TARGET_DIR="$target_dir"
+}
+
+capture_postgres_statement_stats() {
+    local target_dir="$1"
+    local output_file="${target_dir}/${POSTGRES_STATEMENTS_FILE}"
+    local log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+
+    log_phase "capturing Postgres statement stats"
+    {
+        echo "Capturing Postgres statement stats at $(date --iso-8601=seconds)"
+        "${SCRIPTS_DIR}/postgres-statements.sh" snapshot "$output_file"
+        echo "Postgres statement stats saved to ${output_file}"
+    } >> "$log_file" 2>&1
+}
+
+disable_postgres_statement_stats() {
+    local target_dir="$1"
+    local log_file="/dev/null"
+    if [[ -n "$target_dir" ]]; then
+        log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+    fi
+
+    log_phase "disabling Postgres statement stats"
+    {
+        echo "Disabling Postgres statement stats at $(date --iso-8601=seconds)"
+        "${SCRIPTS_DIR}/postgres-statements.sh" disable
+    } >> "$log_file" 2>&1
+    POSTGRES_STATEMENTS_ACTIVE=false
+}
+
 start_spi_jfr() {
     local log_file="$1"
 
@@ -250,6 +303,9 @@ main() {
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
         log_phase "SPI trace collection enabled"
     fi
+    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        log_phase "Postgres statement stats enabled"
+    fi
 
     log_phase "checking initial SPI Kafka lag"
     assert_no_initial_spi_lag
@@ -264,6 +320,10 @@ main() {
         log_phase "funds provisioned"
     else
         log_phase "skipping funds provisioning"
+    fi
+
+    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        enable_postgres_statement_stats "$target_dir"
     fi
 
     log_phase "starting samplers: duration=${sampler_duration}s"
@@ -299,6 +359,11 @@ main() {
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
         stop_spi_trace "$target_dir"
         copy_spi_trace "$target_dir"
+    fi
+
+    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        capture_postgres_statement_stats "$target_dir"
+        disable_postgres_statement_stats "$target_dir"
     fi
 
     log_phase "simulator finished; generating SLA report"

@@ -14,17 +14,22 @@ import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -92,5 +97,81 @@ class PaymentMessageConsumerTest {
         verify(statusReportMapper).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
         verify(processor).processStatusBatch("00000000", statusBatch);
+    }
+
+    @Test
+    void consumeStatusReportsProcessesMultipleKafkaMessagesAsOneDomainBatch() throws Exception {
+        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
+        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        ObjectMapper objectMapper = spy(new ObjectMapper());
+        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
+                paymentTransactionMapper,
+                statusReportMapper,
+                processor,
+                traceRecorder
+        );
+        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
+        StatusBatch firstBatch = StatusBatch.builder()
+                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
+                .build();
+        StatusBatch secondBatch = StatusBatch.builder()
+                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-2").build()))
+                .build();
+        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
+                .thenReturn(firstBatch, secondBatch);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+
+        consumer.consumeStatusReports(List.of(
+                """
+                        {"TxInfAndSts":[]}
+                        """.getBytes(StandardCharsets.UTF_8),
+                """
+                        {"TxInfAndSts":[]}
+                        """.getBytes(StandardCharsets.UTF_8)
+        ), acknowledgment);
+
+        verify(objectMapper, times(2)).readTree(any(byte[].class));
+        verify(objectMapper, times(2)).treeToValue(any(JsonNode.class), eq(FIToFIPaymentStatusReport.class));
+        verify(statusReportMapper, times(2)).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
+        verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
+        verify(traceRecorder).record("E2E-2", SpiTraceEvent.STATUS_CONSUMED);
+        var statusBatchCaptor = forClass(StatusBatch.class);
+        verify(processor).processStatusBatch(eq("00000000"), statusBatchCaptor.capture());
+        assertEquals(List.of("E2E-1", "E2E-2"), statusBatchCaptor.getValue().getStatusReports().stream()
+                .map(StatusReport::getOriginalPaymentId)
+                .toList());
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void consumeStatusReportsDoesNotAcknowledgeWhenProcessingFails() throws Exception {
+        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
+        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        ObjectMapper objectMapper = spy(new ObjectMapper());
+        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
+                paymentTransactionMapper,
+                statusReportMapper,
+                processor,
+                traceRecorder
+        );
+        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
+        StatusBatch statusBatch = StatusBatch.builder()
+                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
+                .build();
+        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
+                .thenReturn(statusBatch);
+        doThrow(new RuntimeException("processing failed"))
+                .when(processor).processStatusBatch(eq("00000000"), any(StatusBatch.class));
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+
+        consumer.consumeStatusReports(List.of("""
+                {"TxInfAndSts":[]}
+                """.getBytes(StandardCharsets.UTF_8)), acknowledgment);
+
+        verify(acknowledgment, never()).acknowledge();
     }
 }

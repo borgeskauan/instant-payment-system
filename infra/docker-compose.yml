@@ -17,12 +17,37 @@ services:
     <<: *low-resource
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.max=10000
+      - -c
+      - track_io_timing=on
     ports:
       - "5432:5432"
     restart: unless-stopped
     healthcheck:
       test: pg_isready -U postgres || exit 1
       <<: *default-healthcheck
+
+  postgres-statements-init:
+    image: postgres:17-alpine
+    container_name: postgres-statements-init
+    environment:
+      - PGPASSWORD=mysecretpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET pg_stat_statements.track = 'none';"
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf();"
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
@@ -138,6 +163,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      postgres-statements-init:
+        condition: service_completed_successfully
 
   kafka-producer:
     build:

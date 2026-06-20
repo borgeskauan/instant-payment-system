@@ -14,6 +14,10 @@ import br.kauan.spi.port.output.PaymentTransactionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 @Slf4j
 @Service
 public class PaymentTransactionProcessorService implements PaymentTransactionProcessorUseCase {
@@ -44,8 +48,20 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     @Override
     public void processStatusBatch(String ispb, StatusBatch statusBatch) {
+        List<StatusReport> acceptedReports = statusBatch.getStatusReports().stream()
+                .filter(statusReport -> statusReport.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS)
+                .toList();
+
+        if (!acceptedReports.isEmpty()) {
+            processAcceptedPayments(acceptedReports.stream()
+                    .map(StatusReport::getOriginalPaymentId)
+                    .toList());
+        }
+
         for (var statusReport : statusBatch.getStatusReports()) {
-            processStatusReport(statusReport);
+            if (statusReport.getStatus() == PaymentStatus.REJECTED) {
+                processRejectedStatusReport(statusReport);
+            }
         }
     }
 
@@ -63,52 +79,41 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
 
-    private void processStatusReport(StatusReport statusReport) {
+    private void processRejectedStatusReport(StatusReport statusReport) {
         log.debug("[PIX FLOW - Step 5] SPI received status report. Payment ID: {}, Status: {}", 
                 statusReport.getOriginalPaymentId(), statusReport.getStatus());
 
-        switch (statusReport.getStatus()) {
-            case ACCEPTED_IN_PROCESS -> {
-                log.debug("[PIX FLOW - Step 5] Payment accepted by PSP Recebedor. Proceeding with settlement.");
-                processAcceptedPayment(statusReport.getOriginalPaymentId());
-            }
-            case REJECTED -> {
-                var paymentTransaction = paymentTransactionRepository.findById(statusReport.getOriginalPaymentId())
-                        .orElseThrow(); // TODO: Use a better exception here
-                log.warn("[PIX FLOW - Step 5] Payment rejected by PSP Recebedor");
-                processRejectedPayment(paymentTransaction);
-            }
-        }
+        var paymentTransaction = paymentTransactionRepository.findById(statusReport.getOriginalPaymentId())
+                .orElseThrow(); // TODO: Use a better exception here
+        log.warn("[PIX FLOW - Step 5] Payment rejected by PSP Recebedor");
+        processRejectedPayment(paymentTransaction);
     }
 
-    private void processAcceptedPayment(String paymentId) {
-        try {
-            log.debug("[PIX FLOW - Step 6] SPI initiating settlement via PI accounts at BCB. Payment ID: {}",
-                    paymentId);
+    private void processAcceptedPayments(List<String> paymentIds) {
+        log.debug("[PIX FLOW - Step 6] SPI initiating batch settlement via PI accounts at BCB. payments={}",
+                paymentIds.size());
 
-            var settledPayment = settlementService.tryMakeSettlement(paymentId);
-            if (settledPayment.isEmpty()) {
-                log.warn("[PIX FLOW - Step 6] Payment accepted by receiver, but settlement did not complete. Payment ID: {}",
-                        paymentId);
-                paymentTransactionRepository.updateStatus(paymentId, PaymentStatus.ACCEPTED_IN_PROCESS);
-                return;
-            }
+        List<PaymentTransaction> settledPayments = settlementService.tryMakeSettlements(paymentIds);
+        Set<String> settledPaymentIds = settledPayments.stream()
+                .map(PaymentTransaction::getPaymentId)
+                .collect(Collectors.toSet());
 
-            log.debug("[PIX FLOW - Step 6] Settlement completed successfully at SPI");
+        for (PaymentTransaction paymentTransaction : settledPayments) {
+            String paymentId = paymentTransaction.getPaymentId();
             traceRecorder.record(paymentId, SpiTraceEvent.SETTLEMENT_COMPLETED);
-
-            log.debug("[PIX FLOW - Step 7] SPI sending confirmation notifications to both PSPs");
-            var paymentTransaction = settledPayment.orElseThrow();
             notificationService.sendConfirmationNotification(paymentTransaction);
             traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
-
-            log.debug("[PIX FLOW - Complete] Payment {} fully settled and confirmed", paymentId);
-
-        } catch (Exception e) {
-            log.error("[PIX FLOW - Error] An error occurred while settling the payment with ID {}",
-                    paymentId, e);
-            paymentTransactionRepository.updateStatus(paymentId, PaymentStatus.ACCEPTED_IN_PROCESS);
         }
+
+        paymentIds.stream()
+                .filter(paymentId -> !settledPaymentIds.contains(paymentId))
+                .forEach(paymentId -> paymentTransactionRepository.updateStatus(
+                        paymentId,
+                        PaymentStatus.ACCEPTED_IN_PROCESS
+                ));
+
+        log.debug("[PIX FLOW - Complete] Batch settlement processed. requested={}, settled={}",
+                paymentIds.size(), settledPayments.size());
     }
 
     private void processRejectedPayment(PaymentTransaction paymentTransaction) {
