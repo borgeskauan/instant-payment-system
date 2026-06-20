@@ -6,7 +6,7 @@ This document defines the performance target used by the local Pix/SPI stack loa
 
 The measured flow starts when the PSP simulator creates a transaction request and ends when the PSP simulator receives the final confirmation notification.
 
-Only accepted transaction requests are included in the latency and completion measurements. Business-rule rejections, if any, must be reported separately and must not be mixed with technical failures.
+Only accepted transaction requests are included in the latency and confirmation measurements. Business-rule rejections, if any, must be reported separately and must not be mixed with technical failures.
 
 The active runtime stack is:
 
@@ -26,6 +26,8 @@ Persistent volumes are excluded from the memory budget. Runtime memory used by p
 Init containers, administrative tools, observability services, and `kafka-ui` are excluded from the sustained budget. `kafka-ui` must remain disabled unless it is explicitly started with its Compose profile.
 
 The load generator must run outside the measured runtime budget.
+
+Warmup traffic may be generated before the active test window. Warmup is used only to prime connections, JVMs, Kafka consumers, caches, and database state. It is not part of the SLA pass/fail window.
 
 ## Contractual Target
 
@@ -59,10 +61,11 @@ This target is the acceptance bar for saying the stack has enough operational ma
 
 ## Recommended Validation Sequence
 
-1. Run a short warmup at 2000 TPS.
-2. Run the official 2000 TPS / 15 minute test.
-3. Repeat the official test without recreating the stack.
-4. Optionally run an exploratory 2500 TPS test to measure margin, but do not use that result as the contractual pass/fail gate.
+1. Run warmup traffic at 2000 TPS.
+2. Start the active measured window only after warmup is complete.
+3. Run the official 2000 TPS / 15 minute test.
+4. Repeat the official test without recreating the stack.
+5. Optionally run an exploratory 2500 TPS test to measure margin, but do not use that result as the contractual pass/fail gate.
 
 ## Pass/Fail Summary
 

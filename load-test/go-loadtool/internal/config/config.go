@@ -9,7 +9,10 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
 
-const DefaultPath = "loadtool-config.json"
+const (
+	DefaultPath      = "loadtool-config.json"
+	defaultOutputDir = "results/go-loadtool/manual"
+)
 
 type Runtime struct {
 	Sim            sim.Config
@@ -20,12 +23,12 @@ type fileConfig struct {
 	BaseURL         string  `json:"baseUrl"`
 	GatewayAddress  string  `json:"gatewayAddress"`
 	TargetTxRate    int     `json:"targetTxRate"`
+	Warmup          string  `json:"warmup"`
 	Duration        string  `json:"duration"`
 	Drain           string  `json:"drain"`
 	HotPSPCount     int     `json:"hotPspCount"`
 	ColdPSPCount    int     `json:"coldPspCount"`
 	HotTrafficShare float64 `json:"hotTrafficShare"`
-	OutputDir       string  `json:"outputDir"`
 	SLAThresholdMs  int64   `json:"slaThresholdMs"`
 }
 
@@ -48,6 +51,13 @@ func Load(path string) (Runtime, error) {
 	if err != nil {
 		return Runtime{}, fmt.Errorf("invalid duration: %w", err)
 	}
+	warmup := time.Duration(0)
+	if file.Warmup != "" {
+		warmup, err = time.ParseDuration(file.Warmup)
+		if err != nil {
+			return Runtime{}, fmt.Errorf("invalid warmup: %w", err)
+		}
+	}
 	drain, err := time.ParseDuration(file.Drain)
 	if err != nil {
 		return Runtime{}, fmt.Errorf("invalid drain: %w", err)
@@ -58,12 +68,13 @@ func Load(path string) (Runtime, error) {
 			BaseURL:        file.BaseURL,
 			GatewayAddress: file.GatewayAddress,
 			TargetTxRate:   file.TargetTxRate,
+			Warmup:         warmup,
 			Duration:       duration,
 			Drain:          drain,
 			HotPSPs:        file.HotPSPCount,
 			ColdPSPs:       file.ColdPSPCount,
 			HotShare:       file.HotTrafficShare,
-			OutputDir:      file.OutputDir,
+			OutputDir:      defaultOutputDir,
 		},
 		SLAThresholdMs: file.SLAThresholdMs,
 	}, nil

@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/report"
@@ -62,7 +61,7 @@ func runReport(args []string) error {
 		return fmt.Errorf("--starts and --events are required")
 	}
 
-	runtimeCfg, err := loadReportConfig(startsPath)
+	runtimeCfg, err := config.LoadDefault()
 	if err != nil {
 		return err
 	}
@@ -70,16 +69,7 @@ func runReport(args []string) error {
 	return report.Print(startsPath, eventsPath, report.Options{
 		SLAThresholdMs: runtimeCfg.SLAThresholdMs,
 		TargetTxRate:   runtimeCfg.Sim.TargetTxRate,
+		Warmup:         runtimeCfg.Sim.Warmup,
 		Duration:       runtimeCfg.Sim.Duration,
 	}, os.Stdout)
-}
-
-func loadReportConfig(startsPath string) (config.Runtime, error) {
-	runDirConfigPath := filepath.Join(filepath.Dir(filepath.Dir(startsPath)), config.DefaultPath)
-	if runtimeCfg, err := config.Load(runDirConfigPath); err == nil {
-		return runtimeCfg, nil
-	} else if !os.IsNotExist(err) {
-		return config.Runtime{}, err
-	}
-	return config.LoadDefault()
 }

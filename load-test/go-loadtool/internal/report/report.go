@@ -10,44 +10,40 @@ import (
 )
 
 type Summary struct {
+	Run                 RunSummary         `json:"run"`
 	Transactions        TransactionSummary `json:"transactions"`
 	ThroughputPerSecond ThroughputSummary  `json:"throughput_per_second"`
-	Windows             WindowSummary      `json:"windows"`
-	SLA                 SLASummary         `json:"sla"`
 	LatencyMs           LatencySummary     `json:"latency_ms"`
+	Diagnostics         DiagnosticSummary  `json:"diagnostics"`
+}
+
+type RunSummary struct {
+	TargetTPS      int     `json:"target_tps"`
+	WarmupSeconds  float64 `json:"warmup_seconds"`
+	ActiveSeconds  float64 `json:"active_seconds"`
+	SLAThresholdMs int64   `json:"sla_threshold_ms"`
 }
 
 type TransactionSummary struct {
 	Started        int                   `json:"started"`
 	Accepted       int                   `json:"accepted"`
-	Completion     CompletionSummary     `json:"completion"`
-	CompletedBySLA CompletedBySLASummary `json:"completed_by_sla"`
+	Confirmation   ConfirmationSummary   `json:"confirmation"`
+	ConfirmedBySLA ConfirmedBySLASummary `json:"confirmed_by_sla"`
 }
 
-type CompletionSummary struct {
-	Completed    int `json:"completed"`
-	NotCompleted int `json:"not_completed"`
+type ConfirmationSummary struct {
+	Confirmed    int `json:"confirmed"`
+	NotConfirmed int `json:"not_confirmed"`
 }
 
-type CompletedBySLASummary struct {
+type ConfirmedBySLASummary struct {
 	WithinSLA int `json:"within_sla"`
 	AfterSLA  int `json:"after_sla"`
 }
 
 type ThroughputSummary struct {
-	Started                 float64 `json:"started"`
-	StartedActualWindow     float64 `json:"started_actual_window"`
-	CompletedDuringActive   float64 `json:"completed_during_active"`
-	CompletedIncludingDrain float64 `json:"completed_including_drain"`
-}
-
-type WindowSummary struct {
-	ConfiguredActiveSeconds  float64 `json:"configured_active_seconds"`
-	ActualStartWindowSeconds float64 `json:"actual_start_window_seconds"`
-}
-
-type SLASummary struct {
-	ThresholdMs int64 `json:"threshold_ms"`
+	Started               float64 `json:"started"`
+	ConfirmedDuringActive float64 `json:"confirmed_during_active"`
 }
 
 type LatencySummary struct {
@@ -57,34 +53,44 @@ type LatencySummary struct {
 	Max float64 `json:"max"`
 }
 
+type DiagnosticSummary struct {
+	ResultCollection ResultCollectionSummary `json:"result_collection"`
+}
+
+type ResultCollectionSummary struct {
+	ConfirmedAfterActive int     `json:"confirmed_after_active"`
+	ConfirmedTotal       int     `json:"confirmed_total"`
+	ConfirmedTotalRate   float64 `json:"confirmed_total_per_second"`
+}
+
 type Options struct {
 	SLAThresholdMs int64
 	TargetTxRate   int
+	Warmup         time.Duration
 	Duration       time.Duration
-}
-
-func Build(starts []events.Start, notifications []events.Notification, slaThresholdMs int64) Summary {
-	return BuildWithOptions(starts, notifications, Options{SLAThresholdMs: slaThresholdMs})
 }
 
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
 	var summary Summary
-	summary.Transactions.Started = len(starts)
-	summary.SLA.ThresholdMs = options.SLAThresholdMs
-	if options.Duration > 0 {
-		summary.Windows.ConfiguredActiveSeconds = options.Duration.Seconds()
-		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
+	summary.Run.TargetTPS = options.TargetTxRate
+	summary.Run.SLAThresholdMs = options.SLAThresholdMs
+	if options.Warmup > 0 {
+		summary.Run.WarmupSeconds = options.Warmup.Seconds()
 	}
-	if startWindowSeconds := startWindowSeconds(starts); startWindowSeconds > 0 {
-		summary.Windows.ActualStartWindowSeconds = startWindowSeconds
-		summary.ThroughputPerSecond.StartedActualWindow = float64(summary.Transactions.Started) / startWindowSeconds
+	if options.Duration > 0 {
+		summary.Run.ActiveSeconds = options.Duration.Seconds()
+	}
+	measuredStarts := measuredWindowStarts(starts, options.Warmup, options.Duration)
+	summary.Transactions.Started = len(measuredStarts)
+	if options.Duration > 0 {
+		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
 	}
 
 	confirmations := payerConfirmations(notifications)
-	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Duration)
-	completedDuringActive := 0
+	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
+	confirmedDuringActive := 0
 	var durations []float64
-	for _, start := range starts {
+	for _, start := range measuredStarts {
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
 			continue
 		}
@@ -94,26 +100,28 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 			ispb:       start.PayerISPB,
 		}]
 		if !ok {
-			summary.Transactions.Completion.NotCompleted++
+			summary.Transactions.Confirmation.NotConfirmed++
 			continue
 		}
 		durationMs := float64(receivedAt-start.CreatedAtNS) / 1_000_000
 		durations = append(durations, durationMs)
-		summary.Transactions.Completion.Completed++
+		summary.Transactions.Confirmation.Confirmed++
 		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
-			completedDuringActive++
+			confirmedDuringActive++
 		}
 		if durationMs > float64(options.SLAThresholdMs) {
-			summary.Transactions.CompletedBySLA.AfterSLA++
+			summary.Transactions.ConfirmedBySLA.AfterSLA++
 		} else {
-			summary.Transactions.CompletedBySLA.WithinSLA++
+			summary.Transactions.ConfirmedBySLA.WithinSLA++
 		}
 	}
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
-		summary.ThroughputPerSecond.CompletedDuringActive = float64(completedDuringActive) / durationSeconds
-		summary.ThroughputPerSecond.CompletedIncludingDrain = float64(summary.Transactions.Completion.Completed) / durationSeconds
+		summary.ThroughputPerSecond.ConfirmedDuringActive = float64(confirmedDuringActive) / durationSeconds
+		summary.Diagnostics.ResultCollection.ConfirmedTotalRate = float64(summary.Transactions.Confirmation.Confirmed) / durationSeconds
 	}
+	summary.Diagnostics.ResultCollection.ConfirmedAfterActive = summary.Transactions.Confirmation.Confirmed - confirmedDuringActive
+	summary.Diagnostics.ResultCollection.ConfirmedTotal = summary.Transactions.Confirmation.Confirmed
 
 	sort.Float64s(durations)
 	summary.LatencyMs.P50 = percentile(durations, 0.50)
@@ -125,34 +133,43 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	return summary
 }
 
-func configuredActiveWindowEndNS(starts []events.Start, duration time.Duration) int64 {
+func configuredActiveWindowEndNS(starts []events.Start, warmup time.Duration, duration time.Duration) int64 {
 	if len(starts) == 0 || duration <= 0 {
 		return 0
 	}
-	minStartedAt := starts[0].CreatedAtNS
-	for _, start := range starts[1:] {
-		if start.CreatedAtNS < minStartedAt {
-			minStartedAt = start.CreatedAtNS
-		}
-	}
-	return minStartedAt + duration.Nanoseconds()
+	return firstStartedAt(starts) + warmup.Nanoseconds() + duration.Nanoseconds()
 }
 
-func startWindowSeconds(starts []events.Start) float64 {
-	if len(starts) < 2 {
-		return 0
+func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration time.Duration) []events.Start {
+	if len(starts) == 0 {
+		return nil
 	}
+	windowStart := firstStartedAt(starts) + warmup.Nanoseconds()
+	windowEnd := int64(0)
+	if duration > 0 {
+		windowEnd = windowStart + duration.Nanoseconds()
+	}
+	measured := make([]events.Start, 0, len(starts))
+	for _, start := range starts {
+		if start.CreatedAtNS < windowStart {
+			continue
+		}
+		if windowEnd > 0 && start.CreatedAtNS >= windowEnd {
+			continue
+		}
+		measured = append(measured, start)
+	}
+	return measured
+}
+
+func firstStartedAt(starts []events.Start) int64 {
 	minStartedAt := starts[0].CreatedAtNS
-	maxStartedAt := starts[0].CreatedAtNS
 	for _, start := range starts[1:] {
 		if start.CreatedAtNS < minStartedAt {
 			minStartedAt = start.CreatedAtNS
 		}
-		if start.CreatedAtNS > maxStartedAt {
-			maxStartedAt = start.CreatedAtNS
-		}
 	}
-	return float64(maxStartedAt-minStartedAt) / 1_000_000_000
+	return minStartedAt
 }
 
 type confirmationKey struct {

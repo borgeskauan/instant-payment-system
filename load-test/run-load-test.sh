@@ -12,10 +12,6 @@ readonly SPI_CONTAINER="spi"
 readonly KAFKA_CONTAINER="kafka"
 readonly SPI_CONSUMER_GROUP="spi-consumer-group"
 readonly SPI_INPUT_TOPICS=("spi-payment-requests" "spi-payment-status-reports")
-readonly SPI_JFR_CONTAINER_FILE="/tmp/spi-load-test.jfr"
-readonly SPI_JFR_NAME="spi-load-test"
-readonly SPI_TRACE_CONTAINER_FILE="/tmp/spi-trace.csv"
-readonly SPI_INTERNAL_BASE_URL="${SPI_INTERNAL_BASE_URL:-http://localhost:8002}"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 
@@ -24,6 +20,7 @@ PROVISION_FUNDS=true
 ENABLE_JFR=false
 ENABLE_SPI_TRACE=false
 ENABLE_POSTGRES_STATEMENTS=false
+ENABLE_PROCESS_STATS=false
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
@@ -32,9 +29,11 @@ POSTGRES_STATEMENTS_TARGET_DIR=""
 SYSTEM_STATS_PID=""
 PROCESS_STATS_PID=""
 KAFKA_LAG_PID=""
+LOADTOOL_BUILD_DIR=""
+LOADTOOL_BIN=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--process-stats] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
 }
 
@@ -62,6 +61,9 @@ cleanup() {
         disable_postgres_statement_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
     fi
     stop_samplers
+    if [[ -n "$LOADTOOL_BUILD_DIR" && "$LOADTOOL_BUILD_DIR" == /tmp/* ]]; then
+        rm -rf "$LOADTOOL_BUILD_DIR"
+    fi
 }
 
 parse_args() {
@@ -85,6 +87,10 @@ parse_args() {
                 ;;
             --postgres-statements)
                 ENABLE_POSTGRES_STATEMENTS=true
+                shift
+                ;;
+            --process-stats)
+                ENABLE_PROCESS_STATS=true
                 shift
                 ;;
             -h|--help)
@@ -125,11 +131,14 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     value = str(json.load(handle)[sys.argv[2]])
 
-match = re.fullmatch(r"([0-9]+)s?", value)
+match = re.fullmatch(r"([0-9]+)([smh]?)", value)
 if not match:
-    raise SystemExit(f"{sys.argv[2]} must be seconds, for example 60s.")
+    raise SystemExit(f"{sys.argv[2]} must be a duration like 60s, 5m, or 1h.")
 
-print(match.group(1))
+amount = int(match.group(1))
+unit = match.group(2) or "s"
+multipliers = {"s": 1, "m": 60, "h": 3600}
+print(amount * multipliers[unit])
 ' "$GO_LOADTOOL_CONFIG" "$key"
 }
 
@@ -161,18 +170,11 @@ assert_no_initial_spi_lag() {
     fi
 }
 
-run_spi_jcmd() {
-    docker exec "$SPI_CONTAINER" jcmd 1 "$@"
-}
-
 start_spi_trace() {
     local log_file="$1"
 
     log_phase "starting SPI trace collection"
-    {
-        echo "Starting SPI trace at $(date --iso-8601=seconds)"
-        curl -fsS -X POST "${SPI_INTERNAL_BASE_URL}/internal/spi-trace/start"
-    } > "$log_file" 2>&1
+    "${SCRIPTS_DIR}/spi-trace.sh" start > "$log_file" 2>&1
     SPI_TRACE_ACTIVE=true
 }
 
@@ -184,10 +186,7 @@ stop_spi_trace() {
     fi
 
     log_phase "stopping SPI trace collection"
-    {
-        echo "Stopping SPI trace at $(date --iso-8601=seconds)"
-        curl -fsS -X POST "${SPI_INTERNAL_BASE_URL}/internal/spi-trace/stop"
-    } >> "$log_file" 2>&1
+    "${SCRIPTS_DIR}/spi-trace.sh" stop >> "$log_file" 2>&1
     SPI_TRACE_ACTIVE=false
 }
 
@@ -196,16 +195,7 @@ copy_spi_trace() {
     local log_file="$target_dir/spi-trace.log"
 
     log_phase "copying SPI trace"
-    {
-        echo "Copying SPI trace at $(date --iso-8601=seconds)"
-        if docker exec "$SPI_CONTAINER" test -s "$SPI_TRACE_CONTAINER_FILE"; then
-            docker cp "${SPI_CONTAINER}:${SPI_TRACE_CONTAINER_FILE}" "$target_dir/spi-trace.csv"
-            echo "SPI trace copied to ${target_dir}/spi-trace.csv"
-        else
-            echo "SPI trace file was not created or is empty."
-            echo "Make sure SPI trace was started successfully before the simulator ran."
-        fi
-    } >> "$log_file" 2>&1
+    "${SCRIPTS_DIR}/spi-trace.sh" copy "$target_dir" >> "$log_file" 2>&1
 }
 
 enable_postgres_statement_stats() {
@@ -253,16 +243,7 @@ start_spi_jfr() {
     local log_file="$1"
 
     log_phase "starting SPI JFR recording"
-    {
-        echo "Starting SPI JFR recording at $(date --iso-8601=seconds)"
-        run_spi_jcmd JFR.stop name="$SPI_JFR_NAME" || true
-        docker exec "$SPI_CONTAINER" rm -f "$SPI_JFR_CONTAINER_FILE" || true
-        run_spi_jcmd JFR.start \
-            name="$SPI_JFR_NAME" \
-            settings=profile \
-            filename="$SPI_JFR_CONTAINER_FILE" \
-            dumponexit=true
-    } > "$log_file" 2>&1
+    "${SCRIPTS_DIR}/spi-jfr.sh" start > "$log_file" 2>&1
     JFR_ACTIVE=true
 }
 
@@ -271,29 +252,23 @@ stop_spi_jfr() {
     local log_file="$target_dir/spi-jfr.log"
 
     log_phase "stopping SPI JFR recording"
-    {
-        echo "Stopping SPI JFR recording at $(date --iso-8601=seconds)"
-        run_spi_jcmd JFR.stop name="$SPI_JFR_NAME" filename="$SPI_JFR_CONTAINER_FILE"
-        docker cp "${SPI_CONTAINER}:${SPI_JFR_CONTAINER_FILE}" "$target_dir/spi-load-test.jfr"
-    } >> "$log_file" 2>&1
+    "${SCRIPTS_DIR}/spi-jfr.sh" stop "$target_dir" >> "$log_file" 2>&1
     JFR_ACTIVE=false
-    log_phase "SPI JFR saved: ${target_dir}/spi-load-test.jfr"
 }
 
-main() {
-    parse_args "$@"
+build_loadtool() {
+    local output_bin="$1"
 
-    local timestamp target_dir tool_out active_seconds drain_seconds sampler_duration
-    timestamp="$(date +%Y%m%d_%H%M%S)"
-    target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
-    tool_out="${target_dir}/go-loadtool"
-    active_seconds="$(duration_seconds "duration")"
-    drain_seconds="$(duration_seconds "drain")"
-    sampler_duration=$((active_seconds + drain_seconds + 20))
+    log_phase "building Go loadtool"
+    (
+        cd go-loadtool
+        GOPATH="${GOPATH:-/tmp/go}" GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go build -o "$output_bin" ./cmd/go-loadtool
+    )
+    log_phase "Go loadtool built"
+}
 
-    mkdir -p "$tool_out"
-    cp "$GO_LOADTOOL_CONFIG" "${target_dir}/loadtool-config.json"
-    trap cleanup EXIT
+log_selected_options() {
+    local target_dir="$1"
 
     log_phase "starting load test: tag=${RUN_TAG} output=${target_dir}"
     log_phase "using config: ${GO_LOADTOOL_CONFIG}"
@@ -306,13 +281,30 @@ main() {
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         log_phase "Postgres statement stats enabled"
     fi
+    if [[ "$ENABLE_PROCESS_STATS" == true ]]; then
+        log_phase "process stats enabled"
+    fi
+}
 
+prepare_run_workspace() {
+    local tool_out="$1"
+
+    mkdir -p "$tool_out"
+    LOADTOOL_BUILD_DIR="$(mktemp -d)"
+    LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/go-loadtool"
+}
+
+run_preflight_checks() {
     log_phase "checking initial SPI Kafka lag"
     assert_no_initial_spi_lag
     log_phase "initial SPI Kafka lag is zero"
 
     log_phase "ensuring SPI trace is stopped"
     stop_spi_trace ""
+}
+
+provision_funds_if_enabled() {
+    local target_dir="$1"
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
@@ -321,60 +313,106 @@ main() {
     else
         log_phase "skipping funds provisioning"
     fi
+}
 
-    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
-        enable_postgres_statement_stats "$target_dir"
-    fi
+start_samplers() {
+    local target_dir="$1"
+    local sampler_duration="$2"
 
     log_phase "starting samplers: duration=${sampler_duration}s"
     "${SCRIPTS_DIR}/sample-system-stats.sh" "$SYSTEM_STATS_INTERVAL_SECONDS" "$sampler_duration" "${target_dir}/system-stats.csv" > "${target_dir}/system-stats.log" 2>&1 &
     SYSTEM_STATS_PID="$!"
 
-    "${SCRIPTS_DIR}/sample-process-stats.sh" "$PROCESS_STATS_INTERVAL_SECONDS" "$sampler_duration" "${target_dir}/process-stats.csv" 20 > "${target_dir}/process-stats.log" 2>&1 &
-    PROCESS_STATS_PID="$!"
+    if [[ "$ENABLE_PROCESS_STATS" == true ]]; then
+        "${SCRIPTS_DIR}/sample-process-stats.sh" "$PROCESS_STATS_INTERVAL_SECONDS" "$sampler_duration" "${target_dir}/process-stats.csv" 20 > "${target_dir}/process-stats.log" 2>&1 &
+        PROCESS_STATS_PID="$!"
+    fi
 
     "${SCRIPTS_DIR}/sample-kafka-lag.sh" "$KAFKA_LAG_INTERVAL_SECONDS" "$sampler_duration" "${target_dir}/kafka-lag.csv" > "${target_dir}/kafka-lag.log" 2>&1 &
     KAFKA_LAG_PID="$!"
+}
 
+start_optional_diagnostics() {
+    local target_dir="$1"
+
+    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        enable_postgres_statement_stats "$target_dir"
+    fi
     if [[ "$ENABLE_JFR" == true ]]; then
         JFR_TARGET_DIR="$target_dir"
         start_spi_jfr "${target_dir}/spi-jfr.log"
     fi
-
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
         start_spi_trace "${target_dir}/spi-trace.log"
     fi
+}
 
-    log_phase "starting simulator"
-    (
-        cd go-loadtool
-        GOPATH="${GOPATH:-/tmp/go}" GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go run ./cmd/go-loadtool simulate \
-            --out "../${tool_out}"
-    ) | tee "${target_dir}/go-loadtool-output.txt"
+collect_optional_diagnostics() {
+    local target_dir="$1"
 
     if [[ "$ENABLE_JFR" == true ]]; then
         stop_spi_jfr "$target_dir"
     fi
-
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
         stop_spi_trace "$target_dir"
         copy_spi_trace "$target_dir"
     fi
-
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         capture_postgres_statement_stats "$target_dir"
         disable_postgres_statement_stats "$target_dir"
     fi
+}
+
+run_simulator() {
+    local target_dir="$1"
+    local tool_out="$2"
+
+    log_phase "starting simulator"
+    (
+        cd go-loadtool
+        "$LOADTOOL_BIN" simulate \
+            --out "../${tool_out}"
+    ) | tee "${target_dir}/go-loadtool-output.txt"
+}
+
+generate_sla_report() {
+    local target_dir="$1"
+    local tool_out="$2"
 
     log_phase "simulator finished; generating SLA report"
     (
         cd go-loadtool
-        GOPATH="${GOPATH:-/tmp/go}" GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go run ./cmd/go-loadtool report \
+        "$LOADTOOL_BIN" report \
             --starts "../${tool_out}/starts.csv" \
             --events "../${tool_out}/events.csv"
     ) | tee "${target_dir}/sla-report.json"
-
     log_phase "SLA report generated"
+}
+
+main() {
+    parse_args "$@"
+
+    local timestamp target_dir tool_out warmup_seconds active_seconds drain_seconds sampler_duration
+    timestamp="$(date +%Y%m%d_%H%M%S)"
+    target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
+    tool_out="${target_dir}/go-loadtool"
+    warmup_seconds="$(duration_seconds "warmup")"
+    active_seconds="$(duration_seconds "duration")"
+    drain_seconds="$(duration_seconds "drain")"
+    sampler_duration=$((warmup_seconds + active_seconds + drain_seconds + 10))
+
+    prepare_run_workspace "$tool_out"
+    trap cleanup EXIT
+
+    log_selected_options "$target_dir"
+    build_loadtool "$LOADTOOL_BIN"
+    run_preflight_checks
+    provision_funds_if_enabled "$target_dir"
+    start_samplers "$target_dir" "$sampler_duration"
+    start_optional_diagnostics "$target_dir"
+    run_simulator "$target_dir" "$tool_out"
+    collect_optional_diagnostics "$target_dir"
+    generate_sla_report "$target_dir" "$tool_out"
     log_phase "results written to ${target_dir}"
 }
 

@@ -25,6 +25,7 @@ type Config struct {
 	BaseURL        string
 	GatewayAddress string
 	TargetTxRate   int
+	Warmup         time.Duration
 	Duration       time.Duration
 	Drain          time.Duration
 	HotPSPs        int
@@ -54,20 +55,6 @@ type simulator struct {
 	accepted      atomic.Uint64
 	pacs002Sent   atomic.Uint64
 	notifications atomic.Uint64
-}
-
-func DefaultConfig() Config {
-	return Config{
-		BaseURL:        "http://localhost:8001",
-		GatewayAddress: "localhost:9090",
-		TargetTxRate:   750,
-		Duration:       60 * time.Second,
-		Drain:          30 * time.Second,
-		HotPSPs:        10,
-		ColdPSPs:       40,
-		HotShare:       0.80,
-		OutputDir:      "results/go-loadtool/manual",
-	}
 }
 
 func Run(cfg Config) error {
@@ -128,7 +115,11 @@ func Run(cfg Config) error {
 	jobs := make(chan transferJob, cfg.TargetTxRate*2)
 	var workers sync.WaitGroup
 	workerCount := max(16, min(512, cfg.TargetTxRate/2))
-	logPhase("starting active load: rate=%d/s duration=%s workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount)
+	if cfg.Warmup > 0 {
+		logPhase("starting warmup plus active load: rate=%d/s warmup=%s active=%s workers=%d", cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount)
+	} else {
+		logPhase("starting active load: rate=%d/s duration=%s workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount)
+	}
 	for range workerCount {
 		workers.Add(1)
 		go s.transferWorker(ctx, &workers, jobs)
@@ -136,7 +127,7 @@ func Run(cfg Config) error {
 
 	s.generate(ctx, jobs, pairs)
 	close(jobs)
-	logPhase("active load finished; waiting for in-flight HTTP requests")
+	logPhase("load generation finished; waiting for in-flight HTTP requests")
 	workers.Wait()
 
 	logPhase("HTTP workers finished; entering drain: drain=%s", cfg.Drain)
@@ -183,6 +174,7 @@ func buildPairs(count int) []ids.Pair {
 func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs []ids.Pair) {
 	start := time.Now()
 	next := start
+	endAfter := s.cfg.Warmup + s.cfg.Duration
 	interval := time.Second / time.Duration(s.cfg.TargetTxRate)
 	hotCount := s.cfg.HotPSPs
 	coldEvery := int(1 / (1 - s.cfg.HotShare))
@@ -190,7 +182,7 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 		coldEvery = 2
 	}
 
-	for seq := uint64(0); time.Since(start) < s.cfg.Duration; seq++ {
+	for seq := uint64(0); time.Since(start) < endAfter; seq++ {
 		if sleep := next.Sub(time.Now()); sleep > 0 {
 			time.Sleep(sleep)
 		}

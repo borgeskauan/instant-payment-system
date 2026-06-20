@@ -13,12 +13,12 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
   "baseUrl": "http://127.0.0.1:8001",
   "gatewayAddress": "127.0.0.1:9090",
   "targetTxRate": 1234,
+  "warmup": "10s",
   "duration": "45s",
   "drain": "12s",
   "hotPspCount": 7,
   "coldPspCount": 13,
   "hotTrafficShare": 0.75,
-  "outputDir": "results/custom",
   "slaThresholdMs": 3200
 }`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -42,6 +42,9 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	if cfg.Sim.Duration != 45*time.Second {
 		t.Fatalf("Duration = %s", cfg.Sim.Duration)
 	}
+	if cfg.Sim.Warmup != 10*time.Second {
+		t.Fatalf("Warmup = %s", cfg.Sim.Warmup)
+	}
 	if cfg.Sim.Drain != 12*time.Second {
 		t.Fatalf("Drain = %s", cfg.Sim.Drain)
 	}
@@ -54,7 +57,7 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	if cfg.Sim.HotShare != 0.75 {
 		t.Fatalf("HotShare = %f", cfg.Sim.HotShare)
 	}
-	if cfg.Sim.OutputDir != "results/custom" {
+	if cfg.Sim.OutputDir != "results/go-loadtool/manual" {
 		t.Fatalf("OutputDir = %q", cfg.Sim.OutputDir)
 	}
 	if cfg.SLAThresholdMs != 3200 {
