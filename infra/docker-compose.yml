@@ -10,10 +10,10 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: postgres
-    cpus: 1.0
-    mem_limit: 384m
-    mem_reservation: 256m
-    memswap_limit: 384m
+    cpus: 0.75
+    mem_limit: 512m
+    mem_reservation: 384m
+    memswap_limit: 512m
     <<: *low-resource
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
@@ -53,7 +53,7 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
-    cpus: 0.75
+    cpus: 0.80
     mem_limit: 1024m
     mem_reservation: 768m
     memswap_limit: 1024m
@@ -129,10 +129,10 @@ services:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
-    cpus: 0.35
-    mem_limit: 384m
-    mem_reservation: 256m
-    memswap_limit: 384m
+    cpus: 0.25
+    mem_limit: 320m
+    mem_reservation: 192m
+    memswap_limit: 320m
     <<: *low-resource
     ports:
       - "9090:9090"
@@ -149,16 +149,17 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
-    cpus: 0.75
-    mem_limit: 1024m
-    memswap_limit: 1024m
+    cpus: 0.55
+    mem_limit: 768m
+    mem_reservation: 512m
+    memswap_limit: 768m
     mem_swappiness: 0
     ports:
       - "8002:8002"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
-      JAVA_TOOL_OPTIONS: "-Xms512m -Xmx768m"
+      JAVA_TOOL_OPTIONS: "-Xms384m -Xmx512m"
       SPI_KAFKA_LISTENER_CONCURRENCY: 8
       SPI_TRACE_FILE: /tmp/spi-trace.csv
     depends_on:

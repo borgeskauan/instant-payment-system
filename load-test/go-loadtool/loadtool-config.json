@@ -1,12 +1,12 @@
 {
   "baseUrl": "http://localhost:8001",
   "gatewayAddress": "localhost:9090",
-  "targetTxRate": 3000,
-  "duration": "60s",
+  "targetTxRate": 2000,
+  "duration": "180s",
   "drain": "30s",
   "hotPspCount": 10,
   "coldPspCount": 40,
   "hotTrafficShare": 0.8,
   "outputDir": "results/go-loadtool/manual",
-  "slaThresholdMs": 4600
+  "slaThresholdMs": 1000
 }
