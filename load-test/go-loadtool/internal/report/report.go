@@ -55,7 +55,6 @@ type LatencySummary struct {
 
 type DiagnosticSummary struct {
 	ResultCollection ResultCollectionSummary `json:"result_collection"`
-	Resources        *ResourceSummary        `json:"resources,omitempty"`
 }
 
 type ResultCollectionSummary struct {
@@ -64,33 +63,11 @@ type ResultCollectionSummary struct {
 	ConfirmedTotalRate   float64 `json:"confirmed_total_per_second"`
 }
 
-type ResourceSummary struct {
-	Containers map[string]ContainerResourceSummary `json:"containers"`
-}
-
-type ContainerResourceSummary struct {
-	Samples int                    `json:"samples"`
-	CPU     *CPUResourceSummary    `json:"cpu,omitempty"`
-	Memory  *MemoryResourceSummary `json:"memory,omitempty"`
-}
-
-type CPUResourceSummary struct {
-	AvgPercent   float64  `json:"avg_percent"`
-	LimitPercent *float64 `json:"limit_percent,omitempty"`
-}
-
-type MemoryResourceSummary struct {
-	AvgMB             float64 `json:"avg_mb"`
-	LimitMB           float64 `json:"limit_mb"`
-	AvgOfLimitPercent float64 `json:"avg_of_limit_percent"`
-}
-
 type Options struct {
 	SLAThresholdMs int64
 	TargetTxRate   int
 	Warmup         time.Duration
 	Duration       time.Duration
-	SystemStats    []SystemStatSample
 }
 
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
@@ -145,7 +122,6 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	}
 	summary.Diagnostics.ResultCollection.ConfirmedAfterActive = summary.Transactions.Confirmation.Confirmed - confirmedDuringActive
 	summary.Diagnostics.ResultCollection.ConfirmedTotal = summary.Transactions.Confirmation.Confirmed
-	summary.Diagnostics.Resources = buildResourceSummary(starts, options)
 
 	sort.Float64s(durations)
 	summary.LatencyMs.P50 = percentile(durations, 0.50)

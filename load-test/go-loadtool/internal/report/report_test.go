@@ -2,8 +2,6 @@ package report
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -158,6 +156,9 @@ func TestSummaryJSONUsesFinalReportShape(t *testing.T) {
 	if _, ok := resultCollection["confirmed_total"]; !ok {
 		t.Fatal("diagnostics missing confirmed_total")
 	}
+	if _, ok := diagnostics["resources"]; ok {
+		t.Fatal("diagnostics contains resource summary that belongs in Prometheus/Grafana")
+	}
 }
 
 func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing.T) {
@@ -226,90 +227,5 @@ func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
 	}
 	if summary.ThroughputPerSecond.Started != 0.4 {
 		t.Fatalf("Started throughput = %f, want 0.4", summary.ThroughputPerSecond.Started)
-	}
-}
-
-func TestSummaryReportsActiveWindowContainerResourceAverages(t *testing.T) {
-	firstStartedAt := time.Date(2026, 6, 20, 18, 0, 0, 0, time.UTC)
-	starts := []events.Start{
-		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: firstStartedAt.UnixNano(), HTTPStatus: 200},
-	}
-	options := Options{
-		SLAThresholdMs: 1000,
-		Warmup:         10 * time.Second,
-		Duration:       20 * time.Second,
-		SystemStats: []SystemStatSample{
-			{Timestamp: firstStartedAt.Add(5 * time.Second), Source: "container", Name: "spi", CPUPercent: 90, CPULimitPercent: 75, MemUsedMB: 700, MemLimitMB: 768},
-			{Timestamp: firstStartedAt.Add(10 * time.Second), Source: "container", Name: "spi", CPUPercent: 40, CPULimitPercent: 75, MemUsedMB: 300, MemLimitMB: 768},
-			{Timestamp: firstStartedAt.Add(20 * time.Second), Source: "container", Name: "spi", CPUPercent: 60, CPULimitPercent: 75, MemUsedMB: 450, MemLimitMB: 768},
-			{Timestamp: firstStartedAt.Add(29 * time.Second), Source: "container", Name: "spi", CPUPercent: 80, CPULimitPercent: 75, MemUsedMB: 600, MemLimitMB: 768},
-			{Timestamp: firstStartedAt.Add(30 * time.Second), Source: "container", Name: "spi", CPUPercent: 10, CPULimitPercent: 75, MemUsedMB: 100, MemLimitMB: 768},
-			{Timestamp: firstStartedAt.Add(20 * time.Second), Source: "host", Name: "host", CPUPercent: 99, MemUsedMB: 1000, MemLimitMB: 2000},
-		},
-	}
-
-	summary := BuildWithOptions(starts, nil, options)
-
-	resources := summary.Diagnostics.Resources
-	if resources == nil {
-		t.Fatal("Resources is nil")
-	}
-	spi := resources.Containers["spi"]
-	if spi.Samples != 3 {
-		t.Fatalf("Samples = %d, want 3", spi.Samples)
-	}
-	if spi.CPU == nil {
-		t.Fatal("CPU is nil")
-	}
-	if spi.CPU.AvgPercent != 60 {
-		t.Fatalf("CPU AvgPercent = %f, want 60", spi.CPU.AvgPercent)
-	}
-	if spi.CPU.LimitPercent == nil || *spi.CPU.LimitPercent != 75 {
-		t.Fatalf("CPU LimitPercent = %v, want 75", spi.CPU.LimitPercent)
-	}
-	if spi.Memory == nil {
-		t.Fatal("Memory is nil")
-	}
-	if spi.Memory.AvgMB != 450 {
-		t.Fatalf("Memory AvgMB = %f, want 450", spi.Memory.AvgMB)
-	}
-	if spi.Memory.LimitMB != 768 {
-		t.Fatalf("Memory LimitMB = %f, want 768", spi.Memory.LimitMB)
-	}
-	wantMemoryPercent := 450.0 / 768.0 * 100
-	if spi.Memory.AvgOfLimitPercent != wantMemoryPercent {
-		t.Fatalf("Memory AvgOfLimitPercent = %f, want %f", spi.Memory.AvgOfLimitPercent, wantMemoryPercent)
-	}
-}
-
-func TestReadSystemStatsParsesContainerCpuLimit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "system-stats.csv")
-	csv := "timestamp,source,name,cpu_percent,cpu_limit_percent,mem_used_mb,mem_limit_mb,mem_available_mb,load_1m,block_io,net_io\n" +
-		"2026-06-20T18:00:10Z,container,spi,55.5,75.0,456.7,768.0,,,52MB / 10MB,1GB / 2GB\n" +
-		"2026-06-20T18:00:10Z,host,host,20.0,,1000,16000,15000,0.50,,\n"
-	if err := os.WriteFile(path, []byte(csv), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := ReadSystemStats(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(stats) != 2 {
-		t.Fatalf("len(stats) = %d, want 2", len(stats))
-	}
-	if stats[0].Name != "spi" {
-		t.Fatalf("Name = %s, want spi", stats[0].Name)
-	}
-	if stats[0].CPUPercent != 55.5 {
-		t.Fatalf("CPUPercent = %f, want 55.5", stats[0].CPUPercent)
-	}
-	if stats[0].CPULimitPercent != 75 {
-		t.Fatalf("CPULimitPercent = %f, want 75", stats[0].CPULimitPercent)
-	}
-	if stats[1].Source != "host" {
-		t.Fatalf("Source = %s, want host", stats[1].Source)
 	}
 }

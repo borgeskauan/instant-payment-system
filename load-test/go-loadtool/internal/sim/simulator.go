@@ -116,7 +116,7 @@ func Run(cfg Config) error {
 	var workers sync.WaitGroup
 	workerCount := max(16, min(512, cfg.TargetTxRate/2))
 	if cfg.Warmup > 0 {
-		logPhase("starting warmup plus active load: rate=%d/s warmup=%s active=%s workers=%d", cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount)
+		logPhase("starting warmup plus active load: warmup_rate=%d/s active_rate=%d/s warmup=%s active=%s workers=%d", warmupRate(cfg.TargetTxRate), cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount)
 	} else {
 		logPhase("starting active load: rate=%d/s duration=%s workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount)
 	}
@@ -175,7 +175,6 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 	start := time.Now()
 	next := start
 	endAfter := s.cfg.Warmup + s.cfg.Duration
-	interval := time.Second / time.Duration(s.cfg.TargetTxRate)
 	hotCount := s.cfg.HotPSPs
 	coldEvery := int(1 / (1 - s.cfg.HotShare))
 	if coldEvery < 2 {
@@ -186,7 +185,9 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 		if sleep := next.Sub(time.Now()); sleep > 0 {
 			time.Sleep(sleep)
 		}
-		next = next.Add(interval)
+		elapsed := time.Since(start)
+		rate := loadRateForElapsed(elapsed, s.cfg.Warmup, s.cfg.TargetTxRate)
+		next = next.Add(time.Second / time.Duration(rate))
 
 		pairIndex := hotCount + int(seq)%s.cfg.ColdPSPs
 		if hotCount > 0 && seq%uint64(coldEvery) != 0 {
@@ -206,6 +207,21 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 			return
 		}
 	}
+}
+
+func loadRateForElapsed(elapsed time.Duration, warmup time.Duration, targetRate int) int {
+	if warmup <= 0 || elapsed >= warmup {
+		return targetRate
+	}
+	return warmupRate(targetRate)
+}
+
+func warmupRate(targetRate int) int {
+	rate := targetRate / 2
+	if rate < 1 {
+		return 1
+	}
+	return rate
 }
 
 func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan transferJob) {
