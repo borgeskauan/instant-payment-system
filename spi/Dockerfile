@@ -6,7 +6,7 @@ RUN ./mvnw dependency:go-offline -q
 COPY src ./src
 RUN ./mvnw package -DskipTests -q
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jdk
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8002

@@ -62,7 +62,7 @@ public class NotificationPublisher {
             SendResult<String, String> result = 
                     kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson).get();
             
-            log.info("Notification published successfully (sync) for ISPB: {}, partition: {}, offset: {}",
+            log.debug("Notification published successfully (sync) for ISPB: {}, partition: {}, offset: {}",
                     ispb, 
                     result.getRecordMetadata().partition(), 
                     result.getRecordMetadata().offset());

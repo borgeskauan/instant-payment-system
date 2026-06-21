@@ -1,15 +1,18 @@
 spring:
   jpa:
     hibernate:
-      ddl-auto: create-drop
-    defer-datasource-initialization: true
-
-  h2:
-    console:
-      enabled: true
+      ddl-auto: validate
 
   flyway:
-    enabled: false
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: mysecretpassword
 
   kafka:
     bootstrap-servers: localhost:9092
@@ -21,15 +24,6 @@ spring:
       properties:
         max.poll.records: 100
         fetch.min.bytes: 1024
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      acks: 1
-      properties:
-        linger.ms: 5
-        batch.size: 16384
-        compression.type: lz4
-
   jmx:
     enabled: false
   main:
@@ -38,6 +32,10 @@ spring:
 
 spi:
   default-initial-balance: 1_000_000_000
+  kafka:
+    listener-concurrency: 8
+  trace:
+    file: /tmp/spi-trace.csv
 
 server:
   port: 8002

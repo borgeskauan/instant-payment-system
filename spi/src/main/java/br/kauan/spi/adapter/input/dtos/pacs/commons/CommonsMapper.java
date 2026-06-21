@@ -15,6 +15,16 @@ import java.util.GregorianCalendar;
 @Service
 public class CommonsMapper {
 
+    private final DatatypeFactory datatypeFactory;
+
+    public CommonsMapper() {
+        this(createDatatypeFactory());
+    }
+
+    CommonsMapper(DatatypeFactory datatypeFactory) {
+        this.datatypeFactory = datatypeFactory;
+    }
+
     public GroupHeader createGroupHeader(BatchDetails batchDetails) {
         var xmlTimestamp = convertInstantToXmlGregorianCalendar(batchDetails.getCreatedAt());
 
@@ -25,16 +35,17 @@ public class CommonsMapper {
                 .build();
     }
 
-    private static XMLGregorianCalendar convertInstantToXmlGregorianCalendar(Instant instant) {
+    private XMLGregorianCalendar convertInstantToXmlGregorianCalendar(Instant instant) {
         ZonedDateTime zdt = instant.atZone(ZoneOffset.UTC);
 
-        // Create a GregorianCalendar from the ZonedDateTime
         GregorianCalendar gregorianCalendar = GregorianCalendar.from(zdt);
 
-        // Create the XMLGregorianCalendar
+        return datatypeFactory.newXMLGregorianCalendar(gregorianCalendar);
+    }
+
+    private static DatatypeFactory createDatatypeFactory() {
         try {
-            return DatatypeFactory.newInstance()
-                    .newXMLGregorianCalendar(gregorianCalendar);
+            return DatatypeFactory.newInstance();
         } catch (DatatypeConfigurationException e) {
             throw new RuntimeException(e);
         }

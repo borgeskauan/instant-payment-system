@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "f98ca61c80eed63c",
+        "id": "8c240b62ee575936",
         "type": "tabs",
         "children": [
           {
-            "id": "6d38264d01b55efa",
+            "id": "f2bac1354622eca2",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "KAFKA_MESSAGE_FLOW.md",
+                "file": "discovery/escopo_inicial.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "KAFKA_MESSAGE_FLOW"
+              "title": "escopo_inicial"
             }
           }
         ]
@@ -78,8 +78,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 239.5,
-    "collapsed": true
+    "width": 239.5
   },
   "right": {
     "id": "6edabe98d8d127d1",
@@ -170,48 +169,48 @@
       "command-palette:Open command palette": false
     }
   },
-  "active": "6d38264d01b55efa",
+  "active": "f2bac1354622eca2",
   "lastOpenFiles": [
-    "board/Atividades/agora/integracao-grpc-psp.md",
-    "board/Atividades/concluidas/integracao-grpc-psp.md",
-    "board/Atividades/concluidas",
-    "KAFKA_MESSAGE_FLOW.md",
-    "board/Atividades/done",
-    "IMPROVEMENTS.md",
-    "LOAD_TEST_KAFKA_INTEGRATION.md",
-    "PIX_FLOW_LOGGING_GUIDE.md",
-    "discovery/escopo_inicial.md",
+    "superpowers/plans/2026-06-14-go-psp-simulator.md",
+    "superpowers/plans",
+    "superpowers",
+    "collection/Get ISPB details.yml",
+    "collection/Transfer flow/05 Execute transfer.yml",
+    "collection/Transfer flow/04 Preview transfer.yml",
+    "collection/Transfer flow/03 Create receiver PIX key.yml",
+    "collection/Transfer flow/02 Create receiver customer.yml",
+    "collection/Transfer flow/01 Create sender customer.yml",
+    "collection/Transfer flow/folder.yml",
+    "collection/Transfer flow",
     "discovery/aprendizado_inicial.md",
-    "requests/demo.http",
-    "requests",
-    "collection/environments/local.yml",
-    "collection/environments",
-    "collection/01 Create sender customer.yml",
-    "collection/README.md",
-    "collection/05 Execute transfer.yml",
-    "collection/04 Preview transfer.yml",
-    "collection/03 Create receiver PIX key.yml",
-    "board/Atividades/reduzir-consumo-cpu-spi.md",
-    "board/Atividades/Atividades.md",
     "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
-    "board/Atividades/agora/Agora.md",
-    "board/Atividades/integracao-gprc-psp.md",
-    "board/Agora.md",
-    "board/Atividades/Agora.md",
-    "board/Atividades.md",
-    "board/Backlog.md",
-    "Programming/Pix/Anotações de aprendizado.md",
+    "discovery/escopo_inicial.md",
     "Programming/Pix/Documentação inicial.md",
+    "Programming/Pix/Anotações de aprendizado.md",
     "Programming/Projects/Completed (kindaof)/AI Support/UI prompt.md",
     "Programming/Pix/Backlog.md",
     "Programming/Pix/Atividades.md",
     "Programming/Projects/Completed (kindaof)/AI Support/Tasks specifications.md",
     "Programming/Projects/Completed (kindaof)/AI Support/Project idea.md",
     "Roteiro de palestra.md",
+    "Roteiro de palestra 2.0.md",
     "MK/image.png",
+    "MK/Diagramas.md",
+    "MK/Anotações resumidas.md",
+    "MK/Criação de conta de usuário.md",
+    "MK/Operacional.md",
+    "MK/Visão geral da empresa.md",
+    "Carrer/Mestrado.md",
+    "Carrer/Marketing pessoal.md",
+    "Carrer/Conselhos.md",
+    "Carrer/Carrer graduation steps.md",
+    "Carrer/PDI/Priorities.md",
+    "Carrer/PDI/Strengths and weaknesses.md",
+    "Carrer/PDI/Backlog.md",
     "Imagens/Pasted image 20250227184342.png",
     "Imagens/Pasted image 20260103151227.png",
     "Imagens/Pasted image desktop.png",
+    "Muriel (Memorias ao vento).md",
     "Pasted image 20260404230145.png",
     "Pasted image 20260404230018.png",
     "Pasted image 20260305213424.png",

@@ -9,26 +9,54 @@ x-low-resource: &low-resource
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: my-postgres
+    container_name: postgres
     cpus: 0.75
-    mem_limit: 384m
-    mem_reservation: 256m
-    memswap_limit: 384m
+    mem_limit: 512m
+    mem_reservation: 384m
+    memswap_limit: 512m
     <<: *low-resource
     environment:
       - POSTGRES_PASSWORD=mysecretpassword
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.max=10000
+      - -c
+      - track_io_timing=on
     ports:
       - "5432:5432"
     restart: unless-stopped
+    healthcheck:
+      test: pg_isready -U postgres || exit 1
+      <<: *default-healthcheck
+
+  postgres-statements-init:
+    image: postgres:17-alpine
+    container_name: postgres-statements-init
+    environment:
+      - PGPASSWORD=mysecretpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET pg_stat_statements.track = 'none';"
+        psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf();"
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
-    cpus: 1.00
-    mem_limit: 768m
-    mem_reservation: 512m
-    memswap_limit: 768m
+    cpus: 0.80
+    mem_limit: 1024m
+    mem_reservation: 768m
+    memswap_limit: 1024m
     <<: *low-resource
     ports:
       - "9092:29092"
@@ -43,14 +71,50 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_LOG_RETENTION_MS: 600000
+      KAFKA_LOG_RETENTION_BYTES: 268435456
+      KAFKA_LOG_SEGMENT_BYTES: 33554432
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 30000
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     healthcheck:
       test: nc -z kafka ${KAFKA_PORT} || exit 1
       <<: *default-healthcheck
 
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+
+        ensure_topic() {
+          local topic="$1"
+          local partitions="$2"
+
+          kafka-topics --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} --create --if-not-exists --topic "$$topic" --partitions "$$partitions" --replication-factor 1
+
+          local current_partitions
+          current_partitions="$$(kafka-topics --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} --describe --topic "$$topic" | awk -F'PartitionCount: ' '/PartitionCount:/ { split($$2, parts, " "); print parts[1]; exit }')"
+          if (( current_partitions < partitions )); then
+            kafka-topics --bootstrap-server ${KAFKA_BOOTSTRAP_SERVERS} --alter --topic "$$topic" --partitions "$$partitions"
+          fi
+        }
+
+        ensure_topic spi-payment-requests 8
+        ensure_topic spi-payment-status-reports 8
+        ensure_topic psp-notifications 1
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    profiles:
+      - ui
     ports:
       - "8090:8080"
     environment:
@@ -65,20 +129,19 @@ services:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
-    cpus: 1.00
-    mem_limit: 384m
-    mem_reservation: 256m
-    memswap_limit: 384m
+    cpus: 0.25
+    mem_limit: 320m
+    mem_reservation: 192m
+    memswap_limit: 320m
     <<: *low-resource
     ports:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      LOGGING_LEVEL_BR_KAUAN_NOTIFICATIONGATEWAY: DEBUG
       JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
 
   spi:
@@ -86,25 +149,33 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
-    cpus: 1.00
+    cpus: 0.55
     mem_limit: 768m
+    mem_reservation: 512m
     memswap_limit: 768m
     mem_swappiness: 0
     ports:
       - "8002:8002"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      JAVA_TOOL_OPTIONS: "-Xms256m -Xmx512m"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
+      JAVA_TOOL_OPTIONS: "-Xms384m -Xmx512m"
+      SPI_KAFKA_LISTENER_CONCURRENCY: 8
+      SPI_TRACE_FILE: /tmp/spi-trace.csv
     depends_on:
-      kafka:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
         condition: service_healthy
+      postgres-statements-init:
+        condition: service_completed_successfully
 
   kafka-producer:
     build:
       context: ../kafka-producer
       dockerfile: Dockerfile
     container_name: kafka-producer
-    cpus: 1.00
+    cpus: 0.55
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m
@@ -115,5 +186,5 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully

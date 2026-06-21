@@ -11,7 +11,5 @@
   },
   "readableLineLength": false,
   "showInlineTitle": false,
-  "alwaysUpdateLinks": true,
-  "propertiesInDocument": "hidden",
-  "foldHeading": true
+  "alwaysUpdateLinks": true
 }

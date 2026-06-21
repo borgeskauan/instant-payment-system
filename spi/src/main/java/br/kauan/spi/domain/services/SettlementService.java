@@ -1,55 +1,57 @@
 package br.kauan.spi.domain.services;
 
 import br.kauan.spi.Utils;
+import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
-import br.kauan.spi.port.output.FundsRepository;
+import br.kauan.spi.port.output.SettlementRepository;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
 public class SettlementService {
 
-    @Value("${spi.default-initial-balance}")
-    private BigDecimal defaultInitialBalance;
+    private final SettlementRepository settlementRepository;
 
-    private final FundsRepository fundsRepository;
-
-    public SettlementService(FundsRepository fundsRepository) {
-        this.fundsRepository = fundsRepository;
+    public SettlementService(SettlementRepository settlementRepository) {
+        this.settlementRepository = settlementRepository;
     }
 
     @Transactional
-    public void makeSettlement(PaymentTransaction paymentTransaction) {
-        var amount = paymentTransaction.getAmount();
-        var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
-        var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
+    public Optional<PaymentTransaction> tryMakeSettlement(String paymentId) {
+        Optional<PaymentTransaction> settledPayment = settlementRepository.settleAcceptedPayment(
+                paymentId,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        );
 
-        createAccountsIfNotExists(senderBankCode, receiverBankCode);
+        settledPayment.ifPresent(paymentTransaction -> {
+            var amount = paymentTransaction.getAmount();
+            var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
+            var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
 
-        var senderAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-        if (senderAvailableFunds.compareTo(amount) < 0) {
-            throw new IllegalStateException("Insufficient funds for settlement");
-        }
+            log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}",
+                    amount, senderBankCode, receiverBankCode);
+        });
 
-        fundsRepository.deductFunds(senderBankCode, amount);
-        fundsRepository.addFunds(receiverBankCode, amount);
-
-        var senderSettledAvailableFunds = fundsRepository.getAvailableFunds(senderBankCode);
-        var receiverSettledAvailableFunds = fundsRepository.getAvailableFunds(receiverBankCode);
-
-        log.info("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}", 
-                amount, senderBankCode, receiverBankCode);
-        log.info("[PIX FLOW - Step 6] Updated PI account balances - {}: {}, {}: {}", 
-                senderBankCode, senderSettledAvailableFunds, receiverBankCode, receiverSettledAvailableFunds);
+        return settledPayment;
     }
 
-    private void createAccountsIfNotExists(String senderBankCode, String receiverBankCode) {
-        fundsRepository.createAccountIfNotExists(senderBankCode, defaultInitialBalance);
-        fundsRepository.createAccountIfNotExists(receiverBankCode, defaultInitialBalance);
+    @Transactional
+    public List<PaymentTransaction> tryMakeSettlements(List<String> paymentIds) {
+        List<PaymentTransaction> settledPayments = settlementRepository.settleAcceptedPayments(
+                paymentIds,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        );
+
+        log.debug("[PIX FLOW - Step 6] Batch settlement completed in SPI. requested={}, settled={}",
+                paymentIds.size(), settledPayments.size());
+
+        return settledPayments;
     }
 }
