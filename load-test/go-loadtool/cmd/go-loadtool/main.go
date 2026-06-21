@@ -51,9 +51,11 @@ func runSimulate(args []string) error {
 func runReport(args []string) error {
 	var startsPath string
 	var eventsPath string
+	var systemStatsPath string
 	flags := flag.NewFlagSet("report", flag.ContinueOnError)
 	flags.StringVar(&startsPath, "starts", "", "starts.csv path")
 	flags.StringVar(&eventsPath, "events", "", "events.csv path")
+	flags.StringVar(&systemStatsPath, "system-stats", "", "system-stats.csv path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -65,11 +67,19 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
+	var systemStats []report.SystemStatSample
+	if systemStatsPath != "" {
+		systemStats, err = report.ReadSystemStats(systemStatsPath)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 
 	return report.Print(startsPath, eventsPath, report.Options{
 		SLAThresholdMs: runtimeCfg.SLAThresholdMs,
 		TargetTxRate:   runtimeCfg.Sim.TargetTxRate,
 		Warmup:         runtimeCfg.Sim.Warmup,
 		Duration:       runtimeCfg.Sim.Duration,
+		SystemStats:    systemStats,
 	}, os.Stdout)
 }

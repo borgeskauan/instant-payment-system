@@ -29,35 +29,21 @@ The load generator must run outside the measured runtime budget.
 
 Warmup traffic may be generated before the active test window. Warmup is used only to prime connections, JVMs, Kafka consumers, caches, and database state. It is not part of the SLA pass/fail window.
 
-## Contractual Target
+## Targets
 
-The contractual target is:
+| Target | Active duration | Accepted request rate | Latency target |
+| ------ | --------------: | --------------------: | -------------- |
+| Contractual | 15 minutes | 2000/s | p99 below 4.6s |
+| Internal engineering | 15 minutes | 2000/s | p99 below 1s |
 
-* Sustain 2000 accepted transaction requests per second during a 15 minute active test window.
-* 100% of accepted transactions must receive a final confirmation within 4.6 seconds end-to-end.
-* Zero technical failures in the measured flow.
-* Zero lost transactions.
+Additional notes:
+
+* The internal engineering target is stricter than the contractual target. It is the acceptance bar for saying the stack has enough operational margin for the contractual SLA.
+* Error/loss tolerance is zero for both targets: no technical failures, application errors, lost transactions, duplicate final confirmations, or inconclusive accepted transactions.
 * Every accepted transaction must receive exactly one final confirmation.
-* No accepted transaction may remain in an inconclusive state after result collection.
-
-## Internal Engineering Target
-
-The internal target is stricter than the contractual target:
-
-* Sustain 2000 accepted transaction requests per second during 15 minutes of active load.
-* p99 end-to-end latency below 1 second across the full active test window.
-* p99 end-to-end latency below 1.2 seconds in every 1 minute rolling window.
-* 100% of final confirmations below 4.6 seconds.
-* Zero application errors in the measured flow.
-* Zero lost transactions.
-* Zero duplicate final confirmations.
-* Zero transactions left in an inconclusive state after result collection.
-* No container restart, OOM kill, or swap usage.
-* No unbounded Kafka lag growth.
-* No unbounded backlog growth during the active test window.
+* Runtime health requirements are the same for both targets: no container restart, OOM kill, swap usage, or unbounded Kafka/internal backlog growth.
 * Kafka lag and internal backlogs must drain back to zero, or to a documented steady-state threshold, after the active load ends.
-
-This target is the acceptance bar for saying the stack has enough operational margin for the contractual SLA.
+* Result collection is used to detect delayed, missing, duplicate, or inconclusive confirmations. It does not extend the SLA latency budget.
 
 ## Recommended Validation Sequence
 

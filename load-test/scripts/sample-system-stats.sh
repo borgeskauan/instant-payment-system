@@ -15,7 +15,7 @@ usage() {
     echo "  $(basename "$0") 5 120 results/system-stats.csv"
     echo
     echo "Columns:"
-    echo "  timestamp,source,name,cpu_percent,mem_used_mb,mem_limit_mb,mem_available_mb,load_1m,block_io,net_io"
+    echo "  timestamp,source,name,cpu_percent,cpu_limit_percent,mem_used_mb,mem_limit_mb,mem_available_mb,load_1m,block_io,net_io"
 }
 
 error_exit() {
@@ -44,7 +44,7 @@ check_requirements() {
 
 write_header() {
     local output_file="$1"
-    echo "timestamp,source,name,cpu_percent,mem_used_mb,mem_limit_mb,mem_available_mb,load_1m,block_io,net_io" > "$output_file"
+    echo "timestamp,source,name,cpu_percent,cpu_limit_percent,mem_used_mb,mem_limit_mb,mem_available_mb,load_1m,block_io,net_io" > "$output_file"
 }
 
 read_cpu_totals() {
@@ -95,7 +95,7 @@ sample_host() {
         cpu_percent="0.00"
     fi
 
-    printf '%s,host,host,%s,%s,%s,%s,%s,,\n' \
+    printf '%s,host,host,%s,,%s,%s,%s,%s,,\n' \
         "$timestamp" "$cpu_percent" "$mem_used_mb" "$mem_limit_mb" "$mem_available_mb" "$load_1m" >> "$output_file"
 
     printf "%s %s\n" "$current_idle" "$current_total"
@@ -129,17 +129,36 @@ parse_mem_usage_mb() {
     fi
 }
 
+container_cpu_limit_percent() {
+    local name="$1"
+    local nano_cpus cpu_quota cpu_period
+
+    read -r nano_cpus cpu_quota cpu_period < <(
+        docker inspect --format '{{.HostConfig.NanoCpus}} {{.HostConfig.CpuQuota}} {{.HostConfig.CpuPeriod}}' "$name" 2>/dev/null ||
+            printf '0 0 0\n'
+    )
+
+    awk -v nano_cpus="$nano_cpus" -v cpu_quota="$cpu_quota" -v cpu_period="$cpu_period" '
+        BEGIN {
+            if (nano_cpus > 0) printf "%.2f", nano_cpus / 1000000000 * 100
+            else if (cpu_quota > 0 && cpu_period > 0) printf "%.2f", cpu_quota / cpu_period * 100
+            else printf ""
+        }
+    '
+}
+
 sample_containers() {
     local timestamp="$1"
     local output_file="$2"
 
     docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.BlockIO}}|{{.NetIO}}' |
         while IFS='|' read -r name cpu_percent mem_usage block_io net_io; do
-            local mem_used_mb mem_limit_mb
+            local cpu_limit_percent mem_used_mb mem_limit_mb
             cpu_percent="${cpu_percent%\%}"
+            cpu_limit_percent=$(container_cpu_limit_percent "$name")
             read -r mem_used_mb mem_limit_mb < <(parse_mem_usage_mb "$mem_usage")
-            printf '%s,container,%s,%s,%s,%s,,,%s,%s\n' \
-                "$timestamp" "$name" "$cpu_percent" "$mem_used_mb" "$mem_limit_mb" "$block_io" "$net_io" >> "$output_file"
+            printf '%s,container,%s,%s,%s,%s,%s,,,%s,%s\n' \
+                "$timestamp" "$name" "$cpu_percent" "$cpu_limit_percent" "$mem_used_mb" "$mem_limit_mb" "$block_io" "$net_io" >> "$output_file"
         done
 }
 

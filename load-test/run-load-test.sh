@@ -384,7 +384,8 @@ generate_sla_report() {
         cd go-loadtool
         "$LOADTOOL_BIN" report \
             --starts "../${tool_out}/starts.csv" \
-            --events "../${tool_out}/events.csv"
+            --events "../${tool_out}/events.csv" \
+            --system-stats "../${target_dir}/system-stats.csv"
     ) | tee "${target_dir}/sla-report.json"
     log_phase "SLA report generated"
 }

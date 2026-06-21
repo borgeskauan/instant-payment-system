@@ -3,7 +3,7 @@
   "gatewayAddress": "localhost:9090",
   "targetTxRate": 2000,
   "warmup": "30s",
-  "duration": "180s",
+  "duration": "15m",
   "drain": "15s",
   "hotPspCount": 10,
   "coldPspCount": 40,
