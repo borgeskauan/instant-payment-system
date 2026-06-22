@@ -14,3 +14,7 @@ spring:
 grpc:
   server:
     port: 9090
+
+notification-gateway:
+  kafka:
+    listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:2}

@@ -13,6 +13,5 @@ message StreamRequest {
 }
 
 message Notification {
-  string ispb    = 1;
-  string payload = 2;
+  bytes payload = 1;
 }

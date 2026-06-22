@@ -67,8 +67,7 @@ func (x *StreamRequest) GetIspb() string {
 
 type Notification struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ispb          string                 `protobuf:"bytes,1,opt,name=ispb,proto3" json:"ispb,omitempty"`
-	Payload       string                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -103,18 +102,11 @@ func (*Notification) Descriptor() ([]byte, []int) {
 	return file_proto_notification_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *Notification) GetIspb() string {
-	if x != nil {
-		return x.Ispb
-	}
-	return ""
-}
-
-func (x *Notification) GetPayload() string {
+func (x *Notification) GetPayload() []byte {
 	if x != nil {
 		return x.Payload
 	}
-	return ""
+	return nil
 }
 
 var File_proto_notification_proto protoreflect.FileDescriptor
@@ -123,10 +115,9 @@ const file_proto_notification_proto_rawDesc = "" +
 	"\n" +
 	"\x18proto/notification.proto\x12\fnotification\"#\n" +
 	"\rStreamRequest\x12\x12\n" +
-	"\x04ispb\x18\x01 \x01(\tR\x04ispb\"<\n" +
-	"\fNotification\x12\x12\n" +
-	"\x04ispb\x18\x01 \x01(\tR\x04ispb\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\tR\apayload2g\n" +
+	"\x04ispb\x18\x01 \x01(\tR\x04ispb\"(\n" +
+	"\fNotification\x12\x18\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload2g\n" +
 	"\x13NotificationGateway\x12P\n" +
 	"\x13StreamNotifications\x12\x1b.notification.StreamRequest\x1a\x1a.notification.Notification0\x01BJZHinstant-payment-system/load-test/go-loadtool/internal/gen/notificationpbb\x06proto3"
 

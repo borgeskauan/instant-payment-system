@@ -36,6 +36,10 @@ spi:
     listener-concurrency: 8
   trace:
     file: /tmp/spi-trace.csv
+    queue-capacity: 8192
+    flush-interval-ms: 250
+    batch-size: 1024
+    sample-rate: 100
 
 server:
   port: 8002

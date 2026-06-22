@@ -304,7 +304,7 @@ func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup,
 			return
 		}
 		s.notifications.Add(1)
-		endToEndID, kind, err := payload.ExtractNotification([]byte(msg.Payload))
+		endToEndID, kind, err := payload.ExtractNotification(msg.Payload)
 		if err != nil {
 			continue
 		}

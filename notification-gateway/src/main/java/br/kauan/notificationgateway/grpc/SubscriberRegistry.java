@@ -1,6 +1,7 @@
 package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.grpc.proto.Notification;
+import com.google.protobuf.ByteString;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.extern.slf4j.Slf4j;
@@ -57,9 +58,9 @@ public class SubscriberRegistry {
      * Called by the Kafka consumer on every incoming message.
      *
      * @param ispb    the destination bank code (Kafka record key)
-     * @param payload the raw JSON payload (pacs.008 or pacs.002)
+     * @param payload the raw notification payload (pacs.008 or pacs.002)
      */
-    public void dispatch(String ispb, String payload) {
+    public void dispatch(String ispb, byte[] payload) {
         List<StreamObserver<Notification>> list = subscribers.get(ispb);
         if (list == null || list.isEmpty()) {
             log.debug("No subscribers for ISPB: {} — notification dropped", ispb);
@@ -67,8 +68,7 @@ public class SubscriberRegistry {
         }
 
         Notification notification = Notification.newBuilder()
-                .setIspb(ispb)
-                .setPayload(payload)
+                .setPayload(ByteString.copyFrom(payload))
                 .build();
 
         log.debug("Dispatching notification to {} subscriber(s) for ISPB: {}", list.size(), ispb);

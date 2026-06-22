@@ -108,7 +108,7 @@ services:
 
         ensure_topic spi-payment-requests 8
         ensure_topic spi-payment-status-reports 8
-        ensure_topic psp-notifications 1
+        ensure_topic psp-notifications 8
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -138,7 +138,8 @@ services:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
+      NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:-2}
+      JAVA_TOOL_OPTIONS: "-Xms96m -Xmx160m -XX:MaxDirectMemorySize=48m -Xss256k"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -160,7 +161,7 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
       JAVA_TOOL_OPTIONS: "-Xms384m -Xmx512m"
-      SPI_KAFKA_LISTENER_CONCURRENCY: 8
+      SPI_KAFKA_LISTENER_CONCURRENCY: 4
       SPI_TRACE_FILE: /tmp/spi-trace.csv
     depends_on:
       kafka-init:
