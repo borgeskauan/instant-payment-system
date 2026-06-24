@@ -128,6 +128,10 @@ public class SpiTraceRecorder {
         }
     }
 
+    public boolean isActive() {
+        return active.get();
+    }
+
     @PreDestroy
     public void shutdown() {
         stop();

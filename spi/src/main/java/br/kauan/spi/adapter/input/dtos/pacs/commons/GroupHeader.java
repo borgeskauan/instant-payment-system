@@ -6,8 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.xml.datatype.XMLGregorianCalendar;
 import java.math.BigInteger;
+import java.time.OffsetDateTime;
 
 @Data
 @Builder
@@ -19,7 +19,7 @@ public class GroupHeader {
     protected String messageId;
 
     @JsonProperty(value = "CreDtTm", required = true)
-    protected XMLGregorianCalendar creationTimestamp;
+    protected OffsetDateTime creationTimestamp;
 
     @JsonProperty(value = "NbOfTxs", required = true)
     protected BigInteger numberOfTransactions;

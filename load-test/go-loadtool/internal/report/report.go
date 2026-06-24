@@ -103,7 +103,7 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 			summary.Transactions.Confirmation.NotConfirmed++
 			continue
 		}
-		durationMs := float64(receivedAt-start.CreatedAtNS) / 1_000_000
+		durationMs := float64(receivedAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
 		summary.Transactions.Confirmation.Confirmed++
 		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
@@ -151,10 +151,10 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 	}
 	measured := make([]events.Start, 0, len(starts))
 	for _, start := range starts {
-		if start.CreatedAtNS < windowStart {
+		if requestStartedAt(start) < windowStart {
 			continue
 		}
-		if windowEnd > 0 && start.CreatedAtNS >= windowEnd {
+		if windowEnd > 0 && requestStartedAt(start) >= windowEnd {
 			continue
 		}
 		measured = append(measured, start)
@@ -163,13 +163,21 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 }
 
 func firstStartedAt(starts []events.Start) int64 {
-	minStartedAt := starts[0].CreatedAtNS
+	minStartedAt := requestStartedAt(starts[0])
 	for _, start := range starts[1:] {
-		if start.CreatedAtNS < minStartedAt {
-			minStartedAt = start.CreatedAtNS
+		startedAt := requestStartedAt(start)
+		if startedAt < minStartedAt {
+			minStartedAt = startedAt
 		}
 	}
 	return minStartedAt
+}
+
+func requestStartedAt(start events.Start) int64 {
+	if start.RequestStartedAtNS != 0 {
+		return start.RequestStartedAtNS
+	}
+	return start.CreatedAtNS
 }
 
 type confirmationKey struct {

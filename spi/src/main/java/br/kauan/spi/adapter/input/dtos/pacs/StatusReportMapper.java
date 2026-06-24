@@ -47,7 +47,7 @@ public class StatusReportMapper {
     private BatchDetails mapGroupHeaderToReportDetails(GroupHeader groupHeader) {
         return BatchDetails.builder()
                 .id(groupHeader.getMessageId())
-                .createdAt(PacsDateTime.toInstant(groupHeader.getCreationTimestamp()))
+                .createdAt(groupHeader.getCreationTimestamp().toInstant())
                 .build();
     }
 

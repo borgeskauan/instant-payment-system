@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import javax.xml.datatype.XMLGregorianCalendar;
+import java.time.OffsetDateTime;
 
 @Data
 @Builder
@@ -18,5 +18,5 @@ public class GroupHeaderStatusReport {
     protected String messageId;
 
     @JsonProperty(value = "CreDtTm", required = true)
-    protected XMLGregorianCalendar creationTimestamp;
+    protected OffsetDateTime creationTimestamp;
 }

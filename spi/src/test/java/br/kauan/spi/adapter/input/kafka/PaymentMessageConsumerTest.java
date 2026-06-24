@@ -17,11 +17,13 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentCaptor.forClass;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
@@ -82,6 +84,42 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void consumePaymentRequestRecordsReceivedBeforeParsingPayload() throws Exception {
+        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
+        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
+        when(traceRecorder.isActive()).thenReturn(true);
+        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
+                paymentTransactionMapper,
+                statusReportMapper,
+                processor,
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
+        );
+        PaymentBatch paymentBatch = PaymentBatch.builder()
+                .transactions(List.of(PaymentTransaction.builder().paymentId("E2E-1").build()))
+                .build();
+        when(paymentRequestReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
+        when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
+                .thenReturn(paymentBatch);
+
+        byte[] payload = """
+                {"CdtTrfTxInf":[{"PmtId":{"EndToEndId":"E2E-1"}}]}
+                """.getBytes(StandardCharsets.UTF_8);
+        consumer.consumePaymentRequest(payload);
+
+        var inOrder = inOrder(traceRecorder, paymentRequestReader);
+        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_RECEIVED);
+        inOrder.verify(paymentRequestReader).readValue(payload);
+        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
+    }
+
+    @Test
     void consumePaymentRequestsMergesKafkaMessagesIntoOneDomainBatch() throws Exception {
         PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
@@ -132,6 +170,32 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void consumePaymentRequestParsesIsoOffsetTimestampWithDefaultReader() {
+        PaymentTransactionMapper paymentTransactionMapper = new PaymentTransactionMapper(
+                mock(br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper.class),
+                new br.kauan.spi.adapter.input.dtos.pacs.CodeMapping()
+        );
+        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
+                paymentTransactionMapper,
+                statusReportMapper,
+                processor,
+                traceRecorder
+        );
+
+        consumer.consumePaymentRequest("""
+                {"GrpHdr":{"MsgId":"MSG-1","CreDtTm":"2026-06-23T20:00:01.123Z","NbOfTxs":1},"CdtTrfTxInf":[{"PmtId":{"EndToEndId":"E2E-1"},"IntrBkSttlmAmt":{"value":10.00,"Ccy":"BRL"},"Dbtr":{"Nm":"Sender","Id":{"PrvtId":{"Othr":{"Id":"12345678900"}}}},"DbtrAcct":{"Id":{"Othr":{"Id":987654,"Issr":1234}},"Tp":{"Cd":"CACC"}},"DbtrAgt":{"FinInstnId":{"ClrSysMmbId":{"MmbId":"10000001"}}},"CdtrAgt":{"FinInstnId":{"ClrSysMmbId":{"MmbId":"20000001"}}},"Cdtr":{"Nm":"Receiver","Id":{"PrvtId":{"Othr":{"Id":"98765432100"}}}},"CdtrAcct":{"Id":{"Othr":{"Id":123456,"Issr":5678}},"Tp":{"Cd":"CACC"},"Prxy":{"Id":"+5511999999999"}},"RmtInf":{"Ustrd":"Load test payment"}}]}
+                """.getBytes(StandardCharsets.UTF_8));
+
+        var paymentBatchCaptor = forClass(PaymentBatch.class);
+        verify(processor).processTransactionBatch(paymentBatchCaptor.capture());
+        assertEquals(Instant.parse("2026-06-23T20:00:01.123Z"),
+                paymentBatchCaptor.getValue().getBatchDetails().getCreatedAt());
+    }
+
+    @Test
     void consumeStatusReportProcessesPacs002FromDedicatedTopic() throws Exception {
         PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
@@ -165,6 +229,42 @@ class PaymentMessageConsumerTest {
         verify(statusReportMapper).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
         verify(processor).processStatusBatch(statusBatch);
+    }
+
+    @Test
+    void consumeStatusReportRecordsReceivedBeforeParsingPayload() throws Exception {
+        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
+        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
+        when(traceRecorder.isActive()).thenReturn(true);
+        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
+                paymentTransactionMapper,
+                statusReportMapper,
+                processor,
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
+        );
+        StatusBatch statusBatch = StatusBatch.builder()
+                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
+                .build();
+        when(statusReportReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFIPaymentStatusReport.builder().build());
+        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
+                .thenReturn(statusBatch);
+
+        byte[] payload = """
+                {"TxInfAndSts":[{"OrgnlEndToEndId":"E2E-1","TxSts":"ACSP"}]}
+                """.getBytes(StandardCharsets.UTF_8);
+        consumer.consumeStatusReport(payload);
+
+        var inOrder = inOrder(traceRecorder, statusReportReader);
+        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_RECEIVED);
+        inOrder.verify(statusReportReader).readValue(payload);
+        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
     }
 
     @Test

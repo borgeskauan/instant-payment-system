@@ -13,7 +13,6 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
@@ -41,10 +40,14 @@ public class NotificationStorage {
      * No longer stores in-memory - immediately publishes to psp-notifications.
      */
     public void addStatusNotification(String ispb, StatusReport statusReport) {
+        addStatusNotifications(ispb, List.of(statusReport));
+    }
+
+    public void addStatusNotifications(String ispb, List<StatusReport> statusReports) {
         log.debug("Publishing status notification for ISPB: {}", ispb);
         
         FIToFIPaymentStatusReport statusBatchNotification = 
-                createStatusBatchNotification(Collections.singletonList(statusReport));
+                createStatusBatchNotification(statusReports);
         
         if (statusBatchNotification != null) {
             contentSerializer.serialize(statusBatchNotification)
@@ -57,10 +60,14 @@ public class NotificationStorage {
      * No longer stores in-memory - immediately publishes to psp-notifications.
      */
     public void addTransactionNotification(String ispb, PaymentTransaction paymentTransaction) {
+        addTransactionNotifications(ispb, List.of(paymentTransaction));
+    }
+
+    public void addTransactionNotifications(String ispb, List<PaymentTransaction> paymentTransactions) {
         log.debug("Publishing transaction notification for ISPB: {}", ispb);
         
         FIToFICustomerCreditTransfer paymentBatchNotification = 
-                createPaymentBatchNotification(Collections.singletonList(paymentTransaction));
+                createPaymentBatchNotification(paymentTransactions);
         
         if (paymentBatchNotification != null) {
             contentSerializer.serialize(paymentBatchNotification)

@@ -241,6 +241,7 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 	body := payload.Pacs008(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
+	startedAt := time.Now().UnixNano()
 	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer", s.cfg.BaseURL, job.Pair.Payer), body)
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
@@ -248,12 +249,13 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 		s.accepted.Add(1)
 	}
 	s.writeStart(events.Start{
-		EndToEndID:      job.ID,
-		PayerISPB:       job.Pair.Payer,
-		ReceiverISPB:    job.Pair.Receiver,
-		CreatedAtNS:     job.Created,
-		RequestDoneAtNS: doneAt,
-		HTTPStatus:      status,
+		EndToEndID:         job.ID,
+		PayerISPB:          job.Pair.Payer,
+		ReceiverISPB:       job.Pair.Receiver,
+		CreatedAtNS:        job.Created,
+		RequestStartedAtNS: startedAt,
+		RequestDoneAtNS:    doneAt,
+		HTTPStatus:         status,
 	})
 }
 
@@ -303,30 +305,32 @@ func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup,
 			fmt.Fprintf(os.Stderr, "stream %s recv failed: %v\n", ispb, err)
 			return
 		}
-		s.notifications.Add(uint64(len(msg.Payloads)))
 		for _, body := range msg.Payloads {
-			endToEndID, kind, err := payload.ExtractNotification(body)
+			notifications, err := payload.ExtractNotifications(body)
 			if err != nil {
 				continue
 			}
-			switch kind {
-			case payload.KindPacs008:
-				s.writeNotification(events.Notification{
-					EndToEndID:   endToEndID,
-					ISPB:         ispb,
-					EventType:    events.EventPacs008Received,
-					ReceivedAtNS: time.Now().UnixNano(),
-				})
-				if receiverRole {
-					go s.sendPacs002(ctx, ispb, endToEndID)
+			s.notifications.Add(uint64(len(notifications)))
+			for _, notification := range notifications {
+				switch notification.Kind {
+				case payload.KindPacs008:
+					s.writeNotification(events.Notification{
+						EndToEndID:   notification.EndToEndID,
+						ISPB:         ispb,
+						EventType:    events.EventPacs008Received,
+						ReceivedAtNS: time.Now().UnixNano(),
+					})
+					if receiverRole {
+						go s.sendPacs002(ctx, ispb, notification.EndToEndID)
+					}
+				case payload.KindPacs002:
+					s.writeNotification(events.Notification{
+						EndToEndID:   notification.EndToEndID,
+						ISPB:         ispb,
+						EventType:    events.EventPacs002Received,
+						ReceivedAtNS: time.Now().UnixNano(),
+					})
 				}
-			case payload.KindPacs002:
-				s.writeNotification(events.Notification{
-					EndToEndID:   endToEndID,
-					ISPB:         ispb,
-					EventType:    events.EventPacs002Received,
-					ReceivedAtNS: time.Now().UnixNano(),
-				})
 			}
 		}
 	}

@@ -67,6 +67,29 @@ func TestExtractPacs008EndToEndID(t *testing.T) {
 	}
 }
 
+func TestExtractPacs008ReturnsAllEndToEndIDs(t *testing.T) {
+	body := []byte(`{
+		"CdtTrfTxInf": [
+			{"PmtId": {"EndToEndId": "tx-1"}},
+			{"PmtId": {"EndToEndId": "tx-2"}}
+		]
+	}`)
+
+	got, err := ExtractNotifications(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].EndToEndID != "tx-1" || got[0].Kind != KindPacs008 {
+		t.Fatalf("first = %#v", got[0])
+	}
+	if got[1].EndToEndID != "tx-2" || got[1].Kind != KindPacs008 {
+		t.Fatalf("second = %#v", got[1])
+	}
+}
+
 func TestExtractPacs002OriginalEndToEndID(t *testing.T) {
 	body := Pacs002("tx-1")
 	got, kind, err := ExtractNotification(body)
@@ -75,5 +98,28 @@ func TestExtractPacs002OriginalEndToEndID(t *testing.T) {
 	}
 	if got != "tx-1" || kind != KindPacs002 {
 		t.Fatalf("got id=%s kind=%s", got, kind)
+	}
+}
+
+func TestExtractPacs002ReturnsAllOriginalEndToEndIDs(t *testing.T) {
+	body := []byte(`{
+		"TxInfAndSts": [
+			{"OrgnlEndToEndId": "tx-1"},
+			{"OrgnlEndToEndId": "tx-2"}
+		]
+	}`)
+
+	got, err := ExtractNotifications(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].EndToEndID != "tx-1" || got[0].Kind != KindPacs002 {
+		t.Fatalf("first = %#v", got[0])
+	}
+	if got[1].EndToEndID != "tx-2" || got[1].Kind != KindPacs002 {
+		t.Fatalf("second = %#v", got[1])
 	}
 }

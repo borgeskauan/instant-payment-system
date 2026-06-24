@@ -43,7 +43,7 @@ public class PaymentTransactionMapper {
     private BatchDetails mapGroupHeaderToBatchDetails(GroupHeader groupHeader) {
         return BatchDetails.builder()
                 .id(groupHeader.getMessageId())
-                .createdAt(PacsDateTime.toInstant(groupHeader.getCreationTimestamp()))
+                .createdAt(groupHeader.getCreationTimestamp().toInstant())
                 .totalTransactions(groupHeader.getNumberOfTransactions().intValue())
                 .build();
     }

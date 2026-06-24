@@ -13,6 +13,7 @@ import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -43,7 +44,7 @@ public class PaymentMessageConsumer {
             PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
             SpiTraceRecorder traceRecorder
     ) {
-        this(paymentTransactionMapper, statusReportMapper, paymentTransactionProcessorUseCase, traceRecorder, new ObjectMapper());
+        this(paymentTransactionMapper, statusReportMapper, paymentTransactionProcessorUseCase, traceRecorder, createObjectMapper());
     }
 
     private PaymentMessageConsumer(
@@ -79,6 +80,10 @@ public class PaymentMessageConsumer {
                 PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
 
+    private static ObjectMapper createObjectMapper() {
+        return new ObjectMapper().registerModule(new JavaTimeModule());
+    }
+
     @KafkaListener(
             topics = PAYMENT_REQUESTS_TOPIC,
             groupId = "${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
@@ -90,6 +95,7 @@ public class PaymentMessageConsumer {
             var payments = new ArrayList<PaymentTransaction>(payloads.size());
 
             for (byte[] payload : payloads) {
+                PacsTraceIds.recordPaymentRequestReceived(payload, traceRecorder);
                 PaymentBatch paymentBatch = toPaymentBatch(payload);
                 payments.addAll(paymentBatch.getTransactions());
             }
@@ -109,6 +115,7 @@ public class PaymentMessageConsumer {
     public void consumePaymentRequest(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_REQUESTS_TOPIC, payload.length);
+            PacsTraceIds.recordPaymentRequestReceived(payload, traceRecorder);
             processPaymentTransaction(payload);
         } catch (Exception e) {
             log.error("Error processing payment transaction from Kafka", e);
@@ -126,6 +133,7 @@ public class PaymentMessageConsumer {
             var statusReports = new ArrayList<StatusReport>(payloads.size());
 
             for (byte[] payload : payloads) {
+                PacsTraceIds.recordStatusReportReceived(payload, traceRecorder);
                 StatusBatch statusBatch = toStatusBatch(payload);
                 statusReports.addAll(statusBatch.getStatusReports());
             }
@@ -152,6 +160,7 @@ public class PaymentMessageConsumer {
     public void consumeStatusReport(byte[] payload) {
         try {
             log.debug("Received message from Kafka topic '{}', size: {} bytes", PAYMENT_STATUS_REPORTS_TOPIC, payload.length);
+            PacsTraceIds.recordStatusReportReceived(payload, traceRecorder);
             processStatusReport(payload);
         } catch (Exception e) {
             log.error("Error processing status report from Kafka", e);

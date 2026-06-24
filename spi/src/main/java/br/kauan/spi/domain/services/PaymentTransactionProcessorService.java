@@ -1,6 +1,5 @@
 package br.kauan.spi.domain.services;
 
-import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusBatch;
 import br.kauan.spi.domain.entity.status.StatusReport;
@@ -53,7 +52,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
         for (var paymentTransaction : transactions) {
             traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
-            sendAcceptanceRequest(paymentTransaction);
+        }
+        notificationService.sendAcceptanceRequests(transactions);
+        for (var paymentTransaction : transactions) {
+            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         }
     }
 
@@ -75,10 +77,14 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             processAcceptedPayments(acceptedPaymentIds);
         }
 
+        List<StatusReport> rejectedReports = new ArrayList<>();
         for (var statusReport : statusReports) {
             if (statusReport.getStatus() == PaymentStatus.REJECTED) {
-                processRejectedStatusReport(statusReport);
+                rejectedReports.add(statusReport);
             }
+        }
+        if (!rejectedReports.isEmpty()) {
+            processRejectedStatusReports(rejectedReports);
         }
     }
 
@@ -90,24 +96,27 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
         log.debug("[PIX FLOW - Step 3] Transaction saved with status WAITING_ACCEPTANCE");
 
-        sendAcceptanceRequest(paymentTransaction);
-    }
-
-    private void sendAcceptanceRequest(PaymentTransaction paymentTransaction) {
-        String receiverBank = Utils.getBankCode(paymentTransaction.getReceiver());
-        log.debug("[PIX FLOW - Step 4] SPI forwarding acceptance request to PSP Recebedor (Bank: {})", receiverBank);
-        notificationService.sendAcceptanceRequest(receiverBank, paymentTransaction);
+        notificationService.sendAcceptanceRequests(List.of(paymentTransaction));
         traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
 
-    private void processRejectedStatusReport(StatusReport statusReport) {
-        log.debug("[PIX FLOW - Step 5] SPI received status report. Payment ID: {}, Status: {}", 
-                statusReport.getOriginalPaymentId(), statusReport.getStatus());
+    private void processRejectedStatusReports(List<StatusReport> statusReports) {
+        List<PaymentTransaction> rejectedPayments = new ArrayList<>(statusReports.size());
 
-        var paymentTransaction = paymentTransactionRepository.findById(statusReport.getOriginalPaymentId())
-                .orElseThrow(); // TODO: Use a better exception here
-        log.warn("[PIX FLOW - Step 5] Payment rejected by PSP Recebedor");
-        processRejectedPayment(paymentTransaction);
+        for (StatusReport statusReport : statusReports) {
+            log.debug("[PIX FLOW - Step 5] SPI received status report. Payment ID: {}, Status: {}",
+                    statusReport.getOriginalPaymentId(), statusReport.getStatus());
+
+            var paymentTransaction = paymentTransactionRepository.findById(statusReport.getOriginalPaymentId())
+                    .orElseThrow(); // TODO: Use a better exception here
+            log.warn("[PIX FLOW - Step 5] Payment rejected by PSP Recebedor");
+            paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.REJECTED);
+            rejectedPayments.add(paymentTransaction);
+        }
+
+        log.debug("[PIX FLOW - Rejection] Sending rejection notification batch to PSP Pagador. payments={}",
+                rejectedPayments.size());
+        notificationService.sendRejectionNotifications(rejectedPayments);
     }
 
     private void processAcceptedPayments(List<String> paymentIds) {
@@ -123,8 +132,13 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         for (PaymentTransaction paymentTransaction : settledPayments) {
             String paymentId = paymentTransaction.getPaymentId();
             traceRecorder.record(paymentId, SpiTraceEvent.SETTLEMENT_COMPLETED);
-            notificationService.sendConfirmationNotification(paymentTransaction);
-            traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
+        }
+        if (!settledPayments.isEmpty()) {
+            notificationService.sendConfirmationNotifications(settledPayments);
+            for (PaymentTransaction paymentTransaction : settledPayments) {
+                String paymentId = paymentTransaction.getPaymentId();
+                traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
+            }
         }
 
         for (String paymentId : paymentIds) {
@@ -140,12 +154,4 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 paymentIds.size(), settledPayments.size());
     }
 
-    private void processRejectedPayment(PaymentTransaction paymentTransaction) {
-        log.warn("[PIX FLOW - Rejection] Processing rejected payment. Payment ID: {}", 
-                paymentTransaction.getPaymentId());
-        
-        paymentTransactionRepository.updateStatus(paymentTransaction.getPaymentId(), PaymentStatus.REJECTED);
-        log.debug("[PIX FLOW - Rejection] Sending rejection notification to PSP Pagador");
-        notificationService.sendRejectionNotification(paymentTransaction);
-    }
 }

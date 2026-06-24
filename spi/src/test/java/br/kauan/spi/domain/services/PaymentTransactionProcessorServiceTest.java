@@ -50,7 +50,7 @@ class PaymentTransactionProcessorServiceTest {
 
         verify(settlementService).tryMakeSettlements(List.of("E2E-1"));
         verify(settlementService, never()).tryMakeSettlement("E2E-1");
-        verify(notificationService).sendConfirmationNotification(paymentTransaction);
+        verify(notificationService).sendConfirmationNotifications(List.of(paymentTransaction));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         verify(paymentTransactionRepository, never()).findById("E2E-1");
@@ -92,8 +92,7 @@ class PaymentTransactionProcessorServiceTest {
         verify(settlementService).tryMakeSettlements(List.of("E2E-1", "E2E-2"));
         verify(settlementService, never()).tryMakeSettlement("E2E-1");
         verify(settlementService, never()).tryMakeSettlement("E2E-2");
-        verify(notificationService).sendConfirmationNotification(firstPayment);
-        verify(notificationService).sendConfirmationNotification(secondPayment);
+        verify(notificationService).sendConfirmationNotifications(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.SETTLEMENT_COMPLETED);
@@ -158,8 +157,7 @@ class PaymentTransactionProcessorServiceTest {
                 .saveTransaction(any(PaymentTransaction.class), any(PaymentStatus.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
-        verify(notificationService).sendAcceptanceRequest("20000001", firstPayment);
-        verify(notificationService).sendAcceptanceRequest("20000002", secondPayment);
+        verify(notificationService).sendAcceptanceRequests(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }

@@ -6,30 +6,25 @@ import br.kauan.spi.adapter.input.dtos.pacs.pacs008.*;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import org.junit.jupiter.api.Test;
 
-import javax.xml.datatype.XMLGregorianCalendar;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class PaymentTransactionMapperTest {
 
     @Test
-    void fromRegulatoryRequestParsesCreationTimestampWithoutGregorianCalendarAllocation() {
-        XMLGregorianCalendar timestamp = mock(XMLGregorianCalendar.class);
-        stubTimestamp(timestamp);
-        when(timestamp.toGregorianCalendar())
-                .thenThrow(new AssertionError("toGregorianCalendar should not be used on the hot path"));
+    void fromRegulatoryRequestUsesOffsetDateTimeCreationTimestamp() {
         PaymentTransactionMapper mapper = new PaymentTransactionMapper(mock(CommonsMapper.class), new CodeMapping());
 
         var batch = mapper.fromRegulatoryRequest(FIToFICustomerCreditTransfer.builder()
                 .groupHeader(GroupHeader.builder()
                         .messageId("batch-1")
-                        .creationTimestamp(timestamp)
+                        .creationTimestamp(OffsetDateTime.parse("2026-06-23T20:00:01.123Z"))
                         .numberOfTransactions(BigInteger.ONE)
                         .build())
                 .creditTransferTransactions(List.of(creditTransferTransaction()))
@@ -104,14 +99,4 @@ class PaymentTransactionMapperTest {
                 .build();
     }
 
-    private static void stubTimestamp(XMLGregorianCalendar timestamp) {
-        when(timestamp.getYear()).thenReturn(2026);
-        when(timestamp.getMonth()).thenReturn(6);
-        when(timestamp.getDay()).thenReturn(23);
-        when(timestamp.getHour()).thenReturn(20);
-        when(timestamp.getMinute()).thenReturn(0);
-        when(timestamp.getSecond()).thenReturn(1);
-        when(timestamp.getFractionalSecond()).thenReturn(new BigDecimal("0.123"));
-        when(timestamp.getTimezone()).thenReturn(0);
-    }
 }

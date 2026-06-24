@@ -71,6 +71,48 @@ func TestSummaryUsesEarliestPayerConfirmation(t *testing.T) {
 	}
 }
 
+func TestSummaryMeasuresLatencyFromRequestStart(t *testing.T) {
+	starts := []events.Start{
+		{
+			EndToEndID:         "tx-1",
+			PayerISPB:          "10000001",
+			CreatedAtNS:        0,
+			RequestStartedAtNS: 2_000_000_000,
+			HTTPStatus:         200,
+		},
+	}
+	notifications := []events.Notification{
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 3_000_000_000},
+	}
+
+	summary := BuildWithOptions(starts, notifications, Options{SLAThresholdMs: 1500})
+
+	if summary.LatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
+	}
+	if summary.Transactions.ConfirmedBySLA.WithinSLA != 1 {
+		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.WithinSLA)
+	}
+}
+
+func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
+	starts := []events.Start{
+		{EndToEndID: "warmup", PayerISPB: "10000000", CreatedAtNS: 0, RequestStartedAtNS: 0, HTTPStatus: 200},
+		{EndToEndID: "queued-before-active", PayerISPB: "10000001", CreatedAtNS: 1_000_000_000, RequestStartedAtNS: 11_000_000_000, HTTPStatus: 200},
+		{EndToEndID: "after-active", PayerISPB: "10000002", CreatedAtNS: 2_000_000_000, RequestStartedAtNS: 16_000_000_000, HTTPStatus: 200},
+	}
+
+	summary := BuildWithOptions(starts, nil, Options{
+		SLAThresholdMs: 4600,
+		Warmup:         10 * time.Second,
+		Duration:       5 * time.Second,
+	})
+
+	if summary.Transactions.Started != 1 {
+		t.Fatalf("Started = %d, want 1", summary.Transactions.Started)
+	}
+}
+
 func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
