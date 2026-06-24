@@ -8,8 +8,10 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.SettlementRepository;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -39,9 +41,31 @@ class SettlementServiceTest {
         );
     }
 
+    @Test
+    void tryMakeSettlementsReturnsSettledPaymentsAndNotSettledPaymentIds() {
+        SettlementRepository settlementRepository = mock(SettlementRepository.class);
+        SettlementService settlementService = new SettlementService(settlementRepository);
+
+        PaymentTransaction settledPayment = paymentTransaction("E2E-1");
+        when(settlementRepository.settleAcceptedPayments(
+                List.of("E2E-1", "E2E-2", "E2E-3"),
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        )).thenReturn(List.of(settledPayment));
+
+        SettlementBatchResult result = settlementService.tryMakeSettlements(List.of("E2E-1", "E2E-2", "E2E-3"));
+
+        assertEquals(List.of(settledPayment), result.settledPayments());
+        assertEquals(List.of("E2E-2", "E2E-3"), result.notSettledPaymentIds());
+    }
+
     private static PaymentTransaction paymentTransaction() {
+        return paymentTransaction("E2E-1");
+    }
+
+    private static PaymentTransaction paymentTransaction(String paymentId) {
         return PaymentTransaction.builder()
-                .paymentId("E2E-1")
+                .paymentId(paymentId)
                 .amountCents(1000L)
                 .sender(party("11111111"))
                 .receiver(party("22222222"))

@@ -10,7 +10,7 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: postgres
-    cpus: 0.50
+    cpus: 1.00
     mem_limit: 512m
     mem_reservation: 384m
     memswap_limit: 512m
@@ -53,7 +53,7 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
-    cpus: 0.80
+    cpus: 1.00
     mem_limit: 1024m
     mem_reservation: 768m
     memswap_limit: 1024m
@@ -129,7 +129,7 @@ services:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
-    cpus: 0.25
+    cpus: 1.00
     mem_limit: 320m
     mem_reservation: 192m
     memswap_limit: 320m
@@ -150,7 +150,7 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
-    cpus: 0.80
+    cpus: 1.00
     mem_limit: 768m
     mem_reservation: 512m
     memswap_limit: 768m
@@ -175,7 +175,7 @@ services:
       context: ../kafka-producer
       dockerfile: Dockerfile
     container_name: kafka-producer
-    cpus: 0.55
+    cpus: 1.00
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m

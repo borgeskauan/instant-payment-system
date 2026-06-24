@@ -84,7 +84,7 @@ class SettlementJdbcAdapterTest {
 
         assertThat(settled)
                 .extracting(PaymentTransaction::getPaymentId)
-                .containsExactly("E2E-BATCH-1", "E2E-BATCH-2", "E2E-BATCH-ALREADY");
+                .containsExactly("E2E-BATCH-2", "E2E-BATCH-ALREADY", "E2E-BATCH-1");
         assertEquals(decimal("97.00"), balance("11111111"));
         assertEquals(decimal("51.00"), balance("22222222"));
         assertEquals(decimal("77.00"), balance("33333333"));
@@ -131,6 +131,35 @@ class SettlementJdbcAdapterTest {
         assertEquals(decimal("50.00"), balance("66666666"));
         assertEquals(PaymentStatus.WAITING_ACCEPTANCE.name(), status("E2E-BATCH-FAILURE-1"));
         assertEquals(PaymentStatus.WAITING_ACCEPTANCE.name(), status("E2E-BATCH-FAILURE-2"));
+    }
+
+    @Test
+    void settleAcceptedPaymentsSettlesAffordablePrefixPerSenderBucket() {
+        insertFunds("99990000", "16.00");
+        insertFunds("99990001", "16.00");
+        List<String> paymentIds = paymentIdsInSameBucket("E2E-PREFIX-", 3);
+        String firstPaymentId = paymentIds.get(0);
+        String secondPaymentId = paymentIds.get(1);
+        String thirdPaymentId = paymentIds.get(2);
+
+        insertPayment(firstPaymentId, "0.60", "99990000", "99990001", PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(secondPaymentId, "0.50", "99990000", "99990001", PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(thirdPaymentId, "0.10", "99990000", "99990001", PaymentStatus.WAITING_ACCEPTANCE);
+
+        List<PaymentTransaction> settled = adapter.settleAcceptedPayments(
+                List.of(firstPaymentId, secondPaymentId, thirdPaymentId),
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED
+        );
+
+        assertThat(settled)
+                .extracting(PaymentTransaction::getPaymentId)
+                .containsExactly(firstPaymentId);
+        assertEquals(decimal("15.40"), balance("99990000"));
+        assertEquals(decimal("16.60"), balance("99990001"));
+        assertEquals(PaymentStatus.ACCEPTED_AND_SETTLED.name(), status(firstPaymentId));
+        assertEquals(PaymentStatus.WAITING_ACCEPTANCE.name(), status(secondPaymentId));
+        assertEquals(PaymentStatus.WAITING_ACCEPTANCE.name(), status(thirdPaymentId));
     }
 
     private void insertFunds(String bankCode, String balance) {
@@ -186,6 +215,31 @@ class SettlementJdbcAdapterTest {
         return jdbcTemplate.queryForObject(
                 "SELECT status FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
+                paymentId
+        );
+    }
+
+    private List<String> paymentIdsInSameBucket(String prefix, int count) {
+        List<String> paymentIds = new java.util.ArrayList<>(count);
+        Integer selectedBucket = null;
+        int suffix = 0;
+        while (paymentIds.size() < count) {
+            String paymentId = prefix + suffix++;
+            Integer bucket = bucket(paymentId);
+            if (selectedBucket == null) {
+                selectedBucket = bucket;
+            }
+            if (selectedBucket.equals(bucket)) {
+                paymentIds.add(paymentId);
+            }
+        }
+        return paymentIds;
+    }
+
+    private Integer bucket(String paymentId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT ABS(hashtext(?)) % 16",
+                Integer.class,
                 paymentId
         );
     }

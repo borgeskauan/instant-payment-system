@@ -29,7 +29,7 @@ spring:
 spi:
   default-initial-balance: 1_000_000_000
   kafka:
-    listener-concurrency: 4
+    listener-concurrency: 3
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group
     max-poll-records: 500

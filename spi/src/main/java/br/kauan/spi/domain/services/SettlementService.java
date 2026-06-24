@@ -8,8 +8,11 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -42,16 +45,28 @@ public class SettlementService {
     }
 
     @Transactional
-    public List<PaymentTransaction> tryMakeSettlements(List<String> paymentIds) {
+    public SettlementBatchResult tryMakeSettlements(List<String> paymentIds) {
         List<PaymentTransaction> settledPayments = settlementRepository.settleAcceptedPayments(
                 paymentIds,
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
+        Set<String> settledPaymentIds = new HashSet<>(settledPayments.size());
+        for (PaymentTransaction settledPayment : settledPayments) {
+            settledPaymentIds.add(settledPayment.getPaymentId());
+        }
+
+        List<String> notSettledPaymentIds = new ArrayList<>(paymentIds.size());
+        for (String paymentId : paymentIds) {
+            if (!settledPaymentIds.contains(paymentId)) {
+                notSettledPaymentIds.add(paymentId);
+            }
+        }
+
         log.debug("[PIX FLOW - Step 6] Batch settlement completed in SPI. requested={}, settled={}",
                 paymentIds.size(), settledPayments.size());
 
-        return settledPayments;
+        return new SettlementBatchResult(settledPayments, notSettledPaymentIds);
     }
 }

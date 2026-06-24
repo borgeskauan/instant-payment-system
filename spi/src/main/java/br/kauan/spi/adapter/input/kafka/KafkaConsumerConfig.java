@@ -25,7 +25,7 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.auto-offset-reset}")
     private String autoOffsetReset;
 
-    @Value("${spi.kafka.listener-concurrency:4}")
+    @Value("${spi.kafka.listener-concurrency:3}")
     private int listenerConcurrency;
 
     @Value("${spi.kafka.max-poll-records:500}")

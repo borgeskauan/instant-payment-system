@@ -39,7 +39,8 @@ class PaymentTransactionProcessorServiceTest {
                 traceRecorder
         );
         PaymentTransaction paymentTransaction = paymentTransaction();
-        when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of(paymentTransaction));
+        when(settlementService.tryMakeSettlements(List.of("E2E-1")))
+                .thenReturn(new SettlementBatchResult(List.of(paymentTransaction), List.of()));
 
         service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder()
@@ -75,7 +76,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransaction firstPayment = paymentTransaction("E2E-1");
         PaymentTransaction secondPayment = paymentTransaction("E2E-2");
         when(settlementService.tryMakeSettlements(List.of("E2E-1", "E2E-2")))
-                .thenReturn(List.of(firstPayment, secondPayment));
+                .thenReturn(new SettlementBatchResult(List.of(firstPayment, secondPayment), List.of()));
 
         service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(
@@ -113,7 +114,8 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of());
+        when(settlementService.tryMakeSettlements(List.of("E2E-1")))
+                .thenReturn(new SettlementBatchResult(List.of(), List.of("E2E-1")));
 
         service.processStatusBatch(StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder()
