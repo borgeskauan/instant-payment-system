@@ -63,6 +63,7 @@ public class KafkaConsumerConfig {
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
+        config.put("enable.metrics.push", false);
         
         // Performance tuning
         config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);

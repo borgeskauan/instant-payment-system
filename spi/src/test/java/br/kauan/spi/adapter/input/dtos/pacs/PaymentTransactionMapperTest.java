@@ -38,6 +38,7 @@ class PaymentTransactionMapperTest {
         assertThat(batch.getBatchDetails().getCreatedAt())
                 .isEqualTo(Instant.parse("2026-06-23T20:00:01.123Z"));
         assertThat(batch.getTransactions()).hasSize(1);
+        assertThat(batch.getTransactions().getFirst().getAmountCents()).isEqualTo(1000L);
         assertThat(batch.getTransactions().getFirst().getSender().getAccount().getType())
                 .isEqualTo(BankAccountType.CHECKING);
     }

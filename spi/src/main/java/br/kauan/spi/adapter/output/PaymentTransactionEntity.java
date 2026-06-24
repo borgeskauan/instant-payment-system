@@ -4,15 +4,13 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import lombok.Data;
 
-import java.math.BigDecimal;
-
 @Data
 @Entity
 public class PaymentTransactionEntity {
 
     @Id
     private String paymentId;
-    private BigDecimal amount;
+    private Long amountCents;
     private String currency;
     private String description;
 

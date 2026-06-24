@@ -7,7 +7,6 @@ import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.math.BigDecimal;
 import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -17,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeSet;
 
 @Repository
 public class SettlementJdbcAdapter implements SettlementRepository {
@@ -31,16 +31,16 @@ public class SettlementJdbcAdapter implements SettlementRepository {
             ),
             debited AS (
                 UPDATE funds_bucket_entity f
-                SET balance = f.balance - tx.amount
+                SET balance_cents = f.balance_cents - tx.amount_cents
                 FROM tx
                 WHERE f.bank_code = tx.sender_bank_code
                   AND f.bucket_id = (ABS(hashtext(tx.payment_id)) % 16)
-                  AND f.balance >= tx.amount
+                  AND f.balance_cents >= tx.amount_cents
                 RETURNING f.bank_code
             ),
             credited AS (
                 UPDATE funds_bucket_entity f
-                SET balance = f.balance + tx.amount
+                SET balance_cents = f.balance_cents + tx.amount_cents
                 FROM tx, debited
                 WHERE f.bank_code = tx.receiver_bank_code
                   AND f.bucket_id = (ABS(hashtext(tx.payment_id)) % 16)
@@ -51,9 +51,9 @@ public class SettlementJdbcAdapter implements SettlementRepository {
                 SET status = ?
                 FROM tx, credited
                 WHERE p.payment_id = tx.payment_id
-                RETURNING p.payment_id, p.amount, p.sender_bank_code, p.receiver_bank_code
+                RETURNING p.payment_id, p.amount_cents, p.sender_bank_code, p.receiver_bank_code
             )
-            SELECT payment_id, amount, sender_bank_code, receiver_bank_code
+            SELECT payment_id, amount_cents, sender_bank_code, receiver_bank_code
             FROM settled
             """;
 
@@ -92,10 +92,8 @@ public class SettlementJdbcAdapter implements SettlementRepository {
             PaymentStatus currentStatus,
             PaymentStatus settledStatus
     ) {
-        List<String> uniquePaymentIds = paymentIds.stream()
-                .distinct()
-                .sorted()
-                .toList();
+        TreeSet<String> uniquePaymentIdSet = new TreeSet<>(paymentIds);
+        List<String> uniquePaymentIds = new ArrayList<>(uniquePaymentIdSet);
 
         if (uniquePaymentIds.isEmpty()) {
             return List.of();
@@ -106,53 +104,52 @@ public class SettlementJdbcAdapter implements SettlementRepository {
             return List.of();
         }
 
-        List<SettlementCandidate> waitingCandidates = candidates.stream()
-                .filter(candidate -> candidate.status().equals(currentStatus.name()))
-                .toList();
-        List<SettlementCandidate> alreadySettledCandidates = candidates.stream()
-                .filter(candidate -> candidate.status().equals(settledStatus.name()))
-                .toList();
+        List<SettlementCandidate> waitingCandidates = new ArrayList<>(candidates.size());
+        List<SettlementCandidate> alreadySettledCandidates = new ArrayList<>(candidates.size());
+        String currentStatusName = currentStatus.name();
+        String settledStatusName = settledStatus.name();
+        for (SettlementCandidate candidate : candidates) {
+            if (candidate.status().equals(currentStatusName)) {
+                waitingCandidates.add(candidate);
+            } else if (candidate.status().equals(settledStatusName)) {
+                alreadySettledCandidates.add(candidate);
+            }
+        }
 
         if (waitingCandidates.isEmpty()) {
-            return candidates.stream()
-                    .map(this::toPaymentTransaction)
-                    .toList();
+            return toPaymentTransactions(candidates);
         }
 
-        List<BucketKey> bucketKeys = waitingCandidates.stream()
-                .flatMap(candidate -> List.of(
-                        new BucketKey(candidate.senderBankCode(), candidate.bucketId()),
-                        new BucketKey(candidate.receiverBankCode(), candidate.bucketId())
-                ).stream())
-                .distinct()
-                .sorted()
-                .toList();
+        TreeSet<BucketKey> bucketKeySet = new TreeSet<>();
+        for (SettlementCandidate candidate : waitingCandidates) {
+            bucketKeySet.add(new BucketKey(candidate.senderBankCode(), candidate.bucketId()));
+            bucketKeySet.add(new BucketKey(candidate.receiverBankCode(), candidate.bucketId()));
+        }
+        List<BucketKey> bucketKeys = new ArrayList<>(bucketKeySet);
 
-        Map<BucketKey, BigDecimal> lockedBalances = lockBuckets(bucketKeys);
+        Map<BucketKey, Long> lockedBalances = lockBuckets(bucketKeys);
         if (lockedBalances.size() != bucketKeys.size()) {
-            return alreadySettledCandidates.stream()
-                    .map(this::toPaymentTransaction)
-                    .toList();
+            return toPaymentTransactions(alreadySettledCandidates);
         }
 
-        Map<BucketKey, BigDecimal> debitTotals = aggregateDebits(waitingCandidates);
-        boolean hasEnoughFunds = debitTotals.entrySet().stream()
-                .allMatch(entry -> lockedBalances.getOrDefault(entry.getKey(), BigDecimal.ZERO)
-                        .compareTo(entry.getValue()) >= 0);
+        Map<BucketKey, Long> debitTotals = aggregateDebits(waitingCandidates);
+        boolean hasEnoughFunds = true;
+        for (Map.Entry<BucketKey, Long> entry : debitTotals.entrySet()) {
+            if (lockedBalances.getOrDefault(entry.getKey(), 0L) < entry.getValue()) {
+                hasEnoughFunds = false;
+                break;
+            }
+        }
 
         if (!hasEnoughFunds) {
-            return alreadySettledCandidates.stream()
-                    .map(this::toPaymentTransaction)
-                    .toList();
+            return toPaymentTransactions(alreadySettledCandidates);
         }
 
-        Map<BucketKey, BigDecimal> deltas = aggregateBalanceDeltas(waitingCandidates);
+        Map<BucketKey, Long> deltas = aggregateBalanceDeltas(waitingCandidates);
         applyBalanceDeltas(deltas);
         markSettled(waitingCandidates, currentStatus, settledStatus);
 
-        return candidates.stream()
-                .map(this::toPaymentTransaction)
-                .toList();
+        return toPaymentTransactions(candidates);
     }
 
     private List<SettlementCandidate> findRelevantTransactions(
@@ -165,7 +162,7 @@ public class SettlementJdbcAdapter implements SettlementRepository {
                     SELECT unnest(?::text[])
                 )
                 SELECT p.payment_id,
-                       p.amount,
+                       p.amount_cents,
                        p.sender_bank_code,
                        p.receiver_bank_code,
                        p.status,
@@ -199,13 +196,13 @@ public class SettlementJdbcAdapter implements SettlementRepository {
         });
     }
 
-    private Map<BucketKey, BigDecimal> lockBuckets(List<BucketKey> bucketKeys) {
+    private Map<BucketKey, Long> lockBuckets(List<BucketKey> bucketKeys) {
         String sql = """
                 WITH requested(bank_code, bucket_id) AS (
                     SELECT *
                     FROM unnest(?::text[], ?::int[])
                 )
-                SELECT f.bank_code, f.bucket_id, f.balance
+                SELECT f.bank_code, f.bucket_id, f.balance_cents
                 FROM funds_bucket_entity f
                 JOIN requested r
                   ON r.bank_code = f.bank_code
@@ -214,25 +211,26 @@ public class SettlementJdbcAdapter implements SettlementRepository {
                 FOR UPDATE OF f
                 """;
 
-        return jdbcTemplate.execute((ConnectionCallback<Map<BucketKey, BigDecimal>>) connection -> {
-            Array bankCodeArray = connection.createArrayOf(
-                    "text",
-                    bucketKeys.stream().map(BucketKey::bankCode).toArray(String[]::new)
-            );
-            Array bucketIdArray = connection.createArrayOf(
-                    "integer",
-                    bucketKeys.stream().map(BucketKey::bucketId).toArray(Integer[]::new)
-            );
+        return jdbcTemplate.execute((ConnectionCallback<Map<BucketKey, Long>>) connection -> {
+            String[] bankCodes = new String[bucketKeys.size()];
+            Integer[] bucketIds = new Integer[bucketKeys.size()];
+            for (int index = 0; index < bucketKeys.size(); index++) {
+                BucketKey bucketKey = bucketKeys.get(index);
+                bankCodes[index] = bucketKey.bankCode();
+                bucketIds[index] = bucketKey.bucketId();
+            }
+            Array bankCodeArray = connection.createArrayOf("text", bankCodes);
+            Array bucketIdArray = connection.createArrayOf("integer", bucketIds);
             try (var statement = connection.prepareStatement(sql)) {
                 statement.setArray(1, bankCodeArray);
                 statement.setArray(2, bucketIdArray);
 
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    Map<BucketKey, BigDecimal> balances = new HashMap<>();
+                    Map<BucketKey, Long> balances = new HashMap<>();
                     while (resultSet.next()) {
                         balances.put(
                                 new BucketKey(resultSet.getString("bank_code"), resultSet.getInt("bucket_id")),
-                                resultSet.getBigDecimal("balance")
+                                resultSet.getLong("balance_cents")
                         );
                     }
                     return balances;
@@ -244,47 +242,46 @@ public class SettlementJdbcAdapter implements SettlementRepository {
         });
     }
 
-    private Map<BucketKey, BigDecimal> aggregateDebits(List<SettlementCandidate> candidates) {
-        Map<BucketKey, BigDecimal> debitTotals = new HashMap<>();
+    private Map<BucketKey, Long> aggregateDebits(List<SettlementCandidate> candidates) {
+        Map<BucketKey, Long> debitTotals = new HashMap<>();
         candidates.forEach(candidate -> debitTotals.merge(
                 new BucketKey(candidate.senderBankCode(), candidate.bucketId()),
-                candidate.amount(),
-                BigDecimal::add
+                candidate.amountCents(),
+                Long::sum
         ));
         return debitTotals;
     }
 
-    private Map<BucketKey, BigDecimal> aggregateBalanceDeltas(List<SettlementCandidate> candidates) {
-        Map<BucketKey, BigDecimal> deltas = new HashMap<>();
+    private Map<BucketKey, Long> aggregateBalanceDeltas(List<SettlementCandidate> candidates) {
+        Map<BucketKey, Long> deltas = new HashMap<>();
         candidates.forEach(candidate -> {
             deltas.merge(
                     new BucketKey(candidate.senderBankCode(), candidate.bucketId()),
-                    candidate.amount().negate(),
-                    BigDecimal::add
+                    -candidate.amountCents(),
+                    Long::sum
             );
             deltas.merge(
                     new BucketKey(candidate.receiverBankCode(), candidate.bucketId()),
-                    candidate.amount(),
-                    BigDecimal::add
+                    candidate.amountCents(),
+                    Long::sum
             );
         });
         return deltas;
     }
 
-    private void applyBalanceDeltas(Map<BucketKey, BigDecimal> deltas) {
+    private void applyBalanceDeltas(Map<BucketKey, Long> deltas) {
         String sql = """
                 UPDATE funds_bucket_entity
-                SET balance = balance + ?
+                SET balance_cents = balance_cents + ?
                 WHERE bank_code = ?
                   AND bucket_id = ?
                 """;
 
-        List<Map.Entry<BucketKey, BigDecimal>> orderedDeltas = deltas.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .toList();
+        List<Map.Entry<BucketKey, Long>> orderedDeltas = new ArrayList<>(deltas.entrySet());
+        orderedDeltas.sort(Map.Entry.comparingByKey());
 
         jdbcTemplate.batchUpdate(sql, orderedDeltas, orderedDeltas.size(), (statement, entry) -> {
-            statement.setBigDecimal(1, entry.getValue());
+            statement.setLong(1, entry.getValue());
             statement.setString(2, entry.getKey().bankCode());
             statement.setInt(3, entry.getKey().bucketId());
         });
@@ -303,10 +300,11 @@ public class SettlementJdbcAdapter implements SettlementRepository {
                 """;
 
         jdbcTemplate.execute((ConnectionCallback<Integer>) connection -> {
-            Array paymentIdArray = connection.createArrayOf(
-                    "text",
-                    candidates.stream().map(SettlementCandidate::paymentId).toArray(String[]::new)
-            );
+            String[] paymentIds = new String[candidates.size()];
+            for (int index = 0; index < candidates.size(); index++) {
+                paymentIds[index] = candidates.get(index).paymentId();
+            }
+            Array paymentIdArray = connection.createArrayOf("text", paymentIds);
             try (var statement = connection.prepareStatement(sql)) {
                 statement.setString(1, settledStatus.name());
                 statement.setString(2, currentStatus.name());
@@ -321,7 +319,7 @@ public class SettlementJdbcAdapter implements SettlementRepository {
     private SettlementCandidate toSettlementCandidate(ResultSet resultSet, int rowNumber) throws SQLException {
         return new SettlementCandidate(
                 resultSet.getString("payment_id"),
-                resultSet.getBigDecimal("amount"),
+                resultSet.getLong("amount_cents"),
                 resultSet.getString("sender_bank_code"),
                 resultSet.getString("receiver_bank_code"),
                 resultSet.getString("status"),
@@ -332,7 +330,7 @@ public class SettlementJdbcAdapter implements SettlementRepository {
     private PaymentTransaction toPaymentTransactionFromResultSet(ResultSet resultSet, int rowNumber) throws SQLException {
         PaymentTransactionEntity entity = new PaymentTransactionEntity();
         entity.setPaymentId(resultSet.getString("payment_id"));
-        entity.setAmount(resultSet.getBigDecimal("amount"));
+        entity.setAmountCents(resultSet.getLong("amount_cents"));
         entity.setSenderBankCode(resultSet.getString("sender_bank_code"));
         entity.setReceiverBankCode(resultSet.getString("receiver_bank_code"));
         return repositoryMapper.toDomain(entity);
@@ -341,10 +339,18 @@ public class SettlementJdbcAdapter implements SettlementRepository {
     private PaymentTransaction toPaymentTransaction(SettlementCandidate candidate) {
         PaymentTransactionEntity entity = new PaymentTransactionEntity();
         entity.setPaymentId(candidate.paymentId());
-        entity.setAmount(candidate.amount());
+        entity.setAmountCents(candidate.amountCents());
         entity.setSenderBankCode(candidate.senderBankCode());
         entity.setReceiverBankCode(candidate.receiverBankCode());
         return repositoryMapper.toDomain(entity);
+    }
+
+    private List<PaymentTransaction> toPaymentTransactions(List<SettlementCandidate> candidates) {
+        List<PaymentTransaction> paymentTransactions = new ArrayList<>(candidates.size());
+        for (SettlementCandidate candidate : candidates) {
+            paymentTransactions.add(toPaymentTransaction(candidate));
+        }
+        return paymentTransactions;
     }
 
     private record BucketKey(String bankCode, int bucketId) implements Comparable<BucketKey> {
@@ -359,7 +365,7 @@ public class SettlementJdbcAdapter implements SettlementRepository {
 
     private record SettlementCandidate(
             String paymentId,
-            BigDecimal amount,
+            long amountCents,
             String senderBankCode,
             String receiverBankCode,
             String status,

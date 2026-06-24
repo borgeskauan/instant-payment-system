@@ -2,13 +2,13 @@ package br.kauan.spi.adapter.input.dtos.pacs;
 
 import br.kauan.spi.adapter.input.dtos.pacs.pacs008.*;
 import br.kauan.spi.domain.entity.commons.BatchDetails;
+import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.transfer.*;
 import br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper;
 import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
@@ -152,7 +152,7 @@ public class PaymentTransactionMapper {
 
     private ActiveCurrencyAndAmount createAmountInformation(PaymentTransaction paymentTransaction) {
         return ActiveCurrencyAndAmount.builder()
-                .value(paymentTransaction.getAmount())
+                .value(Money.toDecimal(paymentTransaction.getAmountCents()))
                 .currencyCode(ActiveCurrencyCode.BRL)
                 .build();
     }
@@ -177,7 +177,7 @@ public class PaymentTransactionMapper {
 
         return PaymentTransaction.builder()
                 .paymentId(extractEndToEndId(transaction.getPaymentIdentification()))
-                .amount(extractAmount(transaction.getAmountInformation()))
+                .amountCents(extractAmountCents(transaction.getAmountInformation()))
                 .currency(transaction.getAmountInformation().getCurrencyCode().name())
                 .description(extractDescription(transaction.getRemittanceInformation()))
                 .sender(sender)
@@ -189,8 +189,8 @@ public class PaymentTransactionMapper {
         return paymentIdentification.getEndToEndId();
     }
 
-    private BigDecimal extractAmount(ActiveCurrencyAndAmount amountInformation) {
-        return amountInformation.getValue();
+    private long extractAmountCents(ActiveCurrencyAndAmount amountInformation) {
+        return Money.toCents(amountInformation.getValue());
     }
 
     private String extractDescription(RemittanceInformation remittanceInformation) {

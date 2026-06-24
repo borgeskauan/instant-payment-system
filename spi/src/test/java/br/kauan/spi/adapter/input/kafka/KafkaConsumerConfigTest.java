@@ -89,4 +89,16 @@ class KafkaConsumerConfigTest {
         assertThat(consumerFactory.getConfigurationProperties())
                 .doesNotContainKey(ConsumerConfig.GROUP_ID_CONFIG);
     }
+
+    @Test
+    void consumerFactoryDisablesKafkaClientTelemetryPush() {
+        KafkaConsumerConfig config = new KafkaConsumerConfig();
+        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
+        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
+
+        var consumerFactory = config.consumerFactory();
+
+        assertThat(consumerFactory.getConfigurationProperties())
+                .containsEntry("enable.metrics.push", false);
+    }
 }

@@ -8,7 +8,6 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -88,7 +87,7 @@ class PaymentTransactionJpaAdapterTest {
     void mapperBuildsPartiesWhenOnlyBankCodesAreAvailable() {
         PaymentTransactionEntity entity = new PaymentTransactionEntity();
         entity.setPaymentId("E2E-1");
-        entity.setAmount(BigDecimal.TEN);
+        entity.setAmountCents(1000L);
         entity.setSenderBankCode("11111111");
         entity.setReceiverBankCode("22222222");
 
@@ -105,7 +104,7 @@ class PaymentTransactionJpaAdapterTest {
     private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
         return PaymentTransaction.builder()
                 .paymentId(paymentId)
-                .amount(BigDecimal.TEN)
+                .amountCents(1000L)
                 .currency("BRL")
                 .description("test")
                 .sender(party(senderBankCode))

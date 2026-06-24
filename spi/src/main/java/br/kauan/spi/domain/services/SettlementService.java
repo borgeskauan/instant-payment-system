@@ -30,12 +30,12 @@ public class SettlementService {
         );
 
         settledPayment.ifPresent(paymentTransaction -> {
-            var amount = paymentTransaction.getAmount();
+            var amountCents = paymentTransaction.getAmountCents();
             var senderBankCode = Utils.getBankCode(paymentTransaction.getSender());
             var receiverBankCode = Utils.getBankCode(paymentTransaction.getReceiver());
 
             log.debug("[PIX FLOW - Step 6] Settlement completed in SPI (BCB PI accounts): {} from {} to {}",
-                    amount, senderBankCode, receiverBankCode);
+                    amountCents, senderBankCode, receiverBankCode);
         });
 
         return settledPayment;

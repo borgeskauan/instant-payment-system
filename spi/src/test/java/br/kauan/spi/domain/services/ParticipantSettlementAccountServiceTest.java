@@ -20,7 +20,7 @@ class ParticipantSettlementAccountServiceTest {
 
         service.provisionSettlementAccount("10000001", BigDecimal.valueOf(1_000_000_000), true);
 
-        verify(fundsRepository).provisionAccount("10000001", BigDecimal.valueOf(1_000_000_000), true);
+        verify(fundsRepository).provisionAccount("10000001", 100_000_000_000L, true);
     }
 
     @Test
@@ -42,15 +42,24 @@ class ParticipantSettlementAccountServiceTest {
     }
 
     @Test
+    void provisionSettlementAccountRejectsBalanceWithMoreThanTwoDecimalPlaces() {
+        FundsRepository fundsRepository = mock(FundsRepository.class);
+        ParticipantSettlementAccountService service = new ParticipantSettlementAccountService(fundsRepository);
+
+        assertThrows(ArithmeticException.class,
+                () -> service.provisionSettlementAccount("10000001", new BigDecimal("10.001"), true));
+    }
+
+    @Test
     void getSettlementAccountBalanceReturnsRepositoryBalance() {
         FundsRepository fundsRepository = mock(FundsRepository.class);
         ParticipantSettlementAccountService service = new ParticipantSettlementAccountService(fundsRepository);
-        when(fundsRepository.getAvailableFunds("10000001")).thenReturn(BigDecimal.TEN);
+        when(fundsRepository.getAvailableFundsCents("10000001")).thenReturn(1000L);
 
         BigDecimal balance = service.getSettlementAccountBalance("10000001");
 
-        assertEquals(BigDecimal.TEN, balance);
-        verify(fundsRepository).getAvailableFunds("10000001");
+        assertEquals(new BigDecimal("10.00"), balance);
+        verify(fundsRepository).getAvailableFundsCents("10000001");
     }
 
     @Test

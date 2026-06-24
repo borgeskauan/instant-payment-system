@@ -14,9 +14,10 @@ import br.kauan.spi.port.output.PaymentTransactionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -58,17 +59,23 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     @Override
     public void processStatusBatch(StatusBatch statusBatch) {
-        List<StatusReport> acceptedReports = statusBatch.getStatusReports().stream()
-                .filter(statusReport -> statusReport.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS)
-                .toList();
-
-        if (!acceptedReports.isEmpty()) {
-            processAcceptedPayments(acceptedReports.stream()
-                    .map(StatusReport::getOriginalPaymentId)
-                    .toList());
+        List<StatusReport> statusReports = statusBatch.getStatusReports();
+        List<StatusReport> acceptedReports = new ArrayList<>(statusReports.size());
+        for (StatusReport statusReport : statusReports) {
+            if (statusReport.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS) {
+                acceptedReports.add(statusReport);
+            }
         }
 
-        for (var statusReport : statusBatch.getStatusReports()) {
+        if (!acceptedReports.isEmpty()) {
+            List<String> acceptedPaymentIds = new ArrayList<>(acceptedReports.size());
+            for (StatusReport acceptedReport : acceptedReports) {
+                acceptedPaymentIds.add(acceptedReport.getOriginalPaymentId());
+            }
+            processAcceptedPayments(acceptedPaymentIds);
+        }
+
+        for (var statusReport : statusReports) {
             if (statusReport.getStatus() == PaymentStatus.REJECTED) {
                 processRejectedStatusReport(statusReport);
             }
@@ -77,7 +84,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     private void processTransaction(PaymentTransaction paymentTransaction) {
         log.debug("[PIX FLOW - Step 3] SPI received transaction request. Payment ID: {}, Amount: {}", 
-                paymentTransaction.getPaymentId(), paymentTransaction.getAmount());
+                paymentTransaction.getPaymentId(), paymentTransaction.getAmountCents());
         
         paymentTransactionRepository.saveTransaction(paymentTransaction, PaymentStatus.WAITING_ACCEPTANCE);
         traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
@@ -108,9 +115,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 paymentIds.size());
 
         List<PaymentTransaction> settledPayments = settlementService.tryMakeSettlements(paymentIds);
-        Set<String> settledPaymentIds = settledPayments.stream()
-                .map(PaymentTransaction::getPaymentId)
-                .collect(Collectors.toSet());
+        Set<String> settledPaymentIds = new HashSet<>(settledPayments.size());
+        for (PaymentTransaction settledPayment : settledPayments) {
+            settledPaymentIds.add(settledPayment.getPaymentId());
+        }
 
         for (PaymentTransaction paymentTransaction : settledPayments) {
             String paymentId = paymentTransaction.getPaymentId();
@@ -119,12 +127,14 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         }
 
-        paymentIds.stream()
-                .filter(paymentId -> !settledPaymentIds.contains(paymentId))
-                .forEach(paymentId -> paymentTransactionRepository.updateStatus(
+        for (String paymentId : paymentIds) {
+            if (!settledPaymentIds.contains(paymentId)) {
+                paymentTransactionRepository.updateStatus(
                         paymentId,
                         PaymentStatus.ACCEPTED_IN_PROCESS
-                ));
+                );
+            }
+        }
 
         log.debug("[PIX FLOW - Complete] Batch settlement processed. requested={}, settled={}",
                 paymentIds.size(), settledPayments.size());

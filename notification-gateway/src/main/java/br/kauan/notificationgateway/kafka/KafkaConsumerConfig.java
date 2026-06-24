@@ -42,6 +42,7 @@ public class KafkaConsumerConfig {
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         config.put(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG, RoundRobinAssignor.class.getName());
+        config.put("enable.metrics.push", false);
 
         // Performance: pull up to 500 records per poll to keep the gateway responsive under load
         config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500);

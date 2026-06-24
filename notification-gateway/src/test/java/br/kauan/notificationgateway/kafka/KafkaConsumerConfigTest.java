@@ -71,4 +71,14 @@ class KafkaConsumerConfigTest {
                     );
         });
     }
+
+    @Test
+    void disablesKafkaClientTelemetryPush() {
+        contextRunner.run(context -> {
+            var consumerFactory = context.getBean("notificationConsumerFactory", ConsumerFactory.class);
+
+            assertThat(consumerFactory.getConfigurationProperties())
+                    .containsEntry("enable.metrics.push", false);
+        });
+    }
 }

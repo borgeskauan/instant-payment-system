@@ -16,7 +16,7 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
     private static final String INSERT_PAYMENT_TRANSACTION_SQL = """
             INSERT INTO payment_transaction_entity (
                 payment_id,
-                amount,
+                amount_cents,
                 status,
                 sender_bank_code,
                 receiver_bank_code
@@ -54,7 +54,7 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
                 paymentTransactions.size(),
                 (statement, paymentTransaction) -> {
                     statement.setString(1, paymentTransaction.getPaymentId());
-                    statement.setBigDecimal(2, paymentTransaction.getAmount());
+                    statement.setLong(2, paymentTransaction.getAmountCents());
                     statement.setString(3, paymentStatus.name());
                     statement.setString(4, Utils.getBankCode(paymentTransaction.getSender()));
                     statement.setString(5, Utils.getBankCode(paymentTransaction.getReceiver()));

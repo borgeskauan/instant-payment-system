@@ -26,6 +26,7 @@ public record AppConfig(int port, String kafkaBootstrapServers) {
         values.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
         values.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         values.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        values.put("enable.metrics.push", "false");
         values.put(ProducerConfig.ACKS_CONFIG, "all");
         values.put(ProducerConfig.LINGER_MS_CONFIG, "10");
         values.put(ProducerConfig.BATCH_SIZE_CONFIG, "32768");

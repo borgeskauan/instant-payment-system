@@ -13,7 +13,7 @@ public class PaymentTransactionRepositoryMapper {
     public PaymentTransactionEntity toEntity(PaymentTransaction transaction, PaymentStatus status) {
         PaymentTransactionEntity entity = new PaymentTransactionEntity();
         entity.setPaymentId(transaction.getPaymentId());
-        entity.setAmount(transaction.getAmount());
+        entity.setAmountCents(transaction.getAmountCents());
         entity.setCurrency(transaction.getCurrency());
         entity.setDescription(transaction.getDescription());
         entity.setStatus(status.name());
@@ -56,7 +56,7 @@ public class PaymentTransactionRepositoryMapper {
     public PaymentTransaction toDomain(PaymentTransactionEntity entity) {
         return PaymentTransaction.builder()
                 .paymentId(entity.getPaymentId())
-                .amount(entity.getAmount())
+                .amountCents(entity.getAmountCents() == null ? 0L : entity.getAmountCents())
                 .currency(entity.getCurrency())
                 .description(entity.getDescription())
                 .sender(getSender(entity))

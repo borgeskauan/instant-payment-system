@@ -37,4 +37,11 @@ class AppConfigTest {
         assertEquals(8001, config.port());
         assertEquals("localhost:9092", config.kafkaBootstrapServers());
     }
+
+    @Test
+    void disablesKafkaClientTelemetryPush() {
+        AppConfig config = AppConfig.fromEnv(Map.of());
+
+        assertEquals("false", config.producerProperties().getProperty("enable.metrics.push"));
+    }
 }

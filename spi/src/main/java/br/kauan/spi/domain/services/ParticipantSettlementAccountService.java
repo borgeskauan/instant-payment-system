@@ -1,5 +1,6 @@
 package br.kauan.spi.domain.services;
 
+import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.port.output.FundsRepository;
 import org.springframework.stereotype.Service;
 
@@ -22,12 +23,12 @@ public class ParticipantSettlementAccountService {
             throw new IllegalArgumentException("Balance must be zero or positive");
         }
 
-        fundsRepository.provisionAccount(ispb, balance, resetIfExists);
+        fundsRepository.provisionAccount(ispb, Money.toCents(balance), resetIfExists);
     }
 
     public BigDecimal getSettlementAccountBalance(String ispb) {
         validateIspb(ispb);
-        return fundsRepository.getAvailableFunds(ispb);
+        return Money.toDecimal(fundsRepository.getAvailableFundsCents(ispb));
     }
 
     private void validateIspb(String ispb) {

@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +41,7 @@ class SettlementJdbcAdapterTest {
 
         PaymentTransaction transaction = settled.orElseThrow();
         assertEquals("E2E-SUCCESS", transaction.getPaymentId());
-        assertEquals(decimal("1.00"), transaction.getAmount());
+        assertEquals(100L, transaction.getAmountCents());
         assertEquals("11111111", transaction.getSender().getAccount().getBankCode());
         assertEquals("22222222", transaction.getReceiver().getAccount().getBankCode());
         assertEquals(decimal("99.00"), balance("11111111"));
@@ -133,15 +134,16 @@ class SettlementJdbcAdapterTest {
     }
 
     private void insertFunds(String bankCode, String balance) {
-        BigDecimal bucketBalance = decimal(balance).divide(decimal("16"), 2, java.math.RoundingMode.DOWN);
-        BigDecimal remainder = decimal(balance).subtract(bucketBalance.multiply(decimal("16")));
+        long balanceCents = Money.toCents(decimal(balance));
+        long bucketBalance = balanceCents / 16;
+        long remainder = balanceCents % 16;
 
         for (int bucketId = 0; bucketId < 16; bucketId++) {
             jdbcTemplate.update(
-                    "INSERT INTO funds_bucket_entity (bank_code, bucket_id, balance) VALUES (?, ?, ?)",
+                    "INSERT INTO funds_bucket_entity (bank_code, bucket_id, balance_cents) VALUES (?, ?, ?)",
                     bankCode,
                     bucketId,
-                    bucketId == 0 ? bucketBalance.add(remainder) : bucketBalance
+                    bucketId == 0 ? bucketBalance + remainder : bucketBalance
             );
         }
     }
@@ -157,14 +159,14 @@ class SettlementJdbcAdapterTest {
                 """
                         INSERT INTO payment_transaction_entity (
                             payment_id,
-                            amount,
+                            amount_cents,
                             status,
                             sender_bank_code,
                             receiver_bank_code
                         ) VALUES (?, ?, ?, ?, ?)
                         """,
                 paymentId,
-                decimal(amount),
+                Money.toCents(decimal(amount)),
                 status.name(),
                 senderBankCode,
                 receiverBankCode
@@ -172,11 +174,12 @@ class SettlementJdbcAdapterTest {
     }
 
     private BigDecimal balance(String bankCode) {
-        return jdbcTemplate.queryForObject(
-                "SELECT COALESCE(SUM(balance), 0) FROM funds_bucket_entity WHERE bank_code = ?",
-                BigDecimal.class,
+        Long balanceCents = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(balance_cents), 0) FROM funds_bucket_entity WHERE bank_code = ?",
+                Long.class,
                 bankCode
         );
+        return Money.toDecimal(balanceCents == null ? 0L : balanceCents);
     }
 
     private String status(String paymentId) {

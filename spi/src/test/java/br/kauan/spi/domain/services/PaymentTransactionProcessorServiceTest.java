@@ -14,7 +14,6 @@ import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -176,7 +175,7 @@ class PaymentTransactionProcessorServiceTest {
     private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
         return PaymentTransaction.builder()
                 .paymentId(paymentId)
-                .amount(BigDecimal.TEN)
+                .amountCents(1000L)
                 .sender(party(senderBankCode))
                 .receiver(party(receiverBankCode))
                 .build();

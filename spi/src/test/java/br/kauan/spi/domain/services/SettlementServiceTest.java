@@ -8,7 +8,6 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.port.output.SettlementRepository;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -43,7 +42,7 @@ class SettlementServiceTest {
     private static PaymentTransaction paymentTransaction() {
         return PaymentTransaction.builder()
                 .paymentId("E2E-1")
-                .amount(BigDecimal.TEN)
+                .amountCents(1000L)
                 .sender(party("11111111"))
                 .receiver(party("22222222"))
                 .build();
