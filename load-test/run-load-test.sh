@@ -9,8 +9,10 @@ readonly SPI_CONTAINER="spi"
 readonly KAFKA_PRODUCER_CONTAINER="kafka-producer"
 readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
 readonly KAFKA_CONTAINER="kafka"
-readonly SPI_CONSUMER_GROUP="spi-consumer-group"
-readonly SPI_INPUT_TOPICS=("spi-payment-requests" "spi-payment-status-reports")
+readonly SPI_PAYMENT_REQUEST_CONSUMER_GROUP="spi-payment-request-consumer-group"
+readonly SPI_STATUS_REPORT_CONSUMER_GROUP="spi-status-report-consumer-group"
+readonly SPI_PAYMENT_REQUEST_TOPIC="spi-payment-requests"
+readonly SPI_STATUS_REPORT_TOPIC="spi-payment-status-reports"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
@@ -239,21 +241,59 @@ print(amount * multipliers[unit])
 ' "$GO_LOADTOOL_CONFIG" "$key"
 }
 
-current_spi_input_lag() {
-    docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
-        --bootstrap-server kafka:9092 \
-        --describe \
-        --group "$SPI_CONSUMER_GROUP" 2>/dev/null |
-        awk -v topics="${SPI_INPUT_TOPICS[*]}" '
-            BEGIN {
-                split(topics, topic_list, " ")
-                for (i in topic_list) {
-                    watched[topic_list[i]] = 1
+consumer_group_topic_lag() {
+    local consumer_group="$1"
+    local topic="$2"
+    local lag
+
+    lag="$({
+        docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
+            --bootstrap-server kafka:9092 \
+            --describe \
+            --group "$consumer_group" 2>/dev/null || true
+    } |
+        awk -v topic="$topic" '
+            $2 == topic && $6 ~ /^[0-9]+$/ {
+                found = 1
+                lag += $6
+            }
+            END {
+                if (found) {
+                    print lag + 0
+                } else {
+                    print "NO_OFFSETS"
                 }
             }
-            watched[$2] && $6 ~ /^[0-9]+$/ { lag += $6 }
-            END { print lag + 0 }
+        ')"
+
+    if [[ "$lag" == "NO_OFFSETS" ]]; then
+        topic_end_offset "$topic"
+        return
+    fi
+
+    echo "$lag"
+}
+
+topic_end_offset() {
+    local topic="$1"
+
+    docker exec "$KAFKA_CONTAINER" kafka-get-offsets \
+        --bootstrap-server kafka:9092 \
+        --topic "$topic" \
+        --time -1 2>/dev/null |
+        awk -F: '
+            $3 ~ /^[0-9]+$/ { offset += $3 }
+            END { print offset + 0 }
         '
+}
+
+current_spi_input_lag() {
+    local payment_lag status_lag
+
+    payment_lag="$(consumer_group_topic_lag "$SPI_PAYMENT_REQUEST_CONSUMER_GROUP" "$SPI_PAYMENT_REQUEST_TOPIC")"
+    status_lag="$(consumer_group_topic_lag "$SPI_STATUS_REPORT_CONSUMER_GROUP" "$SPI_STATUS_REPORT_TOPIC")"
+
+    echo $(( payment_lag + status_lag ))
 }
 
 assert_no_initial_spi_lag() {
@@ -261,7 +301,8 @@ assert_no_initial_spi_lag() {
     lag="$(current_spi_input_lag)"
 
     if (( lag > 0 )); then
-        echo "Refusing to start load test: ${SPI_CONSUMER_GROUP} has ${lag} messages of lag on SPI input topics: ${SPI_INPUT_TOPICS[*]}." >&2
+        echo "Refusing to start load test: SPI input consumer groups have ${lag} messages of lag." >&2
+        echo "Checked ${SPI_PAYMENT_REQUEST_CONSUMER_GROUP}/${SPI_PAYMENT_REQUEST_TOPIC} and ${SPI_STATUS_REPORT_CONSUMER_GROUP}/${SPI_STATUS_REPORT_TOPIC}." >&2
         echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
         exit 1
     fi

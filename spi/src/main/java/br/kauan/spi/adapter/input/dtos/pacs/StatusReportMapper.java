@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -46,14 +47,16 @@ public class StatusReportMapper {
     private BatchDetails mapGroupHeaderToReportDetails(GroupHeader groupHeader) {
         return BatchDetails.builder()
                 .id(groupHeader.getMessageId())
-                .createdAt(groupHeader.getCreationTimestamp().toGregorianCalendar().toInstant())
+                .createdAt(PacsDateTime.toInstant(groupHeader.getCreationTimestamp()))
                 .build();
     }
 
     private List<StatusReport> mapTransactionInfosToStatusUpdates(List<PaymentTransactionInfo> transactionInfos) {
-        return transactionInfos.stream()
-                .map(this::mapTransactionInfoToStatusUpdate)
-                .toList();
+        var statusReports = new ArrayList<StatusReport>(transactionInfos.size());
+        for (PaymentTransactionInfo transactionInfo : transactionInfos) {
+            statusReports.add(mapTransactionInfoToStatusUpdate(transactionInfo));
+        }
+        return statusReports;
     }
 
     private StatusReport mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
@@ -72,9 +75,11 @@ public class StatusReportMapper {
             return List.of();
         }
 
-        return reasonInformations.stream()
-                .map(this::mapStatusReasonInformationToReason)
-                .toList();
+        var reasons = new ArrayList<Reason>(reasonInformations.size());
+        for (StatusReasonInformation reasonInformation : reasonInformations) {
+            reasons.add(mapStatusReasonInformationToReason(reasonInformation));
+        }
+        return reasons;
     }
 
     private Reason mapStatusReasonInformationToReason(StatusReasonInformation reasonInfo) {
@@ -84,9 +89,11 @@ public class StatusReportMapper {
     }
 
     private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfo(List<StatusReport> statusReports) {
-        return statusReports.stream()
-                .map(this::mapStatusUpdateToTransactionInfo)
-                .toList();
+        var transactionInfo = new ArrayList<PaymentTransactionInfo>(statusReports.size());
+        for (StatusReport statusReport : statusReports) {
+            transactionInfo.add(mapStatusUpdateToTransactionInfo(statusReport));
+        }
+        return transactionInfo;
     }
 
     private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusReport statusReport) {
@@ -105,9 +112,11 @@ public class StatusReportMapper {
             return Collections.emptyList();
         }
 
-        return reasons.stream()
-                .map(this::mapReasonToStatusReasonInformation)
-                .toList();
+        var statusReasonInformation = new ArrayList<StatusReasonInformation>(reasons.size());
+        for (Reason reason : reasons) {
+            statusReasonInformation.add(mapReasonToStatusReasonInformation(reason));
+        }
+        return statusReasonInformation;
     }
 
     private StatusReasonInformation mapReasonToStatusReasonInformation(Reason reason) {

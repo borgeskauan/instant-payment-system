@@ -5,16 +5,18 @@ import (
 	"testing"
 )
 
-func TestNotificationPayloadIsBytes(t *testing.T) {
-	payloadType := reflect.TypeOf(Notification{}.Payload)
+func TestNotificationBatchPayloadsIsRepeatedBytes(t *testing.T) {
+	payloadType := reflect.TypeOf(NotificationBatch{}.Payloads)
 
-	if payloadType.Kind() != reflect.Slice || payloadType.Elem().Kind() != reflect.Uint8 {
-		t.Fatalf("Notification.Payload type = %s, want []byte", payloadType)
+	if payloadType.Kind() != reflect.Slice ||
+		payloadType.Elem().Kind() != reflect.Slice ||
+		payloadType.Elem().Elem().Kind() != reflect.Uint8 {
+		t.Fatalf("NotificationBatch.Payloads type = %s, want [][]byte", payloadType)
 	}
 }
 
-func TestNotificationDoesNotCarryIspb(t *testing.T) {
-	if _, ok := reflect.TypeOf(Notification{}).FieldByName("Ispb"); ok {
-		t.Fatal("Notification carries Ispb, but the stream subscription already identifies the ISPB")
+func TestNotificationBatchDoesNotCarryIspb(t *testing.T) {
+	if _, ok := reflect.TypeOf(NotificationBatch{}).FieldByName("Ispb"); ok {
+		t.Fatal("NotificationBatch carries Ispb, but the stream subscription already identifies the ISPB")
 	}
 }

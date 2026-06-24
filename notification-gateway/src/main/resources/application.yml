@@ -18,3 +18,7 @@ grpc:
 notification-gateway:
   kafka:
     listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:2}
+  grpc:
+    batch:
+      max-size: ${NOTIFICATION_GATEWAY_GRPC_BATCH_MAX_SIZE:64}
+      max-delay-ms: ${NOTIFICATION_GATEWAY_GRPC_BATCH_MAX_DELAY_MS:5}

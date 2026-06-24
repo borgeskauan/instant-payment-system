@@ -5,13 +5,13 @@ option go_package = "instant-payment-system/load-test/go-loadtool/internal/gen/n
 package notification;
 
 service NotificationGateway {
-  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+  rpc StreamNotifications(StreamRequest) returns (stream NotificationBatch);
 }
 
 message StreamRequest {
   string ispb = 1;
 }
 
-message Notification {
-  bytes payload = 1;
+message NotificationBatch {
+  repeated bytes payloads = 1;
 }

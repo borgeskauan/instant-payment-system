@@ -88,6 +88,27 @@ Isso ajuda a medir o impacto de uma tabela operacional estreita, mas não resolv
 - [ ] Definir política de retenção e consulta para dados de auditoria.
 - [ ] Medir o impacto da auditoria assíncrona no load test antes de considerá-la parte do fluxo padrão.
 
+### Normalizar lotes PACS na entrada do Kafka producer
+
+**Por que existe**
+
+Hoje o `kafka-producer` trata o corpo HTTP como bytes opacos e publica o payload recebido diretamente nos tópicos internos do SPI. Isso preserva exatamente a mensagem PACS enviada pelo PSP, mas permite dois níveis de lote dentro do sistema: o lote do Kafka consumer e o lote semântico da própria PACS (`CdtTrfTxInf` no `pacs.008` e `TxInfAndSts` no `pacs.002`).
+
+Para produção, a fronteira interna deve ser mais explícita: o sistema pode aceitar mensagens PACS com múltiplas transações/statuses na entrada, mas os tópicos internos devem carregar uma única transação ou status por registro Kafka. Assim, `max.poll.records`, lag, particionamento, retries e tempo de processamento passam a refletir unidades reais de trabalho, evitando multiplicação escondida de carga dentro do SPI.
+
+**Tarefas**
+
+- [ ] Fazer o `kafka-producer` reconhecer `pacs.008` e `pacs.002` na borda HTTP.
+- [ ] Dividir `pacs.008` com múltiplos `CdtTrfTxInf` em um registro Kafka por transação.
+- [ ] Dividir `pacs.002` com múltiplos `TxInfAndSts` em um registro Kafka por status.
+- [ ] Garantir que cada payload interno publicado continue sendo uma PACS válida com apenas um item lógico.
+- [ ] Definir como ajustar ou preservar metadados do `GrpHdr`, como `MsgId`, `NbOfTxs`, timestamps e identificadores de lote original.
+- [ ] Adicionar metadados de rastreabilidade: mensagem original, índice do item, tamanho do lote original, ISPB de origem e hash do payload original.
+- [ ] Definir comportamento de falha para publicação parcial: falhar a requisição inteira ou registrar compensação/reprocessamento.
+- [ ] Fazer o SPI rejeitar ou sinalizar payload interno que contenha mais de um item lógico.
+- [ ] Atualizar testes de contrato e carga para validar a regra: um registro Kafka = uma transação/status.
+- [ ] Medir impacto em throughput, latência, tamanho dos tópicos e consumo de CPU antes de tornar o padrão definitivo.
+
 ### Infraestrutura e deploy
 
 **Por que existe**

@@ -11,24 +11,20 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,22 +32,41 @@ import static org.mockito.Mockito.when;
 class PaymentMessageConsumerTest {
 
     @Test
+    void paymentAndStatusListenersUseSeparateConsumerGroups() throws Exception {
+        KafkaListener paymentListener = PaymentMessageConsumer.class
+                .getMethod("consumePaymentRequests", List.class)
+                .getAnnotation(KafkaListener.class);
+        KafkaListener statusListener = PaymentMessageConsumer.class
+                .getMethod("consumeStatusReports", List.class, Acknowledgment.class)
+                .getAnnotation(KafkaListener.class);
+
+        assertEquals("${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
+                paymentListener.groupId());
+        assertEquals("${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
+                statusListener.groupId());
+    }
+
+    @Test
     void consumeMessageParsesPaymentTransactionJsonOnlyOnce() throws Exception {
         PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectMapper objectMapper = spy(new ObjectMapper());
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
         PaymentMessageConsumer consumer = new PaymentMessageConsumer(
                 paymentTransactionMapper,
                 statusReportMapper,
                 processor,
-                traceRecorder
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
         );
-        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
         PaymentBatch paymentBatch = PaymentBatch.builder()
                 .transactions(List.of(PaymentTransaction.builder().paymentId("E2E-1").build()))
                 .build();
+        when(paymentRequestReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
         when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
                 .thenReturn(paymentBatch);
 
@@ -59,9 +74,8 @@ class PaymentMessageConsumerTest {
                 {"CdtTrfTxInf":[]}
                 """.getBytes(StandardCharsets.UTF_8));
 
-        verify(objectMapper).readTree(any(byte[].class));
-        verify(objectMapper).treeToValue(any(JsonNode.class), eq(FIToFICustomerCreditTransfer.class));
-        verify(objectMapper, never()).readValue(anyString(), any(Class.class));
+        verify(paymentRequestReader).readValue(any(byte[].class));
+        verify(statusReportReader, never()).readValue(any(byte[].class));
         verify(paymentTransactionMapper).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
         verify(processor).processTransactionBatch(paymentBatch);
@@ -73,14 +87,16 @@ class PaymentMessageConsumerTest {
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectMapper objectMapper = spy(new ObjectMapper());
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
         PaymentMessageConsumer consumer = new PaymentMessageConsumer(
                 paymentTransactionMapper,
                 statusReportMapper,
                 processor,
-                traceRecorder
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
         );
-        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
         PaymentTransaction firstPayment = PaymentTransaction.builder().paymentId("E2E-1").build();
         PaymentTransaction secondPayment = PaymentTransaction.builder().paymentId("E2E-2").build();
         PaymentBatch firstBatch = PaymentBatch.builder()
@@ -89,6 +105,8 @@ class PaymentMessageConsumerTest {
         PaymentBatch secondBatch = PaymentBatch.builder()
                 .transactions(List.of(secondPayment))
                 .build();
+        when(paymentRequestReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
         when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
                 .thenReturn(firstBatch, secondBatch);
 
@@ -101,8 +119,7 @@ class PaymentMessageConsumerTest {
                         """.getBytes(StandardCharsets.UTF_8)
         ));
 
-        verify(objectMapper, times(2)).readTree(any(byte[].class));
-        verify(objectMapper, times(2)).treeToValue(any(JsonNode.class), eq(FIToFICustomerCreditTransfer.class));
+        verify(paymentRequestReader, times(2)).readValue(any(byte[].class));
         verify(paymentTransactionMapper, times(2)).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_CONSUMED);
@@ -120,17 +137,21 @@ class PaymentMessageConsumerTest {
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectMapper objectMapper = spy(new ObjectMapper());
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
         PaymentMessageConsumer consumer = new PaymentMessageConsumer(
                 paymentTransactionMapper,
                 statusReportMapper,
                 processor,
-                traceRecorder
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
         );
-        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
         StatusBatch statusBatch = StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
                 .build();
+        when(statusReportReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFIPaymentStatusReport.builder().build());
         when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
                 .thenReturn(statusBatch);
 
@@ -138,8 +159,8 @@ class PaymentMessageConsumerTest {
                 {"TxInfAndSts":[]}
                 """.getBytes(StandardCharsets.UTF_8));
 
-        verify(objectMapper).readTree(any(byte[].class));
-        verify(objectMapper).treeToValue(any(JsonNode.class), eq(FIToFIPaymentStatusReport.class));
+        verify(statusReportReader).readValue(any(byte[].class));
+        verify(paymentRequestReader, never()).readValue(any(byte[].class));
         verify(paymentTransactionMapper, never()).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
         verify(statusReportMapper).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
@@ -152,20 +173,24 @@ class PaymentMessageConsumerTest {
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectMapper objectMapper = spy(new ObjectMapper());
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
         PaymentMessageConsumer consumer = new PaymentMessageConsumer(
                 paymentTransactionMapper,
                 statusReportMapper,
                 processor,
-                traceRecorder
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
         );
-        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
         StatusBatch firstBatch = StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
                 .build();
         StatusBatch secondBatch = StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-2").build()))
                 .build();
+        when(statusReportReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFIPaymentStatusReport.builder().build());
         when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
                 .thenReturn(firstBatch, secondBatch);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -179,8 +204,7 @@ class PaymentMessageConsumerTest {
                         """.getBytes(StandardCharsets.UTF_8)
         ), acknowledgment);
 
-        verify(objectMapper, times(2)).readTree(any(byte[].class));
-        verify(objectMapper, times(2)).treeToValue(any(JsonNode.class), eq(FIToFIPaymentStatusReport.class));
+        verify(statusReportReader, times(2)).readValue(any(byte[].class));
         verify(statusReportMapper, times(2)).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.STATUS_CONSUMED);
@@ -198,17 +222,21 @@ class PaymentMessageConsumerTest {
         StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectMapper objectMapper = spy(new ObjectMapper());
+        ObjectReader paymentRequestReader = mock(ObjectReader.class);
+        ObjectReader statusReportReader = mock(ObjectReader.class);
         PaymentMessageConsumer consumer = new PaymentMessageConsumer(
                 paymentTransactionMapper,
                 statusReportMapper,
                 processor,
-                traceRecorder
+                traceRecorder,
+                paymentRequestReader,
+                statusReportReader
         );
-        ReflectionTestUtils.setField(consumer, "objectMapper", objectMapper);
         StatusBatch statusBatch = StatusBatch.builder()
                 .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
                 .build();
+        when(statusReportReader.readValue(any(byte[].class)))
+                .thenReturn(FIToFIPaymentStatusReport.builder().build());
         when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
                 .thenReturn(statusBatch);
         doThrow(new RuntimeException("processing failed"))

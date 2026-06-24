@@ -22,14 +22,20 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
-    @Value("${spring.kafka.consumer.group-id}")
-    private String groupId;
-
     @Value("${spring.kafka.consumer.auto-offset-reset}")
     private String autoOffsetReset;
 
-    @Value("${spi.kafka.listener-concurrency:8}")
+    @Value("${spi.kafka.listener-concurrency:4}")
     private int listenerConcurrency;
+
+    @Value("${spi.kafka.max-poll-records:500}")
+    private int maxPollRecords;
+
+    @Value("${spi.kafka.fetch-min-bytes:1024}")
+    private int fetchMinBytes;
+
+    @Value("${spi.kafka.fetch-max-wait-ms:10}")
+    private int fetchMaxWaitMs;
 
     @Bean
     public ConsumerFactory<String, byte[]> consumerFactory() {
@@ -54,14 +60,14 @@ public class KafkaConsumerConfig {
         Map<String, Object> config = new HashMap<>();
         
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        config.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
         config.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         config.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class);
         
         // Performance tuning
-        config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 100);
-        config.put(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 1024);
+        config.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, maxPollRecords);
+        config.put(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, fetchMinBytes);
+        config.put(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, fetchMaxWaitMs);
 
         return config;
     }

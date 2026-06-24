@@ -8,10 +8,9 @@ import br.kauan.spi.adapter.input.dtos.pacs.commons.GroupHeader;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import javax.xml.datatype.XMLGregorianCalendar;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -44,15 +43,17 @@ public class PaymentTransactionMapper {
     private BatchDetails mapGroupHeaderToBatchDetails(GroupHeader groupHeader) {
         return BatchDetails.builder()
                 .id(groupHeader.getMessageId())
-                .createdAt(convertXmlGregorianCalendarToInstant(groupHeader.getCreationTimestamp()))
+                .createdAt(PacsDateTime.toInstant(groupHeader.getCreationTimestamp()))
                 .totalTransactions(groupHeader.getNumberOfTransactions().intValue())
                 .build();
     }
 
     private List<CreditTransferTransaction> mapPaymentTransactionsToCreditTransferTransactions(List<PaymentTransaction> paymentTransactions) {
-        return paymentTransactions.stream()
-                .map(this::mapPaymentTransactionToCreditTransferTransaction)
-                .toList();
+        var creditTransferTransactions = new ArrayList<CreditTransferTransaction>(paymentTransactions.size());
+        for (PaymentTransaction paymentTransaction : paymentTransactions) {
+            creditTransferTransactions.add(mapPaymentTransactionToCreditTransferTransaction(paymentTransaction));
+        }
+        return creditTransferTransactions;
     }
 
     private CreditTransferTransaction mapPaymentTransactionToCreditTransferTransaction(PaymentTransaction paymentTransaction) {
@@ -163,9 +164,11 @@ public class PaymentTransactionMapper {
     }
 
     private List<PaymentTransaction> mapCreditTransferTransactionsToPaymentTransactions(List<CreditTransferTransaction> creditTransferTransactions) {
-        return creditTransferTransactions.stream()
-                .map(this::mapCreditTransferTransactionToPaymentTransaction)
-                .toList();
+        var paymentTransactions = new ArrayList<PaymentTransaction>(creditTransferTransactions.size());
+        for (CreditTransferTransaction creditTransferTransaction : creditTransferTransactions) {
+            paymentTransactions.add(mapCreditTransferTransactionToPaymentTransaction(creditTransferTransaction));
+        }
+        return paymentTransactions;
     }
 
     private PaymentTransaction mapCreditTransferTransactionToPaymentTransaction(CreditTransferTransaction transaction) {
@@ -230,7 +233,4 @@ public class PaymentTransactionMapper {
         return accountId.getOther().getBranchCode().intValue();
     }
 
-    private Instant convertXmlGregorianCalendarToInstant(XMLGregorianCalendar xmlGregorianCalendar) {
-        return xmlGregorianCalendar.toGregorianCalendar().toZonedDateTime().toInstant();
-    }
 }
