@@ -128,6 +128,104 @@ As metas principais são: verificar saúde da aplicação enquanto ela roda, aco
 - [ ] Decidir quais métricas vêm de Micrometer/Actuator, Kafka exporter, Postgres exporter, cAdvisor/Node exporter, JFR ou traces próprios.
 - [ ] Integrar a observabilidade aos testes de carga para comparar baseline vs mudança: throughput sustentado, p95/p99, lag, CPU por transação e memória por transação.
 
+### Gating de prontidão dos microserviços
+
+**Por que existe**
+
+Os microserviços podem subir tecnicamente antes de estarem prontos para servir tráfego real. No fluxo atual, isso afeta principalmente o cold start: a aplicação pode aceitar carga antes de aquecer conexões, Kafka producers/consumers, gRPC streams, pools, caches e caminhos críticos de serialização/DB. Isso cria ruído nos testes e pode gerar degradação logo após deploy ou restart.
+
+A meta é separar "processo está vivo" de "serviço está pronto para tráfego real". Cada serviço deve expor readiness apenas depois de validar dependências, inicializar recursos críticos e concluir o warmup necessário para o seu papel no fluxo Pix.
+
+**Tarefas**
+
+- [ ] Definir critérios de readiness por serviço: `kafka-producer`, SPI, notification-gateway, PSP, Kafka, PostgreSQL e DICT quando for separado.
+- [ ] Separar liveness de readiness: liveness indica processo vivo; readiness indica apto a receber tráfego.
+- [ ] Implementar readiness no `kafka-producer` apenas após conexão com Kafka, metadata dos tópicos carregada e producers aquecidos.
+- [ ] Implementar readiness no SPI apenas após PostgreSQL/Flyway prontos, Kafka consumers criados, tópicos acessíveis, pools aquecidos e warmup do caminho crítico concluído.
+- [ ] Implementar readiness no notification-gateway apenas após conexão com Kafka, listener ativo e servidor gRPC pronto.
+- [ ] Implementar readiness no PSP apenas após conexão com notification-gateway, stream gRPC estabelecido, dependências HTTP/DICT disponíveis e warmup concluído.
+- [ ] Definir se o serviço deve rejeitar tráfego com `503` enquanto não estiver ready.
+- [ ] Atualizar Docker Compose para usar healthchecks que reflitam readiness real, não apenas porta aberta.
+- [ ] Planejar adaptação futura para Kubernetes readiness/liveness probes.
+- [ ] Integrar os gates ao script de load test para iniciar carga apenas depois de todos os serviços críticos estarem ready.
+- [ ] Expor métricas de startup/warmup: tempo até liveness, tempo até readiness, tempo de warmup, falhas de dependência e último motivo de not-ready.
+- [ ] Adicionar testes de contrato para readiness: dependência indisponível mantém serviço not-ready; warmup concluído torna serviço ready.
+
+### Cenários realistas e reprocessamento no load-tool
+
+**Por que existe**
+
+O teste atual sustenta alta taxa com um padrão bastante controlado. Para aproximar o experimento de produção, o load-tool precisa fornecer perfis de teste automatizados para cenários diferentes: caminho feliz, saldo insuficiente, rejeições, duplicidade, replay, hot participants e variações de carga.
+
+Kafka, retries, restarts e falhas de rede tornam duplicidade e replay inevitáveis. O fluxo precisa provar que reprocessar mensagens não duplica liquidação, que status já liquidado pode reemitir notificação de forma segura e que mensagens inválidas não travam o consumo.
+
+**Tarefas**
+
+- [ ] Adicionar perfis de teste no load-tool, com múltiplos arquivos `loadtool-config.json` por cenário.
+- [ ] Permitir selecionar o perfil de teste no script de execução, por exemplo caminho feliz, saldo insuficiente, rejeições funcionais, duplicidade, replay e hot participants.
+- [ ] Garantir que cada perfil defina carga, distribuição de participantes, valores, fundos provisionados, taxa esperada de confirmação e critérios de SLA.
+- [ ] Gerar valores de transação variados em vez de valor fixo.
+- [ ] Simular distribuição desigual entre ISPBs: poucos participantes quentes e muitos participantes frios.
+- [ ] Criar cenários com hot ISPB, hot sender, hot receiver e hot partition.
+- [ ] Variar taxa de chegada com ramp-up, pico, carga sustentada, queda e período ocioso.
+- [ ] Misturar transações aprovadas e rejeitadas no mesmo run.
+- [ ] Simular saldo insuficiente real para parte dos pagamentos.
+- [ ] Medir impacto de rejeições e saldo insuficiente em throughput, p95/p99, consumer lag e uso de CPU.
+- [ ] Validar que a taxa de confirmação considera apenas transações que deveriam confirmar.
+- [ ] Reprocessar mensagens Kafka já consumidas e validar que não ocorre dupla liquidação.
+- [ ] Reemitir status de pagamento já liquidado e validar replay idempotente da notificação.
+- [ ] Testar duplicidade de `pacs.008` com o mesmo `EndToEndId`.
+- [ ] Testar duplicidade de `pacs.002` para pagamento já confirmado.
+- [ ] Validar que `notSettledPaymentIds` e atualizações de status continuam corretos com IDs duplicados.
+- [ ] Expor métricas de duplicidade, replay e retries.
+- [ ] Garantir que retry/replay não altera saldo nem gera confirmação inconsistente.
+- [ ] Comparar cenário uniforme atual contra cenários realistas para identificar regressões escondidas.
+
+### Dead letter queue para mensagens inválidas
+
+**Por que existe**
+
+Mensagens inválidas, incompatíveis com o contrato ou impossíveis de processar não devem travar o consumer group nem contaminar o caminho quente. O fluxo precisa isolar esses casos em uma DLQ com metadados suficientes para diagnóstico, replay controlado ou descarte consciente.
+
+**Tarefas**
+
+- [ ] Definir política de DLQ para falhas de parse, validação, contrato incompatível e erro inesperado de processamento.
+- [ ] Criar tópicos DLQ para requests e status reports, com convenção de nomes clara.
+- [ ] Publicar na DLQ o payload original e metadados: tópico original, partição, offset, timestamp, consumer group, erro, stack resumida e serviço origem.
+- [ ] Garantir que mensagens enviadas para DLQ não travem o consumer group principal.
+- [ ] Expor métricas de DLQ: mensagens/sec, total por motivo, total por tópico e idade da mensagem mais antiga.
+- [ ] Criar logs estruturados para envio à DLQ sem logar payload sensível completo por padrão.
+- [ ] Definir processo de replay controlado a partir da DLQ.
+- [ ] Criar teste automatizado para payload inválido: mensagem vai para DLQ, consumer continua e fluxo saudável não é afetado.
+- [ ] Criar teste automatizado para contrato antigo/incompatível, como PACS bruto chegando no tópico interno protobuf.
+- [ ] Documentar quando uma mensagem deve ser reprocessada, corrigida manualmente ou descartada.
+
+### Estabilizar teste de carga dentro do budget de CPU
+
+**Por que existe**
+
+Os testes recentes usaram ajustes de CPU para entender gargalos e validar otimizações. Para o experimento ficar repetível e servir de base para deploy em Kubernetes, o ambiente precisa estabilizar dentro de um budget fixo de aproximadamente 3 vCPUs por stack. Isso permite planejar capacidade para rodar duas stacks/instalações do conjunto de serviços no cluster sem depender de CPU extra durante o teste.
+
+Nesse desenho, as duas stacks devem compartilhar o mesmo PostgreSQL. Isso precisa ser validado explicitamente, porque o banco vira um recurso comum entre as stacks e pode mudar o gargalo, a configuração de pools, locks, conexões e isolamento de dados.
+
+**Tarefas**
+
+- [ ] Definir o budget alvo de CPU por serviço dentro do limite total de 3 vCPUs por stack.
+- [ ] Rebalancear CPU no Docker Compose para refletir o budget alvo, não apenas o melhor resultado local.
+- [ ] Definir memória alvo por serviço junto com CPU para evitar OOM ou swap durante o load test.
+- [ ] Rodar baseline de 15 minutos com o budget de 3 vCPUs e registrar throughput, p95, p99, max, lag, CPU e memória.
+- [ ] Validar que o fluxo sustenta a meta de TPS dentro do SLA com o budget definido.
+- [ ] Identificar qual serviço satura primeiro quando o budget total é respeitado.
+- [ ] Ajustar concorrência de consumers/producers para o budget final, evitando configuração que só funciona com CPU excedente.
+- [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência de backlog residual e ausência de degradação progressiva.
+- [ ] Criar cenário de repetição com múltiplos runs consecutivos após restart completo.
+- [ ] Documentar o perfil final de recursos para Kubernetes: requests, limits e justificativa por serviço.
+- [ ] Planejar execução com duas stacks/instalações no mesmo cluster compartilhando o mesmo PostgreSQL.
+- [ ] Definir como separar dados, tópicos, consumer groups, ISPBs e métricas entre stacks quando o banco for compartilhado.
+- [ ] Validar impacto do PostgreSQL compartilhado em conexões, locks, query latency, CPU, I/O e p95/p99.
+- [ ] Validar isolamento de CPU/memória entre stacks mesmo com banco compartilhado.
+- [ ] Atualizar scripts de load test para registrar automaticamente o perfil de CPU/memória usado no run.
+
 ### Infraestrutura e deploy
 
 **Por que existe**
