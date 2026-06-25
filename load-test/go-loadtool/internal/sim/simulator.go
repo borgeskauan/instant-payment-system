@@ -41,20 +41,28 @@ type transferJob struct {
 	Amount  int64
 }
 
+type statusJob struct {
+	receiverISPB string
+	endToEndID   string
+}
+
 type simulator struct {
-	cfg           Config
-	runID         string
-	httpClient    *http.Client
-	grpcConn      *grpc.ClientConn
-	grpcClient    notificationpb.NotificationGatewayClient
-	startWriter   *events.StartWriter
-	eventWriter   *events.NotificationWriter
-	startMu       sync.Mutex
-	eventMu       sync.Mutex
-	started       atomic.Uint64
-	accepted      atomic.Uint64
-	pacs002Sent   atomic.Uint64
-	notifications atomic.Uint64
+	cfg              Config
+	runID            string
+	httpClient       *http.Client
+	grpcConn         *grpc.ClientConn
+	grpcClient       notificationpb.NotificationGatewayClient
+	startWriter      *events.StartWriter
+	eventWriter      *events.NotificationWriter
+	startMu          sync.Mutex
+	eventMu          sync.Mutex
+	sendPacs002Func  func(context.Context, string, string)
+	statusJobs       chan statusJob
+	started          atomic.Uint64
+	accepted         atomic.Uint64
+	pacs002Sent      atomic.Uint64
+	notifications    atomic.Uint64
+	statusJobsQueued atomic.Uint64
 }
 
 func Run(cfg Config) error {
@@ -94,10 +102,16 @@ func Run(cfg Config) error {
 		grpcClient:  notificationpb.NewNotificationGatewayClient(conn),
 		startWriter: startWriter,
 		eventWriter: eventWriter,
+		statusJobs:  make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
 	}
+	s.sendPacs002Func = s.sendPacs002
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	statusWorkerCount := workerCountForTargetRate(cfg.TargetTxRate)
+	var statusWorkers sync.WaitGroup
+	s.startStatusWorkers(ctx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
 	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
@@ -114,11 +128,11 @@ func Run(cfg Config) error {
 
 	jobs := make(chan transferJob, cfg.TargetTxRate*2)
 	var workers sync.WaitGroup
-	workerCount := max(16, min(512, cfg.TargetTxRate/2))
+	workerCount := workerCountForTargetRate(cfg.TargetTxRate)
 	if cfg.Warmup > 0 {
-		logPhase("starting warmup plus active load: warmup_rate=%d/s active_rate=%d/s warmup=%s active=%s workers=%d", warmupRate(cfg.TargetTxRate), cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount)
+		logPhase("starting warmup plus active load: warmup_rate=%d/s active_rate=%d/s warmup=%s active=%s workers=%d status_workers=%d", warmupRate(cfg.TargetTxRate), cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount, statusWorkerCount)
 	} else {
-		logPhase("starting active load: rate=%d/s duration=%s workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount)
+		logPhase("starting active load: rate=%d/s duration=%s workers=%d status_workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount, statusWorkerCount)
 	}
 	for range workerCount {
 		workers.Add(1)
@@ -136,11 +150,15 @@ func Run(cfg Config) error {
 	cancel()
 	streams.Wait()
 	logPhase("notification streams closed")
+	close(s.statusJobs)
+	statusWorkers.Wait()
+	logPhase("status workers finished")
 
-	fmt.Printf("started=%d accepted=%d notifications=%d pacs002_sent=%d output=%s\n",
+	fmt.Printf("started=%d accepted=%d notifications=%d pacs002_queued=%d pacs002_sent=%d output=%s\n",
 		s.started.Load(),
 		s.accepted.Load(),
 		s.notifications.Load(),
+		s.statusJobsQueued.Load(),
 		s.pacs002Sent.Load(),
 		cfg.OutputDir,
 	)
@@ -161,6 +179,14 @@ func newHTTPClient() *http.Client {
 		},
 		Timeout: 5 * time.Second,
 	}
+}
+
+func workerCountForTargetRate(targetRate int) int {
+	return max(16, min(512, targetRate/2))
+}
+
+func statusQueueCapacity(targetRate int) int {
+	return max(1024, targetRate*4)
 }
 
 func buildPairs(count int) []ids.Pair {
@@ -262,15 +288,41 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 func (s *simulator) sendPacs002(ctx context.Context, receiverISPB string, endToEndID string) {
 	body := payload.Pacs002(endToEndID)
 	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer/status", s.cfg.BaseURL, receiverISPB), body)
-	if status >= 200 && status < 300 {
-		s.pacs002Sent.Add(1)
+	if status < 200 || status >= 300 {
+		return
 	}
+	s.pacs002Sent.Add(1)
 	s.writeNotification(events.Notification{
 		EndToEndID:   endToEndID,
 		ISPB:         receiverISPB,
 		EventType:    events.EventPacs002Sent,
 		ReceivedAtNS: time.Now().UnixNano(),
 	})
+}
+
+func (s *simulator) enqueuePacs002(ctx context.Context, receiverISPB string, endToEndID string) {
+	select {
+	case s.statusJobs <- statusJob{receiverISPB: receiverISPB, endToEndID: endToEndID}:
+		s.statusJobsQueued.Add(1)
+	case <-ctx.Done():
+	}
+}
+
+func (s *simulator) startStatusWorkers(
+	ctx context.Context,
+	workers *sync.WaitGroup,
+	jobs <-chan statusJob,
+	workerCount int,
+) {
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				s.sendPacs002Func(ctx, job.receiverISPB, job.endToEndID)
+			}
+		}()
+	}
 }
 
 func (s *simulator) post(ctx context.Context, url string, body []byte) int {
@@ -321,7 +373,7 @@ func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup,
 						ReceivedAtNS: time.Now().UnixNano(),
 					})
 					if receiverRole {
-						go s.sendPacs002(ctx, ispb, notification.EndToEndID)
+						s.enqueuePacs002(ctx, ispb, notification.EndToEndID)
 					}
 				case payload.KindPacs002:
 					s.writeNotification(events.Notification{

@@ -17,6 +17,7 @@ readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
 readonly GRAFANA_DASHBOARD_PATH="/d/load-test/load-test"
+readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
 
 RUN_TAG=""
 PROVISION_FUNDS=true
@@ -244,14 +245,18 @@ print(amount * multipliers[unit])
 consumer_group_topic_lag() {
     local consumer_group="$1"
     local topic="$2"
-    local lag
+    local group_output lag
 
-    lag="$({
-        docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
+    if ! group_output="$(timeout "$KAFKA_CLI_TIMEOUT_SECONDS" docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
             --bootstrap-server kafka:9092 \
             --describe \
-            --group "$consumer_group" 2>/dev/null || true
-    } |
+            --group "$consumer_group" 2>&1)"; then
+        echo "Failed to read Kafka consumer group lag for ${consumer_group} within ${KAFKA_CLI_TIMEOUT_SECONDS}s." >&2
+        echo "$group_output" >&2
+        return 1
+    fi
+
+    lag="$(echo "$group_output" |
         awk -v topic="$topic" '
             $2 == topic && $6 ~ /^[0-9]+$/ {
                 found = 1
@@ -276,11 +281,18 @@ consumer_group_topic_lag() {
 
 topic_end_offset() {
     local topic="$1"
+    local offset_output
 
-    docker exec "$KAFKA_CONTAINER" kafka-get-offsets \
+    if ! offset_output="$(timeout "$KAFKA_CLI_TIMEOUT_SECONDS" docker exec "$KAFKA_CONTAINER" kafka-get-offsets \
         --bootstrap-server kafka:9092 \
         --topic "$topic" \
-        --time -1 2>/dev/null |
+        --time -1 2>&1)"; then
+        echo "Failed to read Kafka end offsets for ${topic} within ${KAFKA_CLI_TIMEOUT_SECONDS}s." >&2
+        echo "$offset_output" >&2
+        return 1
+    fi
+
+    echo "$offset_output" |
         awk -F: '
             $3 ~ /^[0-9]+$/ { offset += $3 }
             END { print offset + 0 }
