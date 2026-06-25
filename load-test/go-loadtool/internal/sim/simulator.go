@@ -41,20 +41,28 @@ type transferJob struct {
 	Amount  int64
 }
 
+type statusJob struct {
+	receiverISPB string
+	endToEndID   string
+}
+
 type simulator struct {
-	cfg           Config
-	runID         string
-	httpClient    *http.Client
-	grpcConn      *grpc.ClientConn
-	grpcClient    notificationpb.NotificationGatewayClient
-	startWriter   *events.StartWriter
-	eventWriter   *events.NotificationWriter
-	startMu       sync.Mutex
-	eventMu       sync.Mutex
-	started       atomic.Uint64
-	accepted      atomic.Uint64
-	pacs002Sent   atomic.Uint64
-	notifications atomic.Uint64
+	cfg              Config
+	runID            string
+	httpClient       *http.Client
+	grpcConn         *grpc.ClientConn
+	grpcClient       notificationpb.NotificationGatewayClient
+	startWriter      *events.StartWriter
+	eventWriter      *events.NotificationWriter
+	startMu          sync.Mutex
+	eventMu          sync.Mutex
+	sendPacs002Func  func(context.Context, string, string)
+	statusJobs       chan statusJob
+	started          atomic.Uint64
+	accepted         atomic.Uint64
+	pacs002Sent      atomic.Uint64
+	notifications    atomic.Uint64
+	statusJobsQueued atomic.Uint64
 }
 
 func Run(cfg Config) error {
@@ -94,10 +102,16 @@ func Run(cfg Config) error {
 		grpcClient:  notificationpb.NewNotificationGatewayClient(conn),
 		startWriter: startWriter,
 		eventWriter: eventWriter,
+		statusJobs:  make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
 	}
+	s.sendPacs002Func = s.sendPacs002
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	statusWorkerCount := workerCountForTargetRate(cfg.TargetTxRate)
+	var statusWorkers sync.WaitGroup
+	s.startStatusWorkers(ctx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
 	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
@@ -114,11 +128,11 @@ func Run(cfg Config) error {
 
 	jobs := make(chan transferJob, cfg.TargetTxRate*2)
 	var workers sync.WaitGroup
-	workerCount := max(16, min(512, cfg.TargetTxRate/2))
+	workerCount := workerCountForTargetRate(cfg.TargetTxRate)
 	if cfg.Warmup > 0 {
-		logPhase("starting warmup plus active load: rate=%d/s warmup=%s active=%s workers=%d", cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount)
+		logPhase("starting warmup plus active load: warmup_rate=%d/s active_rate=%d/s warmup=%s active=%s workers=%d status_workers=%d", warmupRate(cfg.TargetTxRate), cfg.TargetTxRate, cfg.Warmup, cfg.Duration, workerCount, statusWorkerCount)
 	} else {
-		logPhase("starting active load: rate=%d/s duration=%s workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount)
+		logPhase("starting active load: rate=%d/s duration=%s workers=%d status_workers=%d", cfg.TargetTxRate, cfg.Duration, workerCount, statusWorkerCount)
 	}
 	for range workerCount {
 		workers.Add(1)
@@ -136,11 +150,15 @@ func Run(cfg Config) error {
 	cancel()
 	streams.Wait()
 	logPhase("notification streams closed")
+	close(s.statusJobs)
+	statusWorkers.Wait()
+	logPhase("status workers finished")
 
-	fmt.Printf("started=%d accepted=%d notifications=%d pacs002_sent=%d output=%s\n",
+	fmt.Printf("started=%d accepted=%d notifications=%d pacs002_queued=%d pacs002_sent=%d output=%s\n",
 		s.started.Load(),
 		s.accepted.Load(),
 		s.notifications.Load(),
+		s.statusJobsQueued.Load(),
 		s.pacs002Sent.Load(),
 		cfg.OutputDir,
 	)
@@ -163,6 +181,14 @@ func newHTTPClient() *http.Client {
 	}
 }
 
+func workerCountForTargetRate(targetRate int) int {
+	return max(16, min(512, targetRate/2))
+}
+
+func statusQueueCapacity(targetRate int) int {
+	return max(1024, targetRate*4)
+}
+
 func buildPairs(count int) []ids.Pair {
 	pairs := make([]ids.Pair, 0, count)
 	for i := 1; i <= count; i++ {
@@ -175,7 +201,6 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 	start := time.Now()
 	next := start
 	endAfter := s.cfg.Warmup + s.cfg.Duration
-	interval := time.Second / time.Duration(s.cfg.TargetTxRate)
 	hotCount := s.cfg.HotPSPs
 	coldEvery := int(1 / (1 - s.cfg.HotShare))
 	if coldEvery < 2 {
@@ -186,7 +211,9 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 		if sleep := next.Sub(time.Now()); sleep > 0 {
 			time.Sleep(sleep)
 		}
-		next = next.Add(interval)
+		elapsed := time.Since(start)
+		rate := loadRateForElapsed(elapsed, s.cfg.Warmup, s.cfg.TargetTxRate)
+		next = next.Add(time.Second / time.Duration(rate))
 
 		pairIndex := hotCount + int(seq)%s.cfg.ColdPSPs
 		if hotCount > 0 && seq%uint64(coldEvery) != 0 {
@@ -208,6 +235,21 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 	}
 }
 
+func loadRateForElapsed(elapsed time.Duration, warmup time.Duration, targetRate int) int {
+	if warmup <= 0 || elapsed >= warmup {
+		return targetRate
+	}
+	return warmupRate(targetRate)
+}
+
+func warmupRate(targetRate int) int {
+	rate := targetRate / 2
+	if rate < 1 {
+		return 1
+	}
+	return rate
+}
+
 func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan transferJob) {
 	defer wg.Done()
 	for {
@@ -225,6 +267,7 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 	body := payload.Pacs008(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
+	startedAt := time.Now().UnixNano()
 	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer", s.cfg.BaseURL, job.Pair.Payer), body)
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
@@ -232,27 +275,54 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 		s.accepted.Add(1)
 	}
 	s.writeStart(events.Start{
-		EndToEndID:      job.ID,
-		PayerISPB:       job.Pair.Payer,
-		ReceiverISPB:    job.Pair.Receiver,
-		CreatedAtNS:     job.Created,
-		RequestDoneAtNS: doneAt,
-		HTTPStatus:      status,
+		EndToEndID:         job.ID,
+		PayerISPB:          job.Pair.Payer,
+		ReceiverISPB:       job.Pair.Receiver,
+		CreatedAtNS:        job.Created,
+		RequestStartedAtNS: startedAt,
+		RequestDoneAtNS:    doneAt,
+		HTTPStatus:         status,
 	})
 }
 
 func (s *simulator) sendPacs002(ctx context.Context, receiverISPB string, endToEndID string) {
 	body := payload.Pacs002(endToEndID)
 	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer/status", s.cfg.BaseURL, receiverISPB), body)
-	if status >= 200 && status < 300 {
-		s.pacs002Sent.Add(1)
+	if status < 200 || status >= 300 {
+		return
 	}
+	s.pacs002Sent.Add(1)
 	s.writeNotification(events.Notification{
 		EndToEndID:   endToEndID,
 		ISPB:         receiverISPB,
 		EventType:    events.EventPacs002Sent,
 		ReceivedAtNS: time.Now().UnixNano(),
 	})
+}
+
+func (s *simulator) enqueuePacs002(ctx context.Context, receiverISPB string, endToEndID string) {
+	select {
+	case s.statusJobs <- statusJob{receiverISPB: receiverISPB, endToEndID: endToEndID}:
+		s.statusJobsQueued.Add(1)
+	case <-ctx.Done():
+	}
+}
+
+func (s *simulator) startStatusWorkers(
+	ctx context.Context,
+	workers *sync.WaitGroup,
+	jobs <-chan statusJob,
+	workerCount int,
+) {
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				s.sendPacs002Func(ctx, job.receiverISPB, job.endToEndID)
+			}
+		}()
+	}
 }
 
 func (s *simulator) post(ctx context.Context, url string, body []byte) int {
@@ -287,29 +357,33 @@ func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup,
 			fmt.Fprintf(os.Stderr, "stream %s recv failed: %v\n", ispb, err)
 			return
 		}
-		s.notifications.Add(1)
-		endToEndID, kind, err := payload.ExtractNotification([]byte(msg.Payload))
-		if err != nil {
-			continue
-		}
-		switch kind {
-		case payload.KindPacs008:
-			s.writeNotification(events.Notification{
-				EndToEndID:   endToEndID,
-				ISPB:         ispb,
-				EventType:    events.EventPacs008Received,
-				ReceivedAtNS: time.Now().UnixNano(),
-			})
-			if receiverRole {
-				go s.sendPacs002(ctx, ispb, endToEndID)
+		for _, body := range msg.Payloads {
+			notifications, err := payload.ExtractNotifications(body)
+			if err != nil {
+				continue
 			}
-		case payload.KindPacs002:
-			s.writeNotification(events.Notification{
-				EndToEndID:   endToEndID,
-				ISPB:         ispb,
-				EventType:    events.EventPacs002Received,
-				ReceivedAtNS: time.Now().UnixNano(),
-			})
+			s.notifications.Add(uint64(len(notifications)))
+			for _, notification := range notifications {
+				switch notification.Kind {
+				case payload.KindPacs008:
+					s.writeNotification(events.Notification{
+						EndToEndID:   notification.EndToEndID,
+						ISPB:         ispb,
+						EventType:    events.EventPacs008Received,
+						ReceivedAtNS: time.Now().UnixNano(),
+					})
+					if receiverRole {
+						s.enqueuePacs002(ctx, ispb, notification.EndToEndID)
+					}
+				case payload.KindPacs002:
+					s.writeNotification(events.Notification{
+						EndToEndID:   notification.EndToEndID,
+						ISPB:         ispb,
+						EventType:    events.EventPacs002Received,
+						ReceivedAtNS: time.Now().UnixNano(),
+					})
+				}
+			}
 		}
 	}
 }

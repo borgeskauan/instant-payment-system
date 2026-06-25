@@ -51,25 +51,4 @@ public class NotificationPublisher {
         }
     }
 
-    /**
-     * Synchronous version - waits for acknowledgment.
-     * Use for critical notifications where you need confirmation.
-     */
-    public void publishNotificationSync(String ispb, String notificationJson) {
-        try {
-            log.debug("Publishing notification (sync) for ISPB: {}", ispb);
-            
-            SendResult<String, String> result = 
-                    kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson).get();
-            
-            log.debug("Notification published successfully (sync) for ISPB: {}, partition: {}, offset: {}",
-                    ispb, 
-                    result.getRecordMetadata().partition(), 
-                    result.getRecordMetadata().offset());
-            
-        } catch (Exception e) {
-            log.error("Error publishing notification (sync) to Kafka for ISPB: {}", ispb, e);
-            throw new RuntimeException("Failed to publish notification synchronously", e);
-        }
-    }
 }

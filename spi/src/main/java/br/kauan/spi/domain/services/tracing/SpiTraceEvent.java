@@ -4,7 +4,7 @@ public enum SpiTraceEvent {
     REQUEST_CONSUMED("request_consumed"),
     REQUEST_SAVED("request_saved"),
     ACCEPTANCE_NOTIFICATION_ENQUEUED("acceptance_notification_enqueued"),
-    STATUS_CONSUMED("status_consumed"),
+    STATUS_RECEIVED("status_received"),
     SETTLEMENT_COMPLETED("settlement_completed"),
     CONFIRMATION_NOTIFICATION_ENQUEUED("confirmation_notification_enqueued");
 

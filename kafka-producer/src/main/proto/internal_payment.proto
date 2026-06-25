@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package br.kauan.pix.internal.v1;
+
+option java_multiple_files = true;
+option java_package = "br.kauan.pix.internal.v1";
+
+message PaymentRequest {
+  string payment_id = 1;
+  int64 amount_cents = 2;
+  string currency = 3;
+  string description = 4;
+  Party sender = 5;
+  Party receiver = 6;
+}
+
+message Party {
+  string name = 1;
+  string tax_id = 2;
+  string pix_key = 3;
+  BankAccount account = 4;
+}
+
+message BankAccount {
+  string number = 1;
+  string branch = 2;
+  string type = 3;
+  string ispb = 4;
+}
+
+message PaymentStatusReport {
+  string payment_id = 1;
+  PaymentStatus status = 2;
+  repeated StatusReason reasons = 3;
+}
+
+message StatusReason {
+  string code = 1;
+  string description = 2;
+}
+
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  ACCEPTED_IN_PROCESS = 1;
+  REJECTED = 2;
+}

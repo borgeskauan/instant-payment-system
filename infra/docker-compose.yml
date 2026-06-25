@@ -10,7 +10,7 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: postgres
-    cpus: 0.75
+    cpus: 1.00
     mem_limit: 512m
     mem_reservation: 384m
     memswap_limit: 512m
@@ -53,7 +53,7 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     hostname: kafka
     container_name: kafka
-    cpus: 0.80
+    cpus: 1.00
     mem_limit: 1024m
     mem_reservation: 768m
     memswap_limit: 1024m
@@ -108,7 +108,7 @@ services:
 
         ensure_topic spi-payment-requests 8
         ensure_topic spi-payment-status-reports 8
-        ensure_topic psp-notifications 1
+        ensure_topic psp-notifications 8
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -129,7 +129,7 @@ services:
       context: ../notification-gateway
       dockerfile: Dockerfile
     container_name: notification-gateway
-    cpus: 0.25
+    cpus: 1.00
     mem_limit: 320m
     mem_reservation: 192m
     memswap_limit: 320m
@@ -138,7 +138,8 @@ services:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
+      NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:-2}
+      JAVA_TOOL_OPTIONS: "-Xms96m -Xmx160m -XX:MaxDirectMemorySize=48m -Xss256k"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -149,7 +150,7 @@ services:
       context: ../spi
       dockerfile: Dockerfile
     container_name: spi
-    cpus: 0.55
+    cpus: 1.00
     mem_limit: 768m
     mem_reservation: 512m
     memswap_limit: 768m
@@ -160,7 +161,6 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
       JAVA_TOOL_OPTIONS: "-Xms384m -Xmx512m"
-      SPI_KAFKA_LISTENER_CONCURRENCY: 8
       SPI_TRACE_FILE: /tmp/spi-trace.csv
     depends_on:
       kafka-init:
@@ -175,7 +175,7 @@ services:
       context: ../kafka-producer
       dockerfile: Dockerfile
     container_name: kafka-producer
-    cpus: 0.55
+    cpus: 1.00
     mem_limit: 384m
     mem_reservation: 256m
     memswap_limit: 384m
@@ -184,7 +184,105 @@ services:
       - "8001:8001"
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75 -Dreactor.netty.ioWorkerCount=1"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: prometheus
+    profiles:
+      - observability
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - cadvisor
+      - node-exporter
+      - kafka-exporter
+      - postgres-exporter
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    container_name: grafana
+    profiles:
+      - observability
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.57.0
+    container_name: cadvisor
+    profiles:
+      - observability
+    command:
+      - --docker_only=true
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    profiles:
+      - observability
+    command:
+      - --path.rootfs=/host
+    pid: host
+    ports:
+      - "9100:9100"
+    volumes:
+      - /:/host:ro,rslave
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    profiles:
+      - observability
+    command:
+      - --kafka.server=kafka:9092
+    ports:
+      - "9308:9308"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    profiles:
+      - observability
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:mysecretpassword@postgres:5432/postgres?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  prometheus-data:

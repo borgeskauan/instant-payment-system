@@ -1,24 +1,18 @@
 package br.kauan.spi.domain.services;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusBatch;
-import br.kauan.spi.domain.entity.status.StatusReport;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
-import br.kauan.spi.domain.entity.transfer.PaymentBatch;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.NotificationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
-
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,7 +22,7 @@ import static org.mockito.Mockito.when;
 class PaymentTransactionProcessorServiceTest {
 
     @Test
-    void acceptedStatusUsesBatchSettlementAndSendsConfirmationWhenSettlementSucceeds() {
+    void acceptedStatusSettlesAndSendsConfirmationWhenSettlementSucceeds() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationService notificationService = mock(NotificationService.class);
         SettlementService settlementService = mock(SettlementService.class);
@@ -39,30 +33,26 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        PaymentTransaction paymentTransaction = paymentTransaction();
-        when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of(paymentTransaction));
+        PaymentTransactionCommand paymentTransaction = paymentTransaction();
+        when(settlementService.tryMakeSettlements(List.of("E2E-1")))
+                .thenReturn(new SettlementResult(List.of(paymentTransaction), List.of()));
 
-        service.processStatusBatch(StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder()
+        service.processStatusReports(List.of(StatusReportCommand.builder()
                         .originalPaymentId("E2E-1")
                         .status(PaymentStatus.ACCEPTED_IN_PROCESS)
-                .build()))
-                .build());
+                .build()));
 
         verify(settlementService).tryMakeSettlements(List.of("E2E-1"));
-        verify(settlementService, never()).tryMakeSettlement("E2E-1");
-        verify(notificationService).sendConfirmationNotification(paymentTransaction);
+        verify(notificationService).sendConfirmationNotifications(List.of(paymentTransaction));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         verify(paymentTransactionRepository, never()).findById("E2E-1");
-        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
-        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED);
-        verify(paymentTransactionRepository, never()).saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_IN_PROCESS);
-        verify(paymentTransactionRepository, never()).saveTransaction(paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED);
+        verify(paymentTransactionRepository, never()).updateStatuses(List.of("E2E-1"), PaymentStatus.ACCEPTED_IN_PROCESS);
+        verify(paymentTransactionRepository, never()).updateStatuses(List.of("E2E-1"), PaymentStatus.ACCEPTED_AND_SETTLED);
     }
 
     @Test
-    void acceptedStatusesFromSameBatchAreSettledInOneRepositoryBatch() {
+    void acceptedStatusesFromSamePollAreSettledTogether() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationService notificationService = mock(NotificationService.class);
         SettlementService settlementService = mock(SettlementService.class);
@@ -73,34 +63,31 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        PaymentTransaction firstPayment = paymentTransaction("E2E-1");
-        PaymentTransaction secondPayment = paymentTransaction("E2E-2");
+        PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1");
+        PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2");
         when(settlementService.tryMakeSettlements(List.of("E2E-1", "E2E-2")))
-                .thenReturn(List.of(firstPayment, secondPayment));
+                .thenReturn(new SettlementResult(List.of(firstPayment, secondPayment), List.of()));
 
-        service.processStatusBatch(StatusBatch.builder()
-                .statusReports(List.of(
-                        StatusReport.builder()
+        service.processStatusReports(List.of(
+                        StatusReportCommand.builder()
                                 .originalPaymentId("E2E-1")
                                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
                                 .build(),
-                        StatusReport.builder()
+                        StatusReportCommand.builder()
                                 .originalPaymentId("E2E-2")
                                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
-                                .build()))
-                .build());
+                                .build()));
 
         verify(settlementService).tryMakeSettlements(List.of("E2E-1", "E2E-2"));
-        verify(settlementService, never()).tryMakeSettlement("E2E-1");
-        verify(settlementService, never()).tryMakeSettlement("E2E-2");
-        verify(notificationService).sendConfirmationNotification(firstPayment);
-        verify(notificationService).sendConfirmationNotification(secondPayment);
+        verify(notificationService).sendConfirmationNotifications(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
-        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
-        verify(paymentTransactionRepository, never()).updateStatus("E2E-2", PaymentStatus.ACCEPTED_IN_PROCESS);
+        verify(paymentTransactionRepository, never()).updateStatuses(
+                List.of("E2E-1", "E2E-2"),
+                PaymentStatus.ACCEPTED_IN_PROCESS
+        );
     }
 
     @Test
@@ -115,25 +102,23 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        when(settlementService.tryMakeSettlements(List.of("E2E-1"))).thenReturn(List.of());
+        when(settlementService.tryMakeSettlements(List.of("E2E-1")))
+                .thenReturn(new SettlementResult(List.of(), List.of("E2E-1")));
 
-        service.processStatusBatch(StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder()
+        service.processStatusReports(List.of(StatusReportCommand.builder()
                         .originalPaymentId("E2E-1")
                         .status(PaymentStatus.ACCEPTED_IN_PROCESS)
-                        .build()))
-                .build());
+                        .build()));
 
         verify(settlementService).tryMakeSettlements(List.of("E2E-1"));
-        verify(settlementService, never()).tryMakeSettlement("E2E-1");
         verify(paymentTransactionRepository, never()).findById("E2E-1");
-        verify(paymentTransactionRepository).updateStatus("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
+        verify(paymentTransactionRepository).updateStatuses(List.of("E2E-1"), PaymentStatus.ACCEPTED_IN_PROCESS);
         verifyNoInteractions(notificationService);
-        verify(paymentTransactionRepository, never()).updateStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED);
+        verify(paymentTransactionRepository, never()).updateStatuses(List.of("E2E-1"), PaymentStatus.ACCEPTED_AND_SETTLED);
     }
 
     @Test
-    void transactionRequestSavesPaymentsInBatchAndEnqueuesAcceptanceNotifications() {
+    void rejectedStatusesUpdatePaymentsInOneBatchBeforeSendingNotifications() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationService notificationService = mock(NotificationService.class);
         SettlementService settlementService = mock(SettlementService.class);
@@ -144,39 +129,69 @@ class PaymentTransactionProcessorServiceTest {
                 settlementService,
                 traceRecorder
         );
-        PaymentTransaction firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
-        PaymentTransaction secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
+        PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1");
+        PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2");
+        when(paymentTransactionRepository.findById("E2E-1")).thenReturn(java.util.Optional.of(firstPayment));
+        when(paymentTransactionRepository.findById("E2E-2")).thenReturn(java.util.Optional.of(secondPayment));
 
-        service.processTransactionBatch(PaymentBatch.builder()
-                .transactions(List.of(firstPayment, secondPayment))
-                .build());
+        service.processStatusReports(List.of(
+                StatusReportCommand.builder()
+                        .originalPaymentId("E2E-1")
+                        .status(PaymentStatus.REJECTED)
+                        .build(),
+                StatusReportCommand.builder()
+                        .originalPaymentId("E2E-2")
+                        .status(PaymentStatus.REJECTED)
+                        .build()
+        ));
+
+        verify(paymentTransactionRepository).updateStatuses(
+                List.of("E2E-1", "E2E-2"),
+                PaymentStatus.REJECTED
+        );
+        verify(notificationService).sendRejectionNotifications(List.of(firstPayment, secondPayment));
+    }
+
+    @Test
+    void transactionRequestSavesPaymentsAndEnqueuesAcceptanceNotifications() {
+        PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
+        NotificationService notificationService = mock(NotificationService.class);
+        SettlementService settlementService = mock(SettlementService.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
+                paymentTransactionRepository,
+                notificationService,
+                settlementService,
+                traceRecorder
+        );
+        PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
+        PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
+
+        service.processTransactions(List.of(firstPayment, secondPayment));
 
         verify(paymentTransactionRepository).saveTransactions(
                 List.of(firstPayment, secondPayment),
                 PaymentStatus.WAITING_ACCEPTANCE
         );
-        verify(paymentTransactionRepository, never())
-                .saveTransaction(any(PaymentTransaction.class), any(PaymentStatus.class));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
-        verify(notificationService).sendAcceptanceRequest("20000001", firstPayment);
-        verify(notificationService).sendAcceptanceRequest("20000002", secondPayment);
+        verify(notificationService).sendAcceptanceRequests(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
 
-    private static PaymentTransaction paymentTransaction() {
+    private static PaymentTransactionCommand paymentTransaction() {
         return paymentTransaction("E2E-1");
     }
 
-    private static PaymentTransaction paymentTransaction(String paymentId) {
+    private static PaymentTransactionCommand paymentTransaction(String paymentId) {
         return paymentTransaction(paymentId, "10000001", "20000001");
     }
 
-    private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
-        return PaymentTransaction.builder()
+    private static PaymentTransactionCommand paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
+        return PaymentTransactionCommand.builder()
                 .paymentId(paymentId)
-                .amount(BigDecimal.TEN)
+                .amountCents(1000L)
                 .sender(party(senderBankCode))
                 .receiver(party(receiverBankCode))
                 .build();
@@ -186,8 +201,8 @@ class PaymentTransactionProcessorServiceTest {
         return Party.builder()
                 .account(BankAccount.builder()
                         .bankCode(bankCode)
-                        .number(1L)
-                        .branch(1)
+                        .number("1")
+                        .branch("1")
                         .type(BankAccountType.CHECKING)
                         .build())
                 .build();

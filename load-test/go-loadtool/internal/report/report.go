@@ -55,7 +55,6 @@ type LatencySummary struct {
 
 type DiagnosticSummary struct {
 	ResultCollection ResultCollectionSummary `json:"result_collection"`
-	Resources        *ResourceSummary        `json:"resources,omitempty"`
 }
 
 type ResultCollectionSummary struct {
@@ -64,33 +63,11 @@ type ResultCollectionSummary struct {
 	ConfirmedTotalRate   float64 `json:"confirmed_total_per_second"`
 }
 
-type ResourceSummary struct {
-	Containers map[string]ContainerResourceSummary `json:"containers"`
-}
-
-type ContainerResourceSummary struct {
-	Samples int                    `json:"samples"`
-	CPU     *CPUResourceSummary    `json:"cpu,omitempty"`
-	Memory  *MemoryResourceSummary `json:"memory,omitempty"`
-}
-
-type CPUResourceSummary struct {
-	AvgPercent   float64  `json:"avg_percent"`
-	LimitPercent *float64 `json:"limit_percent,omitempty"`
-}
-
-type MemoryResourceSummary struct {
-	AvgMB             float64 `json:"avg_mb"`
-	LimitMB           float64 `json:"limit_mb"`
-	AvgOfLimitPercent float64 `json:"avg_of_limit_percent"`
-}
-
 type Options struct {
 	SLAThresholdMs int64
 	TargetTxRate   int
 	Warmup         time.Duration
 	Duration       time.Duration
-	SystemStats    []SystemStatSample
 }
 
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
@@ -126,7 +103,7 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 			summary.Transactions.Confirmation.NotConfirmed++
 			continue
 		}
-		durationMs := float64(receivedAt-start.CreatedAtNS) / 1_000_000
+		durationMs := float64(receivedAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
 		summary.Transactions.Confirmation.Confirmed++
 		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
@@ -145,7 +122,6 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	}
 	summary.Diagnostics.ResultCollection.ConfirmedAfterActive = summary.Transactions.Confirmation.Confirmed - confirmedDuringActive
 	summary.Diagnostics.ResultCollection.ConfirmedTotal = summary.Transactions.Confirmation.Confirmed
-	summary.Diagnostics.Resources = buildResourceSummary(starts, options)
 
 	sort.Float64s(durations)
 	summary.LatencyMs.P50 = percentile(durations, 0.50)
@@ -175,10 +151,10 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 	}
 	measured := make([]events.Start, 0, len(starts))
 	for _, start := range starts {
-		if start.CreatedAtNS < windowStart {
+		if requestStartedAt(start) < windowStart {
 			continue
 		}
-		if windowEnd > 0 && start.CreatedAtNS >= windowEnd {
+		if windowEnd > 0 && requestStartedAt(start) >= windowEnd {
 			continue
 		}
 		measured = append(measured, start)
@@ -187,13 +163,21 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 }
 
 func firstStartedAt(starts []events.Start) int64 {
-	minStartedAt := starts[0].CreatedAtNS
+	minStartedAt := requestStartedAt(starts[0])
 	for _, start := range starts[1:] {
-		if start.CreatedAtNS < minStartedAt {
-			minStartedAt = start.CreatedAtNS
+		startedAt := requestStartedAt(start)
+		if startedAt < minStartedAt {
+			minStartedAt = startedAt
 		}
 	}
 	return minStartedAt
+}
+
+func requestStartedAt(start events.Start) int64 {
+	if start.RequestStartedAtNS != 0 {
+		return start.RequestStartedAtNS
+	}
+	return start.CreatedAtNS
 }
 
 type confirmationKey struct {

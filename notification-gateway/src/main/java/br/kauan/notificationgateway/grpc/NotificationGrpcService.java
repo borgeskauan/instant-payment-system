@@ -1,6 +1,6 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.grpc.proto.NotificationBatch;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.StreamRequest;
 import io.grpc.stub.ServerCallStreamObserver;
@@ -20,7 +20,7 @@ import net.devh.boot.grpc.server.service.GrpcService;
  * </ol>
  *
  * <p>The Kafka consumer drives all outbound messages via
- * {@link SubscriberRegistry#dispatch(String, String)}.
+ * {@link SubscriberRegistry#dispatch(String, byte[])}.
  */
 @Slf4j
 @GrpcService
@@ -30,7 +30,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
     private final SubscriberRegistry subscriberRegistry;
 
     @Override
-    public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
+    public void streamNotifications(StreamRequest request, StreamObserver<NotificationBatch> responseObserver) {
         String ispb = request.getIspb();
 
         if (ispb == null || ispb.isBlank()) {
@@ -47,7 +47,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
         // Cast to ServerCallStreamObserver to register a cancellation callback.
         // This ensures the registry is cleaned up even if the client disconnects
         // without sending an explicit cancel (e.g. process crash, network drop).
-        if (responseObserver instanceof ServerCallStreamObserver<Notification> serverObserver) {
+        if (responseObserver instanceof ServerCallStreamObserver<NotificationBatch> serverObserver) {
             serverObserver.setOnCancelHandler(() -> {
                 log.info("Client cancelled stream — ISPB: {} (isCancelled: {})", ispb, serverObserver.isCancelled());
                 subscriberRegistry.unregister(ispb, responseObserver);

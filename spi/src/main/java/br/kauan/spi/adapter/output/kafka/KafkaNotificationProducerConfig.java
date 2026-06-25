@@ -25,6 +25,7 @@ public class KafkaNotificationProducerConfig {
         config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        config.put("enable.metrics.push", false);
         
         // Performance tuning for notifications
         config.put(ProducerConfig.ACKS_CONFIG, "1"); // Leader acknowledgment only for lower latency

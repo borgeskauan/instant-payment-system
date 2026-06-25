@@ -1,8 +1,10 @@
 package br.kauan.spi.domain.services.notification;
 
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Slf4j
 @Service
@@ -14,15 +16,15 @@ public class NotificationService {
         this.notificationOrchestrator = notificationOrchestrator;
     }
 
-    public void sendConfirmationNotification(PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendConfirmationNotification(paymentTransaction);
+    public void sendConfirmationNotifications(List<PaymentTransactionCommand> paymentTransactions) {
+        notificationOrchestrator.sendConfirmationNotifications(paymentTransactions);
     }
 
-    public void sendRejectionNotification(PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendRejectionNotification(paymentTransaction);
+    public void sendRejectionNotifications(List<PaymentTransactionCommand> paymentTransactions) {
+        notificationOrchestrator.sendRejectionNotifications(paymentTransactions);
     }
 
-    public void sendAcceptanceRequest(String ispb, PaymentTransaction paymentTransaction) {
-        notificationOrchestrator.sendAcceptanceRequest(ispb, paymentTransaction);
+    public void sendAcceptanceRequests(List<PaymentTransactionCommand> paymentTransactions) {
+        notificationOrchestrator.sendAcceptanceRequests(paymentTransactions);
     }
 }

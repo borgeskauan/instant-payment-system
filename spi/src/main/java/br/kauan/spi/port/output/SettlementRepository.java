@@ -1,14 +1,19 @@
 package br.kauan.spi.port.output;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 
 import java.util.List;
-import java.util.Optional;
 
 public interface SettlementRepository {
 
-    Optional<PaymentTransaction> settleAcceptedPayment(String paymentId, PaymentStatus currentStatus, PaymentStatus settledStatus);
-
-    List<PaymentTransaction> settleAcceptedPayments(List<String> paymentIds, PaymentStatus currentStatus, PaymentStatus settledStatus);
+    /**
+     * Settles waiting payments that can be debited and also returns payments that were already settled.
+     * Returning already-settled payments makes status notification replay idempotent.
+     */
+    List<PaymentTransactionCommand> settleAcceptedPaymentsIdempotently(
+            List<String> paymentIds,
+            PaymentStatus currentStatus,
+            PaymentStatus settledStatus
+    );
 }

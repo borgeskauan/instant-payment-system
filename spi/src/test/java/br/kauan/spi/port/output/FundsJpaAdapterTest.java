@@ -3,8 +3,6 @@ package br.kauan.spi.port.output;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.math.BigDecimal;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,13 +24,13 @@ class FundsJpaAdapterTest {
                 eq("10000001")
         )).thenReturn(0);
 
-        adapter.provisionAccount("10000001", BigDecimal.valueOf(160), true);
+        adapter.provisionAccount("10000001", 16000L, true);
 
         verify(jdbcTemplate, times(16)).update(
                 org.mockito.ArgumentMatchers.contains("DO UPDATE"),
                 eq("10000001"),
                 any(Integer.class),
-                eq(BigDecimal.valueOf(10).setScale(2))
+                eq(1000L)
         );
     }
 
@@ -46,13 +44,13 @@ class FundsJpaAdapterTest {
                 eq("10000001")
         )).thenReturn(16);
 
-        adapter.provisionAccount("10000001", BigDecimal.valueOf(160), true);
+        adapter.provisionAccount("10000001", 16000L, true);
 
         verify(jdbcTemplate, times(16)).update(
                 org.mockito.ArgumentMatchers.contains("DO UPDATE"),
                 eq("10000001"),
                 any(Integer.class),
-                eq(BigDecimal.valueOf(10).setScale(2))
+                eq(1000L)
         );
     }
 
@@ -66,13 +64,13 @@ class FundsJpaAdapterTest {
                 eq("10000001")
         )).thenReturn(16);
 
-        adapter.provisionAccount("10000001", BigDecimal.TEN, false);
+        adapter.provisionAccount("10000001", 1000L, false);
 
         verify(jdbcTemplate, times(16)).update(
                 org.mockito.ArgumentMatchers.contains("DO NOTHING"),
                 eq("10000001"),
                 any(Integer.class),
-                any(BigDecimal.class)
+                any(Long.class)
         );
     }
 
@@ -87,13 +85,13 @@ class FundsJpaAdapterTest {
         )).thenReturn(16);
         when(jdbcTemplate.queryForObject(
                 org.mockito.ArgumentMatchers.contains("SUM"),
-                eq(BigDecimal.class),
+                eq(Long.class),
                 eq("10000001")
-        )).thenReturn(BigDecimal.TEN);
+        )).thenReturn(1000L);
 
-        BigDecimal balance = adapter.getAvailableFunds("10000001");
+        long balance = adapter.getAvailableFundsCents("10000001");
 
-        assertEquals(BigDecimal.TEN, balance);
+        assertEquals(1000L, balance);
     }
 
     @Test
@@ -106,6 +104,6 @@ class FundsJpaAdapterTest {
                 eq("10000001")
         )).thenReturn(0);
 
-        assertThrows(IllegalStateException.class, () -> adapter.getAvailableFunds("10000001"));
+        assertThrows(IllegalStateException.class, () -> adapter.getAvailableFundsCents("10000001"));
     }
 }

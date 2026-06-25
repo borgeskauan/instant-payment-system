@@ -10,12 +10,13 @@ import (
 )
 
 type Start struct {
-	EndToEndID      string
-	PayerISPB       string
-	ReceiverISPB    string
-	CreatedAtNS     int64
-	RequestDoneAtNS int64
-	HTTPStatus      int
+	EndToEndID         string
+	PayerISPB          string
+	ReceiverISPB       string
+	CreatedAtNS        int64
+	RequestStartedAtNS int64
+	RequestDoneAtNS    int64
+	HTTPStatus         int
 }
 
 type Notification struct {
@@ -44,7 +45,7 @@ func NewStartWriter(path string) (*StartWriter, error) {
 	}
 	buffer := bufio.NewWriterSize(file, 4*1024*1024)
 	writer := csv.NewWriter(buffer)
-	if err := writer.Write([]string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_done_at_ns", "http_status"}); err != nil {
+	if err := writer.Write([]string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status"}); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -57,6 +58,7 @@ func (w *StartWriter) Write(row Start) error {
 		row.PayerISPB,
 		row.ReceiverISPB,
 		strconv.FormatInt(row.CreatedAtNS, 10),
+		strconv.FormatInt(row.RequestStartedAtNS, 10),
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
 	})
@@ -176,28 +178,40 @@ func ReadNotifications(path string) ([]Notification, error) {
 }
 
 func parseStart(record []string) (Start, error) {
-	if len(record) != 6 {
-		return Start{}, fmt.Errorf("start record has %d columns, want 6", len(record))
+	if len(record) != 6 && len(record) != 7 {
+		return Start{}, fmt.Errorf("start record has %d columns, want 6 or 7", len(record))
 	}
 	createdAtNS, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
 		return Start{}, err
 	}
-	requestDoneAtNS, err := strconv.ParseInt(record[4], 10, 64)
+	requestStartedAtNS := createdAtNS
+	requestDoneColumn := 4
+	statusColumn := 5
+	if len(record) == 7 {
+		requestStartedAtNS, err = strconv.ParseInt(record[4], 10, 64)
+		if err != nil {
+			return Start{}, err
+		}
+		requestDoneColumn = 5
+		statusColumn = 6
+	}
+	requestDoneAtNS, err := strconv.ParseInt(record[requestDoneColumn], 10, 64)
 	if err != nil {
 		return Start{}, err
 	}
-	status, err := strconv.Atoi(record[5])
+	status, err := strconv.Atoi(record[statusColumn])
 	if err != nil {
 		return Start{}, err
 	}
 	return Start{
-		EndToEndID:      record[0],
-		PayerISPB:       record[1],
-		ReceiverISPB:    record[2],
-		CreatedAtNS:     createdAtNS,
-		RequestDoneAtNS: requestDoneAtNS,
-		HTTPStatus:      status,
+		EndToEndID:         record[0],
+		PayerISPB:          record[1],
+		ReceiverISPB:       record[2],
+		CreatedAtNS:        createdAtNS,
+		RequestStartedAtNS: requestStartedAtNS,
+		RequestDoneAtNS:    requestDoneAtNS,
+		HTTPStatus:         status,
 	}, nil
 }
 

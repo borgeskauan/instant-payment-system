@@ -1,98 +1,66 @@
 package br.kauan.spi.domain.services.notification;
 
-import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
-import br.kauan.spi.domain.entity.commons.BatchDetails;
-import br.kauan.spi.domain.entity.status.StatusBatch;
-import br.kauan.spi.domain.entity.status.StatusReport;
-import br.kauan.spi.domain.entity.transfer.PaymentBatch;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
 @Component
 public class NotificationStorage {
 
-    private final StatusReportMapper statusReportMapper;
-    private final PaymentTransactionMapper paymentTransactionMapper;
+    private final NotificationPayloadFactory payloadFactory;
     private final NotificationContentSerializer contentSerializer;
     private final NotificationPublisher notificationPublisher;
 
     public NotificationStorage(
-            StatusReportMapper statusReportMapper,
-            PaymentTransactionMapper paymentTransactionMapper,
+            NotificationPayloadFactory payloadFactory,
             NotificationPublisher notificationPublisher
     ) {
-        this.statusReportMapper = statusReportMapper;
-        this.paymentTransactionMapper = paymentTransactionMapper;
+        this.payloadFactory = payloadFactory;
         this.notificationPublisher = notificationPublisher;
         this.contentSerializer = new NotificationContentSerializer();
     }
 
-    /**
-     * Publishes a status notification directly to Kafka.
-     * No longer stores in-memory - immediately publishes to psp-notifications.
-     */
-    public void addStatusNotification(String ispb, StatusReport statusReport) {
+    public void addStatusNotifications(String ispb, List<StatusReportCommand> statusReports) {
         log.debug("Publishing status notification for ISPB: {}", ispb);
-        
-        FIToFIPaymentStatusReport statusBatchNotification = 
-                createStatusBatchNotification(Collections.singletonList(statusReport));
-        
-        if (statusBatchNotification != null) {
-            contentSerializer.serialize(statusBatchNotification)
+
+        Object statusNotification = createStatusNotification(statusReports);
+
+        if (statusNotification != null) {
+            contentSerializer.serialize(statusNotification)
                     .ifPresent(json -> notificationPublisher.publishNotification(ispb, json));
         }
     }
 
-    /**
-     * Publishes a transaction notification directly to Kafka.
-     * No longer stores in-memory - immediately publishes to psp-notifications.
-     */
-    public void addTransactionNotification(String ispb, PaymentTransaction paymentTransaction) {
+    public void addTransactionNotifications(String ispb, List<PaymentTransactionCommand> paymentTransactions) {
         log.debug("Publishing transaction notification for ISPB: {}", ispb);
-        
-        FIToFICustomerCreditTransfer paymentBatchNotification = 
-                createPaymentBatchNotification(Collections.singletonList(paymentTransaction));
-        
-        if (paymentBatchNotification != null) {
-            contentSerializer.serialize(paymentBatchNotification)
+
+        Object paymentNotification = createPaymentNotification(paymentTransactions);
+
+        if (paymentNotification != null) {
+            contentSerializer.serialize(paymentNotification)
                     .ifPresent(json -> notificationPublisher.publishNotification(ispb, json));
         }
     }
 
-    private FIToFIPaymentStatusReport createStatusBatchNotification(List<StatusReport> statusReports) {
+    private Object createStatusNotification(List<StatusReportCommand> statusReports) {
         if (statusReports.isEmpty()) {
             return null;
         }
 
-        BatchDetails batchDetails = BatchDetails.of(statusReports.size());
-        StatusBatch statusBatch = StatusBatch.builder()
-                .batchDetails(batchDetails)
-                .statusReports(statusReports)
-                .build();
-
-        return statusReportMapper.toRegulatoryReport(statusBatch);
+        return payloadFactory.statusNotification(statusReports);
     }
 
-    private FIToFICustomerCreditTransfer createPaymentBatchNotification(List<PaymentTransaction> transactions) {
+    private Object createPaymentNotification(List<PaymentTransactionCommand> transactions) {
         if (transactions.isEmpty()) {
             return null;
         }
 
-        BatchDetails batchDetails = BatchDetails.of(transactions.size());
-        PaymentBatch paymentBatch = PaymentBatch.builder()
-                .batchDetails(batchDetails)
-                .transactions(transactions)
-                .build();
-
-        return paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
+        return payloadFactory.paymentNotification(transactions);
     }
 }

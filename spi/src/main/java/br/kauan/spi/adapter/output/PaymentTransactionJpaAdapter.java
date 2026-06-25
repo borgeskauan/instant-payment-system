@@ -2,7 +2,7 @@ package br.kauan.spi.adapter.output;
 
 import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -16,11 +16,17 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
     private static final String INSERT_PAYMENT_TRANSACTION_SQL = """
             INSERT INTO payment_transaction_entity (
                 payment_id,
-                amount,
+                amount_cents,
                 status,
                 sender_bank_code,
                 receiver_bank_code
             ) VALUES (?, ?, ?, ?, ?)
+            """;
+
+    private static final String UPDATE_PAYMENT_STATUS_SQL = """
+            UPDATE payment_transaction_entity
+            SET status = ?
+            WHERE payment_id = ?
             """;
 
     private final PaymentTransactionJpaClient paymentTransactionJpaClient;
@@ -38,12 +44,7 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
     }
 
     @Override
-    public void saveTransaction(PaymentTransaction paymentTransaction, PaymentStatus paymentStatus) {
-        saveTransactions(List.of(paymentTransaction), paymentStatus);
-    }
-
-    @Override
-    public void saveTransactions(List<PaymentTransaction> paymentTransactions, PaymentStatus paymentStatus) {
+    public void saveTransactions(List<PaymentTransactionCommand> paymentTransactions, PaymentStatus paymentStatus) {
         if (paymentTransactions.isEmpty()) {
             return;
         }
@@ -54,7 +55,7 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
                 paymentTransactions.size(),
                 (statement, paymentTransaction) -> {
                     statement.setString(1, paymentTransaction.getPaymentId());
-                    statement.setBigDecimal(2, paymentTransaction.getAmount());
+                    statement.setLong(2, paymentTransaction.getAmountCents());
                     statement.setString(3, paymentStatus.name());
                     statement.setString(4, Utils.getBankCode(paymentTransaction.getSender()));
                     statement.setString(5, Utils.getBankCode(paymentTransaction.getReceiver()));
@@ -63,15 +64,32 @@ public class PaymentTransactionJpaAdapter implements PaymentTransactionRepositor
     }
 
     @Override
-    public void updateStatus(String paymentId, PaymentStatus paymentStatus) {
-        int updatedRows = paymentTransactionJpaClient.updateStatus(paymentId, paymentStatus.name());
-        if (updatedRows == 0) {
-            throw new IllegalStateException("Payment transaction not found: " + paymentId);
+    public void updateStatuses(List<String> paymentIds, PaymentStatus paymentStatus) {
+        if (paymentIds.isEmpty()) {
+            return;
+        }
+
+        int[][] updatedRows = jdbcTemplate.batchUpdate(
+                UPDATE_PAYMENT_STATUS_SQL,
+                paymentIds,
+                paymentIds.size(),
+                (statement, paymentId) -> {
+                    statement.setString(1, paymentStatus.name());
+                    statement.setString(2, paymentId);
+                }
+        );
+
+        for (int batchIndex = 0; batchIndex < updatedRows.length; batchIndex++) {
+            for (int updateCount : updatedRows[batchIndex]) {
+                if (updateCount == 0) {
+                    throw new IllegalStateException("Payment transaction not found while updating status");
+                }
+            }
         }
     }
 
     @Override
-    public Optional<PaymentTransaction> findById(String originalPaymentId) {
+    public Optional<PaymentTransactionCommand> findById(String originalPaymentId) {
         return paymentTransactionJpaClient.findById(originalPaymentId).map(repositoryMapper::toDomain);
     }
 }

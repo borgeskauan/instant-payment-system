@@ -15,7 +15,7 @@ import static org.mockito.Mockito.when;
 class SettlementJdbcAdapterSqlShapeTest {
 
     @Test
-    void settleAcceptedPaymentsUsesStableArraySqlForBatchInputs() {
+    void settleAcceptedPaymentsIdempotentlyUsesStableArraySqlForBatchInputs() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         SettlementJdbcAdapter adapter = new SettlementJdbcAdapter(
                 jdbcTemplate,
@@ -25,7 +25,7 @@ class SettlementJdbcAdapterSqlShapeTest {
                 .thenThrow(new EmptyResultDataAccessException(1));
 
         try {
-            adapter.settleAcceptedPayments(
+            adapter.settleAcceptedPaymentsIdempotently(
                     java.util.List.of("E2E-1", "E2E-2", "E2E-3"),
                     PaymentStatus.WAITING_ACCEPTANCE,
                     PaymentStatus.ACCEPTED_AND_SETTLED

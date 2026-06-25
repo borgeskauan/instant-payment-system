@@ -32,7 +32,7 @@ public class NotificationKafkaConsumer {
             containerFactory = "notificationKafkaListenerContainerFactory"
     )
     public void consume(
-            @Payload String payload,
+            @Payload byte[] payload,
             @Header(KafkaHeaders.RECEIVED_KEY) String ispb,
             @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
             @Header(KafkaHeaders.OFFSET) long offset
