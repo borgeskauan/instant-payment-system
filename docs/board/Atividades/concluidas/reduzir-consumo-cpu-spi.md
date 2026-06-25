@@ -1,6 +1,6 @@
 # Reduzir o consumo de CPU do container SPI
 
-- [ ] Reduzir o consumo de CPU do container SPI
+- [x] Reduzir o consumo de CPU do container SPI
 
 **Por que existe**
 
@@ -18,26 +18,20 @@ O objetivo é identificar a causa principal do consumo de CPU do SPI e reduzir e
 - [x] Registrados resultados anteriores em `load-test/results/`.
 - [x] Documentado o fluxo Pix em `docs/PIX_FLOW_LOGGING_GUIDE.md`.
 
-**O que falta**
+**O que foi concluído**
 
-- [ ] Reproduzir o cenário em que o SPI consome CPU demais.
-- [ ] Registrar baseline antes de alterar código:
-  - [ ] CPU do container SPI.
-  - [ ] Memória do container SPI.
-  - [ ] Throughput do teste.
-  - [ ] Latência do fluxo.
-  - [ ] Taxa de erro.
-- [ ] Identificar qual parte do fluxo está ativa durante o pico de CPU.
-- [ ] Adicionar ou validar métricas com Micrometer se ainda não houver visibilidade suficiente.
-- [ ] Investigar hipóteses iniciais:
-  - [ ] Long polling ou loops de consulta mantendo CPU ocupada.
-  - [ ] Kafka consumer/processamento sem controle adequado de ritmo.
-  - [ ] Logging excessivo no caminho quente do fluxo Pix.
-  - [ ] Configuração de threads do servidor web ou runtime Java.
-  - [ ] Serialização/conversão de mensagens consumindo CPU demais.
-  - [ ] Limites de CPU do container amplificando o problema.
-- [ ] Aplicar uma otimização pequena por vez.
-- [ ] Reexecutar o mesmo teste e comparar com o baseline.
+- [x] Reproduzido o cenário em que o SPI consumia CPU demais.
+- [x] Registrado baseline antes das alterações:
+  - [x] CPU do container SPI.
+  - [x] Memória do container SPI.
+  - [x] Throughput do teste.
+  - [x] Latência do fluxo.
+  - [x] Taxa de erro.
+- [x] Identificada a participação de Kafka, SPI, PostgreSQL e notification-gateway no caminho quente.
+- [x] Analisados traces, JFRs e resultados em `load-test/results/`.
+- [x] Aplicadas otimizações incrementais no SPI e no fluxo Kafka/SPI.
+- [x] Reexecutados testes de carga e comparados com os baselines.
+- [x] Validado o novo fluxo com o teste `invariant-kafka-event-one-transaction-15m`.
 
 **Referências**
 

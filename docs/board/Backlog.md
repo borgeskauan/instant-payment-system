@@ -40,19 +40,6 @@ DICT e SPI são sistemas distintos na infraestrutura real do Banco Central. Hoje
 - [ ] Adicionar o DICT como serviço separado no ambiente local.
 - [ ] Fazer o SPI chamar o DICT por HTTP em vez de chamada em processo.
 
-### Padronizar PostgreSQL nos ambientes
-
-**Por que existe**
-
-O SPI ainda tem configuração de H2 em `application.yml`, apesar de o projeto já ter PostgreSQL no `docker-compose.yml`. Usar PostgreSQL de forma consistente reduz diferença entre ambiente local, testes e execução real.
-
-**Tarefas**
-
-- [ ] Remover ou isolar a configuração H2 do SPI.
-- [ ] Configurar PostgreSQL como banco padrão do SPI.
-- [ ] Habilitar e revisar migrations com Flyway.
-- [ ] Garantir que o ambiente local suba com PostgreSQL sem passos manuais extras.
-
 ### Contrato de preview e execução no PSP
 
 **Por que existe**
@@ -92,22 +79,54 @@ Isso ajuda a medir o impacto de uma tabela operacional estreita, mas não resolv
 
 **Por que existe**
 
-Hoje o `kafka-producer` trata o corpo HTTP como bytes opacos e publica o payload recebido diretamente nos tópicos internos do SPI. Isso preserva exatamente a mensagem PACS enviada pelo PSP, mas permite dois níveis de lote dentro do sistema: o lote do Kafka consumer e o lote semântico da própria PACS (`CdtTrfTxInf` no `pacs.008` e `TxInfAndSts` no `pacs.002`).
+O `kafka-producer` já reconhece `pacs.008` e `pacs.002` na borda HTTP e publica nos tópicos internos do SPI um registro Kafka por transação/status. O teste de carga `invariant-kafka-event-one-transaction-15m` validou essa invariante no caminho de load test direto para o Kafka producer.
 
-Para produção, a fronteira interna deve ser mais explícita: o sistema pode aceitar mensagens PACS com múltiplas transações/statuses na entrada, mas os tópicos internos devem carregar uma única transação ou status por registro Kafka. Assim, `max.poll.records`, lag, particionamento, retries e tempo de processamento passam a refletir unidades reais de trabalho, evitando multiplicação escondida de carga dentro do SPI.
+Ainda falta aplicar a mesma padronização no PSP real. O PSP continua carregando o modelo antigo de lote no domínio e nos serviços (`PaymentBatch`, `StatusBatch`, `BatchDetails`, `handleTransferRequestBatch`, `handleStatusBatch`) e ainda precisa ser simplificado para tratar cada notificação PACS recebida como uma unidade lógica: uma transação ou um status por payload.
 
 **Tarefas**
 
-- [ ] Fazer o `kafka-producer` reconhecer `pacs.008` e `pacs.002` na borda HTTP.
-- [ ] Dividir `pacs.008` com múltiplos `CdtTrfTxInf` em um registro Kafka por transação.
-- [ ] Dividir `pacs.002` com múltiplos `TxInfAndSts` em um registro Kafka por status.
-- [ ] Garantir que cada payload interno publicado continue sendo uma PACS válida com apenas um item lógico.
+- [x] Fazer o `kafka-producer` reconhecer `pacs.008` e `pacs.002` na borda HTTP.
+- [x] Dividir `pacs.008` com múltiplos `CdtTrfTxInf` em um registro Kafka por transação.
+- [x] Dividir `pacs.002` com múltiplos `TxInfAndSts` em um registro Kafka por status.
+- [x] Publicar nos tópicos internos do SPI protobufs internos com uma única unidade lógica por registro Kafka.
+- [x] Atualizar o SPI para consumir os protobufs internos e manter a PACS isolada na borda.
+- [x] Atualizar o load tool para preservar PACS na entrada, mas validar o fluxo interno com um evento Kafka por transação/status.
+- [x] Medir impacto em throughput e latência no teste `invariant-kafka-event-one-transaction-15m`.
+- [ ] Atualizar o cliente gRPC do PSP para o contrato `NotificationBatch` do notification-gateway e iterar todos os payloads recebidos.
+- [ ] Remover o modelo de lote do domínio do PSP (`PaymentBatch`, `StatusBatch`, `BatchDetails`).
+- [ ] Trocar APIs internas do PSP para processar unidade lógica: `handleTransferRequest(PaymentTransaction)` e `handleStatus(StatusReport)`.
+- [ ] Manter PACS apenas na borda de entrada/saída do PSP, separada dos DTOs internos.
+- [ ] Fazer o PSP rejeitar ou sinalizar payload PACS recebido com mais de uma transação/status, se esse caso chegar pela notificação.
+- [ ] Atualizar testes do PSP para validar a regra: uma notificação PACS recebida = uma transação/status processado.
 - [ ] Definir como ajustar ou preservar metadados do `GrpHdr`, como `MsgId`, `NbOfTxs`, timestamps e identificadores de lote original.
 - [ ] Adicionar metadados de rastreabilidade: mensagem original, índice do item, tamanho do lote original, ISPB de origem e hash do payload original.
 - [ ] Definir comportamento de falha para publicação parcial: falhar a requisição inteira ou registrar compensação/reprocessamento.
-- [ ] Fazer o SPI rejeitar ou sinalizar payload interno que contenha mais de um item lógico.
-- [ ] Atualizar testes de contrato e carga para validar a regra: um registro Kafka = uma transação/status.
-- [ ] Medir impacto em throughput, latência, tamanho dos tópicos e consumo de CPU antes de tornar o padrão definitivo.
+
+### Observabilidade operacional do fluxo Pix
+
+**Por que existe**
+
+O projeto já tem testes de carga, JFR, traces CSV e métricas de infraestrutura no ambiente local, mas ainda falta uma visão operacional clara para responder rapidamente se o sistema está saudável, se houve degradação e onde está o gargalo. A observabilidade precisa cobrir tanto saúde técnica dos serviços quanto o fluxo de negócio Pix ponta a ponta.
+
+As metas principais são: verificar saúde da aplicação enquanto ela roda, acompanhar throughput e latência do fluxo, detectar degradação de SLA, identificar gargalos entre Kafka, SPI, PostgreSQL e notification-gateway, e comparar o comportamento antes/depois de mudanças.
+
+**Tarefas**
+
+- [ ] Definir métricas de saúde por serviço: container/pod up, restarts, readiness/liveness, CPU, memória, CPU throttling, JVM heap, direct memory e GC.
+- [ ] Definir métricas Kafka: consumer lag por tópico/grupo/partição, records consumed/sec, records produced/sec, producer latency, retries, errors e rebalances.
+- [ ] Definir métricas do SPI: requests consumidas/sec, statuses recebidos/sec, settlements/sec, notificações enfileiradas/sec, latência de processamento, erros e tempo de queries no PostgreSQL.
+- [ ] Definir métricas do notification-gateway: subscribers ativos, notificações/sec, batches/sec, tamanho dos batches, flush por tamanho/tempo, erros gRPC e streams cancelados.
+- [ ] Definir métricas de banco: conexões ativas, pool Hikari, query latency, locks, CPU, I/O e slow queries.
+- [ ] Definir métricas de negócio/SLA: transações iniciadas, aceitas, confirmadas, não confirmadas, dentro/fora do SLA, p50, p95, p99 e máximo.
+- [ ] Criar dashboard de saúde geral do ambiente: serviços, containers/pods, CPU, memória, restarts, throttling, Kafka e PostgreSQL.
+- [ ] Criar dashboard do fluxo Pix ponta a ponta: incoming, consumed, settled, outbound status, notifications e confirmations.
+- [ ] Criar dashboard de latência por etapa: `http_done -> request_consumed`, `request_consumed -> pacs008_received`, `pacs002_sent -> confirmation_received` e latência end-to-end.
+- [ ] Criar dashboard de Kafka: lag, throughput, producer/consumer rate, partitions e rebalances.
+- [ ] Criar dashboard de cold start: tempo até readiness, tempo até primeiro consumo, lag inicial, drain rate e tempo até estabilizar p95/p99.
+- [ ] Definir alertas mínimos para degradação: container down, restart loop, CPU throttling alto, consumer lag crescendo, p95/p99 acima do alvo, transações não confirmadas e erros Kafka/gRPC/DB.
+- [ ] Padronizar labels/dimensões das métricas: serviço, tópico, consumer group, partition, ISPB, tipo de evento e versão/build.
+- [ ] Decidir quais métricas vêm de Micrometer/Actuator, Kafka exporter, Postgres exporter, cAdvisor/Node exporter, JFR ou traces próprios.
+- [ ] Integrar a observabilidade aos testes de carga para comparar baseline vs mudança: throughput sustentado, p95/p99, lag, CPU por transação e memória por transação.
 
 ### Infraestrutura e deploy
 
@@ -214,3 +233,8 @@ O projeto tem documentação espalhada sobre descoberta, fluxo Pix, testes de ca
 ### Infraestrutura
 
 - [x] Implementar limite de recursos no teste de load balancer: CPU e RAM.
+- [x] Padronizar PostgreSQL nos ambientes:
+  - [x] Remover ou isolar a configuração H2 do SPI.
+  - [x] Configurar PostgreSQL como banco padrão do SPI.
+  - [x] Habilitar e revisar migrations com Flyway.
+  - [x] Garantir que o ambiente local suba com PostgreSQL sem passos manuais extras.
