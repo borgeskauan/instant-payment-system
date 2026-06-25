@@ -1,29 +1,35 @@
 package br.kauan.spi.domain.services.notification;
 
-import br.kauan.spi.adapter.input.dtos.pacs.CodeMapping;
-import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReport;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class NotificationStorageTest {
 
     @Test
-    void transactionNotificationsPublishOnePacs008PayloadWithAllPayments() {
+    void storageDoesNotExposeSingleItemEntryPoints() {
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationStorage.class.getMethod("addStatusNotification", String.class, StatusReportCommand.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationStorage.class.getMethod("addTransactionNotification", String.class, PaymentTransactionCommand.class));
+    }
+
+    @Test
+    void transactionNotificationsPublishOneAcceptanceRequestPayloadWithAllPayments() {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
@@ -38,11 +44,13 @@ class NotificationStorageTest {
         assertThat(jsonCaptor.getValue())
                 .contains("\"NbOfTxs\":2")
                 .contains("\"EndToEndId\":\"E2E-1\"")
-                .contains("\"EndToEndId\":\"E2E-2\"");
+                .contains("\"EndToEndId\":\"E2E-2\"")
+                .contains("\"Id\":\"000123\"")
+                .contains("\"Issr\":\"0012\"");
     }
 
     @Test
-    void statusNotificationsPublishOnePacs002PayloadWithAllReports() {
+    void statusNotificationsPublishOneStatusPayloadWithAllReports() {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
@@ -61,24 +69,21 @@ class NotificationStorageTest {
     }
 
     private static NotificationStorage notificationStorage(NotificationPublisher publisher) {
-        CodeMapping codeMapping = new CodeMapping();
-        CommonsMapper commonsMapper = new CommonsMapper();
         return new NotificationStorage(
-                new StatusReportMapper(commonsMapper, codeMapping),
-                new PaymentTransactionMapper(commonsMapper, codeMapping),
+                new NotificationPayloadFactory(),
                 publisher
         );
     }
 
-    private static StatusReport status(String paymentId, PaymentStatus status) {
-        return StatusReport.builder()
+    private static StatusReportCommand status(String paymentId, PaymentStatus status) {
+        return StatusReportCommand.builder()
                 .originalPaymentId(paymentId)
                 .status(status)
                 .build();
     }
 
-    private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
-        return PaymentTransaction.builder()
+    private static PaymentTransactionCommand paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
+        return PaymentTransactionCommand.builder()
                 .paymentId(paymentId)
                 .amountCents(1000L)
                 .sender(party(senderBankCode))
@@ -90,8 +95,8 @@ class NotificationStorageTest {
         return Party.builder()
                 .account(BankAccount.builder()
                         .bankCode(bankCode)
-                        .number(1L)
-                        .branch(1)
+                        .number("000123")
+                        .branch("0012")
                         .type(BankAccountType.CHECKING)
                         .build())
                 .build();

@@ -22,8 +22,8 @@ public class PaymentTransactionEntity {
     private String senderPixKey;
 
     // Sender bank account fields
-    private Long senderAccountNumber;
-    private Integer senderAccountBranch;
+    private String senderAccountNumber;
+    private String senderAccountBranch;
     private String senderAccountType;
     private String senderBankCode;
 
@@ -33,8 +33,8 @@ public class PaymentTransactionEntity {
     private String receiverPixKey;
 
     // Receiver bank account fields
-    private Long receiverAccountNumber;
-    private Integer receiverAccountBranch;
+    private String receiverAccountNumber;
+    private String receiverAccountBranch;
     private String receiverAccountType;
     private String receiverBankCode;
 }

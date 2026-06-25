@@ -1,10 +1,12 @@
 package br.kauan.spi.port.input;
 
-import br.kauan.spi.domain.entity.status.StatusBatch;
-import br.kauan.spi.domain.entity.transfer.PaymentBatch;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+
+import java.util.List;
 
 public interface PaymentTransactionProcessorUseCase {
-    void processTransactionBatch(PaymentBatch transaction);
+    void processTransactions(List<PaymentTransactionCommand> transactions);
 
-    void processStatusBatch(StatusBatch statusBatch);
+    void processStatusReports(List<StatusReportCommand> statusReports);
 }

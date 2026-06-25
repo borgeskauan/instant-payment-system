@@ -5,7 +5,7 @@ import lombok.Data;
 
 @Data
 @Builder
-public class PaymentTransaction {
+public class PaymentTransactionCommand {
     private String paymentId;
     private long amountCents;
     private String currency;

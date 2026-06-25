@@ -1,37 +1,42 @@
 package br.kauan.spi.adapter.input.kafka;
 
-import br.kauan.spi.adapter.input.dtos.pacs.PaymentTransactionMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.StatusReportMapper;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs002.FIToFIPaymentStatusReport;
-import br.kauan.spi.adapter.input.dtos.pacs.pacs008.FIToFICustomerCreditTransfer;
-import br.kauan.spi.domain.entity.status.StatusBatch;
-import br.kauan.spi.domain.entity.status.StatusReport;
-import br.kauan.spi.domain.entity.transfer.PaymentBatch;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.pix.internal.v1.BankAccount;
+import br.kauan.pix.internal.v1.Party;
+import br.kauan.pix.internal.v1.PaymentRequest;
+import br.kauan.pix.internal.v1.PaymentStatus;
+import br.kauan.pix.internal.v1.PaymentStatusReport;
+import br.kauan.spi.adapter.input.kafka.internal.InternalPaymentMessageMapper;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
-import com.fasterxml.jackson.databind.ObjectReader;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentCaptor.forClass;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class PaymentMessageConsumerTest {
+
+    @Test
+    void consumerDoesNotExposeSingleRecordEntryPoints() {
+        assertThrows(NoSuchMethodException.class,
+                () -> PaymentMessageConsumer.class.getMethod("consumePaymentRequest", byte[].class));
+        assertThrows(NoSuchMethodException.class,
+                () -> PaymentMessageConsumer.class.getMethod("consumeStatusReport", byte[].class));
+    }
 
     @Test
     void paymentAndStatusListenersUseSeparateConsumerGroups() throws Exception {
@@ -49,304 +54,169 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
-    void consumeMessageParsesPaymentTransactionJsonOnlyOnce() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumePaymentRequestsProcessesInternalProtobufMessage() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        PaymentBatch paymentBatch = PaymentBatch.builder()
-                .transactions(List.of(PaymentTransaction.builder().paymentId("E2E-1").build()))
-                .build();
-        when(paymentRequestReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
-        when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
-                .thenReturn(paymentBatch);
+        PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
 
-        consumer.consumePaymentRequest("""
-                {"CdtTrfTxInf":[]}
-                """.getBytes(StandardCharsets.UTF_8));
+        consumer.consumePaymentRequests(List.of(paymentRequest("E2E-1", "000123", "0012").toByteArray()));
 
-        verify(paymentRequestReader).readValue(any(byte[].class));
-        verify(statusReportReader, never()).readValue(any(byte[].class));
-        verify(paymentTransactionMapper).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
-        verify(processor).processTransactionBatch(paymentBatch);
+        var paymentsCaptor = forClass(List.class);
+        verify(processor).processTransactions(paymentsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<PaymentTransactionCommand> payments = paymentsCaptor.getValue();
+        PaymentTransactionCommand payment = payments.getFirst();
+        assertEquals("E2E-1", payment.getPaymentId());
+        assertEquals(1234L, payment.getAmountCents());
+        assertEquals("BRL", payment.getCurrency());
+        assertEquals("10000001", payment.getSender().getAccount().getBankCode());
+        assertEquals("000123", payment.getSender().getAccount().getNumber());
+        assertEquals("0012", payment.getSender().getAccount().getBranch());
+        assertEquals("20000001", payment.getReceiver().getAccount().getBankCode());
+        assertEquals("+5511999999999", payment.getReceiver().getPixKey());
     }
 
     @Test
-    void consumePaymentRequestRecordsReceivedBeforeParsingPayload() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumePaymentRequestsRecordsTraceWhenRecordIsConsumed() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        when(traceRecorder.isActive()).thenReturn(true);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        PaymentBatch paymentBatch = PaymentBatch.builder()
-                .transactions(List.of(PaymentTransaction.builder().paymentId("E2E-1").build()))
-                .build();
-        when(paymentRequestReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
-        when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
-                .thenReturn(paymentBatch);
+        PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
 
-        byte[] payload = """
-                {"CdtTrfTxInf":[{"PmtId":{"EndToEndId":"E2E-1"}}]}
-                """.getBytes(StandardCharsets.UTF_8);
-        consumer.consumePaymentRequest(payload);
+        consumer.consumePaymentRequests(List.of(paymentRequest("E2E-1", "123", "12").toByteArray()));
 
-        var inOrder = inOrder(traceRecorder, paymentRequestReader);
-        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_RECEIVED);
-        inOrder.verify(paymentRequestReader).readValue(payload);
+        var inOrder = inOrder(traceRecorder, processor);
         inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
+        inOrder.verify(processor).processTransactions(any(List.class));
+        verifyNoMoreInteractions(traceRecorder);
     }
 
     @Test
-    void consumePaymentRequestsMergesKafkaMessagesIntoOneDomainBatch() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumePaymentRequestsPassesKafkaRecordsAsTransactionList() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        PaymentTransaction firstPayment = PaymentTransaction.builder().paymentId("E2E-1").build();
-        PaymentTransaction secondPayment = PaymentTransaction.builder().paymentId("E2E-2").build();
-        PaymentBatch firstBatch = PaymentBatch.builder()
-                .transactions(List.of(firstPayment))
-                .build();
-        PaymentBatch secondBatch = PaymentBatch.builder()
-                .transactions(List.of(secondPayment))
-                .build();
-        when(paymentRequestReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFICustomerCreditTransfer.builder().build());
-        when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
-                .thenReturn(firstBatch, secondBatch);
+        PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
 
         consumer.consumePaymentRequests(List.of(
-                """
-                        {"CdtTrfTxInf":[]}
-                        """.getBytes(StandardCharsets.UTF_8),
-                """
-                        {"CdtTrfTxInf":[]}
-                        """.getBytes(StandardCharsets.UTF_8)
+                paymentRequest("E2E-1", "123", "12").toByteArray(),
+                paymentRequest("E2E-2", "456", "34").toByteArray()
         ));
 
-        verify(paymentRequestReader, times(2)).readValue(any(byte[].class));
-        verify(paymentTransactionMapper, times(2)).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_CONSUMED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_CONSUMED);
-
-        var paymentBatchCaptor = forClass(PaymentBatch.class);
-        verify(processor).processTransactionBatch(paymentBatchCaptor.capture());
-        assertEquals(List.of("E2E-1", "E2E-2"), paymentBatchCaptor.getValue().getTransactions().stream()
-                .map(PaymentTransaction::getPaymentId)
+        var paymentsCaptor = forClass(List.class);
+        verify(processor).processTransactions(paymentsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<PaymentTransactionCommand> payments = paymentsCaptor.getValue();
+        assertEquals(List.of("E2E-1", "E2E-2"), payments.stream()
+                .map(PaymentTransactionCommand::getPaymentId)
                 .toList());
     }
 
     @Test
-    void consumePaymentRequestParsesIsoOffsetTimestampWithDefaultReader() {
-        PaymentTransactionMapper paymentTransactionMapper = new PaymentTransactionMapper(
-                mock(br.kauan.spi.adapter.input.dtos.pacs.commons.CommonsMapper.class),
-                new br.kauan.spi.adapter.input.dtos.pacs.CodeMapping()
-        );
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumeStatusReportsProcessesInternalProtobufMessage() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder
-        );
+        PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
 
-        consumer.consumePaymentRequest("""
-                {"GrpHdr":{"MsgId":"MSG-1","CreDtTm":"2026-06-23T20:00:01.123Z","NbOfTxs":1},"CdtTrfTxInf":[{"PmtId":{"EndToEndId":"E2E-1"},"IntrBkSttlmAmt":{"value":10.00,"Ccy":"BRL"},"Dbtr":{"Nm":"Sender","Id":{"PrvtId":{"Othr":{"Id":"12345678900"}}}},"DbtrAcct":{"Id":{"Othr":{"Id":987654,"Issr":1234}},"Tp":{"Cd":"CACC"}},"DbtrAgt":{"FinInstnId":{"ClrSysMmbId":{"MmbId":"10000001"}}},"CdtrAgt":{"FinInstnId":{"ClrSysMmbId":{"MmbId":"20000001"}}},"Cdtr":{"Nm":"Receiver","Id":{"PrvtId":{"Othr":{"Id":"98765432100"}}}},"CdtrAcct":{"Id":{"Othr":{"Id":123456,"Issr":5678}},"Tp":{"Cd":"CACC"},"Prxy":{"Id":"+5511999999999"}},"RmtInf":{"Ustrd":"Load test payment"}}]}
-                """.getBytes(StandardCharsets.UTF_8));
+        consumer.consumeStatusReports(List.of(statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS).toByteArray()));
 
-        var paymentBatchCaptor = forClass(PaymentBatch.class);
-        verify(processor).processTransactionBatch(paymentBatchCaptor.capture());
-        assertEquals(Instant.parse("2026-06-23T20:00:01.123Z"),
-                paymentBatchCaptor.getValue().getBatchDetails().getCreatedAt());
+        var statusReportsCaptor = forClass(List.class);
+        verify(processor).processStatusReports(statusReportsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<StatusReportCommand> statusReports = statusReportsCaptor.getValue();
+        StatusReportCommand statusReport = statusReports.getFirst();
+        assertEquals("E2E-1", statusReport.getOriginalPaymentId());
+        assertEquals(br.kauan.spi.domain.entity.status.PaymentStatus.ACCEPTED_IN_PROCESS, statusReport.getStatus());
     }
 
     @Test
-    void consumeStatusReportProcessesPacs002FromDedicatedTopic() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumeStatusReportsRecordsTraceWhenRecordIsReadable() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        StatusBatch statusBatch = StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
-                .build();
-        when(statusReportReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFIPaymentStatusReport.builder().build());
-        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
-                .thenReturn(statusBatch);
+        PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
 
-        consumer.consumeStatusReport("""
-                {"TxInfAndSts":[]}
-                """.getBytes(StandardCharsets.UTF_8));
+        consumer.consumeStatusReports(List.of(statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS).toByteArray()));
 
-        verify(statusReportReader).readValue(any(byte[].class));
-        verify(paymentRequestReader, never()).readValue(any(byte[].class));
-        verify(paymentTransactionMapper, never()).fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class));
-        verify(statusReportMapper).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
-        verify(processor).processStatusBatch(statusBatch);
-    }
-
-    @Test
-    void consumeStatusReportRecordsReceivedBeforeParsingPayload() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
-        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        when(traceRecorder.isActive()).thenReturn(true);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        StatusBatch statusBatch = StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
-                .build();
-        when(statusReportReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFIPaymentStatusReport.builder().build());
-        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
-                .thenReturn(statusBatch);
-
-        byte[] payload = """
-                {"TxInfAndSts":[{"OrgnlEndToEndId":"E2E-1","TxSts":"ACSP"}]}
-                """.getBytes(StandardCharsets.UTF_8);
-        consumer.consumeStatusReport(payload);
-
-        var inOrder = inOrder(traceRecorder, statusReportReader);
+        var inOrder = inOrder(traceRecorder, processor);
         inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_RECEIVED);
-        inOrder.verify(statusReportReader).readValue(payload);
-        inOrder.verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
+        inOrder.verify(processor).processStatusReports(any(List.class));
+        verifyNoMoreInteractions(traceRecorder);
     }
 
     @Test
-    void consumeStatusReportsProcessesMultipleKafkaMessagesAsOneDomainBatch() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumeStatusReportsPassesKafkaRecordsAsStatusReportList() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        StatusBatch firstBatch = StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
-                .build();
-        StatusBatch secondBatch = StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-2").build()))
-                .build();
-        when(statusReportReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFIPaymentStatusReport.builder().build());
-        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
-                .thenReturn(firstBatch, secondBatch);
+        PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
 
         consumer.consumeStatusReports(List.of(
-                """
-                        {"TxInfAndSts":[]}
-                        """.getBytes(StandardCharsets.UTF_8),
-                """
-                        {"TxInfAndSts":[]}
-                        """.getBytes(StandardCharsets.UTF_8)
+                statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS).toByteArray(),
+                statusReport("E2E-2", PaymentStatus.REJECTED).toByteArray()
         ), acknowledgment);
 
-        verify(statusReportReader, times(2)).readValue(any(byte[].class));
-        verify(statusReportMapper, times(2)).fromRegulatoryReport(any(FIToFIPaymentStatusReport.class));
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.STATUS_CONSUMED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.STATUS_CONSUMED);
-        var statusBatchCaptor = forClass(StatusBatch.class);
-        verify(processor).processStatusBatch(statusBatchCaptor.capture());
-        assertEquals(List.of("E2E-1", "E2E-2"), statusBatchCaptor.getValue().getStatusReports().stream()
-                .map(StatusReport::getOriginalPaymentId)
+        var statusReportsCaptor = forClass(List.class);
+        verify(processor).processStatusReports(statusReportsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<StatusReportCommand> statusReports = statusReportsCaptor.getValue();
+        assertEquals(List.of("E2E-1", "E2E-2"), statusReports.stream()
+                .map(StatusReportCommand::getOriginalPaymentId)
                 .toList());
         verify(acknowledgment).acknowledge();
     }
 
     @Test
-    void consumeStatusReportsDoesNotAcknowledgeWhenProcessingFails() throws Exception {
-        PaymentTransactionMapper paymentTransactionMapper = mock(PaymentTransactionMapper.class);
-        StatusReportMapper statusReportMapper = mock(StatusReportMapper.class);
+    void consumeStatusReportsDoesNotAcknowledgeWhenProcessingFails() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
-        ObjectReader paymentRequestReader = mock(ObjectReader.class);
-        ObjectReader statusReportReader = mock(ObjectReader.class);
-        PaymentMessageConsumer consumer = new PaymentMessageConsumer(
-                paymentTransactionMapper,
-                statusReportMapper,
-                processor,
-                traceRecorder,
-                paymentRequestReader,
-                statusReportReader
-        );
-        StatusBatch statusBatch = StatusBatch.builder()
-                .statusReports(List.of(StatusReport.builder().originalPaymentId("E2E-1").build()))
-                .build();
-        when(statusReportReader.readValue(any(byte[].class)))
-                .thenReturn(FIToFIPaymentStatusReport.builder().build());
-        when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
-                .thenReturn(statusBatch);
         doThrow(new RuntimeException("processing failed"))
-                .when(processor).processStatusBatch(any(StatusBatch.class));
+                .when(processor).processStatusReports(any(List.class));
+        PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
 
-        consumer.consumeStatusReports(List.of("""
-                {"TxInfAndSts":[]}
-                """.getBytes(StandardCharsets.UTF_8)), acknowledgment);
+        consumer.consumeStatusReports(List.of(
+                statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS).toByteArray()
+        ), acknowledgment);
 
         verify(acknowledgment, never()).acknowledge();
+    }
+
+    private static PaymentMessageConsumer consumer(
+            PaymentTransactionProcessorUseCase processor,
+            SpiTraceRecorder traceRecorder
+    ) {
+        return new PaymentMessageConsumer(new InternalPaymentMessageMapper(), processor, traceRecorder);
+    }
+
+    private static PaymentRequest paymentRequest(String paymentId, String accountNumber, String branch) {
+        return PaymentRequest.newBuilder()
+                .setPaymentId(paymentId)
+                .setAmountCents(1234L)
+                .setCurrency("BRL")
+                .setDescription("Load test payment")
+                .setSender(Party.newBuilder()
+                        .setName("Sender")
+                        .setTaxId("12345678900")
+                        .setAccount(BankAccount.newBuilder()
+                                .setNumber(accountNumber)
+                                .setBranch(branch)
+                                .setType("CHECKING")
+                                .setIspb("10000001")
+                                .build())
+                        .build())
+                .setReceiver(Party.newBuilder()
+                        .setName("Receiver")
+                        .setTaxId("98765432100")
+                        .setPixKey("+5511999999999")
+                        .setAccount(BankAccount.newBuilder()
+                                .setNumber("456")
+                                .setBranch("34")
+                                .setType("CHECKING")
+                                .setIspb("20000001")
+                                .build())
+                        .build())
+                .build();
+    }
+
+    private static PaymentStatusReport statusReport(String paymentId, PaymentStatus status) {
+        return PaymentStatusReport.newBuilder()
+                .setPaymentId(paymentId)
+                .setStatus(status)
+                .build();
     }
 }

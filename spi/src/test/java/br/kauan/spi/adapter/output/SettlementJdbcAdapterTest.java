@@ -2,7 +2,7 @@ package br.kauan.spi.adapter.output;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.commons.Money;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -11,11 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 @SpringBootTest
 @Transactional
@@ -28,18 +26,18 @@ class SettlementJdbcAdapterTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void settleAcceptedPaymentDebitsCreditsAndMarksTransactionAsSettledInOneOperation() {
+    void settleAcceptedPaymentsIdempotentlyDebitsCreditsAndMarksSingleTransactionAsSettledInOneOperation() {
         insertFunds("11111111", "100.00");
         insertFunds("22222222", "50.00");
         insertPayment("E2E-SUCCESS", "1.00", "11111111", "22222222", PaymentStatus.WAITING_ACCEPTANCE);
 
-        Optional<PaymentTransaction> settled = adapter.settleAcceptedPayment(
-                "E2E-SUCCESS",
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
+                List.of("E2E-SUCCESS"),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
-        PaymentTransaction transaction = settled.orElseThrow();
+        PaymentTransactionCommand transaction = settled.getFirst();
         assertEquals("E2E-SUCCESS", transaction.getPaymentId());
         assertEquals(100L, transaction.getAmountCents());
         assertEquals("11111111", transaction.getSender().getAccount().getBankCode());
@@ -50,25 +48,25 @@ class SettlementJdbcAdapterTest {
     }
 
     @Test
-    void settleAcceptedPaymentDoesNotCreditOrSettleWhenDebitCannotBeApplied() {
+    void settleAcceptedPaymentsIdempotentlyDoesNotCreditOrSettleWhenSingleDebitCannotBeApplied() {
         insertFunds("33333333", "10.00");
         insertFunds("44444444", "50.00");
         insertPayment("E2E-FAILURE", "25.00", "33333333", "44444444", PaymentStatus.WAITING_ACCEPTANCE);
 
-        Optional<PaymentTransaction> settled = adapter.settleAcceptedPayment(
-                "E2E-FAILURE",
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
+                List.of("E2E-FAILURE"),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
-        assertFalse(settled.isPresent());
+        assertThat(settled).isEmpty();
         assertEquals(decimal("10.00"), balance("33333333"));
         assertEquals(decimal("50.00"), balance("44444444"));
         assertEquals(PaymentStatus.WAITING_ACCEPTANCE.name(), status("E2E-FAILURE"));
     }
 
     @Test
-    void settleAcceptedPaymentsLocksBucketsOnceAndSettlesOnlyWaitingTransactions() {
+    void settleAcceptedPaymentsIdempotentlyLocksBucketsOnceAndSettlesOnlyWaitingTransactions() {
         insertFunds("11111111", "100.00");
         insertFunds("22222222", "50.00");
         insertFunds("33333333", "75.00");
@@ -76,14 +74,14 @@ class SettlementJdbcAdapterTest {
         insertPayment("E2E-BATCH-2", "2.00", "11111111", "33333333", PaymentStatus.WAITING_ACCEPTANCE);
         insertPayment("E2E-BATCH-ALREADY", "4.00", "11111111", "22222222", PaymentStatus.ACCEPTED_AND_SETTLED);
 
-        List<PaymentTransaction> settled = adapter.settleAcceptedPayments(
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
                 List.of("E2E-BATCH-2", "E2E-BATCH-ALREADY", "E2E-BATCH-1"),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
         assertThat(settled)
-                .extracting(PaymentTransaction::getPaymentId)
+                .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly("E2E-BATCH-2", "E2E-BATCH-ALREADY", "E2E-BATCH-1");
         assertEquals(decimal("97.00"), balance("11111111"));
         assertEquals(decimal("51.00"), balance("22222222"));
@@ -94,19 +92,19 @@ class SettlementJdbcAdapterTest {
     }
 
     @Test
-    void settleAcceptedPaymentsReturnsAlreadySettledTransactionsWithoutMovingFundsAgain() {
+    void settleAcceptedPaymentsIdempotentlyReturnsAlreadySettledTransactionsWithoutMovingFundsAgain() {
         insertFunds("77777777", "100.00");
         insertFunds("88888888", "50.00");
         insertPayment("E2E-BATCH-IDEMPOTENT", "10.00", "77777777", "88888888", PaymentStatus.ACCEPTED_AND_SETTLED);
 
-        List<PaymentTransaction> settled = adapter.settleAcceptedPayments(
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
                 List.of("E2E-BATCH-IDEMPOTENT"),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
         assertThat(settled)
-                .extracting(PaymentTransaction::getPaymentId)
+                .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly("E2E-BATCH-IDEMPOTENT");
         assertEquals(decimal("100.00"), balance("77777777"));
         assertEquals(decimal("50.00"), balance("88888888"));
@@ -114,13 +112,13 @@ class SettlementJdbcAdapterTest {
     }
 
     @Test
-    void settleAcceptedPaymentsDoesNotDebitCreditOrSettleWhenBatchDebitCannotBeApplied() {
+    void settleAcceptedPaymentsIdempotentlyDoesNotDebitCreditOrSettleWhenBatchDebitCannotBeApplied() {
         insertFunds("55555555", "0.00");
         insertFunds("66666666", "50.00");
         insertPayment("E2E-BATCH-FAILURE-1", "1.00", "55555555", "66666666", PaymentStatus.WAITING_ACCEPTANCE);
         insertPayment("E2E-BATCH-FAILURE-2", "2.00", "55555555", "66666666", PaymentStatus.WAITING_ACCEPTANCE);
 
-        List<PaymentTransaction> settled = adapter.settleAcceptedPayments(
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
                 List.of("E2E-BATCH-FAILURE-1", "E2E-BATCH-FAILURE-2"),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
@@ -134,7 +132,7 @@ class SettlementJdbcAdapterTest {
     }
 
     @Test
-    void settleAcceptedPaymentsSettlesAffordablePrefixPerSenderBucket() {
+    void settleAcceptedPaymentsIdempotentlySettlesAffordablePrefixPerSenderBucket() {
         insertFunds("99990000", "16.00");
         insertFunds("99990001", "16.00");
         List<String> paymentIds = paymentIdsInSameBucket("E2E-PREFIX-", 3);
@@ -146,14 +144,14 @@ class SettlementJdbcAdapterTest {
         insertPayment(secondPaymentId, "0.50", "99990000", "99990001", PaymentStatus.WAITING_ACCEPTANCE);
         insertPayment(thirdPaymentId, "0.10", "99990000", "99990001", PaymentStatus.WAITING_ACCEPTANCE);
 
-        List<PaymentTransaction> settled = adapter.settleAcceptedPayments(
+        List<PaymentTransactionCommand> settled = adapter.settleAcceptedPaymentsIdempotently(
                 List.of(firstPaymentId, secondPaymentId, thirdPaymentId),
                 PaymentStatus.WAITING_ACCEPTANCE,
                 PaymentStatus.ACCEPTED_AND_SETTLED
         );
 
         assertThat(settled)
-                .extracting(PaymentTransaction::getPaymentId)
+                .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly(firstPaymentId);
         assertEquals(decimal("15.40"), balance("99990000"));
         assertEquals(decimal("16.60"), balance("99990001"));

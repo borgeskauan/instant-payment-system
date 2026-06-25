@@ -1,17 +1,32 @@
 package br.kauan.kafkaproducer.kafka;
 
 import br.kauan.kafkaproducer.config.AppConfig;
+import br.kauan.kafkaproducer.pacs.PacsToInternalMessageMapper;
 
+import br.kauan.pix.internal.v1.PaymentRequest;
+import br.kauan.pix.internal.v1.PaymentStatusReport;
+import java.util.ArrayList;
+import java.util.List;
 import reactor.core.publisher.Mono;
 
 public class KafkaPaymentPublisher implements PaymentPublisher {
 
     private final ProducerClient paymentRequestProducer;
     private final ProducerClient statusReportProducer;
+    private final PacsToInternalMessageMapper messageMapper;
 
     public KafkaPaymentPublisher(ProducerClient paymentRequestProducer, ProducerClient statusReportProducer) {
+        this(paymentRequestProducer, statusReportProducer, new PacsToInternalMessageMapper());
+    }
+
+    KafkaPaymentPublisher(
+            ProducerClient paymentRequestProducer,
+            ProducerClient statusReportProducer,
+            PacsToInternalMessageMapper messageMapper
+    ) {
         this.paymentRequestProducer = paymentRequestProducer;
         this.statusReportProducer = statusReportProducer;
+        this.messageMapper = messageMapper;
     }
 
     public static KafkaPaymentPublisher fromConfig(AppConfig config) {
@@ -22,12 +37,32 @@ public class KafkaPaymentPublisher implements PaymentPublisher {
 
     @Override
     public Mono<Void> publishPaymentRequest(byte[] payload) {
-        return publish(paymentRequestProducer, AppConfig.PAYMENT_REQUESTS_TOPIC, payload);
+        return Mono.defer(() -> {
+            List<PaymentRequest> requests = messageMapper.toPaymentRequests(payload);
+            List<Mono<Void>> sends = new ArrayList<>(requests.size());
+            for (PaymentRequest request : requests) {
+                sends.add(publish(
+                        paymentRequestProducer,
+                        AppConfig.PAYMENT_REQUESTS_TOPIC,
+                        request.toByteArray()));
+            }
+            return Mono.when(sends);
+        });
     }
 
     @Override
     public Mono<Void> publishStatusReport(byte[] payload) {
-        return publish(statusReportProducer, AppConfig.PAYMENT_STATUS_REPORTS_TOPIC, payload);
+        return Mono.defer(() -> {
+            List<PaymentStatusReport> reports = messageMapper.toPaymentStatusReports(payload);
+            List<Mono<Void>> sends = new ArrayList<>(reports.size());
+            for (PaymentStatusReport report : reports) {
+                sends.add(publish(
+                        statusReportProducer,
+                        AppConfig.PAYMENT_STATUS_REPORTS_TOPIC,
+                        report.toByteArray()));
+            }
+            return Mono.when(sends);
+        });
     }
 
     @Override

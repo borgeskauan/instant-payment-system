@@ -1,20 +1,41 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReport;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 class NotificationOrchestratorTest {
+
+    @Test
+    void orchestratorDoesNotExposeSinglePaymentEntryPoints() {
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationOrchestrator.class.getMethod("sendConfirmationNotification", PaymentTransactionCommand.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationOrchestrator.class.getMethod("sendRejectionNotification", PaymentTransactionCommand.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationOrchestrator.class.getMethod("sendAcceptanceRequest", String.class, PaymentTransactionCommand.class));
+    }
+
+    @Test
+    void notificationServiceDoesNotExposeSinglePaymentEntryPoints() {
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationService.class.getMethod("sendConfirmationNotification", PaymentTransactionCommand.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationService.class.getMethod("sendRejectionNotification", PaymentTransactionCommand.class));
+        assertThrows(NoSuchMethodException.class,
+                () -> NotificationService.class.getMethod("sendAcceptanceRequest", String.class, PaymentTransactionCommand.class));
+    }
 
     @Test
     void acceptanceRequestsAreGroupedByReceiverIspb() {
@@ -24,9 +45,9 @@ class NotificationOrchestratorTest {
                 new NotificationValidator(),
                 new NotificationBuilder()
         );
-        PaymentTransaction first = paymentTransaction("E2E-1", "10000001", "20000001");
-        PaymentTransaction second = paymentTransaction("E2E-2", "10000002", "20000001");
-        PaymentTransaction third = paymentTransaction("E2E-3", "10000003", "20000002");
+        PaymentTransactionCommand first = paymentTransaction("E2E-1", "10000001", "20000001");
+        PaymentTransactionCommand second = paymentTransaction("E2E-2", "10000002", "20000001");
+        PaymentTransactionCommand third = paymentTransaction("E2E-3", "10000003", "20000002");
 
         orchestrator.sendAcceptanceRequests(List.of(first, second, third));
 
@@ -42,8 +63,8 @@ class NotificationOrchestratorTest {
                 new NotificationValidator(),
                 new NotificationBuilder()
         );
-        PaymentTransaction first = paymentTransaction("E2E-1", "10000001", "20000001");
-        PaymentTransaction second = paymentTransaction("E2E-2", "10000002", "20000001");
+        PaymentTransactionCommand first = paymentTransaction("E2E-1", "10000001", "20000001");
+        PaymentTransactionCommand second = paymentTransaction("E2E-2", "10000002", "20000001");
 
         orchestrator.sendConfirmationNotifications(List.of(first, second));
 
@@ -67,8 +88,8 @@ class NotificationOrchestratorTest {
                 new NotificationValidator(),
                 new NotificationBuilder()
         );
-        PaymentTransaction first = paymentTransaction("E2E-1", "10000001", "20000001");
-        PaymentTransaction second = paymentTransaction("E2E-2", "10000001", "20000002");
+        PaymentTransactionCommand first = paymentTransaction("E2E-1", "10000001", "20000001");
+        PaymentTransactionCommand second = paymentTransaction("E2E-2", "10000001", "20000002");
 
         orchestrator.sendRejectionNotifications(List.of(first, second));
 
@@ -78,15 +99,15 @@ class NotificationOrchestratorTest {
         ));
     }
 
-    private static StatusReport status(String paymentId, PaymentStatus status) {
-        return StatusReport.builder()
+    private static StatusReportCommand status(String paymentId, PaymentStatus status) {
+        return StatusReportCommand.builder()
                 .originalPaymentId(paymentId)
                 .status(status)
                 .build();
     }
 
-    private static PaymentTransaction paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
-        return PaymentTransaction.builder()
+    private static PaymentTransactionCommand paymentTransaction(String paymentId, String senderBankCode, String receiverBankCode) {
+        return PaymentTransactionCommand.builder()
                 .paymentId(paymentId)
                 .amountCents(1000L)
                 .sender(party(senderBankCode))
@@ -98,8 +119,8 @@ class NotificationOrchestratorTest {
         return Party.builder()
                 .account(BankAccount.builder()
                         .bankCode(bankCode)
-                        .number(1L)
-                        .branch(1)
+                        .number("1")
+                        .branch("1")
                         .type(BankAccountType.CHECKING)
                         .build())
                 .build();

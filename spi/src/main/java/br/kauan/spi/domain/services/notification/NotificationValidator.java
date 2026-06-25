@@ -1,12 +1,12 @@
 package br.kauan.spi.domain.services.notification;
 
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.springframework.stereotype.Component;
 
 @Component
 public class NotificationValidator {
 
-    public void validatePaymentTransaction(PaymentTransaction paymentTransaction) {
+    public void validatePaymentTransaction(PaymentTransactionCommand paymentTransaction) {
         if (paymentTransaction == null) {
             throw new IllegalArgumentException("Payment transaction cannot be null");
         }

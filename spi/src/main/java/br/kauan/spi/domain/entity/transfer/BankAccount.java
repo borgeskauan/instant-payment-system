@@ -6,8 +6,8 @@ import lombok.Data;
 @Data
 @Builder
 public class BankAccount {
-    private Long number;
-    private Integer branch;
-    private BankAccountType type; // "checking", "savings"
-    private String bankCode; // ISPB
+    private String number;
+    private String branch;
+    private BankAccountType type;
+    private String bankCode;
 }

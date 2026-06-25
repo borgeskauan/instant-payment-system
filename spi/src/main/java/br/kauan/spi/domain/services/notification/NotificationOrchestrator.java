@@ -1,8 +1,8 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReport;
-import br.kauan.spi.domain.entity.transfer.PaymentTransaction;
+import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -31,15 +31,11 @@ public class NotificationOrchestrator {
         this.notificationBuilder = notificationBuilder;
     }
 
-    public void sendConfirmationNotification(PaymentTransaction paymentTransaction) {
-        sendConfirmationNotifications(List.of(paymentTransaction));
-    }
-
-    public void sendConfirmationNotifications(List<PaymentTransaction> paymentTransactions) {
+    public void sendConfirmationNotifications(List<PaymentTransactionCommand> paymentTransactions) {
         try {
-            Map<String, List<StatusReport>> notificationsByIspb = new LinkedHashMap<>();
+            Map<String, List<StatusReportCommand>> notificationsByIspb = new LinkedHashMap<>();
 
-            for (PaymentTransaction paymentTransaction : paymentTransactions) {
+            for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
                 validator.validatePaymentTransaction(paymentTransaction);
 
                 String receiverIspb = getBankCode(paymentTransaction.getReceiver());
@@ -49,9 +45,9 @@ public class NotificationOrchestrator {
                         paymentTransaction.getPaymentId());
                 log.debug("[PIX FLOW - Step 7] Receiver ISPB: {}, Sender ISPB: {}", receiverIspb, senderIspb);
 
-                StatusReport receiverNotification = notificationBuilder.buildStatusReport(
+                StatusReportCommand receiverNotification = notificationBuilder.buildStatusReport(
                         paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER);
-                StatusReport senderNotification = notificationBuilder.buildStatusReport(
+                StatusReportCommand senderNotification = notificationBuilder.buildStatusReport(
                         paymentTransaction, PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
 
                 notificationsByIspb.computeIfAbsent(receiverIspb, ignored -> new ArrayList<>())
@@ -63,28 +59,24 @@ public class NotificationOrchestrator {
             notificationsByIspb.forEach((ispb, statusReports) -> {
                 validator.validateIspb(ispb);
                 notificationStorage.addStatusNotifications(ispb, statusReports);
-                log.debug("[PIX FLOW - Step 7] Confirmation notification batch sent to PSP ({})", ispb);
+                log.debug("[PIX FLOW - Step 7] Confirmation notifications sent to PSP ({})", ispb);
             });
 
         } catch (Exception e) {
-            log.error("[PIX FLOW - Error] Failed to send confirmation notification batch", e);
+            log.error("[PIX FLOW - Error] Failed to send confirmation notifications", e);
             throw new NotificationException("Failed to send confirmation notification", e);
         }
     }
 
-    public void sendRejectionNotification(PaymentTransaction paymentTransaction) {
-        sendRejectionNotifications(List.of(paymentTransaction));
-    }
-
-    public void sendRejectionNotifications(List<PaymentTransaction> paymentTransactions) {
+    public void sendRejectionNotifications(List<PaymentTransactionCommand> paymentTransactions) {
         try {
-            Map<String, List<StatusReport>> notificationsByIspb = new LinkedHashMap<>();
+            Map<String, List<StatusReportCommand>> notificationsByIspb = new LinkedHashMap<>();
 
-            for (PaymentTransaction paymentTransaction : paymentTransactions) {
+            for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
                 validator.validatePaymentTransaction(paymentTransaction);
 
                 String senderIspb = getBankCode(paymentTransaction.getSender());
-                StatusReport rejectionNotification = notificationBuilder.buildStatusReport(
+                StatusReportCommand rejectionNotification = notificationBuilder.buildStatusReport(
                         paymentTransaction, PaymentStatus.REJECTED);
 
                 notificationsByIspb.computeIfAbsent(senderIspb, ignored -> new ArrayList<>())
@@ -96,34 +88,18 @@ public class NotificationOrchestrator {
                 notificationStorage.addStatusNotifications(ispb, statusReports);
             });
 
-            log.debug("Rejection notification batch sent. payments={}", paymentTransactions.size());
+            log.debug("Rejection notifications sent. payments={}", paymentTransactions.size());
         } catch (Exception e) {
-            log.error("Failed to send rejection notification batch", e);
+            log.error("Failed to send rejection notifications", e);
             throw new NotificationException("Failed to send rejection notification", e);
         }
     }
 
-    public void sendAcceptanceRequest(String ispb, PaymentTransaction paymentTransaction) {
+    public void sendAcceptanceRequests(List<PaymentTransactionCommand> paymentTransactions) {
         try {
-            validator.validateIspb(ispb);
-            validator.validatePaymentTransaction(paymentTransaction);
+            Map<String, List<PaymentTransactionCommand>> transactionsByIspb = new LinkedHashMap<>();
 
-            log.debug("[PIX FLOW - Step 4] Sending acceptance request (PACS.008) to PSP Recebedor. ISPB: {}, Payment ID: {}",
-                    ispb, paymentTransaction.getPaymentId());
-            notificationStorage.addTransactionNotification(ispb, paymentTransaction);
-            log.debug("[PIX FLOW - Step 4] Acceptance request queued for delivery via Kafka");
-        } catch (Exception e) {
-            log.error("[PIX FLOW - Error] Failed to send acceptance request for payment: {} to ISPB: {}",
-                    paymentTransaction.getPaymentId(), ispb, e);
-            throw new NotificationException("Failed to send acceptance request", e);
-        }
-    }
-
-    public void sendAcceptanceRequests(List<PaymentTransaction> paymentTransactions) {
-        try {
-            Map<String, List<PaymentTransaction>> transactionsByIspb = new LinkedHashMap<>();
-
-            for (PaymentTransaction paymentTransaction : paymentTransactions) {
+            for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
                 validator.validatePaymentTransaction(paymentTransaction);
                 String receiverIspb = getBankCode(paymentTransaction.getReceiver());
                 transactionsByIspb.computeIfAbsent(receiverIspb, ignored -> new ArrayList<>())
@@ -132,13 +108,13 @@ public class NotificationOrchestrator {
 
             transactionsByIspb.forEach((ispb, transactions) -> {
                 validator.validateIspb(ispb);
-                log.debug("[PIX FLOW - Step 4] Sending acceptance request batch (PACS.008) to PSP Recebedor. ISPB: {}, payments={}",
+                log.debug("[PIX FLOW - Step 4] Sending acceptance requests to PSP Recebedor. ISPB: {}, payments={}",
                         ispb, transactions.size());
                 notificationStorage.addTransactionNotifications(ispb, transactions);
             });
-            log.debug("[PIX FLOW - Step 4] Acceptance request batch queued for delivery via Kafka");
+            log.debug("[PIX FLOW - Step 4] Acceptance requests queued for delivery via Kafka");
         } catch (Exception e) {
-            log.error("[PIX FLOW - Error] Failed to send acceptance request batch", e);
+            log.error("[PIX FLOW - Error] Failed to send acceptance requests", e);
             throw new NotificationException("Failed to send acceptance request", e);
         }
     }
