@@ -1,6 +1,6 @@
 # Separar DICT em um microserviço próprio
 
-- [ ] Separar DICT em um microserviço próprio
+- [x] Separar DICT em um microserviço próprio
 
 **Por que existe**
 
@@ -8,10 +8,10 @@ DICT e SPI são sistemas distintos na infraestrutura real do Banco Central. Hoje
 
 **Tarefas**
 
-- [ ] Extrair `br.kauan.dict.*` para um novo módulo `dict`.
-- [ ] Criar `pom.xml`, `application.yml` e Dockerfile próprios para o DICT.
-- [ ] Adicionar o DICT como serviço separado no ambiente local.
-- [ ] Fazer o SPI chamar o DICT por HTTP em vez de chamada em processo.
+- [x] Extrair `br.kauan.dict.*` para um novo módulo `dict`.
+- [x] Criar `pom.xml`, `application.yml` e Dockerfile próprios para o DICT.
+- [x] Adicionar o DICT como serviço separado no ambiente local.
+- [x] Fazer o SPI chamar o DICT por HTTP em vez de chamada em processo.
 
 **Referências**
 

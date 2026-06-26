@@ -54,9 +54,9 @@ services:
     hostname: kafka
     container_name: kafka
     cpus: 1.00
-    mem_limit: 1024m
-    mem_reservation: 768m
-    memswap_limit: 1024m
+    mem_limit: 2048m
+    mem_reservation: 1536m
+    memswap_limit: 2048m
     <<: *low-resource
     ports:
       - "9092:29092"
@@ -144,6 +144,21 @@ services:
       kafka-init:
         condition: service_completed_successfully
 
+  dict:
+    build:
+      context: ../dict
+      dockerfile: Dockerfile
+    container_name: dict
+    profiles:
+      - dict
+    ports:
+      - "8003:8003"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -XX:MaxRAMPercentage=75"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   spi:
     build:

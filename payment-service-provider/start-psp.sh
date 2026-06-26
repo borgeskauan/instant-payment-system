@@ -15,7 +15,7 @@ Options:
   --container-port VALUE        Container HTTP port. Defaults to 8080.
   --image VALUE                 Docker image. Defaults to payment-service-provider:local.
   --network VALUE               Docker network. Defaults to infra_default.
-  --dict-url VALUE              DICT URL inside Docker network. Defaults to http://spi:8002.
+  --dict-url VALUE              DICT URL inside Docker network. Defaults to http://dict:8003.
   --central-transfer-url VALUE  Central transfer URL. Defaults to http://kafka-producer:8001.
   --notification-host VALUE     Notification gateway host. Defaults to notification-gateway.
   --notification-port VALUE     Notification gateway port. Defaults to 9090.
@@ -79,7 +79,7 @@ host_port=""
 container_port="8080"
 image="payment-service-provider:local"
 network="infra_default"
-dict_url="http://spi:8002"
+dict_url="http://dict:8003"
 central_transfer_url="http://kafka-producer:8001"
 notification_host="notification-gateway"
 notification_port="9090"

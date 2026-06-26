@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.input.grpc;
 
-import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.grpc.proto.NotificationBatch;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.StreamRequest;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
@@ -96,8 +96,11 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
 
         stub.streamNotifications(request, new StreamObserver<>() {
             @Override
-            public void onNext(Notification notification) {
-                notificationProcessor.process(notification.getIspb(), notification.getPayload());
+            public void onNext(NotificationBatch notificationBatch) {
+                String localIspb = GlobalVariables.getBankCode();
+                notificationBatch.getPayloadsList().forEach(payload ->
+                        notificationProcessor.process(localIspb, payload.toStringUtf8())
+                );
             }
 
             @Override

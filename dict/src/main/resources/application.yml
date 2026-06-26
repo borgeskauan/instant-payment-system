@@ -1,0 +1,23 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    table: flyway_schema_history_dict
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: mysecretpassword
+
+  jmx:
+    enabled: false
+
+server:
+  port: 8003

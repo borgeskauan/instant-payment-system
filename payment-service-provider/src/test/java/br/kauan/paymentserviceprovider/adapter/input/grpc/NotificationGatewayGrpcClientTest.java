@@ -1,10 +1,11 @@
 package br.kauan.paymentserviceprovider.adapter.input.grpc;
 
-import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.grpc.proto.NotificationBatch;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.StreamRequest;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
+import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
@@ -52,22 +53,26 @@ class NotificationGatewayGrpcClientTest {
     void subscribesWithBankCodeAndForwardsReceivedNotifications() throws Exception {
         new GlobalVariables().setBankCode("12345678");
         CountDownLatch subscribed = new CountDownLatch(1);
-        CountDownLatch processed = new CountDownLatch(1);
+        CountDownLatch processed = new CountDownLatch(2);
         AtomicReference<String> subscribedIspb = new AtomicReference<>();
         NotificationProcessor processor = mock(NotificationProcessor.class);
         doAnswer(invocation -> {
             processed.countDown();
             return null;
         }).when(processor).process(eq("12345678"), eq("{\"CdtTrfTxInf\":[]}"));
+        doAnswer(invocation -> {
+            processed.countDown();
+            return null;
+        }).when(processor).process(eq("12345678"), eq("{\"FIToFIPmtStsRpt\":[]}"));
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
+            public void streamNotifications(StreamRequest request, StreamObserver<NotificationBatch> responseObserver) {
                 subscribedIspb.set(request.getIspb());
                 subscribed.countDown();
-                responseObserver.onNext(Notification.newBuilder()
-                        .setIspb(request.getIspb())
-                        .setPayload("{\"CdtTrfTxInf\":[]}")
+                responseObserver.onNext(NotificationBatch.newBuilder()
+                        .addPayloads(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
+                        .addPayloads(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
                         .build());
             }
         });
@@ -85,6 +90,7 @@ class NotificationGatewayGrpcClientTest {
         assertThat(processed.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(subscribedIspb.get()).isEqualTo("12345678");
         verify(processor).process("12345678", "{\"CdtTrfTxInf\":[]}");
+        verify(processor).process("12345678", "{\"FIToFIPmtStsRpt\":[]}");
     }
 
     @Test
@@ -95,7 +101,7 @@ class NotificationGatewayGrpcClientTest {
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
+            public void streamNotifications(StreamRequest request, StreamObserver<NotificationBatch> responseObserver) {
                 int current = subscriptions.incrementAndGet();
                 if (current == 2) {
                     secondSubscription.countDown();

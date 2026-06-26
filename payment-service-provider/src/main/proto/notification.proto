@@ -7,14 +7,13 @@ option java_multiple_files = true;
 package notification;
 
 service NotificationGateway {
-  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+  rpc StreamNotifications(StreamRequest) returns (stream NotificationBatch);
 }
 
 message StreamRequest {
   string ispb = 1;
 }
 
-message Notification {
-  string ispb    = 1;
-  string payload = 2;
+message NotificationBatch {
+  repeated bytes payloads = 1;
 }

@@ -1,6 +1,6 @@
 external:
   dict:
-    url: http://localhost:8002
+    url: http://localhost:8003
   central-transfer:
     url: http://localhost:8001
 
