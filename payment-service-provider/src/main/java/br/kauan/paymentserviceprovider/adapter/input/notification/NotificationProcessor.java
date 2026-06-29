@@ -5,8 +5,6 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportM
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
-import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
 import br.kauan.paymentserviceprovider.domain.services.cts.IncomingTransactionService;
 import br.kauan.paymentserviceprovider.domain.services.cts.StatusProcessingService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,12 +68,11 @@ public class NotificationProcessor {
                 FIToFICustomerCreditTransfer.class
         );
 
-        PaymentBatch paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(creditTransfer);
+        var transactions = paymentTransactionMapper.fromRegulatoryRequest(creditTransfer);
 
-        log.info("Processing incoming payment batch with {} transactions",
-                paymentBatch.getTransactions().size());
+        log.info("Processing incoming payment notification with {} transactions", transactions.size());
 
-        incomingTransactionService.handleTransferRequestBatch(paymentBatch);
+        incomingTransactionService.handleTransferRequests(transactions);
     }
 
     private void processStatusReport(String notificationJson) throws Exception {
@@ -84,11 +81,10 @@ public class NotificationProcessor {
                 FIToFIPaymentStatusReport.class
         );
 
-        StatusBatch statusBatch = statusReportMapper.fromRegulatoryReport(statusReport);
+        var statusReports = statusReportMapper.fromRegulatoryReport(statusReport);
 
-        log.info("Processing status batch with {} reports",
-                statusBatch.getStatusReports().size());
+        log.info("Processing status notification with {} reports", statusReports.size());
 
-        statusProcessingService.handleStatusBatch(statusBatch);
+        statusProcessingService.handleStatuses(statusReports);
     }
 }

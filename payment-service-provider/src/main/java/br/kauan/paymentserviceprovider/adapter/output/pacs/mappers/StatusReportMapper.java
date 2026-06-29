@@ -3,10 +3,8 @@ package br.kauan.paymentserviceprovider.adapter.output.pacs.mappers;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.*;
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.ErrorReason;
-import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,9 +21,13 @@ public class StatusReportMapper {
     private final CommonsMapper commonsMapper;
     private final CodeMapping codeMapping;
 
-    public FIToFIPaymentStatusReport toRegulatoryReport(StatusBatch internalReport) {
-        GroupHeader groupHeader = commonsMapper.createGroupHeader(internalReport.getBatchDetails());
-        List<PaymentTransactionInfo> transactionInfoList = mapStatusUpdatesToTransactionInfo(internalReport.getStatusReports());
+    public FIToFIPaymentStatusReport toRegulatoryReport(StatusReport statusReport) {
+        return toRegulatoryReport(List.of(statusReport));
+    }
+
+    public FIToFIPaymentStatusReport toRegulatoryReport(List<StatusReport> statusReports) {
+        GroupHeader groupHeader = commonsMapper.createGroupHeader(statusReports.size());
+        List<PaymentTransactionInfo> transactionInfoList = mapStatusUpdatesToTransactionInfos(statusReports);
 
         return FIToFIPaymentStatusReport.builder()
                 .groupHeader(groupHeader)
@@ -33,21 +35,16 @@ public class StatusReportMapper {
                 .build();
     }
 
-    public StatusBatch fromRegulatoryReport(FIToFIPaymentStatusReport regulatoryReport) {
-        BatchDetails reportDetails = mapGroupHeaderToReportDetails(regulatoryReport.getGroupHeader());
-        List<StatusReport> statusReports = mapTransactionInfosToStatusUpdates(regulatoryReport.getTransactionInfo());
-
-        return StatusBatch.builder()
-                .batchDetails(reportDetails)
-                .statusReports(statusReports)
-                .build();
+    private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfos(List<StatusReport> statusReports) {
+        var transactionInfoList = new java.util.ArrayList<PaymentTransactionInfo>(statusReports.size());
+        for (StatusReport statusReport : statusReports) {
+            transactionInfoList.add(mapStatusUpdateToTransactionInfo(statusReport));
+        }
+        return transactionInfoList;
     }
 
-    private BatchDetails mapGroupHeaderToReportDetails(GroupHeader groupHeader) {
-        return BatchDetails.builder()
-                .id(groupHeader.getMessageId())
-                .createdAt(groupHeader.getCreationTimestamp().toGregorianCalendar().toInstant())
-                .build();
+    public List<StatusReport> fromRegulatoryReport(FIToFIPaymentStatusReport regulatoryReport) {
+        return mapTransactionInfosToStatusUpdates(regulatoryReport.getTransactionInfo());
     }
 
     private List<StatusReport> mapTransactionInfosToStatusUpdates(List<PaymentTransactionInfo> transactionInfos) {
@@ -81,12 +78,6 @@ public class StatusReportMapper {
         return ErrorReason.builder()
                 .descriptions(reasonInfo.getAdditionalInformation())
                 .build();
-    }
-
-    private List<PaymentTransactionInfo> mapStatusUpdatesToTransactionInfo(List<StatusReport> statusReports) {
-        return statusReports.stream()
-                .map(this::mapStatusUpdateToTransactionInfo)
-                .toList();
     }
 
     private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusReport statusReport) {

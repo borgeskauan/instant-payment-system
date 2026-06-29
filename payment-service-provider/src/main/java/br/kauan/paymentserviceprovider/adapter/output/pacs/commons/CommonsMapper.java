@@ -1,6 +1,5 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.commons;
 
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import org.springframework.stereotype.Service;
 
 import javax.xml.datatype.DatatypeConfigurationException;
@@ -11,17 +10,18 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.GregorianCalendar;
+import java.util.UUID;
 
 @Service
 public class CommonsMapper {
 
-    public GroupHeader createGroupHeader(BatchDetails batchDetails) {
-        var xmlTimestamp = convertInstantToXmlGregorianCalendar(batchDetails.getCreatedAt());
+    public GroupHeader createGroupHeader(int totalTransactions) {
+        var xmlTimestamp = convertInstantToXmlGregorianCalendar(Instant.now());
 
         return GroupHeader.builder()
-                .messageId(batchDetails.getId())
+                .messageId(UUID.randomUUID().toString())
                 .creationTimestamp(xmlTimestamp)
-                .numberOfTransactions(BigInteger.valueOf(batchDetails.getTotalTransactions()))
+                .numberOfTransactions(BigInteger.valueOf(totalTransactions))
                 .build();
     }
 

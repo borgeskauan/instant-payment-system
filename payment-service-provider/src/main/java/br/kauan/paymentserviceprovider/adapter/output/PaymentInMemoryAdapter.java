@@ -4,8 +4,10 @@ import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction
 import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Repository
@@ -14,12 +16,21 @@ public class PaymentInMemoryAdapter implements PaymentRepository {
     private final Map<String, PaymentTransaction> payments = new ConcurrentHashMap<>();
 
     @Override
-    public Optional<PaymentTransaction> findById(String originalPaymentId) {
-        return Optional.ofNullable(payments.get(originalPaymentId));
+    public List<PaymentTransaction> findAllByIds(Collection<String> paymentIds) {
+        List<PaymentTransaction> foundPayments = new ArrayList<>(paymentIds.size());
+        for (String paymentId : paymentIds) {
+            PaymentTransaction payment = payments.get(paymentId);
+            if (payment != null) {
+                foundPayments.add(payment);
+            }
+        }
+        return foundPayments;
     }
 
     @Override
-    public void save(PaymentTransaction transaction) {
-        payments.put(transaction.getPaymentId(), transaction);
+    public void saveAll(Collection<PaymentTransaction> transactions) {
+        for (PaymentTransaction transaction : transactions) {
+            payments.put(transaction.getPaymentId(), transaction);
+        }
     }
 }

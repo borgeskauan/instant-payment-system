@@ -7,8 +7,11 @@ import br.kauan.paymentserviceprovider.port.output.CustomerBankAccountRepository
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
 
 @Repository
 public class CustomerBankAccountJpaAdapter implements CustomerBankAccountRepository {
@@ -22,41 +25,69 @@ public class CustomerBankAccountJpaAdapter implements CustomerBankAccountReposit
     }
 
     @Override
-    public Optional<CustomerBankAccount> findById(BankAccountId bankAccountId) {
-        var entitiyId = mapper.toEntityId(bankAccountId);
-
-        var bankAccountFound = bankAccountJpaClient.findById(entitiyId);
-        if (bankAccountFound.isEmpty()) {
-            return createNewAccount(bankAccountId)
-                    .map(mapper::toDomain);
+    public List<CustomerBankAccount> findAllByIds(Collection<BankAccountId> bankAccountIds) {
+        if (bankAccountIds.isEmpty()) {
+            return List.of();
         }
 
-        return bankAccountFound.map(mapper::toDomain);
+        var entityIds = new LinkedHashSet<CustomerBankAccountEntity.CustomerBankAccountId>();
+        for (BankAccountId bankAccountId : bankAccountIds) {
+            entityIds.add(mapper.toEntityId(bankAccountId));
+        }
+
+        List<CustomerBankAccountEntity> existingAccounts = bankAccountJpaClient.findAllById(entityIds);
+
+        var existingIds = new HashSet<CustomerBankAccountEntity.CustomerBankAccountId>(existingAccounts.size());
+        for (CustomerBankAccountEntity account : existingAccounts) {
+            existingIds.add(account.getId());
+        }
+
+        List<CustomerBankAccountEntity> missingAccounts = new ArrayList<>();
+        for (CustomerBankAccountEntity.CustomerBankAccountId entityId : entityIds) {
+            if (!existingIds.contains(entityId)) {
+                missingAccounts.add(createNewAccountEntity(entityId));
+            }
+        }
+
+        List<CustomerBankAccountEntity> accounts = new ArrayList<>(existingAccounts.size() + missingAccounts.size());
+        accounts.addAll(existingAccounts);
+        if (!missingAccounts.isEmpty()) {
+            bankAccountJpaClient.saveAll(missingAccounts).forEach(accounts::add);
+        }
+
+        List<CustomerBankAccount> domainAccounts = new ArrayList<>(accounts.size());
+        for (CustomerBankAccountEntity account : accounts) {
+            domainAccounts.add(mapper.toDomain(account));
+        }
+        return domainAccounts;
     }
 
     @Override
-    public void save(CustomerBankAccount bankAccount) {
-        var entity = mapper.toEntity(bankAccount);
-        bankAccountJpaClient.save(entity);
-    }
+    public List<CustomerBankAccount> findAllByCustomerIds(Collection<String> customerIds) {
+        if (customerIds.isEmpty()) {
+            return List.of();
+        }
 
-    @Override
-    public List<CustomerBankAccount> findByCustomerId(String customerId) {
-        var entities = bankAccountJpaClient.findByCustomerId(customerId);
+        var entities = bankAccountJpaClient.findByCustomerIdIn(customerIds);
         return entities.stream()
                 .map(mapper::toDomain)
                 .toList();
     }
 
-    private Optional<CustomerBankAccountEntity> createNewAccount(BankAccountId bankAccountId) {
-        var entityId = mapper.toEntityId(bankAccountId);
-        var newAccount = CustomerBankAccountEntity.builder()
+    @Override
+    public void saveAll(Collection<CustomerBankAccount> bankAccounts) {
+        List<CustomerBankAccountEntity> entities = new ArrayList<>(bankAccounts.size());
+        for (CustomerBankAccount bankAccount : bankAccounts) {
+            entities.add(mapper.toEntity(bankAccount));
+        }
+        bankAccountJpaClient.saveAll(entities);
+    }
+
+    private CustomerBankAccountEntity createNewAccountEntity(CustomerBankAccountEntity.CustomerBankAccountId entityId) {
+        return CustomerBankAccountEntity.builder()
                 .id(entityId)
                 .balance(BigDecimal.valueOf(10000))
                 .type(BankAccountType.CHECKING.toString())
                 .build();
-
-        var savedEntity = bankAccountJpaClient.save(newAccount);
-        return Optional.of(savedEntity);
     }
 }

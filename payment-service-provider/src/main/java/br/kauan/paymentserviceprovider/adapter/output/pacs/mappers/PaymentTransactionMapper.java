@@ -1,21 +1,16 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.mappers;
 
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper;
-import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.*;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
-import br.kauan.paymentserviceprovider.domain.entity.commons.BatchDetails;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import javax.xml.datatype.XMLGregorianCalendar;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -25,9 +20,9 @@ public class PaymentTransactionMapper {
     private final CommonsMapper commonsMapper;
     private final CodeMapping codeMapping;
 
-    public FIToFICustomerCreditTransfer toRegulatoryRequest(PaymentBatch internalBatch) {
-        var groupHeader = commonsMapper.createGroupHeader(internalBatch.getBatchDetails());
-        var creditTransferTransactions = mapPaymentTransactionsToCreditTransferTransactions(internalBatch.getTransactions());
+    public FIToFICustomerCreditTransfer toRegulatoryRequest(PaymentTransaction paymentTransaction) {
+        var groupHeader = commonsMapper.createGroupHeader(1);
+        var creditTransferTransactions = List.of(mapPaymentTransactionToCreditTransferTransaction(paymentTransaction));
 
         return FIToFICustomerCreditTransfer.builder()
                 .groupHeader(groupHeader)
@@ -35,28 +30,8 @@ public class PaymentTransactionMapper {
                 .build();
     }
 
-    public PaymentBatch fromRegulatoryRequest(FIToFICustomerCreditTransfer regulatoryRequest) {
-        var batchDetails = mapGroupHeaderToBatchDetails(regulatoryRequest.getGroupHeader());
-        var transactions = mapCreditTransferTransactionsToPaymentTransactions(regulatoryRequest.getCreditTransferTransactions());
-
-        return PaymentBatch.builder()
-                .batchDetails(batchDetails)
-                .transactions(transactions)
-                .build();
-    }
-
-    private BatchDetails mapGroupHeaderToBatchDetails(GroupHeader groupHeader) {
-        return BatchDetails.builder()
-                .id(groupHeader.getMessageId())
-                .createdAt(convertXmlGregorianCalendarToInstant(groupHeader.getCreationTimestamp()))
-                .totalTransactions(groupHeader.getNumberOfTransactions().intValue())
-                .build();
-    }
-
-    private List<CreditTransferTransaction> mapPaymentTransactionsToCreditTransferTransactions(List<PaymentTransaction> paymentTransactions) {
-        return paymentTransactions.stream()
-                .map(this::mapPaymentTransactionToCreditTransferTransaction)
-                .toList();
+    public List<PaymentTransaction> fromRegulatoryRequest(FIToFICustomerCreditTransfer regulatoryRequest) {
+        return mapCreditTransferTransactionsToPaymentTransactions(regulatoryRequest.getCreditTransferTransactions());
     }
 
     private CreditTransferTransaction mapPaymentTransactionToCreditTransferTransaction(PaymentTransaction paymentTransaction) {
@@ -238,9 +213,5 @@ public class PaymentTransactionMapper {
 
     private String extractBranchCode(AccountIdentificationChoice accountId) {
         return String.valueOf(accountId.getOther().getBranchCode().intValue());
-    }
-
-    private Instant convertXmlGregorianCalendarToInstant(XMLGregorianCalendar xmlGregorianCalendar) {
-        return xmlGregorianCalendar.toGregorianCalendar().toZonedDateTime().toInstant();
     }
 }

@@ -4,7 +4,6 @@ import br.kauan.paymentserviceprovider.adapter.output.listener.CentralTransferSy
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.PaymentTransactionMapper;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferDetails;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferRequest;
 import br.kauan.paymentserviceprovider.domain.entity.mappers.PaymentTransactionFactory;
@@ -13,6 +12,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Service
 @Slf4j
@@ -42,15 +43,14 @@ public class TransferRequestService {
         log.info("[PIX FLOW - Step 3] PSP Pagador preparing transfer request. Amount: {}, Receiver: {}", 
                 transferRequest.getAmount(), transferRequest.getReceiver().getName());
 
-        PaymentBatch paymentBatch = paymentTransactionFactory.createPaymentBatch(transferRequest);
-        PaymentTransaction transaction = paymentBatch.getTransactions().getFirst();
+        PaymentTransaction transaction = paymentTransactionFactory.createPaymentTransaction(transferRequest);
 
-        paymentRepository.save(transaction);
+        paymentRepository.saveAll(List.of(transaction));
         log.debug("[PIX FLOW - Step 3] Saved payment transaction with ID: {}", transaction.getPaymentId());
 
         try {
-            var regulatoryBatch = paymentTransactionMapper.toRegulatoryRequest(paymentBatch);
-            byte[] requestBytes = objectMapper.writeValueAsBytes(regulatoryBatch);
+            var regulatoryRequest = paymentTransactionMapper.toRegulatoryRequest(transaction);
+            byte[] requestBytes = objectMapper.writeValueAsBytes(regulatoryRequest);
             log.info("[PIX FLOW - Step 3] Sending PACS.008 transfer request to kafka-producer for bank: {}, payload size: {} bytes", 
                     GlobalVariables.getBankCode(), requestBytes.length);
             transferRestClient.requestTransfer(GlobalVariables.getBankCode(), requestBytes);

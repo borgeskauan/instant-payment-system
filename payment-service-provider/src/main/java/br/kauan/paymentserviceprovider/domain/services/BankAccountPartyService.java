@@ -3,6 +3,7 @@ package br.kauan.paymentserviceprovider.domain.services;
 import br.kauan.paymentserviceprovider.adapter.output.customer.CustomerRepository;
 import br.kauan.paymentserviceprovider.domain.entity.mappers.CustomerPartyMapper;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.port.output.CustomerBankAccountRepository;
 import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
@@ -10,6 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -37,7 +42,7 @@ public class BankAccountPartyService {
 
     public Optional<Party> getInternalPartyDetails(String customerId) {
         var customer = customerRepository.findById(customerId);
-        var bankAccounts = customerBankAccountRepository.findByCustomerId(customerId).getFirst();
+        var bankAccounts = customerBankAccountRepository.findAllByCustomerIds(List.of(customerId)).getFirst();
         return customer.map(c -> customerPartyMapper.toParty(c, bankAccounts));
     }
 
@@ -55,27 +60,35 @@ public class BankAccountPartyService {
         return partyDetails;
     }
 
-    public void addAmountToAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
-        var bankAccount = customerBankAccountRepository.findById(bankAccountId).orElseThrow();
-        var oldBalance = bankAccount.getBalance();
-
-        var newBalance = bankAccount.getBalance().add(amountToAdd);
-        bankAccount.setBalance(newBalance);
-        customerBankAccountRepository.save(bankAccount);
-        
-        log.info("[PIX FLOW - Settlement] Credited amount {} to account {}. Balance: {} -> {}", 
-                amountToAdd, bankAccountId, oldBalance, newBalance);
+    public void addAmountsToAccounts(Map<BankAccountId, BigDecimal> amountsByAccount) {
+        updateAccountBalances(amountsByAccount);
     }
 
-    public void removeAmountFromAccount(BankAccountId bankAccountId, BigDecimal amountToAdd) {
-        var bankAccount = customerBankAccountRepository.findById(bankAccountId).orElseThrow();
-        var oldBalance = bankAccount.getBalance();
+    public void removeAmountsFromAccounts(Map<BankAccountId, BigDecimal> amountsByAccount) {
+        Map<BankAccountId, BigDecimal> negativeAmountsByAccount = new HashMap<>(amountsByAccount.size());
+        for (Map.Entry<BankAccountId, BigDecimal> entry : amountsByAccount.entrySet()) {
+            negativeAmountsByAccount.put(entry.getKey(), entry.getValue().negate());
+        }
+        updateAccountBalances(negativeAmountsByAccount);
+    }
 
-        var newBalance = bankAccount.getBalance().subtract(amountToAdd);
-        bankAccount.setBalance(newBalance);
-        customerBankAccountRepository.save(bankAccount);
-        
-        log.info("[PIX FLOW - Settlement] Debited amount {} from account {}. Balance: {} -> {}", 
-                amountToAdd, bankAccountId, oldBalance, newBalance);
+    private void updateAccountBalances(Map<BankAccountId, BigDecimal> balanceDeltasByAccount) {
+        if (balanceDeltasByAccount.isEmpty()) {
+            return;
+        }
+
+        Collection<CustomerBankAccount> bankAccounts = customerBankAccountRepository.findAllByIds(balanceDeltasByAccount.keySet());
+        for (CustomerBankAccount bankAccount : bankAccounts) {
+            BankAccountId bankAccountId = bankAccount.getAccount().getId();
+            BigDecimal balanceDelta = balanceDeltasByAccount.get(bankAccountId);
+            if (balanceDelta == null) {
+                continue;
+            }
+
+            bankAccount.setBalance(bankAccount.getBalance().add(balanceDelta));
+        }
+
+        customerBankAccountRepository.saveAll(bankAccounts);
+        log.info("[PIX FLOW - Settlement] Updated balances for {} accounts", bankAccounts.size());
     }
 }

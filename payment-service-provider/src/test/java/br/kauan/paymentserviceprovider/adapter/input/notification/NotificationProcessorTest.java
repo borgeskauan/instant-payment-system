@@ -5,8 +5,8 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportM
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
-import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
+import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.domain.services.cts.IncomingTransactionService;
 import br.kauan.paymentserviceprovider.domain.services.cts.StatusProcessingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,29 +49,25 @@ class NotificationProcessorTest {
 
     @Test
     void pacs008NotificationIsMappedAndSentToIncomingTransactionService() {
-        PaymentBatch paymentBatch = PaymentBatch.builder()
-                .transactions(List.of())
-                .build();
+        PaymentTransaction transaction = PaymentTransaction.builder().paymentId("E2E-1").build();
         when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
-                .thenReturn(paymentBatch);
+                .thenReturn(List.of(transaction));
 
         processor.process(BANK_CODE, "{\"CdtTrfTxInf\":[]}");
 
-        verify(incomingTransactionService).handleTransferRequestBatch(paymentBatch);
+        verify(incomingTransactionService).handleTransferRequests(List.of(transaction));
         verifyNoInteractions(statusProcessingService);
     }
 
     @Test
     void pacs002NotificationIsMappedAndSentToStatusProcessingService() {
-        StatusBatch statusBatch = StatusBatch.builder()
-                .statusReports(List.of())
-                .build();
+        StatusReport statusReport = StatusReport.builder().originalPaymentId("E2E-1").build();
         when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
-                .thenReturn(statusBatch);
+                .thenReturn(List.of(statusReport));
 
         processor.process(BANK_CODE, "{\"TxInfAndSts\":[]}");
 
-        verify(statusProcessingService).handleStatusBatch(statusBatch);
+        verify(statusProcessingService).handleStatuses(List.of(statusReport));
         verifyNoInteractions(incomingTransactionService);
     }
 

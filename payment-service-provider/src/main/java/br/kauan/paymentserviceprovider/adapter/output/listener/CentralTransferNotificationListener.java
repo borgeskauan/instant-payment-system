@@ -6,14 +6,15 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPayment
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.FIToFICustomerCreditTransfer;
 import br.kauan.paymentserviceprovider.commons.BackgroundTaskRunner;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
-import br.kauan.paymentserviceprovider.domain.entity.status.StatusBatch;
-import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentBatch;
+import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -39,14 +40,14 @@ public class CentralTransferNotificationListener {
     }
 
     public void startListeningForNotifications(
-            Consumer<StatusBatch> statusReportHandler,
-            Consumer<PaymentBatch> transferRequestHandler) {
+            Consumer<List<StatusReport>> statusReportHandler,
+            Consumer<List<PaymentTransaction>> transferRequestHandler) {
         backgroundTaskRunner.startLoop(() -> receiveNotifications(statusReportHandler, transferRequestHandler));
     }
 
     private void receiveNotifications(
-            Consumer<StatusBatch> statusReportHandler,
-            Consumer<PaymentBatch> transferRequestHandler
+            Consumer<List<StatusReport>> statusReportHandler,
+            Consumer<List<PaymentTransaction>> transferRequestHandler
     ) {
         var notifications = transferRestClient.getMessages(GlobalVariables.getBankCode()).getContent();
 
@@ -84,16 +85,14 @@ public class CentralTransferNotificationListener {
 
     private void handleNotification(
             Object notification,
-            Consumer<StatusBatch> statusReportHandler,
-            Consumer<PaymentBatch> transferRequestHandler
+            Consumer<List<StatusReport>> statusReportHandler,
+            Consumer<List<PaymentTransaction>> transferRequestHandler
     ) {
         if (notification instanceof FIToFIPaymentStatusReport statusReport) {
-            var statusBatch = statusReportMapper.fromRegulatoryReport(statusReport);
-            statusReportHandler.accept(statusBatch);
+            statusReportHandler.accept(statusReportMapper.fromRegulatoryReport(statusReport));
 
         } else if (notification instanceof FIToFICustomerCreditTransfer creditTransfer) {
-            var paymentBatch = paymentTransactionMapper.fromRegulatoryRequest(creditTransfer);
-            transferRequestHandler.accept(paymentBatch);
+            transferRequestHandler.accept(paymentTransactionMapper.fromRegulatoryRequest(creditTransfer));
 
         } else {
             log.warn("Received unknown notification type");

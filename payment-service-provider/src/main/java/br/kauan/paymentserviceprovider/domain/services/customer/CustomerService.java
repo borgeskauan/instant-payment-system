@@ -89,7 +89,7 @@ public class CustomerService {
         Customer savedCustomer = customerRepository.save(customer);
 
         customerBankAccount.setCustomerId(savedCustomer.getId());
-        customerBankAccountRepository.save(customerBankAccount);
+        customerBankAccountRepository.saveAll(List.of(customerBankAccount));
 
         log.info("New customer created successfully with ID: {}", savedCustomer.getId());
         return CustomerLoginResponse.builder()
@@ -104,7 +104,7 @@ public class CustomerService {
     }
 
     private CustomerBankAccount findCustomerBankAccount(String customerId) {
-        return customerBankAccountRepository.findByCustomerId(customerId)
+        return customerBankAccountRepository.findAllByCustomerIds(List.of(customerId))
                 .stream()
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account."));
