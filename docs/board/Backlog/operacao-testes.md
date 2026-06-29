@@ -1,78 +1,8 @@
-# Backlog
+# Operação e testes
 
-Este arquivo guarda trabalho possível, mas ainda não priorizado. Tarefas ativas ou pausadas já priorizadas ficam em `docs/board/Atividades`.
+Trabalho possível, mas ainda não priorizado. Tarefas ativas ou pausadas já priorizadas ficam em `docs/board/Atividades`.
 
-## Backlog
-
-### Validações do DICT
-
-**Por que existe**
-
-O DICT já valida alguns aspectos da chave Pix, como tipo de chave e CPF/CNPJ da própria chave. Ainda falta decidir se ele também deve validar dados da conta e do proprietário ao criar uma chave Pix.
-
-**Tarefas**
-
-- [ ] Validar campos da conta ao criar chave Pix.
-- [ ] Validar campos do proprietário ao criar chave Pix.
-- [ ] Definir quais validações pertencem ao DICT e quais pertencem ao PSP.
-
-### Consistência entre DICT oficial e cadastro local de chaves do PSP
-
-**Por que existe**
-
-O DICT oficial não expõe uma API para listar todas as chaves Pix de uma pessoa ou conta. Ele resolve vínculos por chave, cria/atualiza/remove vínculos e oferece mecanismos de eventos/sincronização, mas a visão de "minhas chaves Pix" precisa ser mantida pelo PSP custodiante em uma base local própria.
-
-No ambiente local, o DICT usa PostgreSQL persistido, enquanto os PSPs ainda usam H2 em memória. Depois de reiniciar os PSPs, uma chave Pix antiga pode continuar apontando no DICT para uma conta que não existe mais no PSP atual ou que não é a conta visível no frontend. Isso faz a transferência liquidar para um identificador antigo, causando confusão no teste manual.
-
-Também existe um comportamento perigoso no PSP: buscar uma conta por `BankAccountId` pode criar uma conta nova automaticamente. Esse fallback mascara erro de consistência durante settlement, porque o crédito/débito pode ser aplicado em uma conta criada implicitamente em vez de falhar de forma explícita.
-
-Persistir o banco local dos PSPs não é prioridade agora, porque o escopo principal dos testes continua sendo SPI/Kafka/DICT e não durabilidade do PSP. A estratégia preferida para o ambiente manual é reset coordenado do estado local junto com remoção da criação implícita de contas no PSP.
-
-**Tarefas**
-
-- [ ] Manter fidelidade à API oficial: não criar endpoint no DICT para listar chaves por pessoa ou conta.
-- [ ] Tratar o cadastro local do PSP como a fonte para "minhas chaves Pix", e o DICT como fonte de verdade para resolver/registrar/remover uma chave específica.
-- [ ] Definir contrato para chave Pix já existente: retornar `409 Conflict` ou tratar como idempotente quando já pertencer à mesma conta.
-- [ ] Impedir que falhas de negócio do DICT, como chave duplicada ou chave inexistente, virem `500`.
-- [ ] Garantir atomicidade prática no cadastro: o PSP só deve salvar a chave local depois de sucesso no DICT; falha no DICT não pode deixar chave local órfã.
-- [ ] Definir fluxo de remoção/alteração de chave mantendo consistência entre DICT e cadastro local do PSP.
-- [ ] Avaliar uso futuro de eventos/sincronização do DICT oficial para reconciliar a base local do PSP.
-- [ ] Separar lookup de conta de criação de conta no PSP; settlement deve buscar conta existente e falhar se ela não existir.
-- [ ] Remover criação automática de conta em `CustomerBankAccountJpaAdapter.findById` ou restringir esse comportamento apenas ao fluxo explícito de criação de cliente.
-- [ ] Registrar erro claro quando uma notificação de settlement referenciar conta local inexistente.
-- [ ] Criar reset coordenado para o ambiente manual: limpar DICT junto com o estado efêmero dos PSPs ou recriar seed coerente depois do restart.
-- [ ] Documentar que persistir banco local dos PSPs está fora do escopo atual.
-- [ ] Adicionar teste para chave Pix apontando para conta inexistente no PSP: fluxo deve falhar de forma explícita e observável, sem criar conta implicitamente.
-
-### Consultas auxiliares simuladas
-
-**Por que existe**
-
-O fluxo Pix real depende de consultas e validações auxiliares, como CPF/CNPJ. No projeto, ainda não está claro se isso deve virar um microserviço separado, uma responsabilidade do DICT ou apenas uma validação interna simplificada.
-
-**Tarefas**
-
-- [ ] Decidir onde ficará a consulta/validação de CPF/CNPJ.
-- [ ] Implementar consulta simulada de CPF/CNPJ, se ainda fizer sentido para o escopo.
-
-### Contrato de preview e execução no PSP
-
-**Por que existe**
-
-Hoje o endpoint de execução de transferência recebe o objeto completo do recebedor retornado pelo preview. Isso reaproveita a consulta ao DICT e mantém o `/transfer/execute` rápido, mas acopla o cliente ao formato interno do recebedor. Uma alternativa melhor é o preview gerar um `previewId`, armazenar temporariamente os dados resolvidos no PSP pagador e fazer o execute receber apenas esse identificador, junto com os dados da transferência.
-
-Os testes de carga atuais em `load-test/` chamam diretamente o fluxo SPI/Kafka por PACS e não dependem dos endpoints `/transfer/preview` e `/transfer/execute` do PSP.
-
-**Tarefas**
-
-- [ ] Fazer `/transfer/preview` retornar um `previewId` além dos dados exibíveis do recebedor.
-- [ ] Armazenar temporariamente o resultado do preview no PSP pagador, com expiração.
-- [ ] Alterar `/transfer/execute` para receber `previewId` em vez do corpo completo do `receiver`.
-- [ ] Validar expiração, reuso e existência do preview antes de executar a transferência.
-- [ ] Atualizar Bruno e REST Client para o novo contrato.
-- [ ] Manter os testes de carga atuais compatíveis, já que eles exercitam SPI/Kafka diretamente.
-
-### Auditoria completa das transações no SPI sem pesar o hot path
+## Auditoria completa das transações no SPI sem pesar o hot path
 
 **Por que existe**
 
@@ -90,7 +20,7 @@ Isso ajuda a medir o impacto de uma tabela operacional estreita, mas não resolv
 - [ ] Definir política de retenção e consulta para dados de auditoria.
 - [ ] Medir o impacto da auditoria assíncrona no load test antes de considerá-la parte do fluxo padrão.
 
-### Observabilidade operacional do fluxo Pix
+## Observabilidade operacional do fluxo Pix
 
 **Por que existe**
 
@@ -116,7 +46,7 @@ As metas principais são: verificar saúde da aplicação enquanto ela roda, aco
 - [ ] Decidir quais métricas vêm de Micrometer/Actuator, Kafka exporter, Postgres exporter, cAdvisor/Node exporter, JFR ou traces próprios.
 - [ ] Integrar a observabilidade aos testes de carga para comparar baseline vs mudança: throughput sustentado, p95/p99, lag, CPU por transação e memória por transação.
 
-### Gating de prontidão dos microserviços
+## Gating de prontidão dos microserviços
 
 **Por que existe**
 
@@ -139,7 +69,7 @@ A meta é separar "processo está vivo" de "serviço está pronto para tráfego 
 - [ ] Expor métricas de startup/warmup: tempo até liveness, tempo até readiness, tempo de warmup, falhas de dependência e último motivo de not-ready.
 - [ ] Adicionar testes de contrato para readiness: dependência indisponível mantém serviço not-ready; warmup concluído torna serviço ready.
 
-### Cenários realistas e reprocessamento no load-tool
+## Cenários realistas e reprocessamento no load-tool
 
 **Por que existe**
 
@@ -169,7 +99,7 @@ Kafka, retries, restarts e falhas de rede tornam duplicidade e replay inevitáve
 - [ ] Garantir que retry/replay não altera saldo nem gera confirmação inconsistente.
 - [ ] Comparar cenário uniforme atual contra cenários realistas para identificar regressões escondidas.
 
-### Dead letter queue para mensagens inválidas
+## Dead letter queue para mensagens inválidas
 
 **Por que existe**
 
@@ -188,7 +118,7 @@ Mensagens inválidas, incompatíveis com o contrato ou impossíveis de processar
 - [ ] Criar teste automatizado para contrato antigo/incompatível, como PACS bruto chegando no tópico interno protobuf.
 - [ ] Documentar quando uma mensagem deve ser reprocessada, corrigida manualmente ou descartada.
 
-### Estabilizar teste de carga dentro do budget de CPU
+## Estabilizar teste de carga dentro do budget de CPU
 
 **Por que existe**
 
@@ -213,114 +143,3 @@ Nesse desenho, as duas stacks devem compartilhar o mesmo PostgreSQL. Isso precis
 - [ ] Validar impacto do PostgreSQL compartilhado em conexões, locks, query latency, CPU, I/O e p95/p99.
 - [ ] Validar isolamento de CPU/memória entre stacks mesmo com banco compartilhado.
 - [ ] Atualizar scripts de load test para registrar automaticamente o perfil de CPU/memória usado no run.
-
-### Infraestrutura e deploy
-
-**Por que existe**
-
-O projeto nasceu com intenção de rodar os serviços em containers e, futuramente, em Kubernetes. Já existem Dockerfiles e `infra/docker-compose.yml`, então esta frente precisa ser reavaliada antes de virar implementação.
-
-**Tarefas**
-
-- [ ] Conferir quais serviços já estão containerizados.
-- [ ] Separar o que é ambiente local com Docker Compose do que seria deploy Kubernetes.
-- [ ] Realizar deploy em Kubernetes, se ainda fizer sentido para o projeto.
-
-### Control panel para PSPs
-
-**Por que existe**
-
-A ideia era ter uma interface ou serviço para criar, iniciar, parar e reiniciar PSPs sem depender de inicialização manual. Isso poderia ajudar em cenários com múltiplos PSPs e futura orquestração.
-
-**Tarefas**
-
-- [ ] Decidir se o control panel ainda é necessário.
-- [ ] Definir escopo mínimo: criação, start, stop, restart ou apenas visualização.
-- [ ] Decidir se isso pertence ao frontend atual, a um serviço separado ou à infraestrutura.
-
-### Documentação geral do projeto
-
-**Por que existe**
-
-O projeto tem documentação espalhada sobre descoberta, fluxo Pix, testes de carga, Kafka e gRPC. Falta uma documentação de entrada que explique como o sistema está organizado e por onde retomar.
-
-**Tarefas**
-
-- [ ] Criar documentação geral do projeto.
-- [ ] Mapear os principais serviços: SPI, PSP, DICT, Kafka producer e notification gateway.
-- [ ] Explicar como executar o projeto localmente.
-- [ ] Explicar o fluxo Pix ponta a ponta em alto nível.
-
-## Histórico
-
-### Definições iniciais
-
-- [x] Definir endpoints dos sistemas: SPI, DICT e PSP.
-- [x] Decidir se a estrutura do payload seguiria ISO 20022.
-- [x] Definir fluxo de pagamento.
-- [x] Definir stack técnica:
-  - [x] Java + Spring Boot.
-  - [x] Kafka.
-  - [x] K6.
-  - [x] Kubernetes.
-
-### PACS
-
-- [x] Fazer versão das PACSs para uso interno:
-  - [x] pacs.008.
-  - [x] pacs.002.
-- [x] Converter PACSs para objeto interno e vice-versa:
-  - [x] pacs.008.
-  - [x] pacs.002.
-
-### DICT
-
-- [x] Implementar API do DICT.
-- [x] Realizar implementação básica.
-- [x] Barrar request se chave Pix já existe.
-- [x] Validar CPF com dígito verificador e não existência prévia.
-- [x] Criar enum para validar tipo de chave.
-
-### SPI, PSP e fluxo Pix
-
-- [x] Executar dois PSPs ao mesmo tempo.
-- [x] Criar frontend em Angular para simular transações.
-- [x] Criar endpoint de login/cadastro no PSP.
-- [x] Criar endpoint de cadastro de chave Pix.
-- [x] Realizar transação interbancária e intrabancária.
-- [x] Melhorar infraestrutura para executar dois PSPs ao mesmo tempo.
-- [x] Refatorar código do PSP para desacoplar o modelo usado do modelo do SPI.
-- [x] Refatorar localização das classes e pacotes.
-- [x] Testar implementação após refatoração.
-
-### Testes de performance
-
-- [x] Realizar teste de performance com K6.
-- [x] Realizar vários pedidos de transferência.
-- [x] Realizar pedido de transferência diretamente para SPI.
-- [x] Realizar consulta de mensagens para um PSP.
-- [x] Realizar aceite do pedido.
-- [x] Consultar mensagens de confirmação e finalizar o ciclo de teste.
-- [x] Implementar long polling de verdade.
-
-### Kafka e notificações
-
-- [x] Implementar tópico Kafka para notificações.
-- [x] Criar microserviço de protótipo usando gRPC streaming.
-- [x] Realizar comparação com HTTP long polling usando K6.
-- [x] Implementar primeiro sem Kafka.
-- [x] Desacoplar recebimento e processamento.
-- [x] Criar microserviço para receber e postar no Kafka o pedido de transferência.
-- [x] Integrar consumo do tópico Kafka no SPI para realizar processamento.
-- [x] Criar tópico Kafka para tratar notificações.
-- [x] Criar microserviço para conectar no tópico de notificações Kafka e expor endpoint gRPC de server-streaming.
-- [x] Adequar teste para se integrar com microserviço gRPC.
-
-### Infraestrutura
-
-- [x] Implementar limite de recursos no teste de load balancer: CPU e RAM.
-- [x] Padronizar PostgreSQL nos ambientes:
-  - [x] Remover ou isolar a configuração H2 do SPI.
-  - [x] Configurar PostgreSQL como banco padrão do SPI.
-  - [x] Habilitar e revisar migrations com Flyway.
-  - [x] Garantir que o ambiente local suba com PostgreSQL sem passos manuais extras.

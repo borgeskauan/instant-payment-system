@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "discovery/aprendizado_inicial.md",
+                "file": "board/Backlog/operacao-testes.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "aprendizado_inicial"
+              "title": "operacao-testes"
             }
           }
         ]
@@ -171,6 +171,13 @@
   },
   "active": "f2bac1354622eca2",
   "lastOpenFiles": [
+    "board/Backlog/produto-dominio.md",
+    "board/Backlog/operacao-testes.md",
+    "board/Backlog/infra-documentacao.md",
+    "discovery/aprendizado_inicial.md",
+    "board/Backlog.md",
+    "board/Historico.md",
+    "board/Backlog",
     "discovery/escopo_inicial.md",
     "superpowers/plans/2026-06-14-go-psp-simulator.md",
     "superpowers/plans",
@@ -182,8 +189,6 @@
     "collection/Transfer flow/02 Create receiver customer.yml",
     "collection/Transfer flow/01 Create sender customer.yml",
     "collection/Transfer flow/folder.yml",
-    "collection/Transfer flow",
-    "discovery/aprendizado_inicial.md",
     "board/Atividades/agora/reduzir-consumo-cpu-spi.md",
     "Programming/Pix/Documentação inicial.md",
     "Programming/Pix/Anotações de aprendizado.md",
@@ -203,14 +208,9 @@
     "Carrer/Mestrado.md",
     "Carrer/Marketing pessoal.md",
     "Carrer/Conselhos.md",
-    "Carrer/Carrer graduation steps.md",
-    "Carrer/PDI/Priorities.md",
-    "Carrer/PDI/Strengths and weaknesses.md",
-    "Carrer/PDI/Backlog.md",
     "Imagens/Pasted image 20250227184342.png",
     "Imagens/Pasted image 20260103151227.png",
     "Imagens/Pasted image desktop.png",
-    "Muriel (Memorias ao vento).md",
     "Pasted image 20260404230145.png",
     "Pasted image 20260404230018.png",
     "Pasted image 20260305213424.png",

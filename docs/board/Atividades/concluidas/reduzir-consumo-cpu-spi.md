@@ -36,6 +36,5 @@ O objetivo é identificar a causa principal do consumo de CPU do SPI e reduzir e
 **Referências**
 
 - `docs/PIX_FLOW_LOGGING_GUIDE.md`: descreve o fluxo Pix e onde o SPI participa.
-- `docs/board/Backlog.md`: contém o histórico e pendências antigas do projeto.
 - `load-test/`: contém scripts e resultados anteriores de teste de carga.
 - `spi/`: implementação do serviço SPI.
