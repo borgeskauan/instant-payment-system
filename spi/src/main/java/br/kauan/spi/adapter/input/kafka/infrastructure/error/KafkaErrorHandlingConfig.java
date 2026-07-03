@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.ContainerPausingBackOffHandler;
 import org.springframework.kafka.listener.CommonDelegatingErrorHandler;
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -43,23 +44,25 @@ public class KafkaErrorHandlingConfig {
     }
 
     @Bean
-    public ListenerContainerPauseService listenerContainerPauseService(
+    public DefaultErrorHandler infrastructureKafkaErrorHandler(
             KafkaListenerEndpointRegistry registry,
             @Qualifier("kafkaPauseTaskScheduler") TaskScheduler taskScheduler
     ) {
-        return new ListenerContainerPauseService(registry, taskScheduler);
+        ListenerContainerPauseService pauseService = new ListenerContainerPauseService(registry, taskScheduler);
+        ContainerPausingBackOffHandler backOffHandler = new ContainerPausingBackOffHandler(pauseService);
+        FixedBackOff infrastructureBackOff =
+                new FixedBackOff(INFRASTRUCTURE_BACKOFF.toMillis(), FixedBackOff.UNLIMITED_ATTEMPTS);
+        return new DefaultErrorHandler(null, infrastructureBackOff, backOffHandler);
     }
 
     @Bean
     public CommonErrorHandler kafkaErrorHandler(
             @Qualifier("dlqKafkaErrorHandler") DefaultErrorHandler dlqKafkaErrorHandler,
-            ListenerContainerPauseService pauseService
+            @Qualifier("infrastructureKafkaErrorHandler") DefaultErrorHandler infrastructureKafkaErrorHandler
     ) {
-        CommonErrorHandler infrastructureErrorHandler =
-                new InfrastructurePausingErrorHandler(pauseService, INFRASTRUCTURE_BACKOFF);
         CommonDelegatingErrorHandler errorHandler = new CommonDelegatingErrorHandler(dlqKafkaErrorHandler);
         errorHandler.setCauseChainTraversing(true);
-        errorHandler.addDelegate(InfrastructureUnavailableException.class, infrastructureErrorHandler);
+        errorHandler.addDelegate(InfrastructureUnavailableException.class, infrastructureKafkaErrorHandler);
         return errorHandler;
     }
 }

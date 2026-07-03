@@ -14,7 +14,6 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
-import org.springframework.kafka.listener.ListenerContainerPauseService;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.scheduling.TaskScheduler;
@@ -23,15 +22,12 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -50,35 +46,23 @@ class KafkaErrorHandlingConfigTest {
     }
 
     @Test
-    void infrastructurePausingErrorHandlerPausesContainerAndRethrowsWithoutDlqRecovery() {
-        ListenerContainerPauseService pauseService = mock(ListenerContainerPauseService.class);
-        CommonErrorHandler errorHandler =
-                new InfrastructurePausingErrorHandler(pauseService, Duration.ofSeconds(30));
-        MessageListenerContainer container = mock(MessageListenerContainer.class);
-        RuntimeException infrastructureFailure = new InfrastructureUnavailableException(
-                "Database unavailable while processing SPI batch",
-                new DataAccessResourceFailureException("db down"));
+    void infrastructureKafkaErrorHandlerUsesDefaultErrorHandlerWithoutRecoveredCommits() {
+        KafkaErrorHandlingConfig config = new KafkaErrorHandlingConfig();
+        DefaultErrorHandler errorHandler = config.infrastructureKafkaErrorHandler(
+                mock(KafkaListenerEndpointRegistry.class),
+                config.kafkaPauseTaskScheduler());
 
-        RuntimeException exception = assertThrows(RuntimeException.class,
-                () -> errorHandler.handleBatch(
-                        infrastructureFailure,
-                        ConsumerRecords.empty(),
-                        mock(Consumer.class),
-                        container,
-                        () -> {
-                        }));
-
-        assertThat(exception).isSameAs(infrastructureFailure);
-        verify(pauseService).pause(eq(container), eq(Duration.ofSeconds(30)));
+        assertThat(errorHandler).isInstanceOf(DefaultErrorHandler.class);
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(errorHandler, "isCommitRecovered")).isFalse();
     }
 
     @Test
     void kafkaErrorHandlerDelegatesInfrastructureUnavailableToPausingRetryHandler() {
         KafkaErrorHandlingConfig config = new KafkaErrorHandlingConfig();
         DefaultErrorHandler dlqErrorHandler = new DefaultErrorHandler();
-        ListenerContainerPauseService pauseService = mock(ListenerContainerPauseService.class);
+        DefaultErrorHandler infrastructureErrorHandler = new DefaultErrorHandler();
 
-        CommonErrorHandler errorHandler = config.kafkaErrorHandler(dlqErrorHandler, pauseService);
+        CommonErrorHandler errorHandler = config.kafkaErrorHandler(dlqErrorHandler, infrastructureErrorHandler);
 
         assertThat(errorHandler).isInstanceOf(CommonDelegatingErrorHandler.class);
         @SuppressWarnings("unchecked")
@@ -87,20 +71,15 @@ class KafkaErrorHandlingConfigTest {
                         ReflectionTestUtils.getField(errorHandler, "delegates");
         assertThat(delegates)
                 .containsKey(InfrastructureUnavailableException.class);
-        assertThat(delegates.get(InfrastructureUnavailableException.class))
-                .isInstanceOf(InfrastructurePausingErrorHandler.class);
+        assertThat(delegates.get(InfrastructureUnavailableException.class)).isSameAs(infrastructureErrorHandler);
     }
 
     @Test
-    void kafkaPauseSupportBeansWirePauseService() {
+    void kafkaPauseTaskSchedulerUsesDedicatedThreadPool() {
         KafkaErrorHandlingConfig config = new KafkaErrorHandlingConfig();
         TaskScheduler taskScheduler = config.kafkaPauseTaskScheduler();
-        ListenerContainerPauseService pauseService = config.listenerContainerPauseService(
-                mock(KafkaListenerEndpointRegistry.class),
-                taskScheduler);
 
         assertThat(taskScheduler).isInstanceOf(ThreadPoolTaskScheduler.class);
-        assertThat(pauseService).isInstanceOf(ListenerContainerPauseService.class);
     }
 
     @Test
@@ -112,8 +91,10 @@ class KafkaErrorHandlingConfigTest {
         DeadLetterPublishingRecoverer recoverer = new br.kauan.spi.adapter.input.kafka.infrastructure.dlq.KafkaDlqConfig()
                 .deadLetterPublishingRecoverer(kafkaTemplate);
         DefaultErrorHandler dlqErrorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(0L, 0L));
-        ListenerContainerPauseService pauseService = mock(ListenerContainerPauseService.class);
-        CommonErrorHandler errorHandler = errorConfig.kafkaErrorHandler(dlqErrorHandler, pauseService);
+        DefaultErrorHandler infrastructureErrorHandler = errorConfig.infrastructureKafkaErrorHandler(
+                mock(KafkaListenerEndpointRegistry.class),
+                errorConfig.kafkaPauseTaskScheduler());
+        CommonErrorHandler errorHandler = errorConfig.kafkaErrorHandler(dlqErrorHandler, infrastructureErrorHandler);
         MessageListenerContainer container = mock(MessageListenerContainer.class);
         ConsumerRecords<String, byte[]> records = new ConsumerRecords<>(Map.of(
                 new TopicPartition("spi-payment-requests", 0),
@@ -143,6 +124,5 @@ class KafkaErrorHandlingConfigTest {
         }
 
         verify(kafkaTemplate, org.mockito.Mockito.never()).send(any(ProducerRecord.class));
-        verify(pauseService).pause(eq(container), eq(Duration.ofSeconds(30)));
     }
 }
