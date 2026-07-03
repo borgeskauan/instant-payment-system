@@ -33,6 +33,7 @@ As metas principais são: verificar saúde da aplicação enquanto ela roda, aco
 - [ ] Definir métricas de saúde por serviço: container/pod up, restarts, readiness/liveness, CPU, memória, CPU throttling, JVM heap, direct memory e GC.
 - [ ] Definir métricas Kafka: consumer lag por tópico/grupo/partição, records consumed/sec, records produced/sec, producer latency, retries, errors e rebalances.
 - [ ] Definir métricas do SPI: requests consumidas/sec, statuses recebidos/sec, settlements/sec, notificações enfileiradas/sec, latência de processamento, erros e tempo de queries no PostgreSQL.
+- [ ] Definir métricas de DLQ no SPI: mensagens publicadas por tópico/motivo, falhas ao publicar na DLQ, total por tópico e idade da mensagem mais antiga.
 - [ ] Definir métricas do notification-gateway: subscribers ativos, notificações/sec, batches/sec, tamanho dos batches, flush por tamanho/tempo, erros gRPC e streams cancelados.
 - [ ] Definir métricas de banco: conexões ativas, pool Hikari, query latency, locks, CPU, I/O e slow queries.
 - [ ] Definir métricas de negócio/SLA: transações iniciadas, aceitas, confirmadas, não confirmadas, dentro/fora do SLA, p50, p95, p99 e máximo.
@@ -41,7 +42,7 @@ As metas principais são: verificar saúde da aplicação enquanto ela roda, aco
 - [ ] Criar dashboard de latência por etapa: `http_done -> request_consumed`, `request_consumed -> pacs008_received`, `pacs002_sent -> confirmation_received` e latência end-to-end.
 - [ ] Criar dashboard de Kafka: lag, throughput, producer/consumer rate, partitions e rebalances.
 - [ ] Criar dashboard de cold start: tempo até readiness, tempo até primeiro consumo, lag inicial, drain rate e tempo até estabilizar p95/p99.
-- [ ] Definir alertas mínimos para degradação: container down, restart loop, CPU throttling alto, consumer lag crescendo, p95/p99 acima do alvo, transações não confirmadas e erros Kafka/gRPC/DB.
+- [ ] Definir alertas mínimos para degradação: container down, restart loop, CPU throttling alto, consumer lag crescendo, DLQ recebendo mensagens, p95/p99 acima do alvo, transações não confirmadas e erros Kafka/gRPC/DB.
 - [ ] Padronizar labels/dimensões das métricas: serviço, tópico, consumer group, partition, ISPB, tipo de evento e versão/build.
 - [ ] Decidir quais métricas vêm de Micrometer/Actuator, Kafka exporter, Postgres exporter, cAdvisor/Node exporter, JFR ou traces próprios.
 - [ ] Integrar a observabilidade aos testes de carga para comparar baseline vs mudança: throughput sustentado, p95/p99, lag, CPU por transação e memória por transação.
@@ -107,6 +108,8 @@ DLQ e reprocessamento só são seguros se as mensagens puderem ser reenviadas se
 
 O objetivo é tornar o replay seguro ponta a ponta: duplicidade com o mesmo identificador e mesmo conteúdo deve reconstruir ou reemitir a resposta esperada; duplicidade com conteúdo divergente deve falhar de forma explícita e observável.
 
+Replay a partir da DLQ entra aqui apenas como técnica de teste de idempotência. A ideia é publicar uma mensagem na DLQ, reenviar o payload preservado para o tópico de origem em um cenário controlado e provar que o sistema não duplica liquidação, status ou saldo. Isso não implica criar ferramenta ou processo operacional de replay da DLQ.
+
 **Tarefas**
 
 - [ ] Tornar a gravação de `pacs.008` no SPI idempotente por `paymentId`/`EndToEndId`.
@@ -119,6 +122,7 @@ O objetivo é tornar o replay seguro ponta a ponta: duplicidade com o mesmo iden
 - [ ] Adicionar testes para duplicidade de `pacs.008` com mesmo conteúdo e com conteúdo divergente.
 - [ ] Adicionar testes para replay de `pacs.002` já liquidado no SPI.
 - [ ] Adicionar testes para replay de notificação final no PSP sem alteração duplicada de saldo.
+- [ ] Adicionar cenário controlado de teste que reenvia ao tópico origem o payload preservado em uma mensagem da DLQ e valida idempotência ponta a ponta.
 
 ## Estabilizar teste de carga dentro do budget de CPU
 
