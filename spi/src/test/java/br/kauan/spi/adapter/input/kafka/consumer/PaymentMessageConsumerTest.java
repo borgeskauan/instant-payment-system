@@ -227,6 +227,31 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void forcedUnknownProcessingErrorIsBatchLevelFailureNotInvalidPayload() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(
+                processor,
+                new InternalPaymentMessageMapper(),
+                traceRecorder,
+                invalidPayloadRecoverer,
+                true);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> consumer.consumePaymentRequests(
+                        List.of(paymentRequestRecord("E2E-FORCED-UNKNOWN", "123", "12")),
+                        acknowledgment));
+
+        assertThat(exception).hasMessage("forced unknown processing failure");
+        verify(invalidPayloadRecoverer, never()).accept(any(), any(), any());
+        verify(traceRecorder, never()).record(any(), any());
+        verify(processor, never()).processTransactions(any(List.class));
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
     void paymentRequestProcessingFailureIsTreatedAsBatchLevelFailure() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         RuntimeException processingFailure = new RuntimeException("processing failed");
@@ -401,6 +426,27 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void statusReportDlqFailurePreventsAckAndPropagatesError() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class), invalidPayloadRecoverer);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        ConsumerRecord<String, byte[]> invalidRecord = record(
+                "spi-payment-status-reports",
+                5,
+                91L,
+                "raw-invalid".getBytes());
+        doThrow(new IllegalStateException("dlq failed"))
+                .when(invalidPayloadRecoverer).accept(any(), isNull(), any());
+
+        assertThrows(IllegalStateException.class,
+                () -> consumer.consumeStatusReports(List.of(invalidRecord), acknowledgment));
+
+        verify(acknowledgment, never()).acknowledge();
+        verify(processor, never()).processStatusReports(any(List.class));
+    }
+
+    @Test
     void nullStatusReportPayloadGoesToDlq() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
@@ -458,7 +504,18 @@ class PaymentMessageConsumerTest {
             SpiTraceRecorder traceRecorder,
             DeadLetterPublishingRecoverer invalidPayloadRecoverer
     ) {
-        InboundPaymentMessageDecoder messageDecoder = new InboundPaymentMessageDecoder(mapper, traceRecorder);
+        return consumer(processor, mapper, traceRecorder, invalidPayloadRecoverer, false);
+    }
+
+    private static PaymentMessageConsumer consumer(
+            PaymentTransactionProcessorUseCase processor,
+            InternalPaymentMessageMapper mapper,
+            SpiTraceRecorder traceRecorder,
+            DeadLetterPublishingRecoverer invalidPayloadRecoverer,
+            boolean forceUnknownProcessingError
+    ) {
+        InboundPaymentMessageDecoder messageDecoder =
+                new InboundPaymentMessageDecoder(mapper, traceRecorder, forceUnknownProcessingError);
         InvalidPayloadDlqPublisher invalidPayloadDlqPublisher =
                 new InvalidPayloadDlqPublisher(invalidPayloadRecoverer);
 

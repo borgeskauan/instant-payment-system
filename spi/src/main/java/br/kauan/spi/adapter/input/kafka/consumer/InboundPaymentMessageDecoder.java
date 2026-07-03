@@ -9,6 +9,7 @@ import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -16,13 +17,16 @@ public class InboundPaymentMessageDecoder {
 
     private final InternalPaymentMessageMapper messageMapper;
     private final SpiTraceRecorder traceRecorder;
+    private final boolean forceUnknownProcessingError;
 
     public InboundPaymentMessageDecoder(
             InternalPaymentMessageMapper messageMapper,
-            SpiTraceRecorder traceRecorder
+            SpiTraceRecorder traceRecorder,
+            @Value("${spi.kafka.force-unknown-processing-error:false}") boolean forceUnknownProcessingError
     ) {
         this.messageMapper = messageMapper;
         this.traceRecorder = traceRecorder;
+        this.forceUnknownProcessingError = forceUnknownProcessingError;
     }
 
     public PaymentTransactionCommand toPaymentTransaction(ConsumerRecord<String, byte[]> record) {
@@ -37,6 +41,8 @@ public class InboundPaymentMessageDecoder {
         } catch (InvalidProtocolBufferException e) {
             throw new InvalidInboundPayloadException("Failed to parse payment request protobuf", e);
         }
+
+        failIfForcedUnknownProcessingError();
 
         PaymentTransactionCommand command = messageMapper.toPaymentTransaction(request);
         traceRecorder.record(request.getPaymentId(), SpiTraceEvent.REQUEST_CONSUMED);
@@ -56,8 +62,16 @@ public class InboundPaymentMessageDecoder {
             throw new InvalidInboundPayloadException("Failed to parse payment status report protobuf", e);
         }
 
+        failIfForcedUnknownProcessingError();
+
         StatusReportCommand command = messageMapper.toStatusReport(report);
         traceRecorder.record(report.getPaymentId(), SpiTraceEvent.STATUS_RECEIVED);
         return command;
+    }
+
+    private void failIfForcedUnknownProcessingError() {
+        if (forceUnknownProcessingError) {
+            throw new IllegalStateException("forced unknown processing failure");
+        }
     }
 }

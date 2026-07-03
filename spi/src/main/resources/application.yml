@@ -38,6 +38,7 @@ spi:
     max-poll-records: 500
     fetch-min-bytes: 1024
     fetch-max-wait-ms: 10
+    force-unknown-processing-error: false
   trace:
     file: /tmp/spi-trace.csv
     queue-capacity: 8192
