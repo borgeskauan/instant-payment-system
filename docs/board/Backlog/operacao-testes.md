@@ -99,24 +99,26 @@ Kafka, retries, restarts e falhas de rede tornam duplicidade e replay inevitáve
 - [ ] Garantir que retry/replay não altera saldo nem gera confirmação inconsistente.
 - [ ] Comparar cenário uniforme atual contra cenários realistas para identificar regressões escondidas.
 
-## Dead letter queue para mensagens inválidas
+## Idempotência, replay e deduplicação de mensagens
 
 **Por que existe**
 
-Mensagens inválidas, incompatíveis com o contrato ou impossíveis de processar não devem travar o consumer group nem contaminar o caminho quente. O fluxo precisa isolar esses casos em uma DLQ com metadados suficientes para diagnóstico, replay controlado ou descarte consciente.
+DLQ e reprocessamento só são seguros se as mensagens puderem ser reenviadas sem duplicar efeitos colaterais. Hoje a liquidação no SPI já tem uma base idempotente para `pacs.002`, mas o replay de `pacs.008` ainda pode falhar por conflito de chave no insert, e o PSP ainda pode aplicar confirmação duplicada no saldo local.
+
+O objetivo é tornar o replay seguro ponta a ponta: duplicidade com o mesmo identificador e mesmo conteúdo deve reconstruir ou reemitir a resposta esperada; duplicidade com conteúdo divergente deve falhar de forma explícita e observável.
 
 **Tarefas**
 
-- [ ] Definir política de DLQ para falhas de parse, validação, contrato incompatível e erro inesperado de processamento.
-- [ ] Criar tópicos DLQ para requests e status reports, com convenção de nomes clara.
-- [ ] Publicar na DLQ o payload original e metadados: tópico original, partição, offset, timestamp, consumer group, erro, stack resumida e serviço origem.
-- [ ] Garantir que mensagens enviadas para DLQ não travem o consumer group principal.
-- [ ] Expor métricas de DLQ: mensagens/sec, total por motivo, total por tópico e idade da mensagem mais antiga.
-- [ ] Criar logs estruturados para envio à DLQ sem logar payload sensível completo por padrão.
-- [ ] Definir processo de replay controlado a partir da DLQ.
-- [ ] Criar teste automatizado para payload inválido: mensagem vai para DLQ, consumer continua e fluxo saudável não é afetado.
-- [ ] Criar teste automatizado para contrato antigo/incompatível, como PACS bruto chegando no tópico interno protobuf.
-- [ ] Documentar quando uma mensagem deve ser reprocessada, corrigida manualmente ou descartada.
+- [ ] Tornar a gravação de `pacs.008` no SPI idempotente por `paymentId`/`EndToEndId`.
+- [ ] Para `pacs.008` duplicado com mesmo conteúdo, não criar nova transação e reemitir a notificação de aceite necessária.
+- [ ] Para `pacs.008` duplicado com conteúdo divergente no mesmo `paymentId`, tratar como conflito irrecuperável e encaminhar para erro/DLQ.
+- [ ] Manter a liquidação de `pacs.002` idempotente: replay de aceite/status não pode debitar fundos SPI mais de uma vez.
+- [ ] Tornar o PSP idempotente ao aplicar confirmações finais: `ACCEPTED_AND_SETTLED_FOR_SENDER` e `ACCEPTED_AND_SETTLED_FOR_RECEIVER` não podem debitar/creditar saldo local mais de uma vez.
+- [ ] Definir estado local no PSP para registrar confirmação já aplicada por `paymentId` e lado da confirmação.
+- [ ] Validar que request duplicada recebida pelo PSP recebedor pode reemitir `ACCEPTED_IN_PROCESS`, mas não sobrescreve dados divergentes sem erro explícito.
+- [ ] Adicionar testes para duplicidade de `pacs.008` com mesmo conteúdo e com conteúdo divergente.
+- [ ] Adicionar testes para replay de `pacs.002` já liquidado no SPI.
+- [ ] Adicionar testes para replay de notificação final no PSP sem alteração duplicada de saldo.
 
 ## Estabilizar teste de carga dentro do budget de CPU
 

@@ -13,6 +13,9 @@ spring:
     url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
     password: mysecretpassword
+    hikari:
+      connection-timeout: 3000
+      validation-timeout: 1000
 
   kafka:
     bootstrap-servers: localhost:9092

@@ -3,6 +3,7 @@ package br.kauan.spi.adapter.output;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +25,43 @@ class SettlementJdbcAdapterTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void cleanFixtureRows() {
+        jdbcTemplate.update(
+                """
+                        DELETE FROM payment_transaction_entity
+                        WHERE payment_id IN (
+                            'E2E-SUCCESS',
+                            'E2E-FAILURE',
+                            'E2E-BATCH-1',
+                            'E2E-BATCH-2',
+                            'E2E-BATCH-ALREADY',
+                            'E2E-BATCH-IDEMPOTENT',
+                            'E2E-BATCH-FAILURE-1',
+                            'E2E-BATCH-FAILURE-2'
+                        )
+                        OR payment_id LIKE 'E2E-PREFIX-%'
+                        """
+        );
+        jdbcTemplate.update(
+                """
+                        DELETE FROM funds_bucket_entity
+                        WHERE bank_code IN (
+                            '11111111',
+                            '22222222',
+                            '33333333',
+                            '44444444',
+                            '55555555',
+                            '66666666',
+                            '77777777',
+                            '88888888',
+                            '99990000',
+                            '99990001'
+                        )
+                        """
+        );
+    }
 
     @Test
     void settleAcceptedPaymentsIdempotentlyDebitsCreditsAndMarksSingleTransactionAsSettledInOneOperation() {

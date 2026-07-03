@@ -2,10 +2,10 @@ package br.kauan.spi.adapter.input.kafka;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.listener.ConcurrentMessageListenerContainer;
+import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.ContainerProperties;
-import org.springframework.kafka.listener.MessageListener;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -14,50 +14,44 @@ import static org.mockito.Mockito.mock;
 class KafkaConsumerConfigTest {
 
     @Test
-    void kafkaListenerContainerFactoryUsesConfiguredConcurrency() {
+    void spiKafkaListenerContainerFactoryUsesBatchManualAckAndConfiguredConcurrency() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "listenerConcurrency", 4);
 
-        var factory = config.kafkaListenerContainerFactory(mock(ConsumerFactory.class));
-        factory.getContainerProperties().setMessageListener((MessageListener<String, byte[]>) record -> {
-        });
-        ConcurrentMessageListenerContainer<String, byte[]> container =
-                (ConcurrentMessageListenerContainer<String, byte[]>) factory.createContainer("spi-payment-requests");
-
-        assertThat(container.getConcurrency()).isEqualTo(4);
-    }
-
-    @Test
-    void paymentRequestKafkaListenerContainerFactoryUsesBatchListener() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "listenerConcurrency", 4);
-
-        var factory = config.paymentRequestKafkaListenerContainerFactory(mock(ConsumerFactory.class));
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
+                config.spiKafkaListenerContainerFactory(
+                        mock(ConsumerFactory.class),
+                        mock(CommonErrorHandler.class));
 
         assertThat(factory.isBatchListener()).isTrue();
-        assertThat(factory.getContainerProperties().getAckMode()).isEqualTo(ContainerProperties.AckMode.BATCH);
+        assertThat(ReflectionTestUtils.getField(factory, "concurrency")).isEqualTo(4);
+        assertThat(factory.getContainerProperties().getAckMode())
+                .isEqualTo(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
     }
 
     @Test
-    void statusReportKafkaListenerContainerFactoryUsesBatchListener() {
+    void spiKafkaListenerContainerFactoryUsesKafkaErrorHandler() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "listenerConcurrency", 4);
+        CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
 
-        var factory = config.statusReportKafkaListenerContainerFactory(mock(ConsumerFactory.class));
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
+                config.spiKafkaListenerContainerFactory(
+                        mock(ConsumerFactory.class),
+                        errorHandler);
 
-        assertThat(factory.isBatchListener()).isTrue();
-        assertThat(factory.getContainerProperties().getAckMode()).isEqualTo(ContainerProperties.AckMode.MANUAL);
+        assertThat(ReflectionTestUtils.getField(factory, "commonErrorHandler")).isSameAs(errorHandler);
     }
 
     @Test
-    void statusReportConsumerFactoryDisablesAutoCommit() {
+    void consumerFactoriesDisableAutoCommit() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
         ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
 
-        var consumerFactory = config.statusReportConsumerFactory();
+        var paymentRequestConsumerFactory = config.consumerFactory();
 
-        assertThat(consumerFactory.getConfigurationProperties())
+        assertThat(paymentRequestConsumerFactory.getConfigurationProperties())
                 .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
     }
 

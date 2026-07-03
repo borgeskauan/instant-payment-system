@@ -107,14 +107,16 @@ services:
         }
 
         ensure_topic spi-payment-requests 8
+        ensure_topic spi-payment-requests.dlq 8
         ensure_topic spi-payment-status-reports 8
+        ensure_topic spi-payment-status-reports.dlq 8
         ensure_topic psp-notifications 8
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     profiles:
-      - ui
+      - kafka-ui
     ports:
       - "8090:8080"
     environment:
