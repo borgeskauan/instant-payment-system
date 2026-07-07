@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.error;
 
+import br.kauan.spi.adapter.output.kafka.RecoverableNotificationPublishException;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -70,8 +71,10 @@ class KafkaErrorHandlingConfigTest {
                 (Map<Class<? extends Throwable>, CommonErrorHandler>)
                         ReflectionTestUtils.getField(errorHandler, "delegates");
         assertThat(delegates)
-                .containsKey(InfrastructureUnavailableException.class);
+                .containsKey(InfrastructureUnavailableException.class)
+                .containsKey(RecoverableNotificationPublishException.class);
         assertThat(delegates.get(InfrastructureUnavailableException.class)).isSameAs(infrastructureErrorHandler);
+        assertThat(delegates.get(RecoverableNotificationPublishException.class)).isSameAs(infrastructureErrorHandler);
     }
 
     @Test
@@ -118,6 +121,51 @@ class KafkaErrorHandlingConfigTest {
                     container,
                     () -> {
                         throw wrappedInfrastructureFailure;
+                    });
+        } catch (RuntimeException ignored) {
+            // The infrastructure handler rethrows while leaving the offset uncommitted for a later retry.
+        }
+
+        verify(kafkaTemplate, org.mockito.Mockito.never()).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void kafkaErrorHandlerDoesNotRecoverWrappedNotificationPublishFailureToDlq() {
+        KafkaErrorHandlingConfig errorConfig = new KafkaErrorHandlingConfig();
+        KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        DeadLetterPublishingRecoverer recoverer = new br.kauan.spi.adapter.input.kafka.infrastructure.dlq.KafkaDlqConfig()
+                .deadLetterPublishingRecoverer(kafkaTemplate);
+        DefaultErrorHandler dlqErrorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(0L, 0L));
+        DefaultErrorHandler infrastructureErrorHandler = errorConfig.infrastructureKafkaErrorHandler(
+                mock(KafkaListenerEndpointRegistry.class),
+                errorConfig.kafkaPauseTaskScheduler());
+        CommonErrorHandler errorHandler = errorConfig.kafkaErrorHandler(dlqErrorHandler, infrastructureErrorHandler);
+        MessageListenerContainer container = mock(MessageListenerContainer.class);
+        ConsumerRecords<String, byte[]> records = new ConsumerRecords<>(Map.of(
+                new TopicPartition("spi-payment-requests", 0),
+                List.of(new ConsumerRecord<>(
+                        "spi-payment-requests",
+                        0,
+                        0L,
+                        "key",
+                        "payload".getBytes(StandardCharsets.UTF_8)))));
+        ListenerExecutionFailedException wrappedNotificationFailure =
+                new ListenerExecutionFailedException(
+                        "listener failed",
+                        new RuntimeException(new RecoverableNotificationPublishException(
+                                "Failed to publish notification",
+                                new IllegalStateException("broker rejected"))));
+
+        try {
+            errorHandler.handleBatch(
+                    wrappedNotificationFailure,
+                    records,
+                    mock(Consumer.class),
+                    container,
+                    () -> {
+                        throw wrappedNotificationFailure;
                     });
         } catch (RuntimeException ignored) {
             // The infrastructure handler rethrows while leaving the offset uncommitted for a later retry.

@@ -9,6 +9,7 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -51,8 +52,10 @@ class NotificationOrchestratorTest {
 
         orchestrator.sendAcceptanceRequests(List.of(first, second, third));
 
-        verify(notificationStorage).addTransactionNotifications("20000001", List.of(first, second));
-        verify(notificationStorage).addTransactionNotifications("20000002", List.of(third));
+        verify(notificationStorage).addTransactionNotifications(Map.of(
+                "20000001", List.of(first, second),
+                "20000002", List.of(third)
+        ));
     }
 
     @Test
@@ -68,15 +71,17 @@ class NotificationOrchestratorTest {
 
         orchestrator.sendConfirmationNotifications(List.of(first, second));
 
-        verify(notificationStorage).addStatusNotifications("20000001", List.of(
-                status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER),
-                status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)
-        ));
-        verify(notificationStorage).addStatusNotifications("10000001", List.of(
-                status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
-        ));
-        verify(notificationStorage).addStatusNotifications("10000002", List.of(
-                status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+        verify(notificationStorage).addStatusNotifications(Map.of(
+                "20000001", List.of(
+                        status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER),
+                        status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)
+                ),
+                "10000001", List.of(
+                        status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+                ),
+                "10000002", List.of(
+                        status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+                )
         ));
     }
 
@@ -93,9 +98,11 @@ class NotificationOrchestratorTest {
 
         orchestrator.sendRejectionNotifications(List.of(first, second));
 
-        verify(notificationStorage).addStatusNotifications("10000001", List.of(
-                status("E2E-1", PaymentStatus.REJECTED),
-                status("E2E-2", PaymentStatus.REJECTED)
+        verify(notificationStorage).addStatusNotifications(Map.of(
+                "10000001", List.of(
+                        status("E2E-1", PaymentStatus.REJECTED),
+                        status("E2E-2", PaymentStatus.REJECTED)
+                )
         ));
     }
 

@@ -5,7 +5,11 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 @Slf4j
 @Service
@@ -19,35 +23,38 @@ public class NotificationPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    /**
-     * Publishes a notification to Kafka topic with ISPB as the message key.
-     * This ensures all notifications for the same ISPB go to the same partition,
-     * maintaining ordering per ISPB.
-     *
-     * @param ispb The ISPB (bank code) - used as message key
-     * @param notificationJson The notification content as JSON string
-     */
-    public void publishNotification(String ispb, String notificationJson) {
+    public void publishNotifications(Map<String, String> notificationsByIspb) {
+        if (notificationsByIspb.isEmpty()) {
+            return;
+        }
+
+        List<CompletableFuture<SendResult<String, String>>> futures =
+                new ArrayList<>(notificationsByIspb.size());
+
         try {
-            log.debug("Publishing notification for ISPB: {} to topic: {}", ispb, NOTIFICATION_TOPIC);
-            
-            CompletableFuture<SendResult<String, String>> future = 
-                    kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson);
-            
-            future.whenComplete((result, ex) -> {
-                if (ex == null) {
-                    log.debug("Notification published successfully for ISPB: {}, partition: {}, offset: {}",
-                            ispb, 
-                            result.getRecordMetadata().partition(), 
-                            result.getRecordMetadata().offset());
-                } else {
-                    log.error("Failed to publish notification for ISPB: {}", ispb, ex);
-                }
+            notificationsByIspb.forEach((ispb, notificationJson) -> {
+                log.debug("Publishing notification for ISPB: {} to topic: {}", ispb, NOTIFICATION_TOPIC);
+
+                CompletableFuture<SendResult<String, String>> future =
+                        kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson);
+
+                futures.add(future.whenComplete((result, ex) -> {
+                    if (ex == null) {
+                        log.debug("Notification published successfully for ISPB: {}, partition: {}, offset: {}",
+                                ispb,
+                                result.getRecordMetadata().partition(),
+                                result.getRecordMetadata().offset());
+                    } else {
+                        log.error("Failed to publish notification for ISPB: {}", ispb, ex);
+                    }
+                }));
             });
-            
+
+            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
         } catch (Exception e) {
-            log.error("Error publishing notification to Kafka for ISPB: {}", ispb, e);
-            throw new RuntimeException("Failed to publish notification", e);
+            Throwable cause = e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
+            log.error("Error publishing notifications to Kafka", cause);
+            throw new RecoverableNotificationPublishException("Failed to publish notification", cause);
         }
     }
 

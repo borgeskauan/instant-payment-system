@@ -11,6 +11,7 @@ import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFact
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.Map;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +26,8 @@ class NotificationStorageTest {
         assertThrows(NoSuchMethodException.class,
                 () -> NotificationStorage.class.getMethod("addStatusNotification", String.class, StatusReportCommand.class));
         assertThrows(NoSuchMethodException.class,
+                () -> NotificationStorage.class.getMethod("addStatusNotifications", String.class, List.class));
+        assertThrows(NoSuchMethodException.class,
                 () -> NotificationStorage.class.getMethod("addTransactionNotification", String.class, PaymentTransactionCommand.class));
     }
 
@@ -33,15 +36,19 @@ class NotificationStorageTest {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
-        storage.addTransactionNotifications("20000001", List.of(
-                paymentTransaction("E2E-1", "10000001", "20000001"),
-                paymentTransaction("E2E-2", "10000002", "20000001")
+        storage.addTransactionNotifications(Map.of(
+                "20000001",
+                List.of(
+                        paymentTransaction("E2E-1", "10000001", "20000001"),
+                        paymentTransaction("E2E-2", "10000002", "20000001")
+                )
         ));
 
-        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(publisher).publishNotification(org.mockito.ArgumentMatchers.eq("20000001"), jsonCaptor.capture());
+        ArgumentCaptor<Map<String, String>> notificationsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(publisher).publishNotifications(notificationsCaptor.capture());
+        String notificationJson = notificationsCaptor.getValue().get("20000001");
 
-        assertThat(jsonCaptor.getValue())
+        assertThat(notificationJson)
                 .contains("\"NbOfTxs\":2")
                 .contains("\"EndToEndId\":\"E2E-1\"")
                 .contains("\"EndToEndId\":\"E2E-2\"")
@@ -54,18 +61,27 @@ class NotificationStorageTest {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
-        storage.addStatusNotifications("10000001", List.of(
-                status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER),
-                status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+        storage.addStatusNotifications(Map.of(
+                "10000001", List.of(
+                        status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER),
+                        status("E2E-2", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+                ),
+                "20000001", List.of(
+                        status("E2E-3", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)
+                )
         ));
 
-        ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
-        verify(publisher).publishNotification(org.mockito.ArgumentMatchers.eq("10000001"), jsonCaptor.capture());
+        ArgumentCaptor<Map<String, String>> notificationsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(publisher).publishNotifications(notificationsCaptor.capture());
+        String notificationJson = notificationsCaptor.getValue().get("10000001");
 
-        assertThat(jsonCaptor.getValue())
+        assertThat(notificationJson)
                 .contains("\"NbOfTxs\":2")
                 .contains("\"OrgnlEndToEndId\":\"E2E-1\"")
                 .contains("\"OrgnlEndToEndId\":\"E2E-2\"");
+        assertThat(notificationsCaptor.getValue().get("20000001"))
+                .contains("\"NbOfTxs\":1")
+                .contains("\"OrgnlEndToEndId\":\"E2E-3\"");
     }
 
     private static NotificationStorage notificationStorage(NotificationPublisher publisher) {

@@ -37,4 +37,7 @@ public class PaymentTransactionEntity {
     private String receiverAccountBranch;
     private String receiverAccountType;
     private String receiverBankCode;
+
+    private String requestFingerprint;
+    private String requestFingerprintVersion;
 }

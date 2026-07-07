@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Slf4j
 @Component
@@ -26,26 +28,38 @@ public class NotificationStorage {
         this.contentSerializer = new NotificationContentSerializer();
     }
 
-    public void addStatusNotifications(String ispb, List<StatusReportCommand> statusReports) {
-        log.debug("Publishing status notification for ISPB: {}", ispb);
+    public void addStatusNotifications(Map<String, List<StatusReportCommand>> statusReportsByIspb) {
+        Map<String, String> notificationsByIspb = new LinkedHashMap<>();
 
-        Object statusNotification = createStatusNotification(statusReports);
+        statusReportsByIspb.forEach((ispb, statusReports) -> {
+            log.debug("Publishing status notification for ISPB: {}", ispb);
 
-        if (statusNotification != null) {
-            contentSerializer.serialize(statusNotification)
-                    .ifPresent(json -> notificationPublisher.publishNotification(ispb, json));
-        }
+            Object statusNotification = createStatusNotification(statusReports);
+
+            if (statusNotification != null) {
+                contentSerializer.serialize(statusNotification)
+                        .ifPresent(json -> notificationsByIspb.put(ispb, json));
+            }
+        });
+
+        notificationPublisher.publishNotifications(notificationsByIspb);
     }
 
-    public void addTransactionNotifications(String ispb, List<PaymentTransactionCommand> paymentTransactions) {
-        log.debug("Publishing transaction notification for ISPB: {}", ispb);
+    public void addTransactionNotifications(Map<String, List<PaymentTransactionCommand>> paymentTransactionsByIspb) {
+        Map<String, String> notificationsByIspb = new LinkedHashMap<>();
 
-        Object paymentNotification = createPaymentNotification(paymentTransactions);
+        paymentTransactionsByIspb.forEach((ispb, paymentTransactions) -> {
+            log.debug("Publishing transaction notification for ISPB: {}", ispb);
 
-        if (paymentNotification != null) {
-            contentSerializer.serialize(paymentNotification)
-                    .ifPresent(json -> notificationPublisher.publishNotification(ispb, json));
-        }
+            Object paymentNotification = createPaymentNotification(paymentTransactions);
+
+            if (paymentNotification != null) {
+                contentSerializer.serialize(paymentNotification)
+                        .ifPresent(json -> notificationsByIspb.put(ispb, json));
+            }
+        });
+
+        notificationPublisher.publishNotifications(notificationsByIspb);
     }
 
     private Object createStatusNotification(List<StatusReportCommand> statusReports) {

@@ -8,6 +8,7 @@ import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -36,22 +37,26 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
-    public void processTransactions(List<PaymentTransactionCommand> transactions) {
+    public PaymentTransactionPersistenceResult processTransactions(List<PaymentTransactionCommand> transactions) {
         if (transactions.isEmpty()) {
-            return;
+            return new PaymentTransactionPersistenceResult(List.of(), List.of());
         }
 
         log.debug("[PIX FLOW - Step 3] SPI received transaction requests. payments={}",
                 transactions.size());
-        paymentTransactionRepository.saveTransactions(transactions, PaymentStatus.WAITING_ACCEPTANCE);
+        PaymentTransactionPersistenceResult persistenceResult =
+                paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(transactions);
 
-        for (var paymentTransaction : transactions) {
+        for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
             traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
         }
-        notificationService.sendAcceptanceRequests(transactions);
-        for (var paymentTransaction : transactions) {
-            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+        if (!persistenceResult.acceptanceRequests().isEmpty()) {
+            notificationService.sendAcceptanceRequests(persistenceResult.acceptanceRequests());
+            for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
+                traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+            }
         }
+        return persistenceResult;
     }
 
     @Override

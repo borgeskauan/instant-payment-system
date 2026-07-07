@@ -23,6 +23,7 @@ public class KafkaDlqConfig {
     private static final String CLIENT_TELEMETRY_PUSH_ENABLED = "enable.metrics.push";
     private static final String BATCH_PROCESSING_ERROR = "BATCH_PROCESSING_ERROR";
     private static final String INVALID_PAYLOAD = "INVALID_PAYLOAD";
+    private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
     private static final Duration DLQ_SEND_TIMEOUT = Duration.ofSeconds(10);
 
     @Value("${spring.kafka.bootstrap-servers}")
@@ -66,6 +67,13 @@ public class KafkaDlqConfig {
             @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
     ) {
         return createDeadLetterPublishingRecoverer(kafkaTemplate, INVALID_PAYLOAD);
+    }
+
+    @Bean
+    public DeadLetterPublishingRecoverer divergentDuplicateDeadLetterPublishingRecoverer(
+            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
+    ) {
+        return createDeadLetterPublishingRecoverer(kafkaTemplate, DIVERGENT_DUPLICATE);
     }
 
     private DeadLetterPublishingRecoverer createDeadLetterPublishingRecoverer(

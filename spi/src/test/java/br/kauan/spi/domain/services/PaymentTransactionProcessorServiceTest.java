@@ -9,6 +9,7 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.NotificationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import org.junit.jupiter.api.Test;
 
@@ -166,18 +167,59 @@ class PaymentTransactionProcessorServiceTest {
         );
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
+        when(paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(
+                List.of(firstPayment, secondPayment)
+        )).thenReturn(new PaymentTransactionPersistenceResult(
+                List.of(firstPayment, secondPayment),
+                List.of()
+        ));
 
         service.processTransactions(List.of(firstPayment, secondPayment));
 
-        verify(paymentTransactionRepository).saveTransactions(
-                List.of(firstPayment, secondPayment),
-                PaymentStatus.WAITING_ACCEPTANCE
+        verify(paymentTransactionRepository).storeAndClassifyIncomingPaymentRequests(
+                List.of(firstPayment, secondPayment)
         );
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
         verify(notificationService).sendAcceptanceRequests(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+    }
+
+    @Test
+    void transactionRequestOnlyNotifiesAcceptanceRequestsReturnedByRepository() {
+        PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
+        NotificationService notificationService = mock(NotificationService.class);
+        SettlementService settlementService = mock(SettlementService.class);
+        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
+        PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
+                paymentTransactionRepository,
+                notificationService,
+                settlementService,
+                traceRecorder
+        );
+        PaymentTransactionCommand waitingDuplicate = paymentTransaction("E2E-WAITING", "10000001", "20000001");
+        PaymentTransactionCommand advancedDuplicate = paymentTransaction("E2E-SETTLED", "10000002", "20000002");
+        PaymentTransactionCommand divergentDuplicate = paymentTransaction("E2E-DIVERGENT", "10000003", "20000003");
+        when(paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(
+                List.of(waitingDuplicate, advancedDuplicate, divergentDuplicate)
+        )).thenReturn(new PaymentTransactionPersistenceResult(
+                List.of(waitingDuplicate),
+                List.of(divergentDuplicate)
+        ));
+
+        PaymentTransactionPersistenceResult result = service.processTransactions(List.of(
+                waitingDuplicate,
+                advancedDuplicate,
+                divergentDuplicate
+        ));
+
+        verify(notificationService).sendAcceptanceRequests(List.of(waitingDuplicate));
+        verify(traceRecorder).record("E2E-WAITING", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+        verify(traceRecorder, never()).record("E2E-SETTLED", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+        verify(traceRecorder, never()).record("E2E-DIVERGENT", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+        org.assertj.core.api.Assertions.assertThat(result.divergentDuplicates())
+                .containsExactly(divergentDuplicate);
     }
 
     private static PaymentTransactionCommand paymentTransaction() {

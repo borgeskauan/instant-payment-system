@@ -6,6 +6,7 @@ import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatus;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentDuplicateDlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.adapter.input.kafka.internal.InternalPaymentMessageMapper;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
@@ -13,6 +14,7 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -36,6 +38,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 class PaymentMessageConsumerTest {
 
@@ -67,6 +70,7 @@ class PaymentMessageConsumerTest {
     @Test
     void consumePaymentRequestsProcessesInternalProtobufMessage() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -90,8 +94,63 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void divergentDuplicatePublishesOriginalRecordToDlqBeforeAck() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        DeadLetterPublishingRecoverer divergentDuplicateRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(
+                processor,
+                mock(SpiTraceRecorder.class),
+                mock(DeadLetterPublishingRecoverer.class),
+                divergentDuplicateRecoverer
+        );
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        ConsumerRecord<String, byte[]> record = paymentRequestRecord("E2E-DIVERGENT", "123", "12");
+        PaymentTransactionCommand divergent = paymentTransaction("E2E-DIVERGENT");
+        when(processor.processTransactions(any(List.class))).thenReturn(new PaymentTransactionPersistenceResult(
+                List.of(),
+                List.of(divergent)
+        ));
+
+        consumer.consumePaymentRequests(List.of(record), acknowledgment);
+
+        var inOrder = inOrder(processor, divergentDuplicateRecoverer, acknowledgment);
+        inOrder.verify(processor).processTransactions(any(List.class));
+        inOrder.verify(divergentDuplicateRecoverer).accept(
+                eq(record),
+                isNull(),
+                any(DivergentDuplicatePaymentException.class));
+        inOrder.verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void divergentDuplicateDlqFailurePreventsAckAndPropagatesError() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        DeadLetterPublishingRecoverer divergentDuplicateRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(
+                processor,
+                mock(SpiTraceRecorder.class),
+                mock(DeadLetterPublishingRecoverer.class),
+                divergentDuplicateRecoverer
+        );
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        ConsumerRecord<String, byte[]> record = paymentRequestRecord("E2E-DIVERGENT", "123", "12");
+        when(processor.processTransactions(any(List.class))).thenReturn(new PaymentTransactionPersistenceResult(
+                List.of(),
+                List.of(paymentTransaction("E2E-DIVERGENT"))
+        ));
+        doThrow(new IllegalStateException("dlq failed"))
+                .when(divergentDuplicateRecoverer).accept(any(), isNull(), any());
+
+        assertThrows(IllegalStateException.class,
+                () -> consumer.consumePaymentRequests(List.of(record), acknowledgment));
+
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
     void consumePaymentRequestsRecordsTraceWhenRecordIsConsumed() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
         SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentMessageConsumer consumer = consumer(processor, traceRecorder);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -107,6 +166,7 @@ class PaymentMessageConsumerTest {
     @Test
     void consumePaymentRequestsPassesKafkaRecordsAsTransactionList() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
         PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
 
@@ -128,6 +188,7 @@ class PaymentMessageConsumerTest {
     @Test
     void invalidPaymentRequestGoesToDlqAndBatchContinues() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
         DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
         PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class), invalidPayloadRecoverer);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -170,6 +231,7 @@ class PaymentMessageConsumerTest {
     @Test
     void emptyPaymentRequestPayloadGoesToDlqAndBatchContinues() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
         DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
         PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class), invalidPayloadRecoverer);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -236,6 +298,7 @@ class PaymentMessageConsumerTest {
                 new InternalPaymentMessageMapper(),
                 traceRecorder,
                 invalidPayloadRecoverer,
+                mock(DeadLetterPublishingRecoverer.class),
                 true);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
 
@@ -495,7 +558,22 @@ class PaymentMessageConsumerTest {
             SpiTraceRecorder traceRecorder,
             DeadLetterPublishingRecoverer invalidPayloadRecoverer
     ) {
-        return consumer(processor, new InternalPaymentMessageMapper(), traceRecorder, invalidPayloadRecoverer);
+        return consumer(
+                processor,
+                traceRecorder,
+                invalidPayloadRecoverer,
+                mock(DeadLetterPublishingRecoverer.class)
+        );
+    }
+
+    private static PaymentMessageConsumer consumer(
+            PaymentTransactionProcessorUseCase processor,
+            SpiTraceRecorder traceRecorder,
+            DeadLetterPublishingRecoverer invalidPayloadRecoverer,
+            DeadLetterPublishingRecoverer divergentDuplicateRecoverer
+    ) {
+        return consumer(processor, new InternalPaymentMessageMapper(), traceRecorder, invalidPayloadRecoverer,
+                divergentDuplicateRecoverer);
     }
 
     private static PaymentMessageConsumer consumer(
@@ -504,7 +582,14 @@ class PaymentMessageConsumerTest {
             SpiTraceRecorder traceRecorder,
             DeadLetterPublishingRecoverer invalidPayloadRecoverer
     ) {
-        return consumer(processor, mapper, traceRecorder, invalidPayloadRecoverer, false);
+        return consumer(
+                processor,
+                mapper,
+                traceRecorder,
+                invalidPayloadRecoverer,
+                mock(DeadLetterPublishingRecoverer.class),
+                false
+        );
     }
 
     private static PaymentMessageConsumer consumer(
@@ -512,17 +597,31 @@ class PaymentMessageConsumerTest {
             InternalPaymentMessageMapper mapper,
             SpiTraceRecorder traceRecorder,
             DeadLetterPublishingRecoverer invalidPayloadRecoverer,
+            DeadLetterPublishingRecoverer divergentDuplicateRecoverer
+    ) {
+        return consumer(processor, mapper, traceRecorder, invalidPayloadRecoverer, divergentDuplicateRecoverer, false);
+    }
+
+    private static PaymentMessageConsumer consumer(
+            PaymentTransactionProcessorUseCase processor,
+            InternalPaymentMessageMapper mapper,
+            SpiTraceRecorder traceRecorder,
+            DeadLetterPublishingRecoverer invalidPayloadRecoverer,
+            DeadLetterPublishingRecoverer divergentDuplicateRecoverer,
             boolean forceUnknownProcessingError
     ) {
         InboundPaymentMessageDecoder messageDecoder =
                 new InboundPaymentMessageDecoder(mapper, traceRecorder, forceUnknownProcessingError);
         InvalidPayloadDlqPublisher invalidPayloadDlqPublisher =
                 new InvalidPayloadDlqPublisher(invalidPayloadRecoverer);
+        DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher =
+                new DivergentDuplicateDlqPublisher(divergentDuplicateRecoverer);
 
         return new PaymentMessageConsumer(
                 messageDecoder,
                 processor,
-                invalidPayloadDlqPublisher);
+                invalidPayloadDlqPublisher,
+                divergentDuplicateDlqPublisher);
     }
 
     private static ConsumerRecord<String, byte[]> paymentRequestRecord(
@@ -531,6 +630,11 @@ class PaymentMessageConsumerTest {
             String branch
     ) {
         return record("spi-payment-requests", 0, 15L, paymentRequest(paymentId, accountNumber, branch).toByteArray());
+    }
+
+    private static void stubNoDivergentDuplicates(PaymentTransactionProcessorUseCase processor) {
+        when(processor.processTransactions(any(List.class)))
+                .thenReturn(new PaymentTransactionPersistenceResult(List.of(), List.of()));
     }
 
     private static ConsumerRecord<String, byte[]> statusReportRecord(String paymentId, PaymentStatus status) {
@@ -568,6 +672,12 @@ class PaymentMessageConsumerTest {
                                 .setIspb("20000001")
                                 .build())
                         .build())
+                .build();
+    }
+
+    private static PaymentTransactionCommand paymentTransaction(String paymentId) {
+        return PaymentTransactionCommand.builder()
+                .paymentId(paymentId)
                 .build();
     }
 

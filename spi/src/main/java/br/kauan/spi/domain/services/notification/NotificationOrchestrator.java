@@ -58,9 +58,10 @@ public class NotificationOrchestrator {
 
             notificationsByIspb.forEach((ispb, statusReports) -> {
                 validator.validateIspb(ispb);
-                notificationStorage.addStatusNotifications(ispb, statusReports);
-                log.debug("[PIX FLOW - Step 7] Confirmation notifications sent to PSP ({})", ispb);
+                log.debug("[PIX FLOW - Step 7] Confirmation notifications prepared for PSP ({})", ispb);
             });
+            notificationStorage.addStatusNotifications(notificationsByIspb);
+            log.debug("[PIX FLOW - Step 7] Confirmation notifications queued for delivery via Kafka");
 
         } catch (Exception e) {
             log.error("[PIX FLOW - Error] Failed to send confirmation notifications", e);
@@ -85,8 +86,8 @@ public class NotificationOrchestrator {
 
             notificationsByIspb.forEach((ispb, statusReports) -> {
                 validator.validateIspb(ispb);
-                notificationStorage.addStatusNotifications(ispb, statusReports);
             });
+            notificationStorage.addStatusNotifications(notificationsByIspb);
 
             log.debug("Rejection notifications sent. payments={}", paymentTransactions.size());
         } catch (Exception e) {
@@ -110,8 +111,8 @@ public class NotificationOrchestrator {
                 validator.validateIspb(ispb);
                 log.debug("[PIX FLOW - Step 4] Sending acceptance requests to PSP Recebedor. ISPB: {}, payments={}",
                         ispb, transactions.size());
-                notificationStorage.addTransactionNotifications(ispb, transactions);
             });
+            notificationStorage.addTransactionNotifications(transactionsByIspb);
             log.debug("[PIX FLOW - Step 4] Acceptance requests queued for delivery via Kafka");
         } catch (Exception e) {
             log.error("[PIX FLOW - Error] Failed to send acceptance requests", e);

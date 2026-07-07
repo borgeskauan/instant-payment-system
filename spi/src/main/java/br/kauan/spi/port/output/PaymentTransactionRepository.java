@@ -8,7 +8,9 @@ import java.util.Optional;
 
 public interface PaymentTransactionRepository {
 
-    void saveTransactions(List<PaymentTransactionCommand> paymentTransactions, PaymentStatus paymentStatus);
+    PaymentTransactionPersistenceResult storeAndClassifyIncomingPaymentRequests(
+            List<PaymentTransactionCommand> paymentTransactions
+    );
 
     void updateStatuses(List<String> paymentIds, PaymentStatus paymentStatus);
 

@@ -1,10 +1,12 @@
 package br.kauan.spi.adapter.input.kafka.consumer;
 
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentDuplicateDlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,7 +16,11 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Component
@@ -26,16 +32,19 @@ public class PaymentMessageConsumer {
     private final InboundPaymentMessageDecoder messageDecoder;
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
     private final InvalidPayloadDlqPublisher invalidPayloadDlqPublisher;
+    private final DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher;
 
     @Autowired
     public PaymentMessageConsumer(
             InboundPaymentMessageDecoder messageDecoder,
             PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
-            InvalidPayloadDlqPublisher invalidPayloadDlqPublisher
+            InvalidPayloadDlqPublisher invalidPayloadDlqPublisher,
+            DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher
     ) {
         this.messageDecoder = messageDecoder;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
         this.invalidPayloadDlqPublisher = invalidPayloadDlqPublisher;
+        this.divergentDuplicateDlqPublisher = divergentDuplicateDlqPublisher;
         log.debug("PaymentMessageConsumer initialized - ready to consume from topics '{}' and '{}'",
                 PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
@@ -51,11 +60,14 @@ public class PaymentMessageConsumer {
     ) {
         log.debug("Received records from Kafka topic '{}', records: {}", PAYMENT_REQUESTS_TOPIC, records.size());
         var payments = new ArrayList<PaymentTransactionCommand>(records.size());
+        Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId = new LinkedHashMap<>();
 
         for (ConsumerRecord<String, byte[]> record : records) {
             try {
                 PaymentTransactionCommand payment = messageDecoder.toPaymentTransaction(record);
                 payments.add(payment);
+                recordsByPaymentId.computeIfAbsent(payment.getPaymentId(), ignored -> new ArrayList<>())
+                        .add(record);
             } catch (InvalidInboundPayloadException e) {
                 invalidPayloadDlqPublisher.publish(record, e);
             }
@@ -63,7 +75,9 @@ public class PaymentMessageConsumer {
 
         if (!payments.isEmpty()) {
             try {
-                paymentTransactionProcessorUseCase.processTransactions(payments);
+                PaymentTransactionPersistenceResult result =
+                        paymentTransactionProcessorUseCase.processTransactions(payments);
+                publishDivergentDuplicates(result, recordsByPaymentId);
             } catch (DataAccessResourceFailureException e) {
                 throw databaseUnavailable(
                         PAYMENT_REQUESTS_TOPIC,
@@ -73,6 +87,26 @@ public class PaymentMessageConsumer {
         }
 
         acknowledgment.acknowledge();
+    }
+
+    private void publishDivergentDuplicates(
+            PaymentTransactionPersistenceResult result,
+            Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId
+    ) {
+        Set<String> divergentPaymentIds = new LinkedHashSet<>();
+        for (PaymentTransactionCommand divergentDuplicate : result.divergentDuplicates()) {
+            divergentPaymentIds.add(divergentDuplicate.getPaymentId());
+        }
+
+        for (String paymentId : divergentPaymentIds) {
+            List<ConsumerRecord<String, byte[]>> divergentRecords =
+                    recordsByPaymentId.getOrDefault(paymentId, List.of());
+            for (ConsumerRecord<String, byte[]> divergentRecord : divergentRecords) {
+                divergentDuplicateDlqPublisher.publish(
+                        divergentRecord,
+                        new DivergentDuplicatePaymentException(paymentId));
+            }
+        }
     }
 
     @KafkaListener(
