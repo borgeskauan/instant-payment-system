@@ -1,5 +1,7 @@
 package br.kauan.spi.adapter.output;
 
+import br.kauan.spi.adapter.output.paymenttransaction.Entity;
+import br.kauan.spi.adapter.output.paymenttransaction.Mapper;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.SettlementRepository;
@@ -19,9 +21,9 @@ public class SettlementJdbcAdapter implements SettlementRepository {
     private static final int BUCKET_COUNT = 16;
 
     private final JdbcTemplate jdbcTemplate;
-    private final PaymentTransactionRepositoryMapper repositoryMapper;
+    private final Mapper repositoryMapper;
 
-    public SettlementJdbcAdapter(JdbcTemplate jdbcTemplate, PaymentTransactionRepositoryMapper repositoryMapper) {
+    public SettlementJdbcAdapter(JdbcTemplate jdbcTemplate, Mapper repositoryMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.repositoryMapper = repositoryMapper;
     }
@@ -180,7 +182,7 @@ public class SettlementJdbcAdapter implements SettlementRepository {
     }
 
     private PaymentTransactionCommand toPaymentTransaction(ResultSet resultSet) throws SQLException {
-        PaymentTransactionEntity entity = new PaymentTransactionEntity();
+        Entity entity = new Entity();
         entity.setPaymentId(resultSet.getString("payment_id"));
         entity.setAmountCents(resultSet.getLong("amount_cents"));
         entity.setSenderBankCode(resultSet.getString("sender_bank_code"));

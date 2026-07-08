@@ -9,5 +9,5 @@ import java.util.List;
 public interface PaymentTransactionProcessorUseCase {
     PaymentTransactionPersistenceResult processTransactions(List<PaymentTransactionCommand> transactions);
 
-    void processStatusReports(List<StatusReportCommand> statusReports);
+    StatusReportProcessingResult processStatusReports(List<StatusReportCommand> statusReports);
 }

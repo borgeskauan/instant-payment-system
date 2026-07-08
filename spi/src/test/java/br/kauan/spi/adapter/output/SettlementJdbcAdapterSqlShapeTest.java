@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output;
 
+import br.kauan.spi.adapter.output.paymenttransaction.Mapper;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -19,7 +20,7 @@ class SettlementJdbcAdapterSqlShapeTest {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         SettlementJdbcAdapter adapter = new SettlementJdbcAdapter(
                 jdbcTemplate,
-                new PaymentTransactionRepositoryMapper()
+                new Mapper()
         );
         when(jdbcTemplate.execute(any(ConnectionCallback.class)))
                 .thenThrow(new EmptyResultDataAccessException(1));

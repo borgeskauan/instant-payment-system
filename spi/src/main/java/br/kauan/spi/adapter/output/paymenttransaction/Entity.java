@@ -1,12 +1,13 @@
-package br.kauan.spi.adapter.output;
+package br.kauan.spi.adapter.output.paymenttransaction;
 
-import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import lombok.Data;
 
 @Data
-@Entity
-public class PaymentTransactionEntity {
+@jakarta.persistence.Entity
+@Table(name = "payment_transaction_entity")
+public class Entity {
 
     @Id
     private String paymentId;

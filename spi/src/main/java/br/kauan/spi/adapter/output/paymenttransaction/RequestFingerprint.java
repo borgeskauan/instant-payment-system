@@ -1,4 +1,4 @@
-package br.kauan.spi.adapter.output;
+package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
@@ -8,14 +8,14 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
-final class PaymentTransactionFingerprint {
+public final class RequestFingerprint {
 
-    static final String VERSION = "v1";
+    public static final String VERSION = "v1";
 
-    private PaymentTransactionFingerprint() {
+    private RequestFingerprint() {
     }
 
-    static String from(PaymentTransactionCommand command) {
+    public static String from(PaymentTransactionCommand command) {
         return sha256(canonicalPayload(command));
     }
 

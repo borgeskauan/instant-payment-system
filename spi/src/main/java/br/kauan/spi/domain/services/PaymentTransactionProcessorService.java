@@ -1,14 +1,15 @@
 package br.kauan.spi.domain.services;
 
-import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.NotificationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
+import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
+import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -60,48 +61,23 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
-    public void processStatusReports(List<StatusReportCommand> statusReports) {
-        StatusReportGroups statusReportGroups = groupStatusReports(statusReports);
+    public StatusReportProcessingResult processStatusReports(List<StatusReportCommand> statusReports) {
+        StatusReportPersistenceResult persistenceResult =
+                paymentTransactionRepository.classifyAndApplyIncomingStatusReports(statusReports);
+        List<StatusReportCommand> divergentStatusReports = new ArrayList<>(persistenceResult.divergentStatusReports());
 
-        if (!statusReportGroups.acceptedPaymentIds().isEmpty()) {
-            processAcceptedPayments(statusReportGroups.acceptedPaymentIds());
+        if (!persistenceResult.acceptedPaymentIds().isEmpty()) {
+            processAcceptedPayments(persistenceResult.acceptedPaymentIds());
         }
 
-        if (!statusReportGroups.rejectedReports().isEmpty()) {
-            processRejectedStatusReports(statusReportGroups.rejectedReports());
+        if (!persistenceResult.rejectedPayments().isEmpty()) {
+            processRejectedPayments(persistenceResult.rejectedPayments());
         }
+
+        return new StatusReportProcessingResult(divergentStatusReports);
     }
 
-    private StatusReportGroups groupStatusReports(List<StatusReportCommand> statusReports) {
-        List<String> acceptedPaymentIds = new ArrayList<>(statusReports.size());
-        List<StatusReportCommand> rejectedReports = new ArrayList<>();
-        for (StatusReportCommand statusReport : statusReports) {
-            if (statusReport.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS) {
-                acceptedPaymentIds.add(statusReport.getOriginalPaymentId());
-            } else if (statusReport.getStatus() == PaymentStatus.REJECTED) {
-                rejectedReports.add(statusReport);
-            }
-        }
-        return new StatusReportGroups(acceptedPaymentIds, rejectedReports);
-    }
-
-    private void processRejectedStatusReports(List<StatusReportCommand> statusReports) {
-        List<PaymentTransactionCommand> rejectedPayments = new ArrayList<>(statusReports.size());
-        List<String> rejectedPaymentIds = new ArrayList<>(statusReports.size());
-
-        for (StatusReportCommand statusReport : statusReports) {
-            log.debug("[PIX FLOW - Step 5] SPI received status report. Payment ID: {}, Status: {}",
-                    statusReport.getOriginalPaymentId(), statusReport.getStatus());
-
-            var paymentTransaction = paymentTransactionRepository.findById(statusReport.getOriginalPaymentId())
-                    .orElseThrow(); // TODO: Use a better exception here
-            log.warn("[PIX FLOW - Step 5] Payment rejected by PSP Recebedor");
-            rejectedPaymentIds.add(paymentTransaction.getPaymentId());
-            rejectedPayments.add(paymentTransaction);
-        }
-
-        paymentTransactionRepository.updateStatuses(rejectedPaymentIds, PaymentStatus.REJECTED);
-
+    private void processRejectedPayments(List<PaymentTransactionCommand> rejectedPayments) {
         log.debug("[PIX FLOW - Rejection] Sending rejection notifications to PSP Pagador. payments={}",
                 rejectedPayments.size());
         notificationService.sendRejectionNotifications(rejectedPayments);
@@ -125,11 +101,9 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
             }
         }
-
         if (!settlementResult.notSettledPaymentIds().isEmpty()) {
-            paymentTransactionRepository.updateStatuses(
-                    settlementResult.notSettledPaymentIds(),
-                    PaymentStatus.ACCEPTED_IN_PROCESS
+            paymentTransactionRepository.markAcceptedInProcessIfWaitingAcceptance(
+                    settlementResult.notSettledPaymentIds()
             );
         }
 
@@ -137,9 +111,4 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 paymentIds.size(), settledOrAlreadySettledPayments.size());
     }
 
-    private record StatusReportGroups(
-            List<String> acceptedPaymentIds,
-            List<StatusReportCommand> rejectedReports
-    ) {
-    }
 }

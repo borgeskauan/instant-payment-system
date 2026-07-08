@@ -92,6 +92,33 @@ class KafkaDlqConfigTest {
     }
 
     @Test
+    void divergentStatusReportDeadLetterPublishingRecovererPublishesWithDivergentStatusReportErrorType() {
+        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        DeadLetterPublishingRecoverer recoverer = config.divergentStatusReportDeadLetterPublishingRecoverer(kafkaTemplate);
+        ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
+                "spi-payment-status-reports",
+                5,
+                92L,
+                "status-key",
+                "status-payload".getBytes(StandardCharsets.UTF_8));
+
+        recoverer.accept(sourceRecord, null, new IllegalStateException("divergent status"));
+
+        var captor = forClass(ProducerRecord.class);
+        verify(kafkaTemplate).send(captor.capture());
+        @SuppressWarnings("unchecked")
+        ProducerRecord<String, byte[]> dlqRecord = captor.getValue();
+        assertThat(dlqRecord.topic()).isEqualTo("spi-payment-status-reports.dlq");
+        assertThat(dlqRecord.partition()).isEqualTo(5);
+        assertThat(dlqRecord.value()).isSameAs(sourceRecord.value());
+        assertThat(header(dlqRecord.headers(), "dlq.error-type")).isEqualTo("DIVERGENT_STATUS_REPORT");
+        assertThat(header(dlqRecord.headers(), "dlq.consumer-group")).isEqualTo("spi-status-report-consumer-group");
+    }
+
+    @Test
     void batchLevelRecoveryPublishesEveryRecordIndividuallyToDlq() {
         KafkaDlqConfig config = new KafkaDlqConfig();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
