@@ -134,4 +134,4 @@ The following behavior is covered by automated tests because it is awkward to fo
 
 This version does not include dashboards, alerts, Prometheus metrics, or a DLQ replay process.
 
-Manual DLQ replay is outside the scope of this project. The related system-level requirement that remains in scope for future technical work is idempotency: Kafka redelivery or reprocessing must not duplicate settlement, status updates, or PSP balance effects.
+Manual DLQ replay is outside the scope of this project. The related system-level requirement that remains in scope for future technical work is idempotency: Kafka redelivery or reprocessing must not duplicate settlement, status updates, or PSP balance effects. Current behavior is documented in [Idempotency and Replay Policy](IDEMPOTENCY_REPLAY_POLICY.md).

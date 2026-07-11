@@ -43,3 +43,5 @@ PSPs do not consume Kafka directly. They submit payment messages to `kafka-produ
 ## Failure Policy
 
 SPI DLQ behavior is documented in [Kafka DLQ Policy](KAFKA_DLQ_POLICY.md).
+
+Replay and duplicate handling behavior is documented in [Idempotency and Replay Policy](IDEMPOTENCY_REPLAY_POLICY.md).
