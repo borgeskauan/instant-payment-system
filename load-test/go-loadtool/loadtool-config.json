@@ -4,7 +4,7 @@
   "targetTxRate": 2000,
   "warmup": "1m",
   "duration": "1m",
-  "drain": "1m",
+  "drain": "30s",
   "hotPspCount": 10,
   "coldPspCount": 40,
   "hotTrafficShare": 0.8,

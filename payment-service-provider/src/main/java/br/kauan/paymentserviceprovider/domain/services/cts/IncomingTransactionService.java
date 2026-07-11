@@ -6,6 +6,7 @@ import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
+import br.kauan.paymentserviceprovider.port.output.IncomingPaymentRequestClassification;
 import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
@@ -50,6 +51,11 @@ public class IncomingTransactionService {
 
         try {
             List<StatusReport> statusReports = handleIncomingTransactions(transactions);
+            if (statusReports.isEmpty()) {
+                log.info("[PIX FLOW - Step 5] No accepted incoming transactions to report to SPI");
+                return;
+            }
+
             var regulatoryStatusReport = statusReportMapper.toRegulatoryReport(statusReports);
             byte[] statusBytes = objectMapper.writeValueAsBytes(regulatoryStatusReport);
 
@@ -66,12 +72,18 @@ public class IncomingTransactionService {
     }
 
     private List<StatusReport> handleIncomingTransactions(List<PaymentTransaction> transactions) {
-        paymentRepository.saveAll(transactions);
-        log.info("[PIX FLOW - Step 4] PSP Recebedor saved {} incoming transactions. Auto-approving payments.",
-                transactions.size());
+        IncomingPaymentRequestClassification classification =
+                paymentRepository.storeAndClassifyIncomingRequests(transactions);
+        if (!classification.divergentPaymentRequests().isEmpty()) {
+            log.warn("[PIX FLOW - Step 4] PSP Recebedor detected {} divergent incoming transactions",
+                    classification.divergentPaymentRequests().size());
+        }
 
-        List<StatusReport> statusReports = new ArrayList<>(transactions.size());
-        for (PaymentTransaction transaction : transactions) {
+        log.info("[PIX FLOW - Step 4] PSP Recebedor classified {} incoming transactions for acceptance. Auto-approving payments.",
+                classification.acceptedPaymentRequests().size());
+
+        List<StatusReport> statusReports = new ArrayList<>(classification.acceptedPaymentRequests().size());
+        for (PaymentTransaction transaction : classification.acceptedPaymentRequests()) {
             // TODO: Implement proper business logic for transaction approval
             statusReports.add(buildApprovedStatusReport(transaction.getPaymentId()));
         }
