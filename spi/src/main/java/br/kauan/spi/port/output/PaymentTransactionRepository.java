@@ -12,6 +12,4 @@ public interface PaymentTransactionRepository {
     );
 
     StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(List<StatusReportCommand> statusReports);
-
-    void markAcceptedInProcessIfWaitingAcceptance(List<String> paymentIds);
 }

@@ -41,6 +41,9 @@ public class KafkaConsumerConfig {
     @Value("${spi.kafka.fetch-max-wait-ms:10}")
     private int fetchMaxWaitMs;
 
+    @Value("${spring.kafka.listener.auto-startup:true}")
+    private boolean listenerAutoStartup;
+
     @Bean
     public ConsumerFactory<String, byte[]> consumerFactory() {
         Map<String, Object> config = new HashMap<>();
@@ -72,6 +75,7 @@ public class KafkaConsumerConfig {
         factory.setConcurrency(listenerConcurrency);
         factory.setBatchListener(true);
         factory.setCommonErrorHandler(kafkaErrorHandler);
+        factory.setAutoStartup(listenerAutoStartup);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
 
         return factory;

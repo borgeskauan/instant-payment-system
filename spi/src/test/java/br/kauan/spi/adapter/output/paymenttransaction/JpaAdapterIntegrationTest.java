@@ -2,6 +2,7 @@ package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -15,11 +16,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
 @Transactional
 class JpaAdapterIntegrationTest {
 
@@ -31,7 +33,12 @@ class JpaAdapterIntegrationTest {
 
     @BeforeEach
     void cleanFixtureRows() {
-        jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-IDEMP-%'");
+        jdbcTemplate.update(
+                "DELETE FROM payment_transaction_entity WHERE payment_id >= 'E2E-IDEMP-' AND payment_id < 'E2E-IDEMP.'"
+        );
+        jdbcTemplate.update(
+                "DELETE FROM funds_bucket_entity WHERE bank_code IN ('11111111', '22222222', '33333333')"
+        );
     }
 
     @Test
@@ -165,36 +172,46 @@ class JpaAdapterIntegrationTest {
     }
 
     @Test
-    void acceptedStatusReportClassifiesWaitingPaymentForSettlementWithoutChangingStatus() {
+    void acceptedStatusReportSettlesWaitingPaymentAndReturnsPaymentForConfirmation() {
         PaymentTransactionCommand payment = paymentTransaction("E2E-IDEMP-STATUS-ACCEPTED", "11111111", "22222222");
+        insertFunds("11111111", "1000.00");
+        insertFunds("22222222", "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
                 statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)));
 
-        assertThat(result.acceptedPaymentIds()).containsExactly(payment.getPaymentId());
+        assertThat(result.settledPayments())
+                .extracting(PaymentTransactionCommand::getPaymentId)
+                .containsExactly(payment.getPaymentId());
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(balance("11111111")).isEqualByComparingTo(decimal("990.00"));
+        assertThat(balance("22222222")).isEqualByComparingTo(decimal("510.00"));
     }
 
     @Test
-    void repeatedIdenticalAcceptedStatusReportReturnsOneAcceptedPaymentId() {
+    void repeatedIdenticalAcceptedStatusReportReturnsOneSettledPayment() {
         PaymentTransactionCommand payment = paymentTransaction(
                 "E2E-IDEMP-STATUS-ACCEPTED-REPEATED",
                 "11111111",
                 "22222222"
         );
+        insertFunds("11111111", "1000.00");
+        insertFunds("22222222", "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
         StatusReportCommand first = statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
         StatusReportCommand repeated = statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(first, repeated));
 
-        assertThat(result.acceptedPaymentIds()).containsExactly(payment.getPaymentId());
+        assertThat(result.settledPayments())
+                .extracting(PaymentTransactionCommand::getPaymentId)
+                .containsExactly(payment.getPaymentId());
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
     }
 
     @Test
@@ -210,7 +227,7 @@ class JpaAdapterIntegrationTest {
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(accepted, rejected));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).containsExactly(accepted, rejected);
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
@@ -229,38 +246,63 @@ class JpaAdapterIntegrationTest {
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(first, repeated));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).containsExactly(first, repeated);
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
     }
 
     @Test
-    void markAcceptedInProcessIfWaitingAcceptanceTransitionsWaitingPayment() {
+    void acceptedStatusReportMarksWaitingPaymentInProcessWhenSettlementCannotBeApplied() {
         PaymentTransactionCommand payment = paymentTransaction(
-                "E2E-IDEMP-STATUS-MARK-IN-PROCESS",
+                "E2E-IDEMP-STATUS-ACCEPTED-NO-FUNDS",
                 "11111111",
                 "22222222"
         );
+        insertFunds("11111111", "0.00");
+        insertFunds("22222222", "50.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
 
-        adapter.markAcceptedInProcessIfWaitingAcceptance(List.of(payment.getPaymentId()));
+        StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
+                statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)));
 
+        assertThat(result.settledPayments()).isEmpty();
+        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
     }
 
     @Test
-    void markAcceptedInProcessIfWaitingAcceptanceDoesNotOverwriteSettledPayment() {
-        PaymentTransactionCommand payment = paymentTransaction(
-                "E2E-IDEMP-STATUS-MARK-SETTLED",
+    void acceptedStatusReportsSettleOnlyFirstPaymentsThatFitWhenSenderBucketHasPartialFunds() {
+        List<String> paymentIds = paymentIdsInSameBucket("E2E-IDEMP-STATUS-PARTIAL-FUNDS-", 2);
+        int senderBucketId = bucketId(paymentIds.get(0));
+        PaymentTransactionCommand first = paymentTransaction(paymentIds.get(0), "11111111", "22222222");
+        PaymentTransactionCommand second = paymentTransaction(paymentIds.get(1), "11111111", "22222222");
+        insertFunds("11111111", "0.00");
+        insertFunds("22222222", "0.00");
+        jdbcTemplate.update(
+                "UPDATE funds_bucket_entity SET balance_cents = ? WHERE bank_code = ? AND bucket_id = ?",
+                first.getAmountCents(),
                 "11111111",
-                "22222222"
+                senderBucketId
         );
-        insertPayment(payment, PaymentStatus.ACCEPTED_AND_SETTLED, null, null);
+        insertPayment(first, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+        insertPayment(second, PaymentStatus.WAITING_ACCEPTANCE, null, null);
 
-        adapter.markAcceptedInProcessIfWaitingAcceptance(List.of(payment.getPaymentId()));
+        StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
+                statusReport(first.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS),
+                statusReport(second.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)
+        ));
 
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(result.settledPayments())
+                .extracting(PaymentTransactionCommand::getPaymentId)
+                .containsExactly(first.getPaymentId());
+        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.divergentStatusReports()).isEmpty();
+        assertThat(status(first.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(status(second.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
+        assertThat(balance("11111111")).isEqualByComparingTo(decimal("0.00"));
+        assertThat(balance("22222222")).isEqualByComparingTo(decimal("10.00"));
     }
 
     @Test
@@ -271,7 +313,7 @@ class JpaAdapterIntegrationTest {
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
                 statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
@@ -285,7 +327,7 @@ class JpaAdapterIntegrationTest {
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
                 statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
@@ -299,7 +341,7 @@ class JpaAdapterIntegrationTest {
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
                 statusReport(payment.getPaymentId(), PaymentStatus.REJECTED)));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments())
                 .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly(payment.getPaymentId());
@@ -315,7 +357,7 @@ class JpaAdapterIntegrationTest {
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
                 statusReport(payment.getPaymentId(), PaymentStatus.REJECTED)));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
@@ -329,7 +371,7 @@ class JpaAdapterIntegrationTest {
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(statusReport));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).containsExactly(statusReport);
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
@@ -341,7 +383,7 @@ class JpaAdapterIntegrationTest {
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(statusReport));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).containsExactly(statusReport);
     }
@@ -354,7 +396,7 @@ class JpaAdapterIntegrationTest {
 
         StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(statusReport));
 
-        assertThat(result.acceptedPaymentIds()).isEmpty();
+        assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).containsExactly(statusReport);
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
@@ -394,6 +436,57 @@ class JpaAdapterIntegrationTest {
                 String.class,
                 paymentId
         );
+    }
+
+    private void insertFunds(String bankCode, String balance) {
+        long balanceCents = Money.toCents(decimal(balance));
+        long bucketBalance = balanceCents / 16;
+        long remainder = balanceCents % 16;
+        for (int bucketId = 0; bucketId < 16; bucketId++) {
+            jdbcTemplate.update(
+                    "INSERT INTO funds_bucket_entity (bank_code, bucket_id, balance_cents) VALUES (?, ?, ?)",
+                    bankCode,
+                    bucketId,
+                    bucketId == 0 ? bucketBalance + remainder : bucketBalance
+            );
+        }
+    }
+
+    private List<String> paymentIdsInSameBucket(String prefix, int count) {
+        for (int bucketId = 0; bucketId < 16; bucketId++) {
+            List<String> paymentIds = new java.util.ArrayList<>();
+            for (int candidate = 0; candidate < 256 && paymentIds.size() < count; candidate++) {
+                String paymentId = prefix + candidate;
+                if (bucketId(paymentId) == bucketId) {
+                    paymentIds.add(paymentId);
+                }
+            }
+            if (paymentIds.size() == count) {
+                return paymentIds;
+            }
+        }
+        throw new IllegalStateException("Could not find payment ids in the same bucket");
+    }
+
+    private int bucketId(String paymentId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT ABS(hashtext(?)) % 16",
+                Integer.class,
+                paymentId
+        );
+    }
+
+    private BigDecimal balance(String bankCode) {
+        Long balanceCents = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(balance_cents), 0) FROM funds_bucket_entity WHERE bank_code = ?",
+                Long.class,
+                bankCode
+        );
+        return Money.toDecimal(balanceCents == null ? 0L : balanceCents);
+    }
+
+    private BigDecimal decimal(String amount) {
+        return new BigDecimal(amount);
     }
 
     private String fingerprint(String paymentId) {

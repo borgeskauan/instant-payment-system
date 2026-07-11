@@ -22,18 +22,15 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
 
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final NotificationService notificationService;
-    private final SettlementService settlementService;
     private final SpiTraceRecorder traceRecorder;
 
     public PaymentTransactionProcessorService(
             PaymentTransactionRepository paymentTransactionRepository,
             NotificationService notificationService,
-            SettlementService settlementService,
             SpiTraceRecorder traceRecorder
     ) {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.notificationService = notificationService;
-        this.settlementService = settlementService;
         this.traceRecorder = traceRecorder;
     }
 
@@ -66,8 +63,8 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 paymentTransactionRepository.classifyAndApplyIncomingStatusReports(statusReports);
         List<StatusReportCommand> divergentStatusReports = new ArrayList<>(persistenceResult.divergentStatusReports());
 
-        if (!persistenceResult.acceptedPaymentIds().isEmpty()) {
-            processAcceptedPayments(persistenceResult.acceptedPaymentIds());
+        if (!persistenceResult.settledPayments().isEmpty()) {
+            processSettledPayments(persistenceResult.settledPayments());
         }
 
         if (!persistenceResult.rejectedPayments().isEmpty()) {
@@ -83,32 +80,20 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         notificationService.sendRejectionNotifications(rejectedPayments);
     }
 
-    private void processAcceptedPayments(List<String> paymentIds) {
-        log.debug("[PIX FLOW - Step 6] SPI initiating settlement via PI accounts at BCB. payments={}",
-                paymentIds.size());
-
-        SettlementResult settlementResult = settlementService.tryMakeSettlements(paymentIds);
-        List<PaymentTransactionCommand> settledOrAlreadySettledPayments = settlementResult.settledOrAlreadySettledPayments();
-
-        for (PaymentTransactionCommand paymentTransaction : settledOrAlreadySettledPayments) {
+    private void processSettledPayments(List<PaymentTransactionCommand> settledPayments) {
+        for (PaymentTransactionCommand paymentTransaction : settledPayments) {
             String paymentId = paymentTransaction.getPaymentId();
             traceRecorder.record(paymentId, SpiTraceEvent.SETTLEMENT_COMPLETED);
         }
-        if (!settledOrAlreadySettledPayments.isEmpty()) {
-            notificationService.sendConfirmationNotifications(settledOrAlreadySettledPayments);
-            for (PaymentTransactionCommand paymentTransaction : settledOrAlreadySettledPayments) {
+        if (!settledPayments.isEmpty()) {
+            notificationService.sendConfirmationNotifications(settledPayments);
+            for (PaymentTransactionCommand paymentTransaction : settledPayments) {
                 String paymentId = paymentTransaction.getPaymentId();
                 traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
             }
         }
-        if (!settlementResult.notSettledPaymentIds().isEmpty()) {
-            paymentTransactionRepository.markAcceptedInProcessIfWaitingAcceptance(
-                    settlementResult.notSettledPaymentIds()
-            );
-        }
 
-        log.debug("[PIX FLOW - Complete] Settlement processed. requested={}, settledOrAlreadySettled={}",
-                paymentIds.size(), settledOrAlreadySettledPayments.size());
+        log.debug("[PIX FLOW - Complete] Settlement processed. settled={}", settledPayments.size());
     }
 
 }

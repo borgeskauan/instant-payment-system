@@ -15,7 +15,6 @@ public class JpaAdapter implements PaymentTransactionRepository {
 
     private final IncomingPaymentRequestPersistence incomingPaymentRequestPersistence;
     private final IncomingStatusReportPersistence incomingStatusReportPersistence;
-    private final StatusUpdater statusUpdater;
 
     public JpaAdapter(
             Mapper repositoryMapper,
@@ -23,7 +22,6 @@ public class JpaAdapter implements PaymentTransactionRepository {
     ) {
         this.incomingPaymentRequestPersistence = new IncomingPaymentRequestPersistence(jdbcTemplate);
         this.incomingStatusReportPersistence = new IncomingStatusReportPersistence(repositoryMapper, jdbcTemplate);
-        this.statusUpdater = new StatusUpdater(jdbcTemplate);
     }
 
     @Override
@@ -36,10 +34,5 @@ public class JpaAdapter implements PaymentTransactionRepository {
     @Override
     public StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(List<StatusReportCommand> statusReports) {
         return incomingStatusReportPersistence.classifyAndApply(statusReports);
-    }
-
-    @Override
-    public void markAcceptedInProcessIfWaitingAcceptance(List<String> paymentIds) {
-        statusUpdater.markAcceptedInProcessIfWaitingAcceptance(paymentIds);
     }
 }

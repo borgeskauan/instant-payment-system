@@ -4,30 +4,38 @@ import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Array;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 class IncomingStatusReportPersistence {
 
-    private static final String ACCEPTED_FOR_SETTLEMENT = "ACCEPTED_FOR_SETTLEMENT";
+    private static final int BUCKET_COUNT = 16;
+    private static final String SETTLED_PAYMENT = "SETTLED_PAYMENT";
     private static final String REJECTED_NOTIFICATION = "REJECTED_NOTIFICATION";
     private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
 
-    private static final String STATUS_REPORT_SQL_TEMPLATE = """
-            WITH incoming (
-                ordinal,
-                payment_id,
-                requested_status
-            ) AS (
-                VALUES
-                %s
+    private static final String STATUS_REPORT_SQL = """
+            WITH incoming AS (
+                SELECT *
+                FROM unnest(
+                    ?::int[],
+                    ?::text[],
+                    ?::text[]
+                ) AS i(
+                    ordinal,
+                    payment_id,
+                    requested_status
+                )
             ),
             unknown_actions AS (
                 SELECT
@@ -49,10 +57,11 @@ class IncomingStatusReportPersistence {
                     p.status AS existing_status,
                     p.amount_cents,
                     p.sender_bank_code,
-                    p.receiver_bank_code
+                    p.receiver_bank_code,
+                    (ABS(hashtext(p.payment_id)) % ?) AS bucket_id
                 FROM incoming i
                 JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-                ORDER BY i.ordinal
+                ORDER BY p.payment_id
                 FOR UPDATE OF p
             ),
             rejected_updates AS (
@@ -89,17 +98,112 @@ class IncomingStatusReportPersistence {
                        AND le.existing_status NOT IN (?, ?)
                    )
             ),
-            accepted_for_settlement_actions AS (
-                SELECT
-                    le.ordinal,
-                    'ACCEPTED_FOR_SETTLEMENT'::text AS action,
-                    le.payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+            accepted_waiting AS (
+                SELECT *
                 FROM locked_existing le
                 WHERE le.requested_status = ?
                   AND le.existing_status = ?
+            ),
+            required_buckets AS (
+                SELECT sender_bank_code AS bank_code, bucket_id
+                FROM accepted_waiting
+                UNION
+                SELECT receiver_bank_code AS bank_code, bucket_id
+                FROM accepted_waiting
+            ),
+            locked_buckets AS MATERIALIZED (
+                SELECT f.bank_code, f.bucket_id, f.balance_cents
+                FROM funds_bucket_entity f
+                JOIN required_buckets b
+                  ON b.bank_code = f.bank_code
+                 AND b.bucket_id = f.bucket_id
+                ORDER BY f.bank_code, f.bucket_id
+                FOR UPDATE OF f
+            ),
+            ranked AS (
+                SELECT aw.*,
+                       SUM(aw.amount_cents) OVER (
+                           PARTITION BY aw.sender_bank_code, aw.bucket_id
+                           ORDER BY aw.ordinal
+                       ) AS cumulative_debit_cents
+                FROM accepted_waiting aw
+            ),
+            settleable AS (
+                SELECT r.*
+                FROM ranked r
+                JOIN locked_buckets sender_bucket
+                  ON sender_bucket.bank_code = r.sender_bank_code
+                 AND sender_bucket.bucket_id = r.bucket_id
+                WHERE sender_bucket.balance_cents >= r.cumulative_debit_cents
+                  AND EXISTS (
+                      SELECT 1
+                      FROM locked_buckets receiver_bucket
+                      WHERE receiver_bucket.bank_code = r.receiver_bank_code
+                        AND receiver_bucket.bucket_id = r.bucket_id
+                  )
+            ),
+            deltas AS (
+                SELECT sender_bank_code AS bank_code,
+                       bucket_id,
+                       -SUM(amount_cents) AS delta_cents
+                FROM settleable
+                GROUP BY sender_bank_code, bucket_id
+                UNION ALL
+                SELECT receiver_bank_code AS bank_code,
+                       bucket_id,
+                       SUM(amount_cents) AS delta_cents
+                FROM settleable
+                GROUP BY receiver_bank_code, bucket_id
+            ),
+            net_deltas AS (
+                SELECT bank_code, bucket_id, SUM(delta_cents) AS delta_cents
+                FROM deltas
+                GROUP BY bank_code, bucket_id
+            ),
+            updated_funds AS (
+                UPDATE funds_bucket_entity f
+                SET balance_cents = f.balance_cents + d.delta_cents
+                FROM net_deltas d
+                WHERE f.bank_code = d.bank_code
+                  AND f.bucket_id = d.bucket_id
+                RETURNING f.bank_code
+            ),
+            funds_applied AS (
+                SELECT COUNT(*) AS applied_count
+                FROM updated_funds
+            ),
+            settled_updates AS (
+                UPDATE payment_transaction_entity p
+                SET status = ?
+                FROM settleable s, funds_applied fa
+                WHERE p.payment_id = s.payment_id
+                  AND p.status = ?
+                RETURNING
+                    s.ordinal,
+                    p.payment_id,
+                    p.amount_cents,
+                    p.sender_bank_code,
+                    p.receiver_bank_code
+            ),
+            accepted_in_process_updates AS (
+                UPDATE payment_transaction_entity p
+                SET status = ?
+                FROM accepted_waiting aw
+                LEFT JOIN settleable s ON s.payment_id = aw.payment_id
+                WHERE p.payment_id = aw.payment_id
+                  AND s.payment_id IS NULL
+                  AND p.status = ?
+                RETURNING p.payment_id
+            ),
+            settled_payment_actions AS (
+                SELECT
+                    ordinal,
+                    'SETTLED_PAYMENT'::text AS action,
+                    payment_id,
+                    amount_cents,
+                    sender_bank_code,
+                    receiver_bank_code
+                FROM settled_updates
             ),
             rejected_notification_actions AS (
                 SELECT
@@ -118,7 +222,7 @@ class IncomingStatusReportPersistence {
             FROM divergent_existing_actions
             UNION ALL
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
-            FROM accepted_for_settlement_actions
+            FROM settled_payment_actions
             UNION ALL
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
             FROM rejected_notification_actions
@@ -143,14 +247,14 @@ class IncomingStatusReportPersistence {
 
         BatchLocalStatusReportClassification batchLocalClassification =
                 classifyStatusReportsWithinBatch(statusReports);
-        List<String> acceptedPaymentIds = new ArrayList<>();
+        List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
         List<PaymentTransactionCommand> rejectedPayments = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals =
                 new LinkedHashSet<>(batchLocalClassification.sameBatchDivergentOrdinals());
 
         if (batchLocalClassification.statusReportsToClassify().isEmpty()) {
             return new StatusReportPersistenceResult(
-                    acceptedPaymentIds,
+                    settledPayments,
                     rejectedPayments,
                     divergentStatusReports(statusReports, divergentStatusReportOrdinals)
             );
@@ -159,7 +263,7 @@ class IncomingStatusReportPersistence {
         for (StatusReportActionRow actionRow : classifyAndApplyStatusReports(batchLocalClassification.statusReportsToClassify())) {
             StatusReportCommand statusReport = statusReports.get(actionRow.ordinal());
             switch (actionRow.action()) {
-                case ACCEPTED_FOR_SETTLEMENT -> acceptedPaymentIds.add(statusReport.getOriginalPaymentId());
+                case SETTLED_PAYMENT -> settledPayments.add(toPaymentTransaction(actionRow));
                 case REJECTED_NOTIFICATION -> rejectedPayments.add(toPaymentTransaction(actionRow));
                 case DIVERGENT_STATUS_REPORT -> addOriginalBatchRecordOrdinals(
                         divergentStatusReportOrdinals,
@@ -171,7 +275,7 @@ class IncomingStatusReportPersistence {
         }
 
         return new StatusReportPersistenceResult(
-                acceptedPaymentIds,
+                settledPayments,
                 rejectedPayments,
                 divergentStatusReports(statusReports, divergentStatusReportOrdinals)
         );
@@ -188,7 +292,8 @@ class IncomingStatusReportPersistence {
     private BatchLocalStatusReportClassification classifyStatusReportsWithinBatch(
             List<StatusReportCommand> statusReports
     ) {
-        Map<String, List<StatusReportRow>> rowsByPaymentId = new LinkedHashMap<>();
+        Map<String, List<StatusReportRow>> rowsByPaymentId =
+                new LinkedHashMap<>(mapCapacity(statusReports.size()));
         for (int ordinal = 0; ordinal < statusReports.size(); ordinal++) {
             StatusReportCommand statusReport = statusReports.get(ordinal);
             rowsByPaymentId.computeIfAbsent(
@@ -199,21 +304,22 @@ class IncomingStatusReportPersistence {
 
         List<StatusReportRow> statusReportsToClassify = new ArrayList<>(rowsByPaymentId.size());
         List<Integer> divergentStatusReportOrdinals = new ArrayList<>();
-        Map<String, List<Integer>> originalOrdinalsByPaymentId = new LinkedHashMap<>();
+        Map<String, List<Integer>> originalOrdinalsByPaymentId = new LinkedHashMap<>(mapCapacity(rowsByPaymentId.size()));
 
         for (var entry : rowsByPaymentId.entrySet()) {
             List<StatusReportRow> statusReportRows = entry.getValue();
-            originalOrdinalsByPaymentId.put(
-                    entry.getKey(),
-                    statusReportRows.stream().map(StatusReportRow::ordinal).toList()
-            );
-
-            Set<PaymentStatus> statuses = new LinkedHashSet<>();
+            List<Integer> originalOrdinals = new ArrayList<>(statusReportRows.size());
+            PaymentStatus firstStatus = statusReportRows.get(0).statusReport().getStatus();
+            boolean divergent = false;
             for (StatusReportRow statusReportRow : statusReportRows) {
-                statuses.add(statusReportRow.statusReport().getStatus());
+                originalOrdinals.add(statusReportRow.ordinal());
+                if (statusReportRow.statusReport().getStatus() != firstStatus) {
+                    divergent = true;
+                }
             }
+            originalOrdinalsByPaymentId.put(entry.getKey(), originalOrdinals);
 
-            if (statuses.size() > 1) {
+            if (divergent) {
                 for (StatusReportRow statusReportRow : statusReportRows) {
                     divergentStatusReportOrdinals.add(statusReportRow.ordinal());
                 }
@@ -243,20 +349,28 @@ class IncomingStatusReportPersistence {
     }
 
     private List<StatusReportActionRow> classifyAndApplyStatusReports(List<StatusReportRow> statusReports) {
-        return jdbcTemplate.query(
-                statusReportSql(statusReports.size()),
-                statement -> {
+        return jdbcTemplate.execute((ConnectionCallback<List<StatusReportActionRow>>) connection -> {
+            IncomingStatusReportArrays incoming = incomingStatusReportArrays(statusReports);
+            Array ordinalArray = null;
+            Array paymentIdArray = null;
+            Array requestedStatusArray = null;
+            try {
+                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
+                paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
+                requestedStatusArray = connection.createArrayOf("text", incoming.requestedStatuses());
+
+                try (var statement = connection.prepareStatement(STATUS_REPORT_SQL)) {
                     int parameterIndex = 1;
-                    for (StatusReportRow statusReportRow : statusReports) {
-                        StatusReportCommand statusReport = statusReportRow.statusReport();
-                        statement.setInt(parameterIndex++, statusReportRow.ordinal());
-                        statement.setString(parameterIndex++, statusReport.getOriginalPaymentId());
-                        statement.setString(parameterIndex++, statusReport.getStatus().name());
-                    }
+                    statement.setArray(parameterIndex++, ordinalArray);
+                    statement.setArray(parameterIndex++, paymentIdArray);
+                    statement.setArray(parameterIndex++, requestedStatusArray);
+                    statement.setInt(parameterIndex++, BUCKET_COUNT);
+
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
                     statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
                     statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
+
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
@@ -266,29 +380,64 @@ class IncomingStatusReportPersistence {
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
                     statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
+
+                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
+                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
+
+                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_AND_SETTLED.name());
+                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
                     statement.setString(parameterIndex, PaymentStatus.WAITING_ACCEPTANCE.name());
-                },
-                (resultSet, rowNumber) -> {
-                    Long amountCents = resultSet.getObject("amount_cents", Long.class);
-                    return new StatusReportActionRow(
-                            resultSet.getInt("ordinal"),
-                            resultSet.getString("action"),
-                            resultSet.getString("payment_id"),
-                            amountCents,
-                            resultSet.getString("sender_bank_code"),
-                            resultSet.getString("receiver_bank_code")
-                    );
+
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        List<StatusReportActionRow> actionRows = new ArrayList<>(statusReports.size());
+                        while (resultSet.next()) {
+                            Long amountCents = resultSet.getObject(4, Long.class);
+                            actionRows.add(new StatusReportActionRow(
+                                    resultSet.getInt(1),
+                                    resultSet.getString(2),
+                                    resultSet.getString(3),
+                                    amountCents,
+                                    resultSet.getString(5),
+                                    resultSet.getString(6)
+                            ));
+                        }
+                        return actionRows;
+                    }
                 }
-        );
+            } finally {
+                free(ordinalArray, paymentIdArray, requestedStatusArray);
+            }
+        });
     }
 
-    private String statusReportSql(int rowCount) {
-        String values = java.util.stream.IntStream.range(0, rowCount)
-                .mapToObj(ignored -> "(?, ?, ?)")
-                .collect(Collectors.joining(",\n"));
+    private IncomingStatusReportArrays incomingStatusReportArrays(List<StatusReportRow> statusReports) {
+        int size = statusReports.size();
+        Integer[] ordinals = new Integer[size];
+        String[] paymentIds = new String[size];
+        String[] requestedStatuses = new String[size];
 
-        return STATUS_REPORT_SQL_TEMPLATE.formatted(values);
+        for (int index = 0; index < statusReports.size(); index++) {
+            StatusReportRow statusReportRow = statusReports.get(index);
+            StatusReportCommand statusReport = statusReportRow.statusReport();
+            ordinals[index] = statusReportRow.ordinal();
+            paymentIds[index] = statusReport.getOriginalPaymentId();
+            requestedStatuses[index] = statusReport.getStatus().name();
+        }
+
+        return new IncomingStatusReportArrays(ordinals, paymentIds, requestedStatuses);
+    }
+
+    private void free(Array... arrays) throws SQLException {
+        for (Array array : arrays) {
+            if (array != null) {
+                array.free();
+            }
+        }
+    }
+
+    private int mapCapacity(int expectedSize) {
+        return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
     private PaymentTransactionCommand toPaymentTransaction(StatusReportActionRow actionRow) {
@@ -321,5 +470,18 @@ class IncomingStatusReportPersistence {
             String senderBankCode,
             String receiverBankCode
     ) {
+    }
+
+    private record IncomingStatusReportArrays(
+            Integer[] ordinals,
+            String[] paymentIds,
+            String[] requestedStatuses
+    ) {
+        private IncomingStatusReportArrays {
+            int size = ordinals.length;
+            if (paymentIds.length != size || requestedStatuses.length != size) {
+                throw new IllegalStateException("Incoming status report arrays must have the same size");
+            }
+        }
     }
 }

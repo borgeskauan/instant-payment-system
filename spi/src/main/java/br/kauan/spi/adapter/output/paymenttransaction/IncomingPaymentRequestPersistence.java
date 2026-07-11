@@ -4,34 +4,47 @@ import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Array;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 class IncomingPaymentRequestPersistence {
 
     private static final String ACCEPTANCE_REQUEST = "ACCEPTANCE_REQUEST";
     private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
 
-    private static final String PERSISTENCE_SQL_TEMPLATE = """
-            WITH incoming (
-                ordinal,
-                payment_id,
-                amount_cents,
-                status,
-                sender_bank_code,
-                receiver_bank_code,
-                request_fingerprint,
-                request_fingerprint_version
-            ) AS (
-                VALUES
-                %s
+    private static final String PERSISTENCE_SQL = """
+            WITH incoming AS (
+                SELECT *
+                FROM unnest(
+                    ?::int[],
+                    ?::text[],
+                    ?::bigint[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[]
+                ) AS i(
+                    ordinal,
+                    payment_id,
+                    amount_cents,
+                    status,
+                    sender_bank_code,
+                    receiver_bank_code,
+                    request_fingerprint,
+                    request_fingerprint_version
+                )
             ),
             inserted AS (
                 INSERT INTO payment_transaction_entity (
@@ -167,33 +180,68 @@ class IncomingPaymentRequestPersistence {
     private List<PersistenceActionRow> persistAndClassify(
             List<IncomingPaymentRow> incomingRows
     ) {
-        return jdbcTemplate.query(
-                persistenceSql(incomingRows.size()),
-                statement -> {
-                    int parameterIndex = 1;
-                    for (IncomingPaymentRow incomingRow : incomingRows) {
-                        statement.setInt(parameterIndex++, incomingRow.ordinal());
-                        statement.setString(parameterIndex++, incomingRow.paymentTransaction().getPaymentId());
-                        statement.setLong(parameterIndex++, incomingRow.paymentTransaction().getAmountCents());
-                        statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-                        statement.setString(parameterIndex++, Utils.getBankCode(incomingRow.paymentTransaction().getSender()));
-                        statement.setString(parameterIndex++, Utils.getBankCode(incomingRow.paymentTransaction().getReceiver()));
-                        statement.setString(parameterIndex++, incomingRow.requestFingerprint());
-                        statement.setString(parameterIndex++, incomingRow.requestFingerprintVersion());
+        return jdbcTemplate.execute((ConnectionCallback<List<PersistenceActionRow>>) connection -> {
+            IncomingPaymentArrays incoming = incomingPaymentArrays(incomingRows);
+            Array ordinalArray = null;
+            Array paymentIdArray = null;
+            Array amountCentsArray = null;
+            Array statusArray = null;
+            Array senderBankCodeArray = null;
+            Array receiverBankCodeArray = null;
+            Array requestFingerprintArray = null;
+            Array requestFingerprintVersionArray = null;
+            try {
+                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
+                paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
+                amountCentsArray = connection.createArrayOf("int8", incoming.amountCents());
+                statusArray = connection.createArrayOf("text", incoming.statuses());
+                senderBankCodeArray = connection.createArrayOf("text", incoming.senderBankCodes());
+                receiverBankCodeArray = connection.createArrayOf("text", incoming.receiverBankCodes());
+                requestFingerprintArray = connection.createArrayOf("text", incoming.requestFingerprints());
+                requestFingerprintVersionArray = connection.createArrayOf("text", incoming.requestFingerprintVersions());
+
+                try (var statement = connection.prepareStatement(PERSISTENCE_SQL)) {
+                    statement.setArray(1, ordinalArray);
+                    statement.setArray(2, paymentIdArray);
+                    statement.setArray(3, amountCentsArray);
+                    statement.setArray(4, statusArray);
+                    statement.setArray(5, senderBankCodeArray);
+                    statement.setArray(6, receiverBankCodeArray);
+                    statement.setArray(7, requestFingerprintArray);
+                    statement.setArray(8, requestFingerprintVersionArray);
+                    statement.setString(9, PaymentStatus.WAITING_ACCEPTANCE.name());
+
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        List<PersistenceActionRow> actionRows = new ArrayList<>(incomingRows.size());
+                        while (resultSet.next()) {
+                            actionRows.add(new PersistenceActionRow(
+                                    resultSet.getInt(1),
+                                    resultSet.getString(2)
+                            ));
+                        }
+                        return actionRows;
                     }
-                    statement.setString(parameterIndex, PaymentStatus.WAITING_ACCEPTANCE.name());
-                },
-                (resultSet, rowNumber) -> new PersistenceActionRow(
-                        resultSet.getInt("ordinal"),
-                        resultSet.getString("action")
-                )
-        );
+                }
+            } finally {
+                free(
+                        ordinalArray,
+                        paymentIdArray,
+                        amountCentsArray,
+                        statusArray,
+                        senderBankCodeArray,
+                        receiverBankCodeArray,
+                        requestFingerprintArray,
+                        requestFingerprintVersionArray
+                );
+            }
+        });
     }
 
     private BatchLocalPaymentClassification classifyPaymentRequestsWithinBatch(
             List<PaymentTransactionCommand> paymentTransactions
     ) {
-        Map<String, List<IncomingPaymentRow>> rowsByPaymentId = new LinkedHashMap<>();
+        Map<String, List<IncomingPaymentRow>> rowsByPaymentId =
+                new LinkedHashMap<>(mapCapacity(paymentTransactions.size()));
         List<IncomingPaymentRow> allIncomingRows = incomingRows(paymentTransactions);
         for (IncomingPaymentRow incomingRow : allIncomingRows) {
             rowsByPaymentId.computeIfAbsent(
@@ -204,24 +252,22 @@ class IncomingPaymentRequestPersistence {
 
         List<IncomingPaymentRow> logicalRows = new ArrayList<>(rowsByPaymentId.size());
         List<Integer> divergentDuplicateOrdinals = new ArrayList<>();
-        Map<String, List<Integer>> originalOrdinalsByPaymentId = new LinkedHashMap<>();
+        Map<String, List<Integer>> originalOrdinalsByPaymentId = new LinkedHashMap<>(mapCapacity(rowsByPaymentId.size()));
 
         for (var entry : rowsByPaymentId.entrySet()) {
             List<IncomingPaymentRow> paymentRows = entry.getValue();
-            originalOrdinalsByPaymentId.put(
-                    entry.getKey(),
-                    paymentRows.stream().map(IncomingPaymentRow::ordinal).toList()
-            );
-
-            Set<FingerprintIdentity> fingerprintIdentities = new LinkedHashSet<>();
+            List<Integer> originalOrdinals = new ArrayList<>(paymentRows.size());
+            IncomingPaymentRow firstPaymentRow = paymentRows.get(0);
+            boolean divergent = false;
             for (IncomingPaymentRow paymentRow : paymentRows) {
-                fingerprintIdentities.add(new FingerprintIdentity(
-                        paymentRow.requestFingerprintVersion(),
-                        paymentRow.requestFingerprint()
-                ));
+                originalOrdinals.add(paymentRow.ordinal());
+                if (!sameFingerprintIdentity(firstPaymentRow, paymentRow)) {
+                    divergent = true;
+                }
             }
+            originalOrdinalsByPaymentId.put(entry.getKey(), originalOrdinals);
 
-            if (fingerprintIdentities.size() > 1) {
+            if (divergent) {
                 for (IncomingPaymentRow paymentRow : paymentRows) {
                     divergentDuplicateOrdinals.add(paymentRow.ordinal());
                 }
@@ -235,6 +281,11 @@ class IncomingPaymentRequestPersistence {
                 divergentDuplicateOrdinals,
                 originalOrdinalsByPaymentId
         );
+    }
+
+    private boolean sameFingerprintIdentity(IncomingPaymentRow firstPaymentRow, IncomingPaymentRow paymentRow) {
+        return Objects.equals(firstPaymentRow.requestFingerprintVersion(), paymentRow.requestFingerprintVersion())
+                && Objects.equals(firstPaymentRow.requestFingerprint(), paymentRow.requestFingerprint());
     }
 
     private List<IncomingPaymentRow> incomingRows(List<PaymentTransactionCommand> paymentTransactions) {
@@ -251,12 +302,52 @@ class IncomingPaymentRequestPersistence {
         return incomingRows;
     }
 
-    private String persistenceSql(int rowCount) {
-        String values = java.util.stream.IntStream.range(0, rowCount)
-                .mapToObj(ignored -> "(?, ?, ?, ?, ?, ?, ?, ?)")
-                .collect(Collectors.joining(",\n"));
+    private IncomingPaymentArrays incomingPaymentArrays(List<IncomingPaymentRow> incomingRows) {
+        int size = incomingRows.size();
+        Integer[] ordinals = new Integer[size];
+        String[] paymentIds = new String[size];
+        Long[] amountCents = new Long[size];
+        String[] statuses = new String[size];
+        String[] senderBankCodes = new String[size];
+        String[] receiverBankCodes = new String[size];
+        String[] requestFingerprints = new String[size];
+        String[] requestFingerprintVersions = new String[size];
 
-        return PERSISTENCE_SQL_TEMPLATE.formatted(values);
+        for (int index = 0; index < incomingRows.size(); index++) {
+            IncomingPaymentRow incomingRow = incomingRows.get(index);
+            PaymentTransactionCommand paymentTransaction = incomingRow.paymentTransaction();
+            ordinals[index] = incomingRow.ordinal();
+            paymentIds[index] = paymentTransaction.getPaymentId();
+            amountCents[index] = paymentTransaction.getAmountCents();
+            statuses[index] = PaymentStatus.WAITING_ACCEPTANCE.name();
+            senderBankCodes[index] = Utils.getBankCode(paymentTransaction.getSender());
+            receiverBankCodes[index] = Utils.getBankCode(paymentTransaction.getReceiver());
+            requestFingerprints[index] = incomingRow.requestFingerprint();
+            requestFingerprintVersions[index] = incomingRow.requestFingerprintVersion();
+        }
+
+        return new IncomingPaymentArrays(
+                ordinals,
+                paymentIds,
+                amountCents,
+                statuses,
+                senderBankCodes,
+                receiverBankCodes,
+                requestFingerprints,
+                requestFingerprintVersions
+        );
+    }
+
+    private void free(Array... arrays) throws SQLException {
+        for (Array array : arrays) {
+            if (array != null) {
+                array.free();
+            }
+        }
+    }
+
+    private int mapCapacity(int expectedSize) {
+        return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
     private record IncomingPaymentRow(
@@ -270,16 +361,34 @@ class IncomingPaymentRequestPersistence {
     private record PersistenceActionRow(int ordinal, String action) {
     }
 
-    private record FingerprintIdentity(
-            String requestFingerprintVersion,
-            String requestFingerprint
-    ) {
-    }
-
     private record BatchLocalPaymentClassification(
             List<IncomingPaymentRow> incomingRows,
             List<Integer> sameBatchDivergentOrdinals,
             Map<String, List<Integer>> originalOrdinalsByPaymentId
     ) {
+    }
+
+    private record IncomingPaymentArrays(
+            Integer[] ordinals,
+            String[] paymentIds,
+            Long[] amountCents,
+            String[] statuses,
+            String[] senderBankCodes,
+            String[] receiverBankCodes,
+            String[] requestFingerprints,
+            String[] requestFingerprintVersions
+    ) {
+        private IncomingPaymentArrays {
+            int size = ordinals.length;
+            if (paymentIds.length != size
+                    || amountCents.length != size
+                    || statuses.length != size
+                    || senderBankCodes.length != size
+                    || receiverBankCodes.length != size
+                    || requestFingerprints.length != size
+                    || requestFingerprintVersions.length != size) {
+                throw new IllegalStateException("Incoming payment arrays must have the same size");
+            }
+        }
     }
 }

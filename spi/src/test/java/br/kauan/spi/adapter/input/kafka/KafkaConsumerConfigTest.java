@@ -44,6 +44,19 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
+    void spiKafkaListenerContainerFactoryUsesConfiguredAutoStartup() {
+        KafkaConsumerConfig config = new KafkaConsumerConfig();
+        ReflectionTestUtils.setField(config, "listenerAutoStartup", false);
+
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
+                config.spiKafkaListenerContainerFactory(
+                        mock(ConsumerFactory.class),
+                        mock(CommonErrorHandler.class));
+
+        assertThat(ReflectionTestUtils.getField(factory, "autoStartup")).isEqualTo(false);
+    }
+
+    @Test
     void consumerFactoriesDisableAutoCommit() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");

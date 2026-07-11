@@ -32,30 +32,35 @@ public class NotificationPublisher {
                 new ArrayList<>(notificationsByIspb.size());
 
         try {
-            notificationsByIspb.forEach((ispb, notificationJson) -> {
-                log.debug("Publishing notification for ISPB: {} to topic: {}", ispb, NOTIFICATION_TOPIC);
-
-                CompletableFuture<SendResult<String, String>> future =
-                        kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson);
-
-                futures.add(future.whenComplete((result, ex) -> {
-                    if (ex == null) {
-                        log.debug("Notification published successfully for ISPB: {}, partition: {}, offset: {}",
-                                ispb,
-                                result.getRecordMetadata().partition(),
-                                result.getRecordMetadata().offset());
-                    } else {
-                        log.error("Failed to publish notification for ISPB: {}", ispb, ex);
-                    }
-                }));
-            });
+            notificationsByIspb.forEach((ispb, notificationJson) ->
+                    futures.add(kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson))
+            );
 
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
         } catch (Exception e) {
-            Throwable cause = e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
+            Throwable cause = publishFailureCause(e, futures);
             log.error("Error publishing notifications to Kafka", cause);
             throw new RecoverableNotificationPublishException("Failed to publish notification", cause);
         }
+    }
+
+    private Throwable publishFailureCause(
+            Exception exception,
+            List<CompletableFuture<SendResult<String, String>>> futures
+    ) {
+        for (CompletableFuture<SendResult<String, String>> future : futures) {
+            if (future.isCompletedExceptionally()) {
+                try {
+                    future.join();
+                } catch (CompletionException futureException) {
+                    return futureException.getCause() != null ? futureException.getCause() : futureException;
+                }
+            }
+        }
+
+        return exception instanceof CompletionException && exception.getCause() != null
+                ? exception.getCause()
+                : exception;
     }
 
 }
