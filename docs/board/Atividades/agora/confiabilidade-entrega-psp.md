@@ -1,6 +1,8 @@
 # Confiabilidade de entrega para PSPs com transactional outbox
 
-Trabalho possível, mas ainda não priorizado. Esta frente deve ser tratada como uma feature arquitetural separada da idempotência/replay atual.
+- [ ] Confiabilidade de entrega para PSPs com transactional outbox
+
+Esta frente está priorizada como uma feature arquitetural separada da idempotência/replay atual.
 
 ## Reliable PSP Delivery com transactional outbox, ACK, retry e timeout
 
@@ -9,6 +11,16 @@ Trabalho possível, mas ainda não priorizado. Esta frente deve ser tratada como
 Hoje o SPI processa `pacs.008` e `pacs.002`, altera o estado da transação no banco e publica efeitos laterais para os PSPs, como pedido de aceite, notificação de rejeição e notificação de liquidação. A idempotência atual torna replays seguros, mas não garante sozinha que o sistema nunca esqueça um efeito lateral obrigatório depois de commitar uma alteração no banco.
 
 O objetivo desta frente é persistir explicitamente os efeitos laterais destinados aos PSPs e controlar a entrega por destinatário até confirmação, expiração ou tratamento operacional. O modelo esperado é `at-least-once`: a mesma mensagem pode ser enviada mais de uma vez, e os consumidores precisam permanecer idempotentes.
+
+**Corte inicial**
+
+Antes da implementação completa do worker, fechar o desenho mínimo da entrega confiável:
+
+- [ ] Definir o contrato de confirmação: quando uma delivery pode virar `ACKED`.
+- [ ] Definir quais eventos entram no primeiro corte: `ACCEPTANCE_REQUEST`, `REJECTED_NOTIFICATION` e `SETTLED_NOTIFICATION`.
+- [ ] Definir a política de timeout para `ACCEPTANCE_REQUEST` pendente.
+- [ ] Definir o modelo persistente de `outbox_event` e `outbox_delivery`.
+- [ ] Definir a chave de idempotência usada na entrega.
 
 **Tarefas**
 
