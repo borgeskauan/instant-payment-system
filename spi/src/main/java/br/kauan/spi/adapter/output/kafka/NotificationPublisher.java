@@ -7,7 +7,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
@@ -23,17 +22,20 @@ public class NotificationPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public void publishNotifications(Map<String, String> notificationsByIspb) {
-        if (notificationsByIspb.isEmpty()) {
+    public void publishNotifications(List<NotificationPublication> notifications) {
+        if (notifications.isEmpty()) {
             return;
         }
 
         List<CompletableFuture<SendResult<String, String>>> futures =
-                new ArrayList<>(notificationsByIspb.size());
+                new ArrayList<>(notifications.size());
 
         try {
-            notificationsByIspb.forEach((ispb, notificationJson) ->
-                    futures.add(kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson))
+            notifications.forEach(notification ->
+                    futures.add(kafkaTemplate.send(
+                            NOTIFICATION_TOPIC,
+                            notification.ispb(),
+                            notification.payload()))
             );
 
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();

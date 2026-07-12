@@ -6,8 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -25,11 +24,12 @@ class NotificationPublisherTest {
         CompletableFuture<SendResult<String, String>> firstFuture = new CompletableFuture<>();
         CompletableFuture<SendResult<String, String>> secondFuture = new CompletableFuture<>();
         when(kafkaTemplate.send("psp-notifications", "20000001", "{\"a\":1}")).thenReturn(firstFuture);
-        when(kafkaTemplate.send("psp-notifications", "20000002", "{\"b\":2}")).thenReturn(secondFuture);
+        when(kafkaTemplate.send("psp-notifications", "20000001", "{\"b\":2}")).thenReturn(secondFuture);
 
-        Map<String, String> notifications = new LinkedHashMap<>();
-        notifications.put("20000001", "{\"a\":1}");
-        notifications.put("20000002", "{\"b\":2}");
+        List<NotificationPublication> notifications = List.of(
+                new NotificationPublication("20000001", "{\"a\":1}"),
+                new NotificationPublication("20000001", "{\"b\":2}")
+        );
         CompletableFuture<Void> publishing =
                 CompletableFuture.runAsync(() -> publisher.publishNotifications(notifications));
 
@@ -48,11 +48,12 @@ class NotificationPublisherTest {
         CompletableFuture<SendResult<String, String>> secondFuture = new CompletableFuture<>();
         secondFuture.completeExceptionally(new IllegalStateException("broker rejected"));
         when(kafkaTemplate.send("psp-notifications", "20000001", "{\"a\":1}")).thenReturn(firstFuture);
-        when(kafkaTemplate.send("psp-notifications", "20000002", "{\"b\":2}")).thenReturn(secondFuture);
+        when(kafkaTemplate.send("psp-notifications", "20000001", "{\"b\":2}")).thenReturn(secondFuture);
 
-        Map<String, String> notifications = new LinkedHashMap<>();
-        notifications.put("20000001", "{\"a\":1}");
-        notifications.put("20000002", "{\"b\":2}");
+        List<NotificationPublication> notifications = List.of(
+                new NotificationPublication("20000001", "{\"a\":1}"),
+                new NotificationPublication("20000001", "{\"b\":2}")
+        );
         assertThatThrownBy(() -> publisher.publishNotifications(notifications))
                 .hasMessageContaining("Failed to publish notification");
     }
@@ -64,7 +65,7 @@ class NotificationPublisherTest {
         while (System.nanoTime() < deadline) {
             try {
                 verify(kafkaTemplate).send("psp-notifications", "20000001", "{\"a\":1}");
-                verify(kafkaTemplate).send("psp-notifications", "20000002", "{\"b\":2}");
+                verify(kafkaTemplate).send("psp-notifications", "20000001", "{\"b\":2}");
                 return;
             } catch (AssertionError failure) {
                 lastFailure = failure;

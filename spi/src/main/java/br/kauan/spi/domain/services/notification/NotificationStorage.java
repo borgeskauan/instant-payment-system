@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
+import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
@@ -8,7 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.Map;
 
 @Slf4j
@@ -29,37 +30,35 @@ public class NotificationStorage {
     }
 
     public void addStatusNotifications(Map<String, List<StatusReportCommand>> statusReportsByIspb) {
-        Map<String, String> notificationsByIspb = new LinkedHashMap<>();
+        List<NotificationPublication> notifications = new ArrayList<>();
 
         statusReportsByIspb.forEach((ispb, statusReports) -> {
-            log.debug("Publishing status notification for ISPB: {}", ispb);
+            log.debug("Publishing status notifications for ISPB: {}", ispb);
 
-            Object statusNotification = createStatusNotification(statusReports);
-
-            if (statusNotification != null) {
+            for (StatusReportCommand statusReport : statusReports) {
+                Object statusNotification = createStatusNotification(List.of(statusReport));
                 contentSerializer.serialize(statusNotification)
-                        .ifPresent(json -> notificationsByIspb.put(ispb, json));
+                        .ifPresent(json -> notifications.add(new NotificationPublication(ispb, json)));
             }
         });
 
-        notificationPublisher.publishNotifications(notificationsByIspb);
+        notificationPublisher.publishNotifications(notifications);
     }
 
     public void addTransactionNotifications(Map<String, List<PaymentTransactionCommand>> paymentTransactionsByIspb) {
-        Map<String, String> notificationsByIspb = new LinkedHashMap<>();
+        List<NotificationPublication> notifications = new ArrayList<>();
 
         paymentTransactionsByIspb.forEach((ispb, paymentTransactions) -> {
-            log.debug("Publishing transaction notification for ISPB: {}", ispb);
+            log.debug("Publishing transaction notifications for ISPB: {}", ispb);
 
-            Object paymentNotification = createPaymentNotification(paymentTransactions);
-
-            if (paymentNotification != null) {
+            for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
+                Object paymentNotification = createPaymentNotification(List.of(paymentTransaction));
                 contentSerializer.serialize(paymentNotification)
-                        .ifPresent(json -> notificationsByIspb.put(ispb, json));
+                        .ifPresent(json -> notifications.add(new NotificationPublication(ispb, json)));
             }
         });
 
-        notificationPublisher.publishNotifications(notificationsByIspb);
+        notificationPublisher.publishNotifications(notifications);
     }
 
     private Object createStatusNotification(List<StatusReportCommand> statusReports) {

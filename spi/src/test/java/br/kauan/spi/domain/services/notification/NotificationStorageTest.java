@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
+import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
@@ -11,8 +12,8 @@ import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFact
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,7 +33,7 @@ class NotificationStorageTest {
     }
 
     @Test
-    void transactionNotificationsPublishOneAcceptanceRequestPayloadWithAllPayments() {
+    void transactionNotificationsPublishOneAcceptanceRequestPayloadPerPayment() {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
@@ -44,20 +45,28 @@ class NotificationStorageTest {
                 )
         ));
 
-        ArgumentCaptor<Map<String, String>> notificationsCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<List<NotificationPublication>> notificationsCaptor = ArgumentCaptor.forClass(List.class);
         verify(publisher).publishNotifications(notificationsCaptor.capture());
-        String notificationJson = notificationsCaptor.getValue().get("20000001");
+        List<NotificationPublication> notifications = notificationsCaptor.getValue();
 
-        assertThat(notificationJson)
-                .contains("\"NbOfTxs\":2")
+        assertThat(notifications).hasSize(2);
+        assertThat(notifications)
+                .extracting(NotificationPublication::ispb)
+                .containsExactly("20000001", "20000001");
+        assertThat(notifications.get(0).payload())
+                .contains("\"NbOfTxs\":1")
                 .contains("\"EndToEndId\":\"E2E-1\"")
-                .contains("\"EndToEndId\":\"E2E-2\"")
+                .doesNotContain("\"EndToEndId\":\"E2E-2\"")
                 .contains("\"Id\":\"000123\"")
                 .contains("\"Issr\":\"0012\"");
+        assertThat(notifications.get(1).payload())
+                .contains("\"NbOfTxs\":1")
+                .contains("\"EndToEndId\":\"E2E-2\"")
+                .doesNotContain("\"EndToEndId\":\"E2E-1\"");
     }
 
     @Test
-    void statusNotificationsPublishOneStatusPayloadWithAllReports() {
+    void statusNotificationsPublishOneStatusPayloadPerReport() {
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         NotificationStorage storage = notificationStorage(publisher);
 
@@ -71,17 +80,32 @@ class NotificationStorageTest {
                 )
         ));
 
-        ArgumentCaptor<Map<String, String>> notificationsCaptor = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<List<NotificationPublication>> notificationsCaptor = ArgumentCaptor.forClass(List.class);
         verify(publisher).publishNotifications(notificationsCaptor.capture());
-        String notificationJson = notificationsCaptor.getValue().get("10000001");
+        List<NotificationPublication> notifications = notificationsCaptor.getValue();
 
-        assertThat(notificationJson)
-                .contains("\"NbOfTxs\":2")
-                .contains("\"OrgnlEndToEndId\":\"E2E-1\"")
-                .contains("\"OrgnlEndToEndId\":\"E2E-2\"");
-        assertThat(notificationsCaptor.getValue().get("20000001"))
-                .contains("\"NbOfTxs\":1")
-                .contains("\"OrgnlEndToEndId\":\"E2E-3\"");
+        assertThat(notifications).hasSize(3);
+        assertThat(notifications)
+                .extracting(NotificationPublication::ispb)
+                .containsExactlyInAnyOrder("10000001", "10000001", "20000001");
+        assertThat(notifications)
+                .filteredOn(notification -> notification.payload().contains("\"OrgnlEndToEndId\":\"E2E-1\""))
+                .singleElement()
+                .satisfies(notification -> assertThat(notification.payload())
+                        .contains("\"NbOfTxs\":1")
+                        .doesNotContain("\"OrgnlEndToEndId\":\"E2E-2\""));
+        assertThat(notifications)
+                .filteredOn(notification -> notification.payload().contains("\"OrgnlEndToEndId\":\"E2E-2\""))
+                .singleElement()
+                .satisfies(notification -> assertThat(notification.payload())
+                        .contains("\"NbOfTxs\":1")
+                        .doesNotContain("\"OrgnlEndToEndId\":\"E2E-1\""));
+        assertThat(notifications)
+                .filteredOn(notification -> notification.ispb().equals("20000001"))
+                .singleElement()
+                .satisfies(notification -> assertThat(notification.payload())
+                        .contains("\"NbOfTxs\":1")
+                        .contains("\"OrgnlEndToEndId\":\"E2E-3\""));
     }
 
     private static NotificationStorage notificationStorage(NotificationPublisher publisher) {

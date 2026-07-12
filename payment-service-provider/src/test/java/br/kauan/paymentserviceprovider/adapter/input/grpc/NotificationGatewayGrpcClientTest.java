@@ -1,6 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.input.grpc;
 
-import br.kauan.notificationgateway.grpc.proto.NotificationBatch;
+import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.StreamRequest;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
@@ -67,12 +67,14 @@ class NotificationGatewayGrpcClientTest {
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<NotificationBatch> responseObserver) {
+            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
                 subscribedIspb.set(request.getIspb());
                 subscribed.countDown();
-                responseObserver.onNext(NotificationBatch.newBuilder()
-                        .addPayloads(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
-                        .addPayloads(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
+                responseObserver.onNext(Notification.newBuilder()
+                        .setPayload(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
+                        .build());
+                responseObserver.onNext(Notification.newBuilder()
+                        .setPayload(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
                         .build());
             }
         });
@@ -101,7 +103,7 @@ class NotificationGatewayGrpcClientTest {
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<NotificationBatch> responseObserver) {
+            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
                 int current = subscriptions.incrementAndGet();
                 if (current == 2) {
                     secondSubscription.countDown();
