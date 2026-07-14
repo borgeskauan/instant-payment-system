@@ -2,26 +2,6 @@
 
 Trabalho possível, mas ainda não priorizado. Tarefas ativas ou pausadas já priorizadas ficam em `docs/board/Atividades`.
 
-## Identidade e autorização do PSP
-
-**Por que existe**
-
-Hoje os fluxos entre PSP, `notification-gateway` e SPI ainda dependem demais de identificadores informados pela própria mensagem ou pelo cliente. Para evoluir o sistema com entrega confiável, ACK e autorização por participante, a identidade do PSP precisa vir de um mecanismo autenticado e verificável.
-
-O modelo preferido é usar mTLS: o PSP apresenta um certificado de cliente, o serviço valida esse certificado com uma CA confiável e a aplicação associa a identidade autenticada ao ISPB autorizado. A partir disso, o ISPB informado em payloads ou mensagens deixa de ser fonte de confiança e passa a ser apenas dado de negócio a ser validado contra a identidade autenticada.
-
-**Tarefas**
-
-- [ ] Proteger a conexão gRPC entre PSP e `notification-gateway` com mTLS.
-- [ ] Fazer o PSP apresentar certificado de cliente ao abrir o stream gRPC.
-- [ ] Fazer o `notification-gateway` validar o certificado do PSP usando a CA confiável.
-- [ ] Definir como o certificado identifica o PSP e como essa identidade é vinculada ao ISPB.
-- [ ] Associar automaticamente cada stream gRPC ao ISPB autenticado.
-- [ ] Remover a necessidade de `Subscribe { ispb }` como mecanismo de identidade, mantendo `Subscribe` apenas se futuramente servir para negociação de capacidades ou metadados.
-- [ ] Garantir que o `notification-gateway` envie para cada stream apenas deliveries destinadas ao ISPB autenticado.
-- [ ] Garantir que o PSP só consiga dar ACK em deliveries destinadas ao próprio ISPB autenticado.
-- [ ] Adicionar testes negativos para PSP sem certificado, certificado inválido e ACK de delivery de outro ISPB.
-
 ## Autenticação PSP -> kafka-producer e identidade no SPI
 
 **Por que existe**
