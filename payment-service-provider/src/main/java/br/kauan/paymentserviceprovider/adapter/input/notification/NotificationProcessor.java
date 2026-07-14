@@ -56,9 +56,10 @@ public class NotificationProcessor {
                 return;
             }
 
-            log.warn("Unknown notification type received for ISPB: {}", ispb);
+            throw new IllegalArgumentException("Unknown notification type received for ISPB: " + ispb);
         } catch (Exception e) {
             log.error("Error processing notification for ISPB: {}", ispb, e);
+            throw new NotificationProcessingException("Failed to process notification", e);
         }
     }
 

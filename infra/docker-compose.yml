@@ -140,11 +140,14 @@ services:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
       NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:-2}
       JAVA_TOOL_OPTIONS: "-Xms96m -Xmx160m -XX:MaxDirectMemorySize=48m -Xss256k"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
 
   dict:
     build:

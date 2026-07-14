@@ -1,8 +1,8 @@
 package br.kauan.paymentserviceprovider.adapter.input.grpc;
 
+import br.kauan.notificationgateway.grpc.proto.ClientMessage;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
-import br.kauan.notificationgateway.grpc.proto.StreamRequest;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import com.google.protobuf.ByteString;
@@ -54,6 +54,7 @@ class NotificationGatewayGrpcClientTest {
         new GlobalVariables().setBankCode("12345678");
         CountDownLatch subscribed = new CountDownLatch(1);
         CountDownLatch processed = new CountDownLatch(2);
+        CountDownLatch acked = new CountDownLatch(2);
         AtomicReference<String> subscribedIspb = new AtomicReference<>();
         NotificationProcessor processor = mock(NotificationProcessor.class);
         doAnswer(invocation -> {
@@ -67,15 +68,35 @@ class NotificationGatewayGrpcClientTest {
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
-                subscribedIspb.set(request.getIspb());
-                subscribed.countDown();
-                responseObserver.onNext(Notification.newBuilder()
-                        .setPayload(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
-                        .build());
-                responseObserver.onNext(Notification.newBuilder()
-                        .setPayload(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
-                        .build());
+            public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
+                return new StreamObserver<>() {
+                    @Override
+                    public void onNext(ClientMessage value) {
+                        if (value.hasSubscribe()) {
+                            subscribedIspb.set(value.getSubscribe().getIspb());
+                            subscribed.countDown();
+                            responseObserver.onNext(Notification.newBuilder()
+                                    .setDeliveryId("delivery-1")
+                                    .setPayload(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
+                                    .build());
+                            responseObserver.onNext(Notification.newBuilder()
+                                    .setDeliveryId("delivery-2")
+                                    .setPayload(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
+                                    .build());
+                        }
+                        if (value.hasAck()) {
+                            acked.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                    }
+                };
             }
         });
 
@@ -90,6 +111,7 @@ class NotificationGatewayGrpcClientTest {
 
         assertThat(subscribed.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(processed.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(acked.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(subscribedIspb.get()).isEqualTo("12345678");
         verify(processor).process("12345678", "{\"CdtTrfTxInf\":[]}");
         verify(processor).process("12345678", "{\"FIToFIPmtStsRpt\":[]}");
@@ -103,12 +125,28 @@ class NotificationGatewayGrpcClientTest {
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
-            public void streamNotifications(StreamRequest request, StreamObserver<Notification> responseObserver) {
-                int current = subscriptions.incrementAndGet();
-                if (current == 2) {
-                    secondSubscription.countDown();
-                }
-                responseObserver.onError(new RuntimeException("boom"));
+            public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
+                return new StreamObserver<>() {
+                    @Override
+                    public void onNext(ClientMessage value) {
+                        if (!value.hasSubscribe()) {
+                            return;
+                        }
+                        int current = subscriptions.incrementAndGet();
+                        if (current == 2) {
+                            secondSubscription.countDown();
+                        }
+                        responseObserver.onError(new RuntimeException("boom"));
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                    }
+                };
             }
         });
 

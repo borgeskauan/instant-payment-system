@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.delivery.NotificationDelivery;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
@@ -15,10 +16,11 @@ class SubscriberRegistryTest {
         byte[] payload = "payload".getBytes();
 
         registry.register("20000001", observer);
-        registry.dispatch("20000001", payload);
+        boolean sent = registry.dispatch(delivery("delivery-1", "20000001", payload));
 
+        assertThat(sent).isTrue();
         assertThat(observer.notifications).hasSize(1);
-        assertThat(observer.notifications.getFirst().getDeliveryId()).isEmpty();
+        assertThat(observer.notifications.getFirst().getDeliveryId()).isEqualTo("delivery-1");
         assertThat(observer.notifications.getFirst().getPayload().toByteArray()).isEqualTo(payload);
     }
 
@@ -29,7 +31,7 @@ class SubscriberRegistryTest {
 
         registry.register("20000001", observer);
         for (int i = 0; i < 3; i++) {
-            registry.dispatch("20000001", new byte[]{(byte) i});
+            registry.dispatch(delivery("delivery-" + i, "20000001", new byte[]{(byte) i}));
         }
 
         assertThat(observer.notifications).hasSize(3);
@@ -45,7 +47,7 @@ class SubscriberRegistryTest {
         byte[] payload = "payload".getBytes();
 
         registry.register("20000001", observer);
-        registry.dispatch("20000001", payload);
+        registry.dispatch(delivery("delivery-1", "20000001", payload));
 
         payload[0] = 'P';
 
@@ -54,29 +56,47 @@ class SubscriberRegistryTest {
     }
 
     @Test
-    void multipleSubscribersForSameIspbReceiveSameNotification() {
+    void multipleSubscribersForSameIspbReceiveOnlyOneDeliveryAttempt() {
         var registry = new SubscriberRegistry();
         var first = new CapturingObserver();
         var second = new CapturingObserver();
 
         registry.register("20000001", first);
         registry.register("20000001", second);
-        registry.dispatch("20000001", "one".getBytes());
+        registry.dispatch(delivery("delivery-1", "20000001", "one".getBytes()));
 
         assertThat(first.notifications).hasSize(1);
-        assertThat(second.notifications).hasSize(1);
-        assertThat(first.notifications.getFirst()).isSameAs(second.notifications.getFirst());
+        assertThat(second.notifications).isEmpty();
     }
 
     @Test
-    void dispatchWithoutSubscribersDropsPayload() {
+    void dispatchWithoutSubscribersReturnsFalse() {
         var registry = new SubscriberRegistry();
         var observer = new CapturingObserver();
 
-        registry.dispatch("20000001", "dropped".getBytes());
+        boolean sent = registry.dispatch(delivery("delivery-1", "20000001", "dropped".getBytes()));
         registry.register("20000001", observer);
 
+        assertThat(sent).isFalse();
         assertThat(observer.notifications).isEmpty();
+    }
+
+    @Test
+    void connectedIspbsIncludesOnlyCurrentlyRegisteredIspbs() {
+        var registry = new SubscriberRegistry();
+        var observer = new CapturingObserver();
+
+        registry.register("20000001", observer);
+
+        assertThat(registry.connectedIspbs()).containsExactly("20000001");
+
+        registry.unregister("20000001", observer);
+
+        assertThat(registry.connectedIspbs()).isEmpty();
+    }
+
+    private static NotificationDelivery delivery(String communicationId, String ispb, byte[] payload) {
+        return new NotificationDelivery(communicationId, ispb, payload);
     }
 
     private static final class CapturingObserver implements StreamObserver<Notification> {

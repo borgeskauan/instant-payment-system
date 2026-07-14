@@ -1,15 +1,17 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.delivery.NotificationDelivery;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import com.google.protobuf.UnsafeByteOperations;
-import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 /**
  * Thread-safe registry that maps each ISPB to the list of active gRPC stream
@@ -53,47 +55,42 @@ public class SubscriberRegistry {
         }
     }
 
-    /**
-     * Forwards a notification to all subscribers of the given ISPB.
-     * Called by the Kafka consumer on every incoming message.
-     *
-     * @param ispb    the destination bank code (Kafka record key)
-     * @param payload the raw notification payload (pacs.008 or pacs.002)
-     */
-    public void dispatch(String ispb, byte[] payload) {
-        List<StreamObserver<Notification>> list = subscribers.get(ispb);
-        if (list == null || list.isEmpty()) {
-            log.debug("No subscribers for ISPB: {} — notification dropped", ispb);
-            return;
-        }
-
-        // Kafka's byte[] is not mutated after deserialization; avoid copying it on the hot path.
-        Notification notification = Notification.newBuilder()
-                .setPayload(UnsafeByteOperations.unsafeWrap(payload))
-                .build();
-        sendNotification(ispb, notification);
+    public Set<String> connectedIspbs() {
+        return subscribers.entrySet().stream()
+                .filter(entry -> !entry.getValue().isEmpty())
+                .map(java.util.Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
-    private void sendNotification(String ispb, Notification notification) {
+    public boolean dispatch(NotificationDelivery delivery) {
+        String ispb = delivery.recipientIspb();
+        StreamObserver<Notification> observer = firstSubscriber(ispb);
+        if (observer == null) {
+            log.debug("No subscribers for ISPB: {} — delivery remains pending", ispb);
+            return false;
+        }
+
+        Notification notification = Notification.newBuilder()
+                .setDeliveryId(delivery.communicationId())
+                .setPayload(UnsafeByteOperations.unsafeWrap(delivery.payload()))
+                .build();
+
+        try {
+            observer.onNext(notification);
+            log.debug("Dispatched delivery {} to ISPB {}", delivery.communicationId(), ispb);
+            return true;
+        } catch (Exception e) {
+            log.warn("Failed to send notification to subscriber for ISPB: {} — removing", ispb, e);
+            unregister(ispb, observer);
+            return false;
+        }
+    }
+
+    private StreamObserver<Notification> firstSubscriber(String ispb) {
         List<StreamObserver<Notification>> list = subscribers.get(ispb);
         if (list == null || list.isEmpty()) {
-            log.debug("No subscribers for ISPB: {} — notification dropped", ispb);
-            return;
+            return null;
         }
-
-        log.debug("Dispatching notification to {} subscriber(s) for ISPB: {}", list.size(), ispb);
-
-        for (StreamObserver<Notification> observer : list) {
-            try {
-                if (observer instanceof ServerCallStreamObserver<?> scs) {
-                    log.debug("Pre-dispatch state for ISPB: {} — isCancelled: {}, isReady: {}", ispb, scs.isCancelled(), scs.isReady());
-                }
-                observer.onNext(notification);
-                log.debug("onNext completed successfully for ISPB: {}", ispb);
-            } catch (Exception e) {
-                log.warn("Failed to send notification to subscriber for ISPB: {} — removing", ispb, e);
-                list.remove(observer);
-            }
-        }
+        return list.getFirst();
     }
 }

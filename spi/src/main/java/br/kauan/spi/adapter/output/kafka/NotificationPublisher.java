@@ -1,10 +1,12 @@
 package br.kauan.spi.adapter.output.kafka;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -32,10 +34,7 @@ public class NotificationPublisher {
 
         try {
             notifications.forEach(notification ->
-                    futures.add(kafkaTemplate.send(
-                            NOTIFICATION_TOPIC,
-                            notification.ispb(),
-                            notification.payload()))
+                    futures.add(kafkaTemplate.send(producerRecord(notification)))
             );
 
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
@@ -44,6 +43,23 @@ public class NotificationPublisher {
             log.error("Error publishing notifications to Kafka", cause);
             throw new RecoverableNotificationPublishException("Failed to publish notification", cause);
         }
+    }
+
+    private ProducerRecord<String, String> producerRecord(NotificationPublication notification) {
+        ProducerRecord<String, String> record =
+                new ProducerRecord<>(NOTIFICATION_TOPIC, notification.ispb(), notification.payload());
+        addHeader(record, "notification.communication-id", notification.communicationId());
+        addHeader(record, "notification.event-type", notification.eventType());
+        addHeader(record, "notification.payment-id", notification.paymentId());
+        addHeader(record, "notification.schema-version", notification.schemaVersion());
+        if (notification.status() != null && !notification.status().isBlank()) {
+            addHeader(record, "notification.status", notification.status());
+        }
+        return record;
+    }
+
+    private void addHeader(ProducerRecord<String, String> record, String name, String value) {
+        record.headers().add(name, value.getBytes(StandardCharsets.UTF_8));
     }
 
     private Throwable publishFailureCause(

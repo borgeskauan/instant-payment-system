@@ -9,12 +9,23 @@ package notification;
 // A client subscribes with its ISPB and receives a stream of notifications
 // routed to that ISPB.
 service NotificationGateway {
-  rpc StreamNotifications(StreamRequest) returns (stream Notification);
+  rpc StreamNotifications(stream ClientMessage) returns (stream Notification);
+}
+
+message ClientMessage {
+  oneof message {
+    Subscribe subscribe = 1;
+    Ack ack = 2;
+  }
 }
 
 // The ISPB identifies which PSP wants to receive notifications.
-message StreamRequest {
+message Subscribe {
   string ispb = 1;
+}
+
+message Ack {
+  string delivery_id = 1;
 }
 
 // A single notification forwarded from the internal Kafka topic.

@@ -11,6 +11,18 @@ spring:
       group-id: notification-gateway-group
       auto-offset-reset: earliest
 
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:mysecretpassword}
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    table: notification_gateway_flyway_schema_history
+    baseline-on-migrate: true
+    baseline-version: 0
+
 grpc:
   server:
     port: 9090
@@ -18,3 +30,8 @@ grpc:
 notification-gateway:
   kafka:
     listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:2}
+  delivery:
+    worker-delay-ms: ${NOTIFICATION_GATEWAY_DELIVERY_WORKER_DELAY_MS:250}
+    batch-size: ${NOTIFICATION_GATEWAY_DELIVERY_BATCH_SIZE:100}
+    lease-duration-ms: ${NOTIFICATION_GATEWAY_DELIVERY_LEASE_DURATION_MS:30000}
+    retry-delay-ms: ${NOTIFICATION_GATEWAY_DELIVERY_RETRY_DELAY_MS:1000}

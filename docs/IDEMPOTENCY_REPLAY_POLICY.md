@@ -4,7 +4,7 @@ This document describes the current idempotency policy for Pix message replay an
 
 The goal is safe at-least-once processing. Kafka redelivery, manual replay, duplicate payloads, and repeated PSP notifications must not duplicate settlement, status transitions, or local PSP balance effects.
 
-This policy does not implement end-to-end exactly-once delivery and does not replace the future reliable delivery work based on transactional outbox.
+This policy does not implement end-to-end exactly-once delivery. PSP notification delivery is tracked separately by the notification gateway with at-least-once retry and explicit PSP ACK.
 
 ## Principles
 
@@ -119,7 +119,8 @@ If DLQ publication for a deterministic conflict fails, the source batch is not a
 
 ## Current Limits
 
-- There is no transactional outbox for PSP notifications yet.
-- Kafka broker acknowledgement is not the same as PSP end-to-end acknowledgement.
+- There is no transactional outbox inside SPI for PSP notifications.
+- PSP notification delivery is tracked in `notification-gateway`; Kafka broker acknowledgement is not the same as PSP end-to-end acknowledgement.
+- A PSP notification is considered `ACKED` only after the PSP processes it and sends an ACK through the gRPC stream.
 - PSP local idempotency is in-memory in the current simulated PSP.
 - Automated end-to-end replay scenarios in the load-tool are tracked separately in the backlog.

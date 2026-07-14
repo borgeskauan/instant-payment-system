@@ -21,27 +21,31 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type StreamRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ispb          string                 `protobuf:"bytes,1,opt,name=ispb,proto3" json:"ispb,omitempty"`
+type ClientMessage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Message:
+	//
+	//	*ClientMessage_Subscribe
+	//	*ClientMessage_Ack
+	Message       isClientMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *StreamRequest) Reset() {
-	*x = StreamRequest{}
+func (x *ClientMessage) Reset() {
+	*x = ClientMessage{}
 	mi := &file_proto_notification_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *StreamRequest) String() string {
+func (x *ClientMessage) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*StreamRequest) ProtoMessage() {}
+func (*ClientMessage) ProtoMessage() {}
 
-func (x *StreamRequest) ProtoReflect() protoreflect.Message {
+func (x *ClientMessage) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_notification_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -53,14 +57,136 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
-func (*StreamRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ClientMessage.ProtoReflect.Descriptor instead.
+func (*ClientMessage) Descriptor() ([]byte, []int) {
 	return file_proto_notification_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *StreamRequest) GetIspb() string {
+func (x *ClientMessage) GetMessage() isClientMessage_Message {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+func (x *ClientMessage) GetSubscribe() *Subscribe {
+	if x != nil {
+		if x, ok := x.Message.(*ClientMessage_Subscribe); ok {
+			return x.Subscribe
+		}
+	}
+	return nil
+}
+
+func (x *ClientMessage) GetAck() *Ack {
+	if x != nil {
+		if x, ok := x.Message.(*ClientMessage_Ack); ok {
+			return x.Ack
+		}
+	}
+	return nil
+}
+
+type isClientMessage_Message interface {
+	isClientMessage_Message()
+}
+
+type ClientMessage_Subscribe struct {
+	Subscribe *Subscribe `protobuf:"bytes,1,opt,name=subscribe,proto3,oneof"`
+}
+
+type ClientMessage_Ack struct {
+	Ack *Ack `protobuf:"bytes,2,opt,name=ack,proto3,oneof"`
+}
+
+func (*ClientMessage_Subscribe) isClientMessage_Message() {}
+
+func (*ClientMessage_Ack) isClientMessage_Message() {}
+
+type Subscribe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ispb          string                 `protobuf:"bytes,1,opt,name=ispb,proto3" json:"ispb,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Subscribe) Reset() {
+	*x = Subscribe{}
+	mi := &file_proto_notification_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Subscribe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Subscribe) ProtoMessage() {}
+
+func (x *Subscribe) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_notification_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Subscribe.ProtoReflect.Descriptor instead.
+func (*Subscribe) Descriptor() ([]byte, []int) {
+	return file_proto_notification_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Subscribe) GetIspb() string {
 	if x != nil {
 		return x.Ispb
+	}
+	return ""
+}
+
+type Ack struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeliveryId    string                 `protobuf:"bytes,1,opt,name=delivery_id,json=deliveryId,proto3" json:"delivery_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Ack) Reset() {
+	*x = Ack{}
+	mi := &file_proto_notification_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Ack) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Ack) ProtoMessage() {}
+
+func (x *Ack) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_notification_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Ack.ProtoReflect.Descriptor instead.
+func (*Ack) Descriptor() ([]byte, []int) {
+	return file_proto_notification_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Ack) GetDeliveryId() string {
+	if x != nil {
+		return x.DeliveryId
 	}
 	return ""
 }
@@ -75,7 +201,7 @@ type Notification struct {
 
 func (x *Notification) Reset() {
 	*x = Notification{}
-	mi := &file_proto_notification_proto_msgTypes[1]
+	mi := &file_proto_notification_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -87,7 +213,7 @@ func (x *Notification) String() string {
 func (*Notification) ProtoMessage() {}
 
 func (x *Notification) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_notification_proto_msgTypes[1]
+	mi := &file_proto_notification_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -100,7 +226,7 @@ func (x *Notification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Notification.ProtoReflect.Descriptor instead.
 func (*Notification) Descriptor() ([]byte, []int) {
-	return file_proto_notification_proto_rawDescGZIP(), []int{1}
+	return file_proto_notification_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Notification) GetDeliveryId() string {
@@ -121,15 +247,22 @@ var File_proto_notification_proto protoreflect.FileDescriptor
 
 const file_proto_notification_proto_rawDesc = "" +
 	"\n" +
-	"\x18proto/notification.proto\x12\fnotification\"#\n" +
-	"\rStreamRequest\x12\x12\n" +
-	"\x04ispb\x18\x01 \x01(\tR\x04ispb\"I\n" +
+	"\x18proto/notification.proto\x12\fnotification\"z\n" +
+	"\rClientMessage\x127\n" +
+	"\tsubscribe\x18\x01 \x01(\v2\x17.notification.SubscribeH\x00R\tsubscribe\x12%\n" +
+	"\x03ack\x18\x02 \x01(\v2\x11.notification.AckH\x00R\x03ackB\t\n" +
+	"\amessage\"\x1f\n" +
+	"\tSubscribe\x12\x12\n" +
+	"\x04ispb\x18\x01 \x01(\tR\x04ispb\"&\n" +
+	"\x03Ack\x12\x1f\n" +
+	"\vdelivery_id\x18\x01 \x01(\tR\n" +
+	"deliveryId\"I\n" +
 	"\fNotification\x12\x1f\n" +
 	"\vdelivery_id\x18\x01 \x01(\tR\n" +
 	"deliveryId\x12\x18\n" +
-	"\apayload\x18\x02 \x01(\fR\apayload2g\n" +
-	"\x13NotificationGateway\x12P\n" +
-	"\x13StreamNotifications\x12\x1b.notification.StreamRequest\x1a\x1a.notification.Notification0\x01BJZHinstant-payment-system/load-test/go-loadtool/internal/gen/notificationpbb\x06proto3"
+	"\apayload\x18\x02 \x01(\fR\apayload2i\n" +
+	"\x13NotificationGateway\x12R\n" +
+	"\x13StreamNotifications\x12\x1b.notification.ClientMessage\x1a\x1a.notification.Notification(\x010\x01BJZHinstant-payment-system/load-test/go-loadtool/internal/gen/notificationpbb\x06proto3"
 
 var (
 	file_proto_notification_proto_rawDescOnce sync.Once
@@ -143,19 +276,23 @@ func file_proto_notification_proto_rawDescGZIP() []byte {
 	return file_proto_notification_proto_rawDescData
 }
 
-var file_proto_notification_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_notification_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_proto_notification_proto_goTypes = []any{
-	(*StreamRequest)(nil), // 0: notification.StreamRequest
-	(*Notification)(nil),  // 1: notification.Notification
+	(*ClientMessage)(nil), // 0: notification.ClientMessage
+	(*Subscribe)(nil),     // 1: notification.Subscribe
+	(*Ack)(nil),           // 2: notification.Ack
+	(*Notification)(nil),  // 3: notification.Notification
 }
 var file_proto_notification_proto_depIdxs = []int32{
-	0, // 0: notification.NotificationGateway.StreamNotifications:input_type -> notification.StreamRequest
-	1, // 1: notification.NotificationGateway.StreamNotifications:output_type -> notification.Notification
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	1, // 0: notification.ClientMessage.subscribe:type_name -> notification.Subscribe
+	2, // 1: notification.ClientMessage.ack:type_name -> notification.Ack
+	0, // 2: notification.NotificationGateway.StreamNotifications:input_type -> notification.ClientMessage
+	3, // 3: notification.NotificationGateway.StreamNotifications:output_type -> notification.Notification
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_notification_proto_init() }
@@ -163,13 +300,17 @@ func file_proto_notification_proto_init() {
 	if File_proto_notification_proto != nil {
 		return
 	}
+	file_proto_notification_proto_msgTypes[0].OneofWrappers = []any{
+		(*ClientMessage_Subscribe)(nil),
+		(*ClientMessage_Ack)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_notification_proto_rawDesc), len(file_proto_notification_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

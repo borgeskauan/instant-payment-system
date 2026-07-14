@@ -53,6 +53,15 @@ class NotificationStorageTest {
         assertThat(notifications)
                 .extracting(NotificationPublication::ispb)
                 .containsExactly("20000001", "20000001");
+        assertThat(notifications)
+                .extracting(NotificationPublication::eventType, NotificationPublication::paymentId, NotificationPublication::status)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("ACCEPTANCE_REQUEST", "E2E-1", null),
+                        org.assertj.core.groups.Tuple.tuple("ACCEPTANCE_REQUEST", "E2E-2", null)
+                );
+        assertThat(notifications)
+                .extracting(NotificationPublication::communicationId)
+                .allSatisfy(communicationId -> assertThat(communicationId).startsWith("v1:"));
         assertThat(notifications.get(0).payload())
                 .contains("\"NbOfTxs\":1")
                 .contains("\"EndToEndId\":\"E2E-1\"")
@@ -88,6 +97,13 @@ class NotificationStorageTest {
         assertThat(notifications)
                 .extracting(NotificationPublication::ispb)
                 .containsExactlyInAnyOrder("10000001", "10000001", "20000001");
+        assertThat(notifications)
+                .extracting(NotificationPublication::eventType, NotificationPublication::status)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("SETTLED_NOTIFICATION", "ACSC"),
+                        org.assertj.core.groups.Tuple.tuple("SETTLED_NOTIFICATION", "ACSC"),
+                        org.assertj.core.groups.Tuple.tuple("SETTLED_NOTIFICATION", "ACCC")
+                );
         assertThat(notifications)
                 .filteredOn(notification -> notification.payload().contains("\"OrgnlEndToEndId\":\"E2E-1\""))
                 .singleElement()

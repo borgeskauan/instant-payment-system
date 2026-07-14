@@ -96,6 +96,7 @@ Kafka, retries, restarts e falhas de rede tornam duplicidade e replay inevitáve
 - [ ] Testar duplicidade de `pacs.008` com o mesmo `EndToEndId`.
 - [ ] Testar duplicidade de `pacs.002` para pagamento já confirmado.
 - [ ] Validar que `notSettledPaymentIds` e atualizações de status continuam corretos com IDs duplicados.
+- [ ] Automatizar cenários de reliable PSP delivery: PSP offline, retry após reconexão, restart do `notification-gateway`, ACK perdido e replay sem delivery duplicada.
 - [ ] Expor métricas de duplicidade, replay e retries.
 - [ ] Garantir que retry/replay não altera saldo nem gera confirmação inconsistente.
 - [ ] Comparar cenário uniforme atual contra cenários realistas para identificar regressões escondidas.
