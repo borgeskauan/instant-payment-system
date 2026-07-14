@@ -1,8 +1,10 @@
 package br.kauan.paymentserviceprovider.adapter.input.grpc;
 
-import br.kauan.notificationgateway.grpc.proto.NotificationBatch;
+import br.kauan.notificationgateway.grpc.proto.Ack;
+import br.kauan.notificationgateway.grpc.proto.ClientMessage;
+import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
-import br.kauan.notificationgateway.grpc.proto.StreamRequest;
+import br.kauan.notificationgateway.grpc.proto.Subscribe;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import io.grpc.ManagedChannel;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Component
@@ -90,17 +93,18 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
         String ispb = GlobalVariables.getBankCode();
         log.info("Opening notification-gateway gRPC stream for ISPB: {}", ispb);
 
-        StreamRequest request = StreamRequest.newBuilder()
-                .setIspb(ispb)
-                .build();
-
-        stub.streamNotifications(request, new StreamObserver<>() {
+        AtomicReference<StreamObserver<ClientMessage>> requestObserverRef = new AtomicReference<>();
+        StreamObserver<ClientMessage> requestObserver = stub.streamNotifications(new StreamObserver<>() {
             @Override
-            public void onNext(NotificationBatch notificationBatch) {
+            public void onNext(Notification notification) {
                 String localIspb = GlobalVariables.getBankCode();
-                notificationBatch.getPayloadsList().forEach(payload ->
-                        notificationProcessor.process(localIspb, payload.toStringUtf8())
-                );
+                try {
+                    notificationProcessor.process(localIspb, notification.getPayload().toStringUtf8());
+                    ack(notification.getDeliveryId());
+                } catch (Exception e) {
+                    log.warn("Notification processing failed; delivery will not be ACKed. deliveryId={}",
+                            notification.getDeliveryId(), e);
+                }
             }
 
             @Override
@@ -122,7 +126,29 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
                 log.warn("notification-gateway stream completed unexpectedly; scheduling reconnect");
                 scheduleReconnect();
             }
+
+            private void ack(String deliveryId) {
+                if (deliveryId == null || deliveryId.isBlank()) {
+                    log.warn("Processed notification without delivery_id; ACK skipped");
+                    return;
+                }
+
+                ClientMessage ack = ClientMessage.newBuilder()
+                        .setAck(Ack.newBuilder().setDeliveryId(deliveryId))
+                        .build();
+                StreamObserver<ClientMessage> requestObserver = requestObserverRef.get();
+                if (requestObserver == null) {
+                    log.warn("ACK skipped because request stream is not ready. deliveryId={}", deliveryId);
+                    return;
+                }
+                requestObserver.onNext(ack);
+            }
         });
+        requestObserverRef.set(requestObserver);
+
+        requestObserver.onNext(ClientMessage.newBuilder()
+                .setSubscribe(Subscribe.newBuilder().setIspb(ispb))
+                .build());
     }
 
     private void scheduleReconnect() {

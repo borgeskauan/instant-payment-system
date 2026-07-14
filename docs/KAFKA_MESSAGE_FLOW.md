@@ -24,6 +24,7 @@ flowchart LR
     SPI -->|"produce PSP notifications"| Notifications
     Notifications -->|"consume notifications"| Gateway
     Gateway -->|"gRPC notification stream"| PSP
+    PSP -->|"gRPC ACK"| Gateway
 ```
 
 ## Topics
@@ -39,6 +40,8 @@ flowchart LR
 ## Boundary
 
 PSPs do not consume Kafka directly. They submit payment messages to `kafka-producer` over HTTP, and receive SPI notifications from `notification-gateway` through the gRPC stream.
+
+The notification stream is bidirectional. The PSP subscribes with its ISPB and sends an ACK only after processing a delivery successfully. The `notification-gateway` tracks each delivery by `communication_id` and retries unacknowledged deliveries with an `IN_FLIGHT` lease.
 
 ## Failure Policy
 

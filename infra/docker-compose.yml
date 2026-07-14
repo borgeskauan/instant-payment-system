@@ -132,19 +132,24 @@ services:
       dockerfile: Dockerfile
     container_name: notification-gateway
     cpus: 1.00
-    mem_limit: 320m
-    mem_reservation: 192m
-    memswap_limit: 320m
+    mem_limit: 512m
+    mem_reservation: 320m
+    memswap_limit: 512m
     <<: *low-resource
     ports:
       - "9090:9090"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
       NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:-2}
-      JAVA_TOOL_OPTIONS: "-Xms96m -Xmx160m -XX:MaxDirectMemorySize=48m -Xss256k"
+      NOTIFICATION_GATEWAY_DELIVERY_WORKER_DELAY_MS: ${NOTIFICATION_GATEWAY_DELIVERY_WORKER_DELAY_MS:-20}
+      NOTIFICATION_GATEWAY_DELIVERY_BATCH_SIZE: ${NOTIFICATION_GATEWAY_DELIVERY_BATCH_SIZE:-1000}
+      JAVA_TOOL_OPTIONS: "-Xms160m -Xmx256m -XX:MaxDirectMemorySize=96m -Xss256k"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
 
   dict:
     build:

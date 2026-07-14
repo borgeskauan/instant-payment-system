@@ -26,7 +26,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NotificationGatewayClient interface {
-	StreamNotifications(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NotificationBatch], error)
+	StreamNotifications(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientMessage, Notification], error)
 }
 
 type notificationGatewayClient struct {
@@ -37,30 +37,24 @@ func NewNotificationGatewayClient(cc grpc.ClientConnInterface) NotificationGatew
 	return &notificationGatewayClient{cc}
 }
 
-func (c *notificationGatewayClient) StreamNotifications(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[NotificationBatch], error) {
+func (c *notificationGatewayClient) StreamNotifications(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientMessage, Notification], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &NotificationGateway_ServiceDesc.Streams[0], NotificationGateway_StreamNotifications_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[StreamRequest, NotificationBatch]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
+	x := &grpc.GenericClientStream[ClientMessage, Notification]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NotificationGateway_StreamNotificationsClient = grpc.ServerStreamingClient[NotificationBatch]
+type NotificationGateway_StreamNotificationsClient = grpc.BidiStreamingClient[ClientMessage, Notification]
 
 // NotificationGatewayServer is the server API for NotificationGateway service.
 // All implementations must embed UnimplementedNotificationGatewayServer
 // for forward compatibility.
 type NotificationGatewayServer interface {
-	StreamNotifications(*StreamRequest, grpc.ServerStreamingServer[NotificationBatch]) error
+	StreamNotifications(grpc.BidiStreamingServer[ClientMessage, Notification]) error
 	mustEmbedUnimplementedNotificationGatewayServer()
 }
 
@@ -71,7 +65,7 @@ type NotificationGatewayServer interface {
 // pointer dereference when methods are called.
 type UnimplementedNotificationGatewayServer struct{}
 
-func (UnimplementedNotificationGatewayServer) StreamNotifications(*StreamRequest, grpc.ServerStreamingServer[NotificationBatch]) error {
+func (UnimplementedNotificationGatewayServer) StreamNotifications(grpc.BidiStreamingServer[ClientMessage, Notification]) error {
 	return status.Error(codes.Unimplemented, "method StreamNotifications not implemented")
 }
 func (UnimplementedNotificationGatewayServer) mustEmbedUnimplementedNotificationGatewayServer() {}
@@ -96,15 +90,11 @@ func RegisterNotificationGatewayServer(s grpc.ServiceRegistrar, srv Notification
 }
 
 func _NotificationGateway_StreamNotifications_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(StreamRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(NotificationGatewayServer).StreamNotifications(m, &grpc.GenericServerStream[StreamRequest, NotificationBatch]{ServerStream: stream})
+	return srv.(NotificationGatewayServer).StreamNotifications(&grpc.GenericServerStream[ClientMessage, Notification]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NotificationGateway_StreamNotificationsServer = grpc.ServerStreamingServer[NotificationBatch]
+type NotificationGateway_StreamNotificationsServer = grpc.BidiStreamingServer[ClientMessage, Notification]
 
 // NotificationGateway_ServiceDesc is the grpc.ServiceDesc for NotificationGateway service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -118,6 +108,7 @@ var NotificationGateway_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "StreamNotifications",
 			Handler:       _NotificationGateway_StreamNotifications_Handler,
 			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "proto/notification.proto",

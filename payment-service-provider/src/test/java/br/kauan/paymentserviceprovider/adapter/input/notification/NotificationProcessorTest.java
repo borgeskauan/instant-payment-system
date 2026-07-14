@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -84,8 +85,9 @@ class NotificationProcessorTest {
     }
 
     @Test
-    void unknownPayloadIsIgnored() {
-        processor.process(BANK_CODE, "{\"Other\":[]}");
+    void unknownPayloadPropagatesProcessingFailure() {
+        assertThatThrownBy(() -> processor.process(BANK_CODE, "{\"Other\":[]}"))
+                .isInstanceOf(NotificationProcessingException.class);
 
         verifyNoInteractions(
                 paymentTransactionMapper,
@@ -96,8 +98,9 @@ class NotificationProcessorTest {
     }
 
     @Test
-    void invalidJsonDoesNotPropagateAnException() {
-        processor.process(BANK_CODE, "{");
+    void invalidJsonPropagatesProcessingFailure() {
+        assertThatThrownBy(() -> processor.process(BANK_CODE, "{"))
+                .isInstanceOf(NotificationProcessingException.class);
 
         verifyNoInteractions(
                 paymentTransactionMapper,

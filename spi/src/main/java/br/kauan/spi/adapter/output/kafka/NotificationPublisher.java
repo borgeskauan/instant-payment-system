@@ -1,13 +1,14 @@
 package br.kauan.spi.adapter.output.kafka;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
@@ -23,17 +24,17 @@ public class NotificationPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public void publishNotifications(Map<String, String> notificationsByIspb) {
-        if (notificationsByIspb.isEmpty()) {
+    public void publishNotifications(List<NotificationPublication> notifications) {
+        if (notifications.isEmpty()) {
             return;
         }
 
         List<CompletableFuture<SendResult<String, String>>> futures =
-                new ArrayList<>(notificationsByIspb.size());
+                new ArrayList<>(notifications.size());
 
         try {
-            notificationsByIspb.forEach((ispb, notificationJson) ->
-                    futures.add(kafkaTemplate.send(NOTIFICATION_TOPIC, ispb, notificationJson))
+            notifications.forEach(notification ->
+                    futures.add(kafkaTemplate.send(producerRecord(notification)))
             );
 
             CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
@@ -42,6 +43,23 @@ public class NotificationPublisher {
             log.error("Error publishing notifications to Kafka", cause);
             throw new RecoverableNotificationPublishException("Failed to publish notification", cause);
         }
+    }
+
+    private ProducerRecord<String, String> producerRecord(NotificationPublication notification) {
+        ProducerRecord<String, String> record =
+                new ProducerRecord<>(NOTIFICATION_TOPIC, notification.ispb(), notification.payload());
+        addHeader(record, "notification.communication-id", notification.communicationId());
+        addHeader(record, "notification.event-type", notification.eventType());
+        addHeader(record, "notification.payment-id", notification.paymentId());
+        addHeader(record, "notification.schema-version", notification.schemaVersion());
+        if (notification.status() != null && !notification.status().isBlank()) {
+            addHeader(record, "notification.status", notification.status());
+        }
+        return record;
+    }
+
+    private void addHeader(ProducerRecord<String, String> record, String name, String value) {
+        record.headers().add(name, value.getBytes(StandardCharsets.UTF_8));
     }
 
     private Throwable publishFailureCause(

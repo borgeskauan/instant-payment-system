@@ -6,7 +6,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    table: spi_flyway_schema_history
     baseline-on-migrate: true
+    baseline-version: 0
     validate-on-migrate: true
 
   datasource:
