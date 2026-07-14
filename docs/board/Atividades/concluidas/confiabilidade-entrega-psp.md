@@ -42,7 +42,6 @@ O primeiro corte persiste as notificações destinadas aos PSPs no `notification
 
 **Pendências futuras**
 
-- [ ] Adicionar métricas de deliveries pendentes, retries, falhas, expirados, mortos, tempo até ACK e lag do worker.
 - [ ] Definir política de timeout de negócio para `ACCEPTANCE_REQUEST` pendente e status final após expiração.
 - [ ] Adicionar estados/políticas operacionais para `EXPIRED` e `DEAD`.
 - [ ] Configurar backoff e limite de tentativas por tipo de evento.

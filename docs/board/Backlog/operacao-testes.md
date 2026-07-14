@@ -34,7 +34,7 @@ As metas principais são: verificar saúde da aplicação enquanto ela roda, aco
 - [ ] Definir métricas Kafka: consumer lag por tópico/grupo/partição, records consumed/sec, records produced/sec, producer latency, retries, errors e rebalances.
 - [ ] Definir métricas do SPI: requests consumidas/sec, statuses recebidos/sec, settlements/sec, notificações enfileiradas/sec, latência de processamento, erros e tempo de queries no PostgreSQL.
 - [ ] Definir métricas de DLQ no SPI: mensagens publicadas por tópico/motivo, falhas ao publicar na DLQ, total por tópico e idade da mensagem mais antiga.
-- [ ] Definir métricas do notification-gateway: subscribers ativos, notificações/sec, batches/sec, tamanho dos batches, flush por tamanho/tempo, erros gRPC e streams cancelados.
+- [ ] Definir métricas do notification-gateway: subscribers ativos, notificações/sec, deliveries pendentes por status, retries, falhas, expirados, mortos, tempo até ACK, lag do worker, erros gRPC e streams cancelados.
 - [ ] Definir métricas de banco: conexões ativas, pool Hikari, query latency, locks, CPU, I/O e slow queries.
 - [ ] Definir métricas de negócio/SLA: transações iniciadas, aceitas, confirmadas, não confirmadas, dentro/fora do SLA, p50, p95, p99 e máximo.
 - [ ] Criar dashboard de saúde geral do ambiente: serviços, containers/pods, CPU, memória, restarts, throttling, Kafka e PostgreSQL.

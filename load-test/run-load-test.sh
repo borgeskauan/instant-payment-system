@@ -11,8 +11,13 @@ readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
 readonly KAFKA_CONTAINER="kafka"
 readonly SPI_PAYMENT_REQUEST_CONSUMER_GROUP="spi-payment-request-consumer-group"
 readonly SPI_STATUS_REPORT_CONSUMER_GROUP="spi-status-report-consumer-group"
+readonly NOTIFICATION_GATEWAY_CONSUMER_GROUP="notification-gateway-group"
 readonly SPI_PAYMENT_REQUEST_TOPIC="spi-payment-requests"
 readonly SPI_STATUS_REPORT_TOPIC="spi-payment-status-reports"
+readonly PSP_NOTIFICATIONS_TOPIC="psp-notifications"
+readonly POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
+readonly POSTGRES_USER="${POSTGRES_USER:-postgres}"
+readonly POSTGRES_DB="${POSTGRES_DB:-postgres}"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
@@ -21,6 +26,7 @@ readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
 
 RUN_TAG=""
 PROVISION_FUNDS=true
+RESET_TEST_STATE=true
 ENABLE_JFR=false
 ENABLE_SPI_TRACE=false
 ENABLE_POSTGRES_STATEMENTS=false
@@ -33,7 +39,7 @@ LOADTOOL_BUILD_DIR=""
 LOADTOOL_BIN=""
 
 usage() {
-    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--reset-state|--no-reset-state] [--provision-funds|--no-provision-funds] <run-tag>"
     echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
 }
 
@@ -181,6 +187,14 @@ parse_args() {
                 PROVISION_FUNDS=false
                 shift
                 ;;
+            --reset-state)
+                RESET_TEST_STATE=true
+                shift
+                ;;
+            --no-reset-state)
+                RESET_TEST_STATE=false
+                shift
+                ;;
             --jfr)
                 ENABLE_JFR=true
                 shift
@@ -308,13 +322,26 @@ current_spi_input_lag() {
     echo $(( payment_lag + status_lag ))
 }
 
-assert_no_initial_spi_lag() {
+current_notification_gateway_lag() {
+    consumer_group_topic_lag "$NOTIFICATION_GATEWAY_CONSUMER_GROUP" "$PSP_NOTIFICATIONS_TOPIC"
+}
+
+assert_no_initial_kafka_lag() {
     local lag
     lag="$(current_spi_input_lag)"
 
     if (( lag > 0 )); then
         echo "Refusing to start load test: SPI input consumer groups have ${lag} messages of lag." >&2
         echo "Checked ${SPI_PAYMENT_REQUEST_CONSUMER_GROUP}/${SPI_PAYMENT_REQUEST_TOPIC} and ${SPI_STATUS_REPORT_CONSUMER_GROUP}/${SPI_STATUS_REPORT_TOPIC}." >&2
+        echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
+        exit 1
+    fi
+
+    lag="$(current_notification_gateway_lag)"
+
+    if (( lag > 0 )); then
+        echo "Refusing to start load test: notification-gateway has ${lag} messages of lag on ${PSP_NOTIFICATIONS_TOPIC}." >&2
+        echo "Old PSP notifications would be delivered during the new run and contaminate SLA results." >&2
         echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
         exit 1
     fi
@@ -458,6 +485,11 @@ log_selected_options() {
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         log_phase "Postgres statement stats enabled"
     fi
+    if [[ "$RESET_TEST_STATE" == true ]]; then
+        log_phase "persistent test state reset enabled"
+    else
+        log_phase "persistent test state reset disabled"
+    fi
 }
 
 prepare_run_workspace() {
@@ -469,12 +501,40 @@ prepare_run_workspace() {
 }
 
 run_preflight_checks() {
-    log_phase "checking initial SPI Kafka lag"
-    assert_no_initial_spi_lag
-    log_phase "initial SPI Kafka lag is zero"
+    log_phase "checking initial Kafka lag"
+    assert_no_initial_kafka_lag
+    log_phase "initial Kafka lag is zero"
 
     log_phase "ensuring SPI trace is stopped"
     stop_spi_trace ""
+}
+
+reset_persistent_test_state_if_enabled() {
+    local target_dir="$1"
+    local log_file="${target_dir}/reset-test-state.log"
+
+    if [[ "$RESET_TEST_STATE" != true ]]; then
+        log_phase "skipping persistent test state reset"
+        return
+    fi
+
+    log_phase "resetting persistent test state"
+    {
+        echo "Resetting persistent test state at $(date --iso-8601=seconds)"
+        docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+BEGIN
+    IF to_regclass('public.notification_delivery') IS NOT NULL THEN
+        TRUNCATE TABLE notification_delivery;
+    END IF;
+
+    IF to_regclass('public.payment_transaction_entity') IS NOT NULL THEN
+        TRUNCATE TABLE payment_transaction_entity;
+    END IF;
+END $$;
+SQL
+    } > "$log_file" 2>&1
+    log_phase "persistent test state reset"
 }
 
 provision_funds_if_enabled() {
@@ -571,6 +631,7 @@ main() {
     log_grafana_status "$grafana_available_at_run_start"
     build_loadtool "$LOADTOOL_BIN"
     run_preflight_checks
+    reset_persistent_test_state_if_enabled "$target_dir"
     provision_funds_if_enabled "$target_dir"
     start_optional_diagnostics "$target_dir"
     run_simulator "$target_dir" "$tool_out"
