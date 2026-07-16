@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -101,7 +102,7 @@ class NotificationGatewayGrpcClientTest {
         });
 
         NotificationGatewayGrpcClient client = new NotificationGatewayGrpcClient(
-                new NotificationGatewayProperties("unused", 0, Duration.ofMillis(10)),
+                properties(),
                 processor,
                 channel,
                 executor
@@ -151,7 +152,7 @@ class NotificationGatewayGrpcClientTest {
         });
 
         NotificationGatewayGrpcClient client = new NotificationGatewayGrpcClient(
-                new NotificationGatewayProperties("unused", 0, Duration.ofMillis(10)),
+                properties(),
                 mock(NotificationProcessor.class),
                 channel,
                 executor
@@ -161,6 +162,27 @@ class NotificationGatewayGrpcClientTest {
 
         assertThat(secondSubscription.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(subscriptions.get()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void invalidTlsFilesFailWithoutPlaintextDowngrade() {
+        NotificationGatewayProperties properties = new NotificationGatewayProperties(
+                "unused",
+                0,
+                Duration.ofMillis(10),
+                new NotificationGatewayProperties.Tls(
+                        "/missing/client.crt",
+                        "/missing/client.key",
+                        "/missing/ca.crt"
+                )
+        );
+
+        assertThatThrownBy(() -> new NotificationGatewayGrpcClient(
+                properties,
+                new NotificationProcessor(null, null, null, null, null)
+        ))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("notification.gateway.tls.certificate-chain");
     }
 
     private void startServer(NotificationGatewayGrpc.NotificationGatewayImplBase service) throws IOException {
@@ -176,5 +198,14 @@ class NotificationGatewayGrpcClientTest {
                 .forName(serverName)
                 .directExecutor()
                 .build();
+    }
+
+    private static NotificationGatewayProperties properties() {
+        return new NotificationGatewayProperties(
+                "unused",
+                0,
+                Duration.ofMillis(10),
+                new NotificationGatewayProperties.Tls("", "", "")
+        );
     }
 }

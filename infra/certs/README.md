@@ -12,11 +12,19 @@ Generate the local CA and the `notification-gateway` server certificate:
 infra/certs/generate-local-mtls-certs.sh init
 ```
 
+In the Docker Compose environment, this is normally done by the one-shot service:
+
+```bash
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f infra/docker-compose.yml up certs-init
+```
+
 Generate a PSP client certificate for an ISPB:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh psp 12345678
 ```
+
+When using `payment-service-provider/start-psp.sh` with mTLS enabled, the PSP certificate is generated automatically. The script does not run `init`; the local CA must already exist.
 
 Recreate existing files with `--force`:
 

@@ -26,6 +26,12 @@ spring:
 grpc:
   server:
     port: 9090
+    security:
+      enabled: true
+      certificate-chain: ${GRPC_SERVER_SECURITY_CERTIFICATE_CHAIN:file:/certs/gateway/server.crt}
+      private-key: ${GRPC_SERVER_SECURITY_PRIVATE_KEY:file:/certs/gateway/server.key}
+      trust-cert-collection: ${GRPC_SERVER_SECURITY_TRUST_CERT_COLLECTION:file:/certs/ca/ca.crt}
+      client-auth: REQUIRE
 
 notification-gateway:
   kafka:

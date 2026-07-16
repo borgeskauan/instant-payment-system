@@ -8,16 +8,20 @@ import br.kauan.notificationgateway.grpc.proto.Subscribe;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
+import javax.net.ssl.SSLException;
+import java.io.File;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -25,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Component
+@ConditionalOnProperty(prefix = "notification.gateway", name = "client-enabled", havingValue = "true", matchIfMissing = true)
 public class NotificationGatewayGrpcClient implements SmartLifecycle {
 
     private final NotificationGatewayProperties properties;
@@ -43,10 +48,7 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
         this(
                 properties,
                 notificationProcessor,
-                ManagedChannelBuilder
-                        .forAddress(properties.host(), properties.port())
-                        .usePlaintext()
-                        .build(),
+                createChannel(properties),
                 Executors.newSingleThreadScheduledExecutor()
         );
     }
@@ -149,6 +151,41 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
         requestObserver.onNext(ClientMessage.newBuilder()
                 .setSubscribe(Subscribe.newBuilder().setIspb(ispb))
                 .build());
+    }
+
+    private static ManagedChannel createChannel(NotificationGatewayProperties properties) {
+        NotificationGatewayProperties.Tls tls = properties.tls();
+        if (tls == null) {
+            throw new IllegalStateException("notification.gateway.tls must be configured");
+        }
+
+        File certificateChain = requiredFile(tls.certificateChain(), "notification.gateway.tls.certificate-chain");
+        File privateKey = requiredFile(tls.privateKey(), "notification.gateway.tls.private-key");
+        File trustCertCollection = requiredFile(tls.trustCertCollection(), "notification.gateway.tls.trust-cert-collection");
+
+        try {
+            return NettyChannelBuilder
+                    .forAddress(properties.host(), properties.port())
+                    .sslContext(GrpcSslContexts.forClient()
+                            .keyManager(certificateChain, privateKey)
+                            .trustManager(trustCertCollection)
+                            .build())
+                    .build();
+        } catch (SSLException e) {
+            throw new IllegalStateException("Failed to configure notification-gateway mTLS channel", e);
+        }
+    }
+
+    private static File requiredFile(String path, String propertyName) {
+        if (path == null || path.isBlank()) {
+            throw new IllegalStateException(propertyName + " must be configured");
+        }
+
+        File file = new File(path);
+        if (!file.isFile() || !file.canRead()) {
+            throw new IllegalStateException(propertyName + " does not point to a readable file: " + path);
+        }
+        return file;
     }
 
     private void scheduleReconnect() {
