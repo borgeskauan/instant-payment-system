@@ -1,6 +1,6 @@
 # Autenticação mTLS do PSP no notification-gateway
 
-- [ ] Autenticação mTLS do PSP no `notification-gateway`
+- [x] Autenticação mTLS do PSP no `notification-gateway`
 
 **Por que existe**
 
@@ -10,15 +10,15 @@ O modelo desejado é usar mTLS: o PSP apresenta um certificado de cliente, o `no
 
 **Tarefas**
 
-- [ ] Proteger a conexão gRPC entre PSP e `notification-gateway` com mTLS.
-- [ ] Fazer o PSP apresentar certificado de cliente ao abrir o stream gRPC.
-- [ ] Fazer o `notification-gateway` validar o certificado do PSP usando a CA confiável.
-- [ ] Definir como o certificado identifica o PSP e como essa identidade é vinculada ao ISPB.
-- [ ] Associar automaticamente cada stream gRPC ao ISPB autenticado.
-- [ ] Remover `Subscribe { ispb }` do contrato gRPC; o stream deve ser associado ao ISPB autenticado pelo certificado.
-- [ ] Garantir que o `notification-gateway` envie para cada stream apenas deliveries destinadas ao ISPB autenticado.
-- [ ] Garantir que o PSP só consiga dar ACK em deliveries destinadas ao próprio ISPB autenticado.
-- [ ] Adicionar testes negativos para PSP sem certificado, certificado inválido e ACK de delivery de outro ISPB.
+- [x] Proteger a conexão gRPC entre PSP e `notification-gateway` com mTLS.
+- [x] Fazer o PSP apresentar certificado de cliente ao abrir o stream gRPC.
+- [x] Fazer o `notification-gateway` validar o certificado do PSP usando a CA confiável.
+- [x] Definir como o certificado identifica o PSP e como essa identidade é vinculada ao ISPB.
+- [x] Associar automaticamente cada stream gRPC ao ISPB autenticado.
+- [x] Remover `Subscribe { ispb }` do contrato gRPC; o stream deve ser associado ao ISPB autenticado pelo certificado.
+- [x] Garantir que o `notification-gateway` envie para cada stream apenas deliveries destinadas ao ISPB autenticado.
+- [x] Garantir que o PSP só consiga dar ACK em deliveries destinadas ao próprio ISPB autenticado.
+- [x] Adicionar testes negativos para PSP sem certificado, certificado inválido e ACK de delivery de outro ISPB.
 
 **Notas**
 
