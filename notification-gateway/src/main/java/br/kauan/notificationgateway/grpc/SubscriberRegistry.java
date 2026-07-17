@@ -76,7 +76,9 @@ public class SubscriberRegistry {
                 .build();
 
         try {
-            observer.onNext(notification);
+            synchronized (observer) {
+                observer.onNext(notification);
+            }
             log.debug("Dispatched delivery {} to ISPB {}", delivery.communicationId(), ispb);
             return true;
         } catch (Exception e) {

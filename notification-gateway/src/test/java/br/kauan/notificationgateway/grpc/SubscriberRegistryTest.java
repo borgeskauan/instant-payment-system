@@ -5,6 +5,11 @@ import br.kauan.notificationgateway.grpc.proto.Notification;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SubscriberRegistryTest {
@@ -95,8 +100,45 @@ class SubscriberRegistryTest {
         assertThat(registry.connectedIspbs()).isEmpty();
     }
 
+    @Test
+    void concurrentDispatchesToSameObserverAreSerialized() throws Exception {
+        var registry = new SubscriberRegistry();
+        var observer = new BlockingObserver();
+        registry.register("20000001", observer);
+        var executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try {
+            var first = executor.submit(() -> {
+                await(start);
+                registry.dispatch(delivery("delivery-1", "20000001", "one".getBytes()));
+            });
+            var second = executor.submit(() -> {
+                await(start);
+                registry.dispatch(delivery("delivery-2", "20000001", "two".getBytes()));
+            });
+
+            start.countDown();
+            first.get(1, TimeUnit.SECONDS);
+            second.get(1, TimeUnit.SECONDS);
+
+            assertThat(observer.maxActive.get()).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private static NotificationDelivery delivery(String communicationId, String ispb, byte[] payload) {
         return new NotificationDelivery(communicationId, ispb, payload);
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
     }
 
     private static final class CapturingObserver implements StreamObserver<Notification> {
@@ -106,6 +148,34 @@ class SubscriberRegistryTest {
         @Override
         public void onNext(Notification value) {
             this.notifications.add(value);
+        }
+
+        @Override
+        public void onError(Throwable t) {
+        }
+
+        @Override
+        public void onCompleted() {
+        }
+    }
+
+    private static final class BlockingObserver implements StreamObserver<Notification> {
+
+        private final AtomicInteger active = new AtomicInteger();
+        private final AtomicInteger maxActive = new AtomicInteger();
+
+        @Override
+        public void onNext(Notification value) {
+            int current = active.incrementAndGet();
+            maxActive.accumulateAndGet(current, Math::max);
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            } finally {
+                active.decrementAndGet();
+            }
         }
 
         @Override
