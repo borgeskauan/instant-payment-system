@@ -5,4 +5,4 @@ variables:
   - name: receiverPspUrl
     value: http://localhost:8082
   - name: receiverPixKey
-    value: bob02@example.com
+    value: bob04@example.com

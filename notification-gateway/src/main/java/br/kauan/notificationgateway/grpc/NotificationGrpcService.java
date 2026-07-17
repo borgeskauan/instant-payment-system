@@ -1,6 +1,7 @@
 package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
 import br.kauan.notificationgateway.grpc.proto.ClientMessage;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
@@ -10,14 +11,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
 
-import java.util.concurrent.atomic.AtomicReference;
-
 /**
  * gRPC server implementation — exposes a bidirectional stream to external consumers.
  *
  * <p>When a client calls {@code StreamNotifications}, this service:
  * <ol>
- *   <li>Waits for the first {@code Subscribe} message and registers the response stream by ISPB.
+ *   <li>Registers the response stream by the ISPB authenticated from the client certificate.
  *   <li>Keeps the stream open indefinitely (never calls {@code onCompleted}).
  *   <li>Marks deliveries ACKED when the client sends {@code Ack}.
  *   <li>Cleans up the observer from the registry when the client cancels/disconnects.
@@ -33,36 +32,35 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
 
     @Override
     public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
-        AtomicReference<String> subscribedIspb = new AtomicReference<>();
+        String authenticatedIspb = AuthenticatedPspContext.requireAuthenticatedIspb();
+        log.info("Client connected for notifications — ISPB: {}", authenticatedIspb);
+        subscriberRegistry.register(authenticatedIspb, responseObserver);
 
         if (responseObserver instanceof ServerCallStreamObserver<Notification> serverObserver) {
             serverObserver.setOnCancelHandler(() -> {
-                String ispb = subscribedIspb.get();
-                if (ispb != null) {
-                    log.info("Client cancelled stream — ISPB: {} (isCancelled: {})", ispb, serverObserver.isCancelled());
-                    subscriberRegistry.unregister(ispb, responseObserver);
-                }
+                log.info("Client cancelled stream — ISPB: {} (isCancelled: {})",
+                        authenticatedIspb, serverObserver.isCancelled());
+                subscriberRegistry.unregister(authenticatedIspb, responseObserver);
             });
         }
 
         return new StreamObserver<>() {
             @Override
             public void onNext(ClientMessage message) {
-                if (message.hasSubscribe()) {
-                    subscribe(message.getSubscribe().getIspb());
-                    return;
-                }
-
                 if (message.hasAck()) {
                     String deliveryId = message.getAck().getDeliveryId();
                     if (!deliveryId.isBlank()) {
-                        deliveryRepository.acknowledge(deliveryId);
-                        log.debug("ACK received for delivery {}", deliveryId);
+                        boolean acknowledged = deliveryRepository.acknowledge(deliveryId, authenticatedIspb);
+                        if (acknowledged) {
+                            log.debug("ACK received for delivery {} from ISPB {}", deliveryId, authenticatedIspb);
+                        } else {
+                            log.info("ACK ignored for delivery {} from ISPB {}", deliveryId, authenticatedIspb);
+                        }
                     }
                     return;
                 }
 
-                failInvalid("message must contain subscribe or ack");
+                failInvalid("message must contain ack");
             }
 
             @Override
@@ -76,25 +74,8 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
                 responseObserver.onCompleted();
             }
 
-            private void subscribe(String ispb) {
-                if (ispb == null || ispb.isBlank()) {
-                    failInvalid("ispb must not be blank");
-                    return;
-                }
-                if (!subscribedIspb.compareAndSet(null, ispb)) {
-                    failInvalid("subscribe must be sent only once");
-                    return;
-                }
-
-                log.info("Client subscribed for notifications — ISPB: {}", ispb);
-                subscriberRegistry.register(ispb, responseObserver);
-            }
-
             private void unregister() {
-                String ispb = subscribedIspb.get();
-                if (ispb != null) {
-                    subscriberRegistry.unregister(ispb, responseObserver);
-                }
+                subscriberRegistry.unregister(authenticatedIspb, responseObserver);
             }
 
             private void failInvalid(String description) {

@@ -2,13 +2,16 @@ package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.delivery.NotificationDelivery;
 import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
 import br.kauan.notificationgateway.grpc.proto.Ack;
 import br.kauan.notificationgateway.grpc.proto.ClientMessage;
 import br.kauan.notificationgateway.grpc.proto.Notification;
-import br.kauan.notificationgateway.grpc.proto.Subscribe;
+import io.grpc.Context;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -16,16 +19,15 @@ import static org.mockito.Mockito.verify;
 class NotificationGrpcServiceTest {
 
     @Test
-    void subscribeRegistersStreamAndAckMarksDeliveryAcked() {
+    void authenticatedIspbRegistersStreamAndAckMarksDeliveryAcked() throws Exception {
         SubscriberRegistry registry = new SubscriberRegistry();
         NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
         NotificationGrpcService service = new NotificationGrpcService(registry, repository);
         CapturingObserver responseObserver = new CapturingObserver();
 
-        StreamObserver<ClientMessage> requestObserver = service.streamNotifications(responseObserver);
-        requestObserver.onNext(ClientMessage.newBuilder()
-                .setSubscribe(Subscribe.newBuilder().setIspb("20000001"))
-                .build());
+        StreamObserver<ClientMessage> requestObserver = Context.current()
+                .withValue(AuthenticatedPspContext.AUTHENTICATED_ISPB, "20000001")
+                .call(() -> service.streamNotifications(responseObserver));
 
         boolean sent = registry.dispatch(new NotificationDelivery(
                 "v1:delivery",
@@ -39,7 +41,18 @@ class NotificationGrpcServiceTest {
         assertThat(sent).isTrue();
         assertThat(responseObserver.notification.getDeliveryId()).isEqualTo("v1:delivery");
         assertThat(responseObserver.notification.getPayload().toByteArray()).isEqualTo("payload".getBytes());
-        verify(repository).acknowledge("v1:delivery");
+        verify(repository).acknowledge("v1:delivery", "20000001");
+    }
+
+    @Test
+    void missingAuthenticatedIspbRejectsStream() {
+        SubscriberRegistry registry = new SubscriberRegistry();
+        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        NotificationGrpcService service = new NotificationGrpcService(registry, repository);
+
+        assertThatThrownBy(() -> service.streamNotifications(new CapturingObserver()))
+                .isInstanceOf(StatusRuntimeException.class)
+                .hasMessageContaining("authenticated PSP ISPB is required");
     }
 
     private static final class CapturingObserver implements StreamObserver<Notification> {

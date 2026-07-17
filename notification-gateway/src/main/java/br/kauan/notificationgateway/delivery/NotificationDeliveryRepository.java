@@ -80,6 +80,7 @@ public class NotificationDeliveryRepository {
                 lease_until = NULL,
                 updated_at = :now
             WHERE communication_id = :communicationId
+              AND recipient_ispb = :recipientIspb
               AND delivery_status <> 'ACKED'
             """;
 
@@ -155,11 +156,13 @@ public class NotificationDeliveryRepository {
         });
     }
 
-    public void acknowledge(String communicationId) {
+    public boolean acknowledge(String communicationId, String recipientIspb) {
         Instant now = clock.instant();
-        jdbcTemplate.update(ACK_SQL, new MapSqlParameterSource()
+        int updatedRows = jdbcTemplate.update(ACK_SQL, new MapSqlParameterSource()
                 .addValue("communicationId", communicationId)
+                .addValue("recipientIspb", recipientIspb)
                 .addValue("now", timestamp(now)));
+        return updatedRows > 0;
     }
 
     public void markRetryableFailed(String communicationId, String error, Duration retryDelay) {

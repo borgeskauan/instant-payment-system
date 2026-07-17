@@ -16,12 +16,12 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,12 +51,11 @@ class NotificationGatewayGrpcClientTest {
     }
 
     @Test
-    void subscribesWithBankCodeAndForwardsReceivedNotifications() throws Exception {
+    void opensStreamAndForwardsReceivedNotifications() throws Exception {
         new GlobalVariables().setBankCode("12345678");
-        CountDownLatch subscribed = new CountDownLatch(1);
+        CountDownLatch connected = new CountDownLatch(1);
         CountDownLatch processed = new CountDownLatch(2);
         CountDownLatch acked = new CountDownLatch(2);
-        AtomicReference<String> subscribedIspb = new AtomicReference<>();
         NotificationProcessor processor = mock(NotificationProcessor.class);
         doAnswer(invocation -> {
             processed.countDown();
@@ -70,21 +69,20 @@ class NotificationGatewayGrpcClientTest {
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
             public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
+                CompletableFuture.runAsync(() -> {
+                    connected.countDown();
+                    responseObserver.onNext(Notification.newBuilder()
+                            .setDeliveryId("delivery-1")
+                            .setPayload(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
+                            .build());
+                    responseObserver.onNext(Notification.newBuilder()
+                            .setDeliveryId("delivery-2")
+                            .setPayload(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
+                            .build());
+                });
                 return new StreamObserver<>() {
                     @Override
                     public void onNext(ClientMessage value) {
-                        if (value.hasSubscribe()) {
-                            subscribedIspb.set(value.getSubscribe().getIspb());
-                            subscribed.countDown();
-                            responseObserver.onNext(Notification.newBuilder()
-                                    .setDeliveryId("delivery-1")
-                                    .setPayload(ByteString.copyFromUtf8("{\"CdtTrfTxInf\":[]}"))
-                                    .build());
-                            responseObserver.onNext(Notification.newBuilder()
-                                    .setDeliveryId("delivery-2")
-                                    .setPayload(ByteString.copyFromUtf8("{\"FIToFIPmtStsRpt\":[]}"))
-                                    .build());
-                        }
                         if (value.hasAck()) {
                             acked.countDown();
                         }
@@ -110,10 +108,9 @@ class NotificationGatewayGrpcClientTest {
 
         client.start();
 
-        assertThat(subscribed.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(connected.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(processed.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(acked.await(1, TimeUnit.SECONDS)).isTrue();
-        assertThat(subscribedIspb.get()).isEqualTo("12345678");
         verify(processor).process("12345678", "{\"CdtTrfTxInf\":[]}");
         verify(processor).process("12345678", "{\"FIToFIPmtStsRpt\":[]}");
     }
@@ -127,17 +124,14 @@ class NotificationGatewayGrpcClientTest {
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override
             public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
+                int current = subscriptions.incrementAndGet();
+                if (current == 2) {
+                    secondSubscription.countDown();
+                }
+                responseObserver.onError(new RuntimeException("boom"));
                 return new StreamObserver<>() {
                     @Override
                     public void onNext(ClientMessage value) {
-                        if (!value.hasSubscribe()) {
-                            return;
-                        }
-                        int current = subscriptions.incrementAndGet();
-                        if (current == 2) {
-                            secondSubscription.countDown();
-                        }
-                        responseObserver.onError(new RuntimeException("boom"));
                     }
 
                     @Override

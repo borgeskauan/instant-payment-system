@@ -4,7 +4,6 @@ import br.kauan.notificationgateway.grpc.proto.Ack;
 import br.kauan.notificationgateway.grpc.proto.ClientMessage;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
-import br.kauan.notificationgateway.grpc.proto.Subscribe;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
 import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import io.grpc.ManagedChannel;
@@ -148,9 +147,7 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
         });
         requestObserverRef.set(requestObserver);
 
-        requestObserver.onNext(ClientMessage.newBuilder()
-                .setSubscribe(Subscribe.newBuilder().setIspb(ispb))
-                .build());
+        log.debug("notification-gateway stream opened for local ISPB: {}", ispb);
     }
 
     private static ManagedChannel createChannel(NotificationGatewayProperties properties) {
