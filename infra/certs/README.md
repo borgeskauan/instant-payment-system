@@ -26,6 +26,14 @@ infra/certs/generate-local-mtls-certs.sh psp 12345678
 
 When using `payment-service-provider/start-psp.sh` with mTLS enabled, the PSP certificate is generated automatically. The script does not run `init`; the local CA must already exist.
 
+Generate a PSP client certificate under a custom root:
+
+```bash
+infra/certs/generate-local-mtls-certs.sh --psp-root /tmp/load-certs psp 12345678
+```
+
+This writes the certificate to `/tmp/load-certs/psp-12345678/`. The load-tool uses this option to create temporary PSP certificates for each simulated ISPB without polluting `infra/certs/local/`.
+
 Recreate existing files with `--force`:
 
 ```bash
@@ -44,6 +52,15 @@ infra/certs/local/
     server.crt
     server.key
 
+  psp-12345678/
+    client.crt
+    client.key
+```
+
+With `--psp-root /tmp/load-certs`, only the PSP directory changes:
+
+```text
+/tmp/load-certs/
   psp-12345678/
     client.crt
     client.key

@@ -37,6 +37,9 @@ JFR_TARGET_DIR=""
 POSTGRES_STATEMENTS_TARGET_DIR=""
 LOADTOOL_BUILD_DIR=""
 LOADTOOL_BIN=""
+LOADTOOL_CERT_ROOT=""
+LOADTOOL_GATEWAY_CA_CERT=""
+LOADTOOL_GATEWAY_SERVER_NAME="${LOADTOOL_GATEWAY_SERVER_NAME:-localhost}"
 
 usage() {
     echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--reset-state|--no-reset-state] [--provision-funds|--no-provision-funds] <run-tag>"
@@ -162,6 +165,7 @@ print_grafana_links() {
 }
 
 cleanup() {
+    trap - EXIT INT TERM
     if [[ "$SPI_TRACE_ACTIVE" == true ]]; then
         stop_spi_trace "" || true
     fi
@@ -173,6 +177,9 @@ cleanup() {
     fi
     if [[ -n "$LOADTOOL_BUILD_DIR" && "$LOADTOOL_BUILD_DIR" == /tmp/* ]]; then
         rm -rf "$LOADTOOL_BUILD_DIR"
+    fi
+    if [[ -n "$LOADTOOL_CERT_ROOT" && -d "$LOADTOOL_CERT_ROOT" ]]; then
+        rm -rf "$LOADTOOL_CERT_ROOT"
     fi
 }
 
@@ -253,6 +260,19 @@ amount = int(match.group(1))
 unit = match.group(2) or "s"
 multipliers = {"s": 1, "m": 60, "h": 3600}
 print(amount * multipliers[unit])
+' "$GO_LOADTOOL_CONFIG" "$key"
+}
+
+config_number() {
+    local key="$1"
+    python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    value = json.load(handle)[sys.argv[2]]
+
+print(int(value))
 ' "$GO_LOADTOOL_CONFIG" "$key"
 }
 
@@ -476,6 +496,7 @@ log_selected_options() {
 
     log_phase "starting load test: tag=${RUN_TAG} output=${target_dir}"
     log_phase "using config: ${GO_LOADTOOL_CONFIG}"
+    log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
     if [[ "$ENABLE_JFR" == true ]]; then
         log_phase "JFR enabled for kafka-producer, SPI, and notification-gateway"
     fi
@@ -537,6 +558,41 @@ SQL
     log_phase "persistent test state reset"
 }
 
+prepare_loadtool_certificates() {
+    local target_dir="$1"
+    local hot_count cold_count total_count cert_script ca_cert target_dir_abs
+
+    hot_count="$(config_number "hotPspCount")"
+    cold_count="$(config_number "coldPspCount")"
+    total_count=$((hot_count + cold_count))
+
+    target_dir_abs="$(cd "$target_dir" && pwd)"
+    LOADTOOL_CERT_ROOT="${target_dir_abs}/certs"
+    cert_script="../infra/certs/generate-local-mtls-certs.sh"
+    ca_cert="../infra/certs/local/ca/ca.crt"
+
+    if [[ ! -f "$ca_cert" ]]; then
+        echo "Local mTLS CA not found: $ca_cert" >&2
+        echo "Run from repo root: LOCAL_UID=\$(id -u) LOCAL_GID=\$(id -g) docker compose -f infra/docker-compose.yml up certs-init" >&2
+        exit 1
+    fi
+    if [[ ! -x "$cert_script" ]]; then
+        echo "Certificate generator not found or not executable: $cert_script" >&2
+        exit 1
+    fi
+
+    mkdir -p "$LOADTOOL_CERT_ROOT"
+    LOADTOOL_GATEWAY_CA_CERT="$(cd "$(dirname "$ca_cert")" && pwd)/$(basename "$ca_cert")"
+
+    log_phase "generating ephemeral load-tool PSP certificates: psps=$((total_count * 2)) root=${LOADTOOL_CERT_ROOT}"
+    for vu in $(seq 1 "$total_count"); do
+        suffix="$(printf "%06d" "$vu")"
+        "$cert_script" --psp-root "$LOADTOOL_CERT_ROOT" psp "10${suffix}" >/dev/null
+        "$cert_script" --psp-root "$LOADTOOL_CERT_ROOT" psp "20${suffix}" >/dev/null
+    done
+    log_phase "ephemeral load-tool PSP certificates generated"
+}
+
 provision_funds_if_enabled() {
     local target_dir="$1"
 
@@ -587,7 +643,10 @@ run_simulator() {
     (
         cd go-loadtool
         "$LOADTOOL_BIN" simulate \
-            --out "../${tool_out}"
+            --out "../${tool_out}" \
+            --gateway-ca-cert "$LOADTOOL_GATEWAY_CA_CERT" \
+            --gateway-client-cert-root "$LOADTOOL_CERT_ROOT" \
+            --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
     ) | tee "${target_dir}/go-loadtool-output.txt"
 }
 
@@ -620,7 +679,8 @@ main() {
     active_finished_at="$(iso_after_seconds "$active_started_at" "$active_seconds")"
 
     prepare_run_workspace "$tool_out"
-    trap cleanup EXIT
+    trap cleanup EXIT INT TERM
+    prepare_loadtool_certificates "$target_dir"
     if grafana_available; then
         grafana_available_at_run_start=true
     else

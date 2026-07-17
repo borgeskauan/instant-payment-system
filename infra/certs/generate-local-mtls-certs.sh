@@ -7,20 +7,22 @@ Generate local development certificates for PSP <-> notification-gateway mTLS.
 
 Usage:
   infra/certs/generate-local-mtls-certs.sh [--force] init
-  infra/certs/generate-local-mtls-certs.sh [--force] psp <ispb>
+  infra/certs/generate-local-mtls-certs.sh [--force] [--psp-root DIR] psp <ispb>
 
 Commands:
   init        Generate the local CA and notification-gateway server certificate.
   psp <ispb> Generate a PSP client certificate with SAN URI urn:pix:ispb:<ispb>.
 
 Options:
-  --force     Recreate the target certificate files if they already exist.
-  -h, --help  Show this help.
+  --force         Recreate the target certificate files if they already exist.
+  --psp-root DIR  Write PSP certificates under DIR/psp-<ispb> instead of local/.
+  -h, --help      Show this help.
 
 Examples:
   infra/certs/generate-local-mtls-certs.sh init
   infra/certs/generate-local-mtls-certs.sh psp 12345678
   infra/certs/generate-local-mtls-certs.sh --force psp 12345678
+  infra/certs/generate-local-mtls-certs.sh --psp-root /tmp/load-certs psp 12345678
 EOF
 }
 
@@ -234,6 +236,7 @@ main() {
   require_openssl
 
   local force=false
+  local psp_root=""
   local command=""
   local ispb=""
 
@@ -242,6 +245,11 @@ main() {
       --force)
         force=true
         shift
+        ;;
+      --psp-root)
+        psp_root="${2:-}"
+        [[ -n "$psp_root" ]] || fail "--psp-root requires a directory"
+        shift 2
         ;;
       -h|--help)
         usage
@@ -273,17 +281,19 @@ main() {
   local local_dir="$certs_dir/local"
   local ca_dir="$local_dir/ca"
   local gateway_dir="$local_dir/notification-gateway"
+  psp_root="${psp_root:-$local_dir}"
 
   case "$command" in
     init)
       [[ -z "$ispb" ]] || fail "init does not accept an ISPB"
+      [[ "$psp_root" == "$local_dir" ]] || fail "--psp-root is only supported for psp"
       generate_ca "$force" "$ca_dir"
       generate_gateway "$force" "$ca_dir" "$gateway_dir"
       ;;
     psp)
       [[ -n "$ispb" ]] || fail "missing ISPB for psp command"
       validate_ispb "$ispb"
-      generate_psp "$force" "$ca_dir" "$local_dir/psp-$ispb" "$ispb"
+      generate_psp "$force" "$ca_dir" "$psp_root/psp-$ispb" "$ispb"
       ;;
   esac
 }

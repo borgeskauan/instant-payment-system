@@ -10,13 +10,8 @@ service NotificationGateway {
 
 message ClientMessage {
   oneof message {
-    Subscribe subscribe = 1;
-    Ack ack = 2;
+    Ack ack = 1;
   }
-}
-
-message Subscribe {
-  string ispb = 1;
 }
 
 message Ack {
