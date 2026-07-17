@@ -19,7 +19,7 @@ O primeiro corte persiste as notificações destinadas aos PSPs no `notification
 - O `notification-gateway` consome o Kafka e faz upsert em `notification_delivery`.
 - `ACKED` significa que o PSP recebeu a notificação pelo stream gRPC, processou com sucesso e enviou `Ack`.
 - Publicar no Kafka não é ACK fim-a-fim do PSP.
-- O stream gRPC é bidirecional: primeira mensagem do PSP é `Subscribe`, depois o PSP envia `Ack` por delivery processada.
+- O stream gRPC é bidirecional: o PSP recebe notificações pelo stream e envia `Ack` por delivery processada.
 - `IN_FLIGHT` é uma lease, não um lock aberto durante o envio.
 - Se não houver ACK, a delivery volta a ser elegível quando `lease_until` vence.
 - Não existe NACK no v1: falha de processamento no PSP significa ausência de ACK.

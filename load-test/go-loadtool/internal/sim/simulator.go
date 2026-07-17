@@ -3,6 +3,8 @@ package sim
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,7 +15,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
@@ -22,16 +25,19 @@ import (
 )
 
 type Config struct {
-	BaseURL        string
-	GatewayAddress string
-	TargetTxRate   int
-	Warmup         time.Duration
-	Duration       time.Duration
-	Drain          time.Duration
-	HotPSPs        int
-	ColdPSPs       int
-	HotShare       float64
-	OutputDir      string
+	BaseURL               string
+	GatewayAddress        string
+	GatewayCACert         string
+	GatewayClientCertRoot string
+	GatewayServerName     string
+	TargetTxRate          int
+	Warmup                time.Duration
+	Duration              time.Duration
+	Drain                 time.Duration
+	HotPSPs               int
+	ColdPSPs              int
+	HotShare              float64
+	OutputDir             string
 }
 
 type transferJob struct {
@@ -47,22 +53,40 @@ type statusJob struct {
 }
 
 type simulator struct {
-	cfg              Config
-	runID            string
-	httpClient       *http.Client
-	grpcConn         *grpc.ClientConn
-	grpcClient       notificationpb.NotificationGatewayClient
-	startWriter      *events.StartWriter
-	eventWriter      *events.NotificationWriter
-	startMu          sync.Mutex
-	eventMu          sync.Mutex
-	sendPacs002Func  func(context.Context, string, string)
-	statusJobs       chan statusJob
-	started          atomic.Uint64
-	accepted         atomic.Uint64
-	pacs002Sent      atomic.Uint64
-	notifications    atomic.Uint64
-	statusJobsQueued atomic.Uint64
+	cfg                        Config
+	runID                      string
+	httpClient                 *http.Client
+	startWriter                *events.StartWriter
+	eventWriter                *events.NotificationWriter
+	startMu                    sync.Mutex
+	eventMu                    sync.Mutex
+	sendPacs002Func            func(context.Context, string, string)
+	openNotificationStreamFunc func(context.Context, string) (notificationStreamClient, func() error, error)
+	statusJobs                 chan statusJob
+	started                    atomic.Uint64
+	accepted                   atomic.Uint64
+	pacs002Sent                atomic.Uint64
+	notifications              atomic.Uint64
+	statusJobsQueued           atomic.Uint64
+}
+
+type notificationStreamClient interface {
+	Send(*notificationpb.ClientMessage) error
+	Recv() (*notificationpb.Notification, error)
+	CloseSend() error
+}
+
+type notificationStreamSession struct {
+	ispb         string
+	receiverRole bool
+	stream       notificationStreamClient
+	close        func() error
+}
+
+type grpcReadyConn interface {
+	Connect()
+	GetState() connectivity.State
+	WaitForStateChange(context.Context, connectivity.State) bool
 }
 
 func Run(cfg Config) error {
@@ -88,18 +112,10 @@ func Run(cfg Config) error {
 	}
 	defer eventWriter.Close()
 
-	conn, err := grpc.NewClient(cfg.GatewayAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
 	s := &simulator{
 		cfg:         cfg,
 		runID:       fmt.Sprintf("go-%d", time.Now().UnixNano()),
 		httpClient:  newHTTPClient(),
-		grpcConn:    conn,
-		grpcClient:  notificationpb.NewNotificationGatewayClient(conn),
 		startWriter: startWriter,
 		eventWriter: eventWriter,
 		statusJobs:  make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
@@ -109,22 +125,28 @@ func Run(cfg Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	statusWorkerCount := workerCountForTargetRate(cfg.TargetTxRate)
-	var statusWorkers sync.WaitGroup
-	s.startStatusWorkers(ctx, &statusWorkers, s.statusJobs, statusWorkerCount)
-
 	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
+	notificationCtx, stopNotifications := context.WithCancel(ctx)
+	sessions, err := s.openNotificationStreams(notificationCtx, pairs)
+	if err != nil {
+		stopNotifications()
+		return err
+	}
+
 	var streams sync.WaitGroup
-	for _, pair := range pairs {
-		streams.Add(2)
-		go s.streamNotifications(ctx, &streams, pair.Receiver, true)
-		go s.streamNotifications(ctx, &streams, pair.Payer, false)
+	for _, session := range sessions {
+		streams.Add(1)
+		go s.consumeNotificationStream(notificationCtx, &streams, session)
 	}
 
 	// Give streams a short window to connect before the generator starts.
 	time.Sleep(2 * time.Second)
 	logPhase("notification streams warmup finished")
+
+	statusWorkerCount := workerCountForTargetRate(cfg.TargetTxRate)
+	var statusWorkers sync.WaitGroup
+	s.startStatusWorkers(ctx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
 	jobs := make(chan transferJob, cfg.TargetTxRate*2)
 	var workers sync.WaitGroup
@@ -148,6 +170,8 @@ func Run(cfg Config) error {
 	time.Sleep(cfg.Drain)
 	logPhase("drain finished; closing notification streams")
 	cancel()
+	stopNotifications()
+	closeNotificationSessions(sessions)
 	streams.Wait()
 	logPhase("notification streams closed")
 	close(s.statusJobs)
@@ -340,29 +364,159 @@ func (s *simulator) post(ctx context.Context, url string, body []byte) int {
 	return resp.StatusCode
 }
 
-func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup, ispb string, receiverRole bool) {
-	defer wg.Done()
-	stream, err := s.grpcClient.StreamNotifications(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "stream %s failed: %v\n", ispb, err)
-		return
-	}
-	if err := stream.Send(&notificationpb.ClientMessage{
-		Message: &notificationpb.ClientMessage_Subscribe{
-			Subscribe: &notificationpb.Subscribe{Ispb: ispb},
-		},
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "stream %s subscribe failed: %v\n", ispb, err)
-		return
+func (s *simulator) openNotificationStreams(
+	ctx context.Context,
+	pairs []ids.Pair,
+) ([]notificationStreamSession, error) {
+	specs := notificationStreamSpecs(pairs)
+	sessions := make([]notificationStreamSession, 0, len(specs))
+
+	for _, spec := range specs {
+		open := s.openNotificationStream
+		if s.openNotificationStreamFunc != nil {
+			open = s.openNotificationStreamFunc
+		}
+		stream, closeFunc, err := open(ctx, spec.ispb)
+		if err != nil {
+			closeNotificationSessions(sessions)
+			return nil, fmt.Errorf("open notification stream for ISPB %s: %w", spec.ispb, err)
+		}
+		sessions = append(sessions, notificationStreamSession{
+			ispb:         spec.ispb,
+			receiverRole: spec.receiverRole,
+			stream:       stream,
+			close:        closeFunc,
+		})
 	}
 
+	return sessions, nil
+}
+
+type notificationStreamSpec struct {
+	ispb         string
+	receiverRole bool
+}
+
+func notificationStreamSpecs(pairs []ids.Pair) []notificationStreamSpec {
+	specs := make([]notificationStreamSpec, 0, len(pairs)*2)
+	seen := make(map[string]int, len(pairs)*2)
+	for _, pair := range pairs {
+		if index, ok := seen[pair.Receiver]; ok {
+			specs[index].receiverRole = true
+		} else {
+			seen[pair.Receiver] = len(specs)
+			specs = append(specs, notificationStreamSpec{ispb: pair.Receiver, receiverRole: true})
+		}
+		if _, ok := seen[pair.Payer]; !ok {
+			seen[pair.Payer] = len(specs)
+			specs = append(specs, notificationStreamSpec{ispb: pair.Payer})
+		}
+	}
+	return specs
+}
+
+func (s *simulator) openNotificationStream(
+	ctx context.Context,
+	ispb string,
+) (notificationStreamClient, func() error, error) {
+	transportCredentials, err := s.notificationTransportCredentials(ispb)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conn, err := grpc.NewClient(s.cfg.GatewayAddress, grpc.WithTransportCredentials(transportCredentials))
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := waitForGrpcReady(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+
+	client := notificationpb.NewNotificationGatewayClient(conn)
+	stream, err := client.StreamNotifications(ctx)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+
+	closeFunc := func() error {
+		_ = stream.CloseSend()
+		return conn.Close()
+	}
+	return stream, closeFunc, nil
+}
+
+func waitForGrpcReady(ctx context.Context, conn grpcReadyConn) error {
+	conn.Connect()
 	for {
-		msg, err := stream.Recv()
+		state := conn.GetState()
+		switch state {
+		case connectivity.Ready:
+			return nil
+		case connectivity.Shutdown:
+			return fmt.Errorf("notification gateway channel reached SHUTDOWN before READY")
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			if err := ctx.Err(); err != nil {
+				return fmt.Errorf("wait for notification gateway channel READY: %w", err)
+			}
+			return fmt.Errorf("notification gateway channel did not reach READY")
+		}
+	}
+}
+
+func (s *simulator) notificationTransportCredentials(ispb string) (credentials.TransportCredentials, error) {
+	certPath, keyPath := clientCertPaths(s.cfg.GatewayClientCertRoot, ispb)
+
+	certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load client certificate for ISPB %s: %w", ispb, err)
+	}
+
+	caPEM, err := os.ReadFile(s.cfg.GatewayCACert)
+	if err != nil {
+		return nil, fmt.Errorf("read gateway CA certificate: %w", err)
+	}
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("gateway CA certificate has no valid PEM certificates: %s", s.cfg.GatewayCACert)
+	}
+
+	serverName := s.cfg.GatewayServerName
+	if serverName == "" {
+		serverName = "localhost"
+	}
+	return credentials.NewTLS(&tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		ServerName:   serverName,
+		RootCAs:      rootCAs,
+		Certificates: []tls.Certificate{certificate},
+	}), nil
+}
+
+func clientCertPaths(root string, ispb string) (string, string) {
+	base := filepath.Join(root, "psp-"+ispb)
+	return filepath.Join(base, "client.crt"), filepath.Join(base, "client.key")
+}
+
+func closeNotificationSessions(sessions []notificationStreamSession) {
+	for _, session := range sessions {
+		if session.close != nil {
+			_ = session.close()
+		}
+	}
+}
+
+func (s *simulator) consumeNotificationStream(ctx context.Context, wg *sync.WaitGroup, session notificationStreamSession) {
+	defer wg.Done()
+	for {
+		msg, err := session.stream.Recv()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			fmt.Fprintf(os.Stderr, "stream %s recv failed: %v\n", ispb, err)
+			fmt.Fprintf(os.Stderr, "stream %s recv failed: %v\n", session.ispb, err)
 			return
 		}
 		notifications, err := payload.ExtractNotifications(msg.Payload)
@@ -375,24 +529,24 @@ func (s *simulator) streamNotifications(ctx context.Context, wg *sync.WaitGroup,
 			case payload.KindPacs008:
 				s.writeNotification(events.Notification{
 					EndToEndID:   notification.EndToEndID,
-					ISPB:         ispb,
+					ISPB:         session.ispb,
 					EventType:    events.EventPacs008Received,
 					ReceivedAtNS: time.Now().UnixNano(),
 				})
-				if receiverRole {
-					s.enqueuePacs002(ctx, ispb, notification.EndToEndID)
+				if session.receiverRole {
+					s.enqueuePacs002(ctx, session.ispb, notification.EndToEndID)
 				}
 			case payload.KindPacs002:
 				s.writeNotification(events.Notification{
 					EndToEndID:   notification.EndToEndID,
-					ISPB:         ispb,
+					ISPB:         session.ispb,
 					EventType:    events.EventPacs002Received,
 					ReceivedAtNS: time.Now().UnixNano(),
 				})
 			}
 		}
 		if deliveryID := msg.GetDeliveryId(); deliveryID != "" {
-			_ = stream.Send(&notificationpb.ClientMessage{
+			_ = session.stream.Send(&notificationpb.ClientMessage{
 				Message: &notificationpb.ClientMessage_Ack{
 					Ack: &notificationpb.Ack{DeliveryId: deliveryID},
 				},

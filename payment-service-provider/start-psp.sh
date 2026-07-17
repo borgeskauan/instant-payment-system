@@ -73,6 +73,21 @@ quote_cmd() {
   printf '\n'
 }
 
+ensure_psp_certificate() {
+  local bank_code="$1"
+  local cert_script="$2"
+  local ca_crt="$3"
+  local client_crt="$4"
+
+  if [[ -f "$client_crt" ]] && ! openssl verify -CAfile "$ca_crt" "$client_crt" >/dev/null 2>&1; then
+    echo "Existing PSP certificate does not match the local CA; regenerating it." >&2
+    "$cert_script" --force psp "$bank_code"
+    return
+  fi
+
+  "$cert_script" psp "$bank_code"
+}
+
 bank_code=""
 container_name=""
 host_port=""
@@ -172,6 +187,12 @@ container_name="${container_name:-psp-$bank_code}"
 host_port="${host_port:-$(first_free_port)}"
 
 root="$(repo_root)"
+cert_script="$root/infra/certs/generate-local-mtls-certs.sh"
+certs_local_dir="$root/infra/certs/local"
+ca_dir="$certs_local_dir/ca"
+psp_cert_dir="$certs_local_dir/psp-$bank_code"
+psp_client_crt="$psp_cert_dir/client.crt"
+
 docker_run_cmd=(
   docker run -d
   --name "$container_name"
@@ -182,6 +203,11 @@ docker_run_cmd=(
   -e "EXTERNAL_CENTRAL_TRANSFER_URL=$central_transfer_url"
   -e "NOTIFICATION_GATEWAY_HOST=$notification_host"
   -e "NOTIFICATION_GATEWAY_PORT=$notification_port"
+  -v "$psp_cert_dir:/certs/psp:ro"
+  -v "$ca_dir:/certs/ca:ro"
+  -e "NOTIFICATION_GATEWAY_TLS_CERTIFICATE_CHAIN=/certs/psp/client.crt"
+  -e "NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY=/certs/psp/client.key"
+  -e "NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION=/certs/ca/ca.crt"
 )
 
 if [[ -n "$java_tool_options" ]]; then
@@ -191,6 +217,7 @@ fi
 docker_run_cmd+=("$image")
 
 if $dry_run; then
+  quote_cmd ensure_psp_certificate "$bank_code" "$cert_script" "$ca_dir/ca.crt" "$psp_client_crt"
   if $build_image; then
     quote_cmd docker build -t "$image" "$root/payment-service-provider"
   fi
@@ -200,6 +227,18 @@ if $dry_run; then
   quote_cmd "${docker_run_cmd[@]}"
   exit 0
 fi
+
+if [[ ! -f "$ca_dir/ca.crt" || ! -f "$ca_dir/ca.key" ]]; then
+  cat >&2 <<EOF
+Notification gateway mTLS is enabled, but the local CA was not found.
+
+Run the certs init service before starting PSP containers:
+  LOCAL_UID=\$(id -u) LOCAL_GID=\$(id -g) docker compose -f infra/docker-compose.yml up certs-init
+EOF
+  exit 1
+fi
+
+ensure_psp_certificate "$bank_code" "$cert_script" "$ca_dir/ca.crt" "$psp_client_crt"
 
 if $build_image; then
   docker build -t "$image" "$root/payment-service-provider"

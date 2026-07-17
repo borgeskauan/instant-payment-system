@@ -1,6 +1,9 @@
 {
   "baseUrl": "http://localhost:8001",
   "gatewayAddress": "localhost:9090",
+  "gatewayCaCert": "../../infra/certs/local/ca/ca.crt",
+  "gatewayClientCertRoot": "../../infra/certs/local",
+  "gatewayServerName": "localhost",
   "targetTxRate": 2000,
   "warmup": "1m",
   "duration": "1m",

@@ -41,7 +41,7 @@ flowchart LR
 
 PSPs do not consume Kafka directly. They submit payment messages to `kafka-producer` over HTTP, and receive SPI notifications from `notification-gateway` through the gRPC stream.
 
-The notification stream is bidirectional. The PSP subscribes with its ISPB and sends an ACK only after processing a delivery successfully. The `notification-gateway` tracks each delivery by `communication_id` and retries unacknowledged deliveries with an `IN_FLIGHT` lease.
+The notification stream is bidirectional. The PSP identity comes from its mTLS client certificate, and the PSP sends an ACK only after processing a delivery successfully. The `notification-gateway` tracks each delivery by `communication_id` and retries unacknowledged deliveries with an `IN_FLIGHT` lease.
 
 ## Failure Policy
 

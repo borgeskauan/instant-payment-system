@@ -6,9 +6,14 @@ external:
 
 notification:
   gateway:
+    client-enabled: ${NOTIFICATION_GATEWAY_CLIENT_ENABLED:true}
     host: ${NOTIFICATION_GATEWAY_HOST:localhost}
     port: ${NOTIFICATION_GATEWAY_PORT:9090}
     reconnect-delay: ${NOTIFICATION_GATEWAY_RECONNECT_DELAY:1s}
+    tls:
+      certificate-chain: ${NOTIFICATION_GATEWAY_TLS_CERTIFICATE_CHAIN:}
+      private-key: ${NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY:}
+      trust-cert-collection: ${NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION:}
 
 spring:
   h2:

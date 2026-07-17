@@ -2,10 +2,19 @@ package sim
 
 import (
 	"context"
+	"errors"
+	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/connectivity"
+	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
+	"instant-payment-system/load-test/go-loadtool/internal/ids"
+	"instant-payment-system/load-test/go-loadtool/internal/payload"
 )
 
 func TestLoadRateUsesHalfTargetDuringWarmup(t *testing.T) {
@@ -66,4 +75,171 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	if got := maxActive.Load(); got > workerCount {
 		t.Fatalf("max concurrent status workers = %d, want <= %d", got, workerCount)
 	}
+}
+
+func TestClientCertPathsUsesIspbDirectory(t *testing.T) {
+	certPath, keyPath := clientCertPaths("/tmp/loadtool-certs", "20000001")
+
+	if certPath != "/tmp/loadtool-certs/psp-20000001/client.crt" {
+		t.Fatalf("certPath = %q", certPath)
+	}
+	if keyPath != "/tmp/loadtool-certs/psp-20000001/client.key" {
+		t.Fatalf("keyPath = %q", keyPath)
+	}
+}
+
+func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	writer, err := events.NewNotificationWriter(filepath.Join(t.TempDir(), "events.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+
+	stream := newFakeNotificationStream()
+	s := &simulator{eventWriter: writer}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go s.consumeNotificationStream(ctx, &wg, notificationStreamSession{
+		ispb:         "20000001",
+		receiverRole: false,
+		stream:       stream,
+	})
+
+	select {
+	case msg := <-stream.sent:
+		t.Fatalf("unexpected client message before notification: %#v", msg)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	stream.received <- &notificationpb.Notification{
+		DeliveryId: "delivery-1",
+		Payload:    payload.Pacs002("tx-1"),
+	}
+
+	select {
+	case msg := <-stream.sent:
+		if msg.GetAck() == nil {
+			t.Fatalf("client message has no ack: %#v", msg)
+		}
+		if got := msg.GetAck().GetDeliveryId(); got != "delivery-1" {
+			t.Fatalf("ack delivery id = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ack")
+	}
+
+	cancel()
+	close(stream.received)
+	wg.Wait()
+}
+
+func TestOpenNotificationStreamsClosesAlreadyOpenedSessionsOnFailure(t *testing.T) {
+	var closed atomic.Int64
+	openCount := 0
+	s := &simulator{
+		openNotificationStreamFunc: func(context.Context, string) (notificationStreamClient, func() error, error) {
+			openCount++
+			if openCount == 1 {
+				return newFakeNotificationStream(), func() error {
+					closed.Add(1)
+					return nil
+				}, nil
+			}
+			return nil, nil, errors.New("handshake failed")
+		},
+	}
+
+	_, err := s.openNotificationStreams(context.Background(), []ids.Pair{
+		{Payer: "10000001", Receiver: "20000001"},
+	})
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := closed.Load(); got != 1 {
+		t.Fatalf("closed sessions = %d, want 1", got)
+	}
+}
+
+func TestWaitForGrpcReadyConnectsAndWaitsUntilReady(t *testing.T) {
+	conn := &fakeGrpcReadyConn{
+		states: []connectivity.State{
+			connectivity.Idle,
+			connectivity.Connecting,
+			connectivity.Ready,
+		},
+	}
+
+	if err := waitForGrpcReady(context.Background(), conn); err != nil {
+		t.Fatal(err)
+	}
+
+	if conn.connectCalls != 1 {
+		t.Fatalf("connectCalls = %d, want 1", conn.connectCalls)
+	}
+	if len(conn.waitedStates) != 2 {
+		t.Fatalf("waited states = %v, want two states", conn.waitedStates)
+	}
+	if conn.waitedStates[0] != connectivity.Idle {
+		t.Fatalf("first waited state = %s", conn.waitedStates[0])
+	}
+	if conn.waitedStates[1] != connectivity.Connecting {
+		t.Fatalf("second waited state = %s", conn.waitedStates[1])
+	}
+}
+
+type fakeNotificationStream struct {
+	received chan *notificationpb.Notification
+	sent     chan *notificationpb.ClientMessage
+}
+
+func newFakeNotificationStream() *fakeNotificationStream {
+	return &fakeNotificationStream{
+		received: make(chan *notificationpb.Notification, 1),
+		sent:     make(chan *notificationpb.ClientMessage, 1),
+	}
+}
+
+func (f *fakeNotificationStream) Send(message *notificationpb.ClientMessage) error {
+	f.sent <- message
+	return nil
+}
+
+func (f *fakeNotificationStream) Recv() (*notificationpb.Notification, error) {
+	message, ok := <-f.received
+	if !ok {
+		return nil, io.EOF
+	}
+	return message, nil
+}
+
+func (f *fakeNotificationStream) CloseSend() error {
+	return nil
+}
+
+type fakeGrpcReadyConn struct {
+	states       []connectivity.State
+	index        int
+	connectCalls int
+	waitedStates []connectivity.State
+}
+
+func (f *fakeGrpcReadyConn) Connect() {
+	f.connectCalls++
+}
+
+func (f *fakeGrpcReadyConn) GetState() connectivity.State {
+	return f.states[f.index]
+}
+
+func (f *fakeGrpcReadyConn) WaitForStateChange(_ context.Context, source connectivity.State) bool {
+	f.waitedStates = append(f.waitedStates, source)
+	if f.index >= len(f.states)-1 {
+		return false
+	}
+	f.index++
+	return true
 }

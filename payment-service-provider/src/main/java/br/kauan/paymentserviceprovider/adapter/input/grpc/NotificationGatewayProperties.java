@@ -8,6 +8,14 @@ import java.time.Duration;
 public record NotificationGatewayProperties(
         String host,
         int port,
-        Duration reconnectDelay
+        Duration reconnectDelay,
+        Tls tls
 ) {
+
+    public record Tls(
+            String certificateChain,
+            String privateKey,
+            String trustCertCollection
+    ) {
+    }
 }

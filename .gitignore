@@ -36,3 +36,4 @@ build/
 
 /load_test/summary/
 /load-test/results/
+/infra/certs/local/

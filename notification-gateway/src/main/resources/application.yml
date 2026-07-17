@@ -26,6 +26,12 @@ spring:
 grpc:
   server:
     port: 9090
+    security:
+      enabled: true
+      certificate-chain: ${GRPC_SERVER_SECURITY_CERTIFICATE_CHAIN:file:/certs/gateway/server.crt}
+      private-key: ${GRPC_SERVER_SECURITY_PRIVATE_KEY:file:/certs/gateway/server.key}
+      trust-cert-collection: ${GRPC_SERVER_SECURITY_TRUST_CERT_COLLECTION:file:/certs/ca/ca.crt}
+      client-auth: REQUIRE
 
 notification-gateway:
   kafka:
@@ -33,5 +39,6 @@ notification-gateway:
   delivery:
     worker-delay-ms: ${NOTIFICATION_GATEWAY_DELIVERY_WORKER_DELAY_MS:250}
     batch-size: ${NOTIFICATION_GATEWAY_DELIVERY_BATCH_SIZE:100}
+    dispatch-concurrency: ${NOTIFICATION_GATEWAY_DELIVERY_DISPATCH_CONCURRENCY:8}
     lease-duration-ms: ${NOTIFICATION_GATEWAY_DELIVERY_LEASE_DURATION_MS:30000}
     retry-delay-ms: ${NOTIFICATION_GATEWAY_DELIVERY_RETRY_DELAY_MS:1000}

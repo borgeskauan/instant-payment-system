@@ -20,16 +20,19 @@ type Runtime struct {
 }
 
 type fileConfig struct {
-	BaseURL         string  `json:"baseUrl"`
-	GatewayAddress  string  `json:"gatewayAddress"`
-	TargetTxRate    int     `json:"targetTxRate"`
-	Warmup          string  `json:"warmup"`
-	Duration        string  `json:"duration"`
-	Drain           string  `json:"drain"`
-	HotPSPCount     int     `json:"hotPspCount"`
-	ColdPSPCount    int     `json:"coldPspCount"`
-	HotTrafficShare float64 `json:"hotTrafficShare"`
-	SLAThresholdMs  int64   `json:"slaThresholdMs"`
+	BaseURL               string  `json:"baseUrl"`
+	GatewayAddress        string  `json:"gatewayAddress"`
+	GatewayCACert         string  `json:"gatewayCaCert"`
+	GatewayClientCertRoot string  `json:"gatewayClientCertRoot"`
+	GatewayServerName     string  `json:"gatewayServerName"`
+	TargetTxRate          int     `json:"targetTxRate"`
+	Warmup                string  `json:"warmup"`
+	Duration              string  `json:"duration"`
+	Drain                 string  `json:"drain"`
+	HotPSPCount           int     `json:"hotPspCount"`
+	ColdPSPCount          int     `json:"coldPspCount"`
+	HotTrafficShare       float64 `json:"hotTrafficShare"`
+	SLAThresholdMs        int64   `json:"slaThresholdMs"`
 }
 
 func LoadDefault() (Runtime, error) {
@@ -65,17 +68,27 @@ func Load(path string) (Runtime, error) {
 
 	return Runtime{
 		Sim: sim.Config{
-			BaseURL:        file.BaseURL,
-			GatewayAddress: file.GatewayAddress,
-			TargetTxRate:   file.TargetTxRate,
-			Warmup:         warmup,
-			Duration:       duration,
-			Drain:          drain,
-			HotPSPs:        file.HotPSPCount,
-			ColdPSPs:       file.ColdPSPCount,
-			HotShare:       file.HotTrafficShare,
-			OutputDir:      defaultOutputDir,
+			BaseURL:               file.BaseURL,
+			GatewayAddress:        file.GatewayAddress,
+			GatewayCACert:         file.GatewayCACert,
+			GatewayClientCertRoot: file.GatewayClientCertRoot,
+			GatewayServerName:     gatewayServerName(file.GatewayServerName),
+			TargetTxRate:          file.TargetTxRate,
+			Warmup:                warmup,
+			Duration:              duration,
+			Drain:                 drain,
+			HotPSPs:               file.HotPSPCount,
+			ColdPSPs:              file.ColdPSPCount,
+			HotShare:              file.HotTrafficShare,
+			OutputDir:             defaultOutputDir,
 		},
 		SLAThresholdMs: file.SLAThresholdMs,
 	}, nil
+}
+
+func gatewayServerName(value string) string {
+	if value == "" {
+		return "localhost"
+	}
+	return value
 }

@@ -19,6 +19,9 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
   "hotPspCount": 7,
   "coldPspCount": 13,
   "hotTrafficShare": 0.75,
+  "gatewayCaCert": "/tmp/ca.crt",
+  "gatewayClientCertRoot": "/tmp/loadtool-certs",
+  "gatewayServerName": "notification-gateway",
   "slaThresholdMs": 3200
 }`
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -56,6 +59,15 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	}
 	if cfg.Sim.HotShare != 0.75 {
 		t.Fatalf("HotShare = %f", cfg.Sim.HotShare)
+	}
+	if cfg.Sim.GatewayCACert != "/tmp/ca.crt" {
+		t.Fatalf("GatewayCACert = %q", cfg.Sim.GatewayCACert)
+	}
+	if cfg.Sim.GatewayClientCertRoot != "/tmp/loadtool-certs" {
+		t.Fatalf("GatewayClientCertRoot = %q", cfg.Sim.GatewayClientCertRoot)
+	}
+	if cfg.Sim.GatewayServerName != "notification-gateway" {
+		t.Fatalf("GatewayServerName = %q", cfg.Sim.GatewayServerName)
 	}
 	if cfg.Sim.OutputDir != "results/go-loadtool/manual" {
 		t.Fatalf("OutputDir = %q", cfg.Sim.OutputDir)
