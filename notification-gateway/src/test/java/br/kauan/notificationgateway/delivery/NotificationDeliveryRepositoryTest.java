@@ -63,4 +63,38 @@ class NotificationDeliveryRepositoryTest {
         assertThat(paramsCaptor.getValue().getValue("communicationId")).isEqualTo("v1:abc");
         assertThat(paramsCaptor.getValue().getValue("recipientIspb")).isEqualTo("20000001");
     }
+
+    @Test
+    void acknowledgeReturnsFalseWhenNoDeliveryMatchesTheAuthenticatedIspb() {
+        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
+        NotificationDeliveryRepository repository = new NotificationDeliveryRepository(
+                jdbcTemplate,
+                mock(TransactionTemplate.class)
+        );
+        when(jdbcTemplate.update(anyString(), any(MapSqlParameterSource.class))).thenReturn(0);
+
+        boolean acknowledged = repository.acknowledge("v1:abc", "20000002");
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).update(sqlCaptor.capture(), paramsCaptor.capture());
+        assertThat(acknowledged).isFalse();
+        assertThat(sqlCaptor.getValue()).contains("recipient_ispb = :recipientIspb");
+        assertThat(paramsCaptor.getValue().getValue("communicationId")).isEqualTo("v1:abc");
+        assertThat(paramsCaptor.getValue().getValue("recipientIspb")).isEqualTo("20000002");
+    }
+
+    @Test
+    void acknowledgeReturnsTrueWhenDeliveryMatchesTheAuthenticatedIspb() {
+        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
+        NotificationDeliveryRepository repository = new NotificationDeliveryRepository(
+                jdbcTemplate,
+                mock(TransactionTemplate.class)
+        );
+        when(jdbcTemplate.update(anyString(), any(MapSqlParameterSource.class))).thenReturn(1);
+
+        boolean acknowledged = repository.acknowledge("v1:abc", "20000001");
+
+        assertThat(acknowledged).isTrue();
+    }
 }

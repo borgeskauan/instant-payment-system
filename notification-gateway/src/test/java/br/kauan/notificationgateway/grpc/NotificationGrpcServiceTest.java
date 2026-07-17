@@ -11,19 +11,21 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class NotificationGrpcServiceTest {
 
     @Test
-    void authenticatedIspbRegistersStreamAndAckMarksDeliveryAcked() throws Exception {
+    void authenticatedIspbRegistersStreamAndPassesAckToRepository() throws Exception {
         SubscriberRegistry registry = new SubscriberRegistry();
         NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
         NotificationGrpcService service = new NotificationGrpcService(registry, repository);
         CapturingObserver responseObserver = new CapturingObserver();
+        when(repository.acknowledge("v1:delivery", "20000001")).thenReturn(true);
 
         StreamObserver<ClientMessage> requestObserver = Context.current()
                 .withValue(AuthenticatedPspContext.AUTHENTICATED_ISPB, "20000001")
