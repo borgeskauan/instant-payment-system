@@ -24,4 +24,5 @@ O modelo desejado é usar mTLS: o PSP apresenta um certificado de cliente, o `no
 
 - O ISPB informado por mensagem ou payload não deve ser usado como identidade autenticada.
 - O stream gRPC passa a ser autorizado pelo ISPB extraído do certificado do cliente.
+- O modelo local gera chave privada e certificado do PSP para facilitar desenvolvimento; em produção, o PSP deve gerar a chave privada, enviar CSR para uma CA e receber apenas o certificado assinado. Ver `infra/certs/README.md`.
 - Esta task cobre apenas PSP -> `notification-gateway`; autenticação PSP -> `kafka-producer` continua no backlog de segurança.

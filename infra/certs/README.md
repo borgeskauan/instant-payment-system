@@ -72,6 +72,28 @@ Example:
 SAN URI = urn:pix:ispb:12345678
 ```
 
+## Local model vs production model
+
+This local setup follows the same trust idea as production: the gateway trusts a CA, the PSP presents a client certificate signed by that CA, and the application uses the signed certificate identity instead of trusting an ISPB sent in a payload.
+
+The local setup is intentionally simpler:
+
+- `generate-local-mtls-certs.sh init` creates the local CA and the gateway server certificate.
+- `generate-local-mtls-certs.sh psp <ISPB>` creates both the PSP private key and the PSP client certificate.
+- The local CA private key is stored on the developer machine under `infra/certs/local/ca/ca.key`.
+- There is no CSR flow, revocation check, certificate inventory, or formal rotation policy.
+
+A production-like setup should be stricter:
+
+- The PSP generates and protects its own private key.
+- The PSP sends a CSR containing its public key and requested identity to the CA/onboarding process.
+- The CA validates the PSP/ISPB association and signs a certificate containing the approved identity, for example `SAN URI = urn:pix:ispb:<ISPB>`.
+- The PSP receives only the signed certificate; the CA/SPI does not need the PSP private key.
+- Homologation and production should use separate trust roots and separate certificates.
+- Certificate revocation, expiration monitoring, renewal, audit, and operational inventory should exist outside this local script.
+
+If a signed certificate is edited after issuance, the CA signature no longer validates. The gateway relies on this property: the ISPB extracted from the SAN URI is trusted only because it is part of the signed certificate validated during mTLS.
+
 ## Idempotency and rotation
 
 Without `--force`, the script does not overwrite complete existing certificates.
