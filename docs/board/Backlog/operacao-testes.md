@@ -109,6 +109,16 @@ Os testes recentes usaram ajustes de CPU para entender gargalos e validar otimiz
 
 Nesse desenho, as duas stacks devem compartilhar o mesmo PostgreSQL. Isso precisa ser validado explicitamente, porque o banco vira um recurso comum entre as stacks e pode mudar o gargalo, a configuração de pools, locks, conexões e isolamento de dados.
 
+**Notas de performance**
+
+- Preservar a reutilização de conexões HTTP persistentes entre o PSP e o `kafka-producer`, evitando um novo handshake mTLS por requisição.
+- Criar o cliente HTTP e seu contexto TLS uma vez e reutilizá-los durante a vida da aplicação PSP; não recriá-los a cada envio.
+- O gerenciamento das conexões pertence ao cliente PSP. O `kafka-producer`, como servidor, deve manter keep-alive e aceitar conexões persistentes; ele não cria um pool para conexões recebidas.
+- O cliente HTTP atual já oferece reutilização implícita de conexões. Avaliar configuração e tuning explícitos de pool, limites e timeouts somente com base nos resultados dos testes de carga.
+- Avaliar o desacoplamento entre claim e dispatch no `notification-gateway`. Hoje o worker aguarda o término dos grupos de ISPB antes de iniciar outro ciclo; filas limitadas por ISPB podem permitir novos claims sem introduzir writes concorrentes no mesmo stream.
+- Medir se o envio sequencial de deliveries para um mesmo ISPB se torna gargalo em cenários com participante quente e avaliar alternativas que preservem um único writer por stream.
+- Medir separadamente o custo da query de claim, dos updates de lease e do polling da outbox. Usar os resultados para avaliar índices, tamanho do batch e intervalo do worker.
+
 **Tarefas**
 
 - [ ] Definir o budget alvo de CPU por serviço dentro do limite total de 3 vCPUs por stack.
