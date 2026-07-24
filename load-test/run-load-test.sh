@@ -40,6 +40,8 @@ LOADTOOL_BIN=""
 LOADTOOL_CERT_ROOT=""
 LOADTOOL_GATEWAY_CA_CERT=""
 LOADTOOL_GATEWAY_SERVER_NAME="${LOADTOOL_GATEWAY_SERVER_NAME:-localhost}"
+LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
+LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
     echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--reset-state|--no-reset-state] [--provision-funds|--no-provision-funds] <run-tag>"
@@ -497,6 +499,7 @@ log_selected_options() {
     log_phase "starting load test: tag=${RUN_TAG} output=${target_dir}"
     log_phase "using config: ${GO_LOADTOOL_CONFIG}"
     log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
+    log_phase "load-tool central transfer mTLS enabled: server_name=${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME}"
     if [[ "$ENABLE_JFR" == true ]]; then
         log_phase "JFR enabled for kafka-producer, SPI, and notification-gateway"
     fi
@@ -583,6 +586,7 @@ prepare_loadtool_certificates() {
 
     mkdir -p "$LOADTOOL_CERT_ROOT"
     LOADTOOL_GATEWAY_CA_CERT="$(cd "$(dirname "$ca_cert")" && pwd)/$(basename "$ca_cert")"
+    LOADTOOL_CENTRAL_TRANSFER_CA_CERT="$LOADTOOL_GATEWAY_CA_CERT"
 
     log_phase "generating ephemeral load-tool PSP certificates: psps=$((total_count * 2)) root=${LOADTOOL_CERT_ROOT}"
     for vu in $(seq 1 "$total_count"); do
@@ -644,6 +648,9 @@ run_simulator() {
         cd go-loadtool
         "$LOADTOOL_BIN" simulate \
             --out "../${tool_out}" \
+            --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT" \
+            --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT" \
+            --central-transfer-server-name "$LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME" \
             --gateway-ca-cert "$LOADTOOL_GATEWAY_CA_CERT" \
             --gateway-client-cert-root "$LOADTOOL_CERT_ROOT" \
             --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"

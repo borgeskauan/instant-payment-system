@@ -3,11 +3,18 @@ package br.kauan.kafkaproducer.config;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-public record AppConfig(int port, String kafkaBootstrapServers) {
+public record AppConfig(
+        int port,
+        String kafkaBootstrapServers,
+        Path tlsCertificateChain,
+        Path tlsPrivateKey,
+        Path tlsTrustCertCollection
+) {
 
     public static final String PAYMENT_REQUESTS_TOPIC = "spi-payment-requests";
     public static final String PAYMENT_STATUS_REPORTS_TOPIC = "spi-payment-status-reports";
@@ -18,7 +25,12 @@ public record AppConfig(int port, String kafkaBootstrapServers) {
                 "KAFKA_BOOTSTRAP_SERVERS",
                 "SPRING_KAFKA_BOOTSTRAP_SERVERS",
                 "localhost:9092");
-        return new AppConfig(port, bootstrapServers);
+        return new AppConfig(
+                port,
+                bootstrapServers,
+                requiredPath(env, "KAFKA_PRODUCER_TLS_CERTIFICATE_CHAIN"),
+                requiredPath(env, "KAFKA_PRODUCER_TLS_PRIVATE_KEY"),
+                requiredPath(env, "KAFKA_PRODUCER_TLS_TRUST_CERT_COLLECTION"));
     }
 
     public Properties producerProperties() {
@@ -47,5 +59,13 @@ public record AppConfig(int port, String kafkaBootstrapServers) {
             return fallbackValue;
         }
         return defaultValue;
+    }
+
+    private static Path requiredPath(Map<String, String> env, String name) {
+        String value = env.get(name);
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("Missing required environment variable: " + name);
+        }
+        return Path.of(value);
     }
 }

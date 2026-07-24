@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -85,6 +87,55 @@ func TestClientCertPathsUsesIspbDirectory(t *testing.T) {
 	}
 	if keyPath != "/tmp/loadtool-certs/psp-20000001/client.key" {
 		t.Fatalf("keyPath = %q", keyPath)
+	}
+}
+
+func TestNewHTTPClientsRejectsPlaintextBaseURL(t *testing.T) {
+	_, err := newHTTPClients(Config{BaseURL: "http://localhost:8001"}, nil)
+
+	if err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("newHTTPClients error = %v, want HTTPS validation error", err)
+	}
+}
+
+func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
+	var payerCalls atomic.Int64
+	var receiverCalls atomic.Int64
+	s := &simulator{
+		httpClients: map[string]*http.Client{
+			"10000001": {
+				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					payerCalls.Add(1)
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+				}),
+			},
+			"20000001": {
+				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+					receiverCalls.Add(1)
+					return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+				}),
+			},
+		},
+	}
+
+	payerStatus := s.post(
+		context.Background(),
+		"10000001",
+		"https://localhost:8001/10000001/transfer",
+		[]byte("pacs008"),
+	)
+	receiverStatus := s.post(
+		context.Background(),
+		"20000001",
+		"https://localhost:8001/20000001/transfer/status",
+		[]byte("pacs002"),
+	)
+
+	if payerStatus != http.StatusOK || payerCalls.Load() != 1 {
+		t.Fatalf("payer status/calls = %d/%d", payerStatus, payerCalls.Load())
+	}
+	if receiverStatus != http.StatusAccepted || receiverCalls.Load() != 1 {
+		t.Fatalf("receiver status/calls = %d/%d", receiverStatus, receiverCalls.Load())
 	}
 }
 
@@ -225,6 +276,12 @@ type fakeGrpcReadyConn struct {
 	index        int
 	connectCalls int
 	waitedStates []connectivity.State
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func (f *fakeGrpcReadyConn) Connect() {

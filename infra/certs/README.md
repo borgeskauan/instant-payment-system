@@ -1,12 +1,13 @@
 # Local mTLS certificates
 
-This directory contains local development tooling for PSP `<->` `notification-gateway` mTLS.
+This directory contains local development tooling for PSP mTLS connections to
+the `notification-gateway` and `kafka-producer`.
 
 Generated files are written under `infra/certs/local/` and are intentionally ignored by Git.
 
 ## Commands
 
-Generate the local CA and the `notification-gateway` server certificate:
+Generate the local CA and both server certificates:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh init
@@ -52,6 +53,10 @@ infra/certs/local/
     server.crt
     server.key
 
+  kafka-producer/
+    server.crt
+    server.key
+
   psp-12345678/
     client.crt
     client.key
@@ -70,14 +75,24 @@ With `--psp-root /tmp/load-certs`, only the PSP directory changes:
 
 `ca.key` is the local CA private key. It is only used for provisioning new certificates and must not be mounted into application containers.
 
-`server.crt` and `server.key` identify the `notification-gateway` as the gRPC server. The server certificate includes:
+The `notification-gateway/server.crt` and `server.key` files identify the gRPC
+server. Its certificate includes:
 
 ```text
 SAN DNS = notification-gateway
 SAN DNS = localhost
 ```
 
-`client.crt` and `client.key` identify one PSP as a gRPC client. The client certificate includes the business identity:
+The `kafka-producer/server.crt` and `server.key` files identify the HTTPS
+server. Its certificate includes:
+
+```text
+SAN DNS = kafka-producer
+SAN DNS = localhost
+```
+
+`client.crt` and `client.key` identify one PSP as an mTLS client for both
+servers. The client certificate includes the business identity:
 
 ```text
 SAN URI = urn:pix:ispb:<ISPB>
@@ -91,11 +106,14 @@ SAN URI = urn:pix:ispb:12345678
 
 ## Local model vs production model
 
-This local setup follows the same trust idea as production: the gateway trusts a CA, the PSP presents a client certificate signed by that CA, and the application uses the signed certificate identity instead of trusting an ISPB sent in a payload.
+This local setup follows the same trust idea as production: each server trusts
+a CA, the PSP presents a client certificate signed by that CA, and the
+application uses the signed certificate identity instead of trusting an ISPB
+sent in a payload.
 
 The local setup is intentionally simpler:
 
-- `generate-local-mtls-certs.sh init` creates the local CA and the gateway server certificate.
+- `generate-local-mtls-certs.sh init` creates the local CA and both server certificates.
 - `generate-local-mtls-certs.sh psp <ISPB>` creates both the PSP private key and the PSP client certificate.
 - The local CA private key is stored on the developer machine under `infra/certs/local/ca/ca.key`.
 - There is no CSR flow, revocation check, certificate inventory, or formal rotation policy.
@@ -117,7 +135,9 @@ Without `--force`, the script does not overwrite complete existing certificates.
 
 If only part of a certificate pair exists, the script fails and asks for cleanup or `--force`.
 
-`--force` means "delete and recreate the files for this command".
+`--force` means "delete and recreate the files for this command". With
+`--force init`, it also removes every `infra/certs/local/psp-*` directory
+because those certificates would no longer be valid after the CA changes.
 
 For a PSP certificate:
 
@@ -145,18 +165,32 @@ infra/certs/local/ca/ca.crt
 infra/certs/local/ca/ca.key
 infra/certs/local/notification-gateway/server.crt
 infra/certs/local/notification-gateway/server.key
+infra/certs/local/kafka-producer/server.crt
+infra/certs/local/kafka-producer/server.key
 ```
 
-Be careful with `--force init`: recreating the CA changes the authority that signs certificates. PSP certificates signed by the old CA will no longer match the new CA, so regenerate the PSP certificates that should keep working:
+It also removes all locally generated PSP certificate directories:
+
+```text
+infra/certs/local/psp-*
+```
+
+PSP certificates created under a custom `--psp-root` are not tracked and are
+not removed.
+
+Be careful with `--force init`: recreating the CA changes the authority that
+signs certificates. Regenerate the PSP certificates that should keep working
+and restart running PSP containers:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh --force init
-infra/certs/generate-local-mtls-certs.sh --force psp 12345678
+infra/certs/generate-local-mtls-certs.sh psp 12345678
 ```
 
 ## Inspect certificates
 
 ```bash
 openssl x509 -in infra/certs/local/notification-gateway/server.crt -noout -text
+openssl x509 -in infra/certs/local/kafka-producer/server.crt -noout -text
 openssl x509 -in infra/certs/local/psp-12345678/client.crt -noout -text
 ```

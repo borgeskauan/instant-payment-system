@@ -16,7 +16,7 @@ Options:
   --image VALUE                 Docker image. Defaults to payment-service-provider:local.
   --network VALUE               Docker network. Defaults to infra_default.
   --dict-url VALUE              DICT URL inside Docker network. Defaults to http://dict:8003.
-  --central-transfer-url VALUE  Central transfer URL. Defaults to http://kafka-producer:8001.
+  --central-transfer-url VALUE  Central transfer URL. Defaults to https://kafka-producer:8001.
   --notification-host VALUE     Notification gateway host. Defaults to notification-gateway.
   --notification-port VALUE     Notification gateway port. Defaults to 9090.
   --java-tool-options VALUE     Optional JAVA_TOOL_OPTIONS value.
@@ -95,7 +95,7 @@ container_port="8080"
 image="payment-service-provider:local"
 network="infra_default"
 dict_url="http://dict:8003"
-central_transfer_url="http://kafka-producer:8001"
+central_transfer_url="https://kafka-producer:8001"
 notification_host="notification-gateway"
 notification_port="9090"
 java_tool_options=""
@@ -208,6 +208,9 @@ docker_run_cmd=(
   -e "NOTIFICATION_GATEWAY_TLS_CERTIFICATE_CHAIN=/certs/psp/client.crt"
   -e "NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY=/certs/psp/client.key"
   -e "NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION=/certs/ca/ca.crt"
+  -e "CENTRAL_TRANSFER_TLS_CERTIFICATE_CHAIN=/certs/psp/client.crt"
+  -e "CENTRAL_TRANSFER_TLS_PRIVATE_KEY=/certs/psp/client.key"
+  -e "CENTRAL_TRANSFER_TLS_TRUST_CERT_COLLECTION=/certs/ca/ca.crt"
 )
 
 if [[ -n "$java_tool_options" ]]; then
@@ -230,7 +233,7 @@ fi
 
 if [[ ! -f "$ca_dir/ca.crt" || ! -f "$ca_dir/ca.key" ]]; then
   cat >&2 <<EOF
-Notification gateway mTLS is enabled, but the local CA was not found.
+PSP mTLS is enabled, but the local CA was not found.
 
 Run the certs init service before starting PSP containers:
   LOCAL_UID=\$(id -u) LOCAL_GID=\$(id -g) docker compose -f infra/docker-compose.yml up certs-init

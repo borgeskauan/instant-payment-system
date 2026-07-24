@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,19 +26,22 @@ import (
 )
 
 type Config struct {
-	BaseURL               string
-	GatewayAddress        string
-	GatewayCACert         string
-	GatewayClientCertRoot string
-	GatewayServerName     string
-	TargetTxRate          int
-	Warmup                time.Duration
-	Duration              time.Duration
-	Drain                 time.Duration
-	HotPSPs               int
-	ColdPSPs              int
-	HotShare              float64
-	OutputDir             string
+	BaseURL                       string
+	CentralTransferCACert         string
+	CentralTransferClientCertRoot string
+	CentralTransferServerName     string
+	GatewayAddress                string
+	GatewayCACert                 string
+	GatewayClientCertRoot         string
+	GatewayServerName             string
+	TargetTxRate                  int
+	Warmup                        time.Duration
+	Duration                      time.Duration
+	Drain                         time.Duration
+	HotPSPs                       int
+	ColdPSPs                      int
+	HotShare                      float64
+	OutputDir                     string
 }
 
 type transferJob struct {
@@ -55,7 +59,7 @@ type statusJob struct {
 type simulator struct {
 	cfg                        Config
 	runID                      string
-	httpClient                 *http.Client
+	httpClients                map[string]*http.Client
 	startWriter                *events.StartWriter
 	eventWriter                *events.NotificationWriter
 	startMu                    sync.Mutex
@@ -112,10 +116,17 @@ func Run(cfg Config) error {
 	}
 	defer eventWriter.Close()
 
+	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
+	httpClients, err := newHTTPClients(cfg, pairs)
+	if err != nil {
+		return err
+	}
+	defer closeHTTPClients(httpClients)
+
 	s := &simulator{
 		cfg:         cfg,
 		runID:       fmt.Sprintf("go-%d", time.Now().UnixNano()),
-		httpClient:  newHTTPClient(),
+		httpClients: httpClients,
 		startWriter: startWriter,
 		eventWriter: eventWriter,
 		statusJobs:  make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
@@ -125,7 +136,6 @@ func Run(cfg Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
 	notificationCtx, stopNotifications := context.WithCancel(ctx)
 	sessions, err := s.openNotificationStreams(notificationCtx, pairs)
@@ -193,15 +203,55 @@ func logPhase(format string, args ...any) {
 	fmt.Printf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 }
 
-func newHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        4096,
-			MaxIdleConnsPerHost: 4096,
-			MaxConnsPerHost:     4096,
-			IdleConnTimeout:     90 * time.Second,
-		},
-		Timeout: 5 * time.Second,
+func newHTTPClients(cfg Config, pairs []ids.Pair) (map[string]*http.Client, error) {
+	baseURL, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse central transfer URL: %w", err)
+	}
+	if baseURL.Scheme != "https" {
+		return nil, fmt.Errorf("central transfer URL must use https: %s", cfg.BaseURL)
+	}
+
+	rootCAs, err := loadCertificatePool(cfg.CentralTransferCACert, "central transfer CA")
+	if err != nil {
+		return nil, err
+	}
+
+	clients := make(map[string]*http.Client, len(pairs)*2)
+	for _, pair := range pairs {
+		for _, ispb := range []string{pair.Payer, pair.Receiver} {
+			if _, exists := clients[ispb]; exists {
+				continue
+			}
+
+			certPath, keyPath := clientCertPaths(cfg.CentralTransferClientCertRoot, ispb)
+			certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, fmt.Errorf("load central transfer client certificate for ISPB %s: %w", ispb, err)
+			}
+			clients[ispb] = &http.Client{
+				Transport: &http.Transport{
+					MaxIdleConns:        4096,
+					MaxIdleConnsPerHost: 4096,
+					MaxConnsPerHost:     4096,
+					IdleConnTimeout:     90 * time.Second,
+					TLSClientConfig: &tls.Config{
+						MinVersion:   tls.VersionTLS12,
+						ServerName:   cfg.CentralTransferServerName,
+						RootCAs:      rootCAs,
+						Certificates: []tls.Certificate{certificate},
+					},
+				},
+				Timeout: 5 * time.Second,
+			}
+		}
+	}
+	return clients, nil
+}
+
+func closeHTTPClients(clients map[string]*http.Client) {
+	for _, client := range clients {
+		client.CloseIdleConnections()
 	}
 }
 
@@ -292,7 +342,7 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 	body := payload.Pacs008(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
 	startedAt := time.Now().UnixNano()
-	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer", s.cfg.BaseURL, job.Pair.Payer), body)
+	status := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/%s/transfer", s.cfg.BaseURL, job.Pair.Payer), body)
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
 	if status >= 200 && status < 300 {
@@ -311,7 +361,12 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 
 func (s *simulator) sendPacs002(ctx context.Context, receiverISPB string, endToEndID string) {
 	body := payload.Pacs002(endToEndID)
-	status := s.post(ctx, fmt.Sprintf("%s/%s/transfer/status", s.cfg.BaseURL, receiverISPB), body)
+	status := s.post(
+		ctx,
+		receiverISPB,
+		fmt.Sprintf("%s/%s/transfer/status", s.cfg.BaseURL, receiverISPB),
+		body,
+	)
 	if status < 200 || status >= 300 {
 		return
 	}
@@ -349,13 +404,17 @@ func (s *simulator) startStatusWorkers(
 	}
 }
 
-func (s *simulator) post(ctx context.Context, url string, body []byte) int {
+func (s *simulator) post(ctx context.Context, ispb string, url string, body []byte) int {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	resp, err := s.httpClient.Do(req)
+	client, exists := s.httpClients[ispb]
+	if !exists {
+		return 0
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0
 	}
@@ -474,13 +533,9 @@ func (s *simulator) notificationTransportCredentials(ispb string) (credentials.T
 		return nil, fmt.Errorf("load client certificate for ISPB %s: %w", ispb, err)
 	}
 
-	caPEM, err := os.ReadFile(s.cfg.GatewayCACert)
+	rootCAs, err := loadCertificatePool(s.cfg.GatewayCACert, "gateway CA")
 	if err != nil {
-		return nil, fmt.Errorf("read gateway CA certificate: %w", err)
-	}
-	rootCAs := x509.NewCertPool()
-	if !rootCAs.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("gateway CA certificate has no valid PEM certificates: %s", s.cfg.GatewayCACert)
+		return nil, err
 	}
 
 	serverName := s.cfg.GatewayServerName
@@ -493,6 +548,18 @@ func (s *simulator) notificationTransportCredentials(ispb string) (credentials.T
 		RootCAs:      rootCAs,
 		Certificates: []tls.Certificate{certificate},
 	}), nil
+}
+
+func loadCertificatePool(path string, description string) (*x509.CertPool, error) {
+	caPEM, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s certificate: %w", description, err)
+	}
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("%s certificate has no valid PEM certificates: %s", description, path)
+	}
+	return rootCAs, nil
 }
 
 func clientCertPaths(root string, ispb string) (string, string) {

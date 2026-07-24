@@ -2,7 +2,7 @@ external:
   dict:
     url: http://localhost:8003
   central-transfer:
-    url: http://localhost:8001
+    url: ${EXTERNAL_CENTRAL_TRANSFER_URL:https://localhost:8001}
 
 notification:
   gateway:
@@ -16,6 +16,16 @@ notification:
       trust-cert-collection: ${NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION:}
 
 spring:
+  ssl:
+    bundle:
+      pem:
+        central-transfer:
+          keystore:
+            certificate: ${CENTRAL_TRANSFER_TLS_CERTIFICATE_CHAIN}
+            private-key: ${CENTRAL_TRANSFER_TLS_PRIVATE_KEY}
+          truststore:
+            certificate: ${CENTRAL_TRANSFER_TLS_TRUST_CERT_COLLECTION}
+
   h2:
     console:
       enabled: true

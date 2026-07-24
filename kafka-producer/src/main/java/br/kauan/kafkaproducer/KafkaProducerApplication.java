@@ -2,7 +2,9 @@ package br.kauan.kafkaproducer;
 
 import br.kauan.kafkaproducer.config.AppConfig;
 import br.kauan.kafkaproducer.http.ReactorNettyPaymentServer;
+import br.kauan.kafkaproducer.http.ServerSslContextFactory;
 import br.kauan.kafkaproducer.kafka.KafkaPaymentPublisher;
+import io.netty.handler.ssl.SslContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.netty.DisposableServer;
@@ -13,11 +15,16 @@ public class KafkaProducerApplication {
 
     public static void main(String[] args) {
         AppConfig config = AppConfig.fromEnv(System.getenv());
+        SslContext sslContext = ServerSslContextFactory.create(
+                config.tlsCertificateChain(),
+                config.tlsPrivateKey(),
+                config.tlsTrustCertCollection());
+
         KafkaPaymentPublisher publisher = KafkaPaymentPublisher.fromConfig(config);
         publisher.warmUp();
 
-        DisposableServer server = new ReactorNettyPaymentServer(config.port(), publisher).start();
-        log.info("Kafka producer started: port={} bootstrapServers={} routing=reactor-netty-direct",
+        DisposableServer server = new ReactorNettyPaymentServer(config.port(), publisher, sslContext).start();
+        log.info("Kafka producer started: port={} bootstrapServers={} routing=reactor-netty-mtls",
                 config.port(), config.kafkaBootstrapServers());
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

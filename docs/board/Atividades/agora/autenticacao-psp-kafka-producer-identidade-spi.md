@@ -16,10 +16,10 @@ As regras de autorização são:
 **Tarefas**
 
 - [ ] Configurar mTLS obrigatório entre PSP e `kafka-producer`.
-  - [ ] Usar o mesmo contrato de identidade do `notification-gateway`: certificado com `SAN URI = urn:pix:ispb:<ISPB>`.
-  - [ ] Alterar `generate-local-mtls-certs.sh init` para gerar o certificado de servidor do `kafka-producer`, assinado pela mesma CA local e com SAN DNS para `kafka-producer` e `localhost`.
-  - [ ] Montar o certificado, a chave privada e a CA no container do `kafka-producer`, mantendo a chave legível apenas pelo usuário do processo.
-  - [ ] Remover fallback automático para plaintext; falha de TLS ou certificado deve falhar a requisição ou a inicialização.
+  - [x] Usar o mesmo contrato de identidade do `notification-gateway`: certificado com `SAN URI = urn:pix:ispb:<ISPB>`.
+  - [x] Alterar `generate-local-mtls-certs.sh init` para gerar o certificado de servidor do `kafka-producer`, assinado pela mesma CA local e com SAN DNS para `kafka-producer` e `localhost`.
+  - [x] Montar o certificado, a chave privada e a CA no container do `kafka-producer`, mantendo a chave legível apenas pelo usuário do processo.
+  - [x] Remover fallback automático para plaintext; falha de TLS ou certificado deve falhar a requisição ou a inicialização.
   - [ ] Extrair no `kafka-producer` o ISPB autenticado pelo certificado da conexão HTTP.
 - [ ] Ajustar o contrato HTTP do `kafka-producer`.
   - [ ] Remover o ISPB das rotas `/{ispb}/transfer` e `/{ispb}/transfer/status`.
@@ -38,7 +38,7 @@ As regras de autorização são:
   - [ ] Impedir que mensagem sem `authenticated-ispb`, com header duplicado ou com identidade incompatível altere estado, saldo ou produza efeitos laterais.
   - [ ] Publicar erros determinísticos de segurança na DLQ: `NOT_AUTHENTICATED` para header ausente, duplicado ou malformado; `UNAUTHORIZED_PSP` para identidade válida sem autorização sobre a mensagem ou transação.
 - [ ] Cobrir autenticação e autorização com testes.
-  - [ ] Testar PSP sem certificado e certificado inválido.
+  - [x] Testar PSP sem certificado e certificado inválido.
   - [ ] Testar `pacs.008` com pagador divergente e replay de `paymentId` pertencente a outro pagador.
   - [ ] Testar que um `pacs.008` com múltiplas transações, sendo uma delas não autorizada, é rejeitado integralmente e não publica nenhum record Kafka.
   - [ ] Testar que um `pacs.002` enviado por PSP diferente do recebedor não altera a transação e é publicado na DLQ.

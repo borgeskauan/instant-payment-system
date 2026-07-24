@@ -2,6 +2,7 @@ package br.kauan.kafkaproducer.http;
 
 import br.kauan.kafkaproducer.kafka.PaymentPublisher;
 
+import io.netty.handler.ssl.SslContext;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import org.reactivestreams.Publisher;
 import org.slf4j.Logger;
@@ -18,16 +19,19 @@ public class ReactorNettyPaymentServer {
 
     private final int port;
     private final PaymentPublisher publisher;
+    private final SslContext sslContext;
 
-    public ReactorNettyPaymentServer(int port, PaymentPublisher publisher) {
+    public ReactorNettyPaymentServer(int port, PaymentPublisher publisher, SslContext sslContext) {
         this.port = port;
         this.publisher = publisher;
+        this.sslContext = sslContext;
     }
 
     public DisposableServer start() {
         return HttpServer.create()
                 .port(port)
                 .compress(false)
+                .secure(sslProvider -> sslProvider.sslContext(sslContext))
                 .route(routes -> routes
                         .post("/{ispb}/transfer", (request, response) ->
                                 handle(request, response, publisher::publishPaymentRequest))

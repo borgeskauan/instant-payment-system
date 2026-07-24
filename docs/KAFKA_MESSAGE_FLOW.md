@@ -14,7 +14,7 @@ flowchart LR
     Notifications[("psp-notifications")]
     Gateway["notification-gateway"]
 
-    PSP -->|"HTTP transfer/status request"| Producer
+    PSP -->|"mTLS HTTPS transfer/status request"| Producer
     Producer -->|"produce PACS.008"| PaymentRequests
     Producer -->|"produce PACS.002"| StatusReports
     PaymentRequests -->|"consume payment requests"| SPI
@@ -39,7 +39,15 @@ flowchart LR
 
 ## Boundary
 
-PSPs do not consume Kafka directly. They submit payment messages to `kafka-producer` over HTTP, and receive SPI notifications from `notification-gateway` through the gRPC stream.
+PSPs do not consume Kafka directly. They submit payment messages to
+`kafka-producer` over mTLS HTTPS, and receive SPI notifications from
+`notification-gateway` through the mTLS gRPC stream.
+
+The `kafka-producer` requires a client certificate signed by the trusted local
+CA and has no plaintext fallback. During the transport-only implementation
+phase, transfer routes still contain `/{ispb}`. Binding that value and the
+payment payload to the ISPB authenticated by the certificate is handled by the
+next authorization phase.
 
 The notification stream is bidirectional. The PSP identity comes from its mTLS client certificate, and the PSP sends an ACK only after processing a delivery successfully. The `notification-gateway` tracks each delivery by `communication_id` and retries unacknowledged deliveries with an `IN_FLIGHT` lease.
 

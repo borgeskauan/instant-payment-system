@@ -1,5 +1,8 @@
 {
-  "baseUrl": "http://localhost:8001",
+  "baseUrl": "https://localhost:8001",
+  "centralTransferCaCert": "../../infra/certs/local/ca/ca.crt",
+  "centralTransferClientCertRoot": "../../infra/certs/local",
+  "centralTransferServerName": "localhost",
   "gatewayAddress": "localhost:9090",
   "gatewayCaCert": "../../infra/certs/local/ca/ca.crt",
   "gatewayClientCertRoot": "../../infra/certs/local",
