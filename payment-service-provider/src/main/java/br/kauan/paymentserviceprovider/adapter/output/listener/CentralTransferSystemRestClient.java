@@ -22,11 +22,11 @@ import java.net.URI;
 )
 public interface CentralTransferSystemRestClient {
 
-    @PostMapping(value = "/{ispb}/transfer", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    void requestTransfer(@PathVariable String ispb, @RequestBody byte[] transferRequest);
+    @PostMapping(value = "/transfer", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    void requestTransfer(@RequestBody byte[] transferRequest);
 
-    @PostMapping(value = "/{ispb}/transfer/status", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    void sendTransferStatus(@PathVariable String ispb, @RequestBody byte[] statusReport);
+    @PostMapping(value = "/transfer/status", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    void sendTransferStatus(@RequestBody byte[] statusReport);
 
     @GetMapping("/{ispb}/messages")
     SpiNotification getMessages(@PathVariable String ispb);

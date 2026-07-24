@@ -121,13 +121,13 @@ func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
 	payerStatus := s.post(
 		context.Background(),
 		"10000001",
-		"https://localhost:8001/10000001/transfer",
+		"https://localhost:8001/transfer",
 		[]byte("pacs008"),
 	)
 	receiverStatus := s.post(
 		context.Background(),
 		"20000001",
-		"https://localhost:8001/20000001/transfer/status",
+		"https://localhost:8001/transfer/status",
 		[]byte("pacs002"),
 	)
 

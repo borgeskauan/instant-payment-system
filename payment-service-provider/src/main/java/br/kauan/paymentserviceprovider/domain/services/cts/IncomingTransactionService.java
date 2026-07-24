@@ -2,7 +2,6 @@ package br.kauan.paymentserviceprovider.domain.services.cts;
 
 import br.kauan.paymentserviceprovider.adapter.output.listener.CentralTransferSystemRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportMapper;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
@@ -61,7 +60,7 @@ public class IncomingTransactionService {
 
             log.info("[PIX FLOW - Step 5] PSP Recebedor sending {} acceptances (PACS.002) to SPI",
                     statusReports.size());
-            transferRestClient.sendTransferStatus(GlobalVariables.getBankCode(), statusBytes);
+            transferRestClient.sendTransferStatus(statusBytes);
             log.info("[PIX FLOW - Step 5] Acceptances sent successfully to kafka-producer (will be forwarded to SPI)");
         } catch (Exception e) {
             log.error("[PIX FLOW - Error] Failed to serialize status reports", e);

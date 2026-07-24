@@ -13,15 +13,16 @@ Cada módulo (SPI, DICT e PSP) passará por **testes de carga**, garantindo que 
 A comunicação entre as **PSPs** e o **SPI** seguirá a **ISO 20022**.
 
 ### PSP → SPI
-Os endpoints recebem o **ISPB** como parâmetro de caminho.
+Os endpoints autenticam o PSP por mTLS. O **ISPB** é extraído do certificado
+cliente e não é recebido como parâmetro de caminho.
 
 > **ISPB** (Identificador de Sistema de Pagamentos Brasileiro): código único de 8 dígitos atribuído pelo Banco Central do Brasil a cada instituição financeira participante do **SPB** (Sistema de Pagamentos Brasileiro).
 
-- **POST /{ispb}/transfer**    
+- **POST /transfer**
     - Recebimento de pedido de transação pela instituição do pagador.
     - Mensagem: **PACS.008**.
 
-- **POST /{ispb}/transfer/status**
+- **POST /transfer/status**
     - Recebimento da confirmação/aceite da transação pela instituição do recebedor.
     - Mensagem: **PACS.002**.
 
@@ -32,7 +33,7 @@ Endpoint para recebimento de mensagens via _long polling_ clássico (sem uso de 
 Tipos de mensagens recebidas:
 - **PACS.002** → Confirmação de transação.
 - **PACS.008** → Solicitação de transação.
-	- Nesse caso, a PSP do recebedor deverá processar o evento e enviar o aceite do pagamento (POST /{ispb}/transfer/status).
+	- Nesse caso, a PSP do recebedor deverá processar o evento e enviar o aceite do pagamento (`POST /transfer/status`).
 
 
 ---
@@ -206,4 +207,3 @@ sequenceDiagram
 | **Kubernetes**           | Orquestração de contêineres. Garante escalabilidade, alta disponibilidade e gerenciamento automático dos serviços em ambiente distribuído.                                               |
 | **PostgreSQL**           | Banco de dados principal. Adequado para manter consistência em registros críticos como chaves PIX (DICT) e transações.                                                                   |
 | **Prometheus + Grafana** | Coleta e visualização de métricas (ex.: latência, throughput, erros). Útil para acompanhar se os SLAs de SPI e PSP estão sendo cumpridos.                                                |
-

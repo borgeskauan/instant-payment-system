@@ -1,6 +1,8 @@
 package br.kauan.kafkaproducer.http;
 
 import br.kauan.kafkaproducer.kafka.PaymentPublisher;
+import br.kauan.kafkaproducer.security.PspAuthenticationException;
+import br.kauan.kafkaproducer.security.PspAuthorizationException;
 
 import io.netty.buffer.Unpooled;
 import io.netty.handler.ssl.SslContext;
@@ -71,10 +73,11 @@ class ReactorNettyPaymentServerTest {
         FakePaymentPublisher publisher = new FakePaymentPublisher();
 
         try (RunningServer server = start(publisher)) {
-            int status = post(server, trustedClientSslContext, "/12345678/transfer", "pacs008".getBytes());
+            int status = post(server, trustedClientSslContext, "/transfer", "pacs008".getBytes());
 
             assertEquals(200, status);
-            assertArrayEquals("pacs008".getBytes(), publisher.paymentRequests.getFirst());
+            assertEquals("12345678", publisher.paymentRequests.getFirst().authenticatedIspb());
+            assertArrayEquals("pacs008".getBytes(), publisher.paymentRequests.getFirst().payload());
             assertEquals(0, publisher.statusReports.size());
         }
     }
@@ -87,12 +90,43 @@ class ReactorNettyPaymentServerTest {
             int status = post(
                     server,
                     trustedClientSslContext,
-                    "/12345678/transfer/status",
+                    "/transfer/status",
                     "pacs002".getBytes());
 
             assertEquals(200, status);
-            assertArrayEquals("pacs002".getBytes(), publisher.statusReports.getFirst());
+            assertEquals("12345678", publisher.statusReports.getFirst().authenticatedIspb());
+            assertArrayEquals("pacs002".getBytes(), publisher.statusReports.getFirst().payload());
             assertEquals(0, publisher.paymentRequests.size());
+        }
+    }
+
+    @Test
+    void ignoresSpoofedAuthenticatedIspbHttpHeader() throws Exception {
+        FakePaymentPublisher publisher = new FakePaymentPublisher();
+
+        try (RunningServer server = start(publisher)) {
+            int status = post(
+                    server,
+                    trustedClientSslContext,
+                    "/transfer",
+                    "pacs008".getBytes(),
+                    "99999999");
+
+            assertEquals(200, status);
+            assertEquals("12345678", publisher.paymentRequests.getFirst().authenticatedIspb());
+        }
+    }
+
+    @Test
+    void oldIspbRoutesAreNotAvailable() throws Exception {
+        try (RunningServer server = start(new FakePaymentPublisher())) {
+            int status = post(
+                    server,
+                    trustedClientSslContext,
+                    "/12345678/transfer",
+                    "pacs008".getBytes());
+
+            assertEquals(404, status);
         }
     }
 
@@ -102,9 +136,38 @@ class ReactorNettyPaymentServerTest {
         publisher.failure = new IllegalStateException("send failed");
 
         try (RunningServer server = start(publisher)) {
-            int status = post(server, trustedClientSslContext, "/12345678/transfer", "pacs008".getBytes());
+            int status = post(server, trustedClientSslContext, "/transfer", "pacs008".getBytes());
 
             assertEquals(500, status);
+        }
+    }
+
+    @Test
+    void returnsForbiddenWhenPublisherRejectsPspAuthorization() throws Exception {
+        FakePaymentPublisher publisher = new FakePaymentPublisher();
+        publisher.failure = new PspAuthorizationException("sender does not match certificate");
+
+        try (RunningServer server = start(publisher)) {
+            int status = post(server, trustedClientSslContext, "/transfer", "pacs008".getBytes());
+
+            assertEquals(403, status);
+        }
+    }
+
+    @Test
+    void returnsUnauthorizedWhenCertificateIdentityCannotBeExtracted() throws Exception {
+        DisposableServer disposableServer = new ReactorNettyPaymentServer(
+                0,
+                new FakePaymentPublisher(),
+                serverSslContext,
+                ignored -> {
+                    throw new PspAuthenticationException("missing PSP identity");
+                }).start();
+
+        try (RunningServer server = new RunningServer(disposableServer)) {
+            int status = post(server, trustedClientSslContext, "/transfer", "pacs008".getBytes());
+
+            assertEquals(401, status);
         }
     }
 
@@ -116,7 +179,7 @@ class ReactorNettyPaymentServerTest {
                     () -> post(
                             server,
                             clientWithoutCertificateSslContext,
-                            "/12345678/transfer",
+                            "/transfer",
                             "pacs008".getBytes()));
         }
     }
@@ -129,7 +192,7 @@ class ReactorNettyPaymentServerTest {
                     () -> post(
                             server,
                             untrustedClientSslContext,
-                            "/12345678/transfer",
+                            "/transfer",
                             "pacs008".getBytes()));
         }
     }
@@ -140,7 +203,7 @@ class ReactorNettyPaymentServerTest {
             assertThrows(RuntimeException.class, () -> HttpClient.create()
                     .responseTimeout(Duration.ofSeconds(5))
                     .post()
-                    .uri("http://127.0.0.1:" + server.port() + "/12345678/transfer")
+                    .uri("http://127.0.0.1:" + server.port() + "/transfer")
                     .send(Mono.just(Unpooled.wrappedBuffer("pacs008".getBytes())))
                     .response()
                     .block(Duration.ofSeconds(5)));
@@ -158,10 +221,25 @@ class ReactorNettyPaymentServerTest {
             String path,
             byte[] payload
     ) {
+        return post(server, clientSslContext, path, payload, null);
+    }
+
+    private int post(
+            RunningServer server,
+            SslContext clientSslContext,
+            String path,
+            byte[] payload,
+            String spoofedAuthenticatedIspb
+    ) {
         return HttpClient.create()
                 .secure(sslProvider -> sslProvider.sslContext(clientSslContext))
                 .responseTimeout(Duration.ofSeconds(5))
-                .headers(headers -> headers.set("Content-Type", "application/octet-stream"))
+                .headers(headers -> {
+                    headers.set("Content-Type", "application/octet-stream");
+                    if (spoofedAuthenticatedIspb != null) {
+                        headers.set("authenticated-ispb", spoofedAuthenticatedIspb);
+                    }
+                })
                 .post()
                 .uri("https://localhost:" + server.port() + path)
                 .send(Mono.just(Unpooled.wrappedBuffer(payload)))
@@ -241,19 +319,19 @@ class ReactorNettyPaymentServerTest {
     }
 
     private static final class FakePaymentPublisher implements PaymentPublisher {
-        final List<byte[]> paymentRequests = new ArrayList<>();
-        final List<byte[]> statusReports = new ArrayList<>();
+        final List<AuthenticatedPayload> paymentRequests = new ArrayList<>();
+        final List<AuthenticatedPayload> statusReports = new ArrayList<>();
         RuntimeException failure;
 
         @Override
-        public Mono<Void> publishPaymentRequest(byte[] payload) {
-            paymentRequests.add(payload);
+        public Mono<Void> publishPaymentRequest(String authenticatedIspb, byte[] payload) {
+            paymentRequests.add(new AuthenticatedPayload(authenticatedIspb, payload));
             return failure == null ? Mono.empty() : Mono.error(failure);
         }
 
         @Override
-        public Mono<Void> publishStatusReport(byte[] payload) {
-            statusReports.add(payload);
+        public Mono<Void> publishStatusReport(String authenticatedIspb, byte[] payload) {
+            statusReports.add(new AuthenticatedPayload(authenticatedIspb, payload));
             return failure == null ? Mono.empty() : Mono.error(failure);
         }
 
@@ -264,5 +342,8 @@ class ReactorNettyPaymentServerTest {
         @Override
         public void close() {
         }
+    }
+
+    private record AuthenticatedPayload(String authenticatedIspb, byte[] payload) {
     }
 }

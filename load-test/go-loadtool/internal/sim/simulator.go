@@ -342,7 +342,7 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 	body := payload.Pacs008(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
 	startedAt := time.Now().UnixNano()
-	status := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/%s/transfer", s.cfg.BaseURL, job.Pair.Payer), body)
+	status := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body)
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
 	if status >= 200 && status < 300 {
@@ -364,7 +364,7 @@ func (s *simulator) sendPacs002(ctx context.Context, receiverISPB string, endToE
 	status := s.post(
 		ctx,
 		receiverISPB,
-		fmt.Sprintf("%s/%s/transfer/status", s.cfg.BaseURL, receiverISPB),
+		fmt.Sprintf("%s/transfer/status", s.cfg.BaseURL),
 		body,
 	)
 	if status < 200 || status >= 300 {

@@ -18,7 +18,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -63,7 +62,7 @@ class IncomingTransactionServiceTest {
         assertThat(statuses.getValue())
                 .extracting(StatusReport::getOriginalPaymentId, StatusReport::getStatus)
                 .containsExactly(org.assertj.core.groups.Tuple.tuple("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS));
-        verify(transferRestClient).sendTransferStatus(anyString(), org.mockito.ArgumentMatchers.any(byte[].class));
+        verify(transferRestClient).sendTransferStatus(org.mockito.ArgumentMatchers.any(byte[].class));
     }
 
     @Test
@@ -75,6 +74,6 @@ class IncomingTransactionServiceTest {
         service.handleTransferRequests(List.of(divergent));
 
         verify(statusReportMapper, never()).toRegulatoryReport(anyList());
-        verify(transferRestClient, never()).sendTransferStatus(anyString(), org.mockito.ArgumentMatchers.any(byte[].class));
+        verify(transferRestClient, never()).sendTransferStatus(org.mockito.ArgumentMatchers.any(byte[].class));
     }
 }

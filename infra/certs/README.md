@@ -104,6 +104,21 @@ Example:
 SAN URI = urn:pix:ispb:12345678
 ```
 
+## kafka-producer identity contract
+
+The `kafka-producer` exposes only the mTLS endpoints `POST /transfer` and
+`POST /transfer/status`. It extracts the PSP identity from the client
+certificate and requires exactly one SAN URI matching
+`urn:pix:ispb:<8 digits>`.
+
+A certificate accepted by the CA but without a valid, unambiguous PSP identity
+receives HTTP `401`. A `pacs.008` whose payer does not match the authenticated
+ISPB receives HTTP `403`, and no transaction from that request is published.
+
+Every internal Kafka record created from either endpoint contains exactly one
+`authenticated-ispb` header derived from the certificate. Client HTTP headers
+and ISPB values from the URL or payload are not used as authenticated identity.
+
 ## Local model vs production model
 
 This local setup follows the same trust idea as production: each server trusts

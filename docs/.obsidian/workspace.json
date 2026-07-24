@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "board/Atividades/agora/autenticacao-psp-kafka-producer-identidade-spi.md",
+                "file": "IDEMPOTENCY_REPLAY_POLICY.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "autenticacao-psp-kafka-producer-identidade-spi"
+              "title": "IDEMPOTENCY_REPLAY_POLICY"
             }
           }
         ]
@@ -78,8 +78,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 239.5,
-    "collapsed": true
+    "width": 239.5
   },
   "right": {
     "id": "6edabe98d8d127d1",
@@ -172,6 +171,8 @@
   },
   "active": "f2bac1354622eca2",
   "lastOpenFiles": [
+    "KAFKA_DLQ_POLICY.md",
+    "board/Atividades/agora/autenticacao-psp-kafka-producer-identidade-spi.md",
     "board/Backlog/operacao-testes.md",
     "board/Atividades/agora/dead-letter-queue-mensagens-invalidas.md",
     "board/Atividades/agora",
@@ -207,8 +208,6 @@
     "MK/Criação de conta de usuário.md",
     "MK/Operacional.md",
     "MK/Visão geral da empresa.md",
-    "Carrer/Mestrado.md",
-    "Carrer/Marketing pessoal.md",
     "Imagens/Pasted image 20250227184342.png",
     "Imagens/Pasted image 20260103151227.png",
     "Imagens/Pasted image desktop.png",
