@@ -1,11 +1,14 @@
 package br.kauan.spi.adapter.input.kafka.consumer;
 
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
+import br.kauan.spi.Utils;
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentDuplicateDlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentStatusReportDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.NotAuthenticatedDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.UnauthorizedPspDlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
@@ -18,11 +21,8 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.Objects;
 
 @Slf4j
 @Component
@@ -36,6 +36,8 @@ public class PaymentMessageConsumer {
     private final InvalidPayloadDlqPublisher invalidPayloadDlqPublisher;
     private final DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher;
     private final DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher;
+    private final NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher;
+    private final UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher;
 
     @Autowired
     public PaymentMessageConsumer(
@@ -43,13 +45,17 @@ public class PaymentMessageConsumer {
             PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
             InvalidPayloadDlqPublisher invalidPayloadDlqPublisher,
             DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher,
-            DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher
+            DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher,
+            NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher,
+            UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher
     ) {
         this.messageDecoder = messageDecoder;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
         this.invalidPayloadDlqPublisher = invalidPayloadDlqPublisher;
         this.divergentDuplicateDlqPublisher = divergentDuplicateDlqPublisher;
         this.divergentStatusReportDlqPublisher = divergentStatusReportDlqPublisher;
+        this.notAuthenticatedDlqPublisher = notAuthenticatedDlqPublisher;
+        this.unauthorizedPspDlqPublisher = unauthorizedPspDlqPublisher;
         log.debug("PaymentMessageConsumer initialized - ready to consume from topics '{}' and '{}'",
                 PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
@@ -64,15 +70,23 @@ public class PaymentMessageConsumer {
             Acknowledgment acknowledgment
     ) {
         log.debug("Received records from Kafka topic '{}', records: {}", PAYMENT_REQUESTS_TOPIC, records.size());
-        var payments = new ArrayList<PaymentTransactionCommand>(records.size());
-        Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId = new LinkedHashMap<>();
+        var payments = new ArrayList<AuthenticatedPaymentRequest>(records.size());
 
-        for (ConsumerRecord<String, byte[]> record : records) {
+        for (int sourceOrdinal = 0; sourceOrdinal < records.size(); sourceOrdinal++) {
+            ConsumerRecord<String, byte[]> record = records.get(sourceOrdinal);
             try {
-                PaymentTransactionCommand payment = messageDecoder.toPaymentTransaction(record);
-                payments.add(payment);
-                recordsByPaymentId.computeIfAbsent(payment.getPaymentId(), ignored -> new ArrayList<>())
-                        .add(record);
+                String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
+                var payment = messageDecoder.toPaymentTransaction(record);
+                if (!Objects.equals(authenticatedIspb, Utils.getBankCode(payment.getSender()))) {
+                    unauthorizedPspDlqPublisher.publish(
+                            record,
+                            new UnauthorizedPspException(payment.getPaymentId(), authenticatedIspb)
+                    );
+                    continue;
+                }
+                payments.add(new AuthenticatedPaymentRequest(sourceOrdinal, authenticatedIspb, payment));
+            } catch (NotAuthenticatedException e) {
+                notAuthenticatedDlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
                 invalidPayloadDlqPublisher.publish(record, e);
             }
@@ -82,7 +96,8 @@ public class PaymentMessageConsumer {
             try {
                 PaymentTransactionPersistenceResult result =
                         paymentTransactionProcessorUseCase.processTransactions(payments);
-                publishDivergentDuplicates(result, recordsByPaymentId);
+                publishDivergentDuplicates(result, records);
+                publishUnauthorizedPaymentRequests(result, records);
             } catch (DataAccessResourceFailureException e) {
                 throw databaseUnavailable(
                         PAYMENT_REQUESTS_TOPIC,
@@ -96,21 +111,28 @@ public class PaymentMessageConsumer {
 
     private void publishDivergentDuplicates(
             PaymentTransactionPersistenceResult result,
-            Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId
+            List<ConsumerRecord<String, byte[]>> records
     ) {
-        Set<String> divergentPaymentIds = new LinkedHashSet<>();
-        for (PaymentTransactionCommand divergentDuplicate : result.divergentDuplicates()) {
-            divergentPaymentIds.add(divergentDuplicate.getPaymentId());
+        for (AuthenticatedPaymentRequest divergentDuplicate : result.divergentDuplicates()) {
+            divergentDuplicateDlqPublisher.publish(
+                    recordAt(records, divergentDuplicate.sourceOrdinal()),
+                    new DivergentDuplicatePaymentException(divergentDuplicate.command().getPaymentId())
+            );
         }
+    }
 
-        for (String paymentId : divergentPaymentIds) {
-            List<ConsumerRecord<String, byte[]>> divergentRecords =
-                    recordsByPaymentId.getOrDefault(paymentId, List.of());
-            for (ConsumerRecord<String, byte[]> divergentRecord : divergentRecords) {
-                divergentDuplicateDlqPublisher.publish(
-                        divergentRecord,
-                        new DivergentDuplicatePaymentException(paymentId));
-            }
+    private void publishUnauthorizedPaymentRequests(
+            PaymentTransactionPersistenceResult result,
+            List<ConsumerRecord<String, byte[]>> records
+    ) {
+        for (AuthenticatedPaymentRequest unauthorizedRequest : result.unauthorizedRequests()) {
+            unauthorizedPspDlqPublisher.publish(
+                    recordAt(records, unauthorizedRequest.sourceOrdinal()),
+                    new UnauthorizedPspException(
+                            unauthorizedRequest.command().getPaymentId(),
+                            unauthorizedRequest.authenticatedIspb()
+                    )
+            );
         }
     }
 
@@ -124,16 +146,21 @@ public class PaymentMessageConsumer {
             Acknowledgment acknowledgment
     ) {
         log.debug("Received records from Kafka topic '{}', records: {}", PAYMENT_STATUS_REPORTS_TOPIC, records.size());
-        var statusReports = new ArrayList<StatusReportCommand>(records.size());
-        Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId = new LinkedHashMap<>();
+        var statusReports = new ArrayList<AuthenticatedStatusReport>(records.size());
 
-        for (ConsumerRecord<String, byte[]> record : records) {
+        for (int sourceOrdinal = 0; sourceOrdinal < records.size(); sourceOrdinal++) {
+            ConsumerRecord<String, byte[]> record = records.get(sourceOrdinal);
             try {
-                StatusReportCommand statusReport = messageDecoder.toStatusReport(record);
+                String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
+                var statusReport = messageDecoder.toStatusReport(record);
                 log.debug("Processing status report. payment_id={}", statusReport.getOriginalPaymentId());
-                statusReports.add(statusReport);
-                recordsByPaymentId.computeIfAbsent(statusReport.getOriginalPaymentId(), ignored -> new ArrayList<>())
-                        .add(record);
+                statusReports.add(new AuthenticatedStatusReport(
+                        sourceOrdinal,
+                        authenticatedIspb,
+                        statusReport
+                ));
+            } catch (NotAuthenticatedException e) {
+                notAuthenticatedDlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
                 invalidPayloadDlqPublisher.publish(record, e);
             }
@@ -143,7 +170,8 @@ public class PaymentMessageConsumer {
             try {
                 StatusReportProcessingResult result =
                         paymentTransactionProcessorUseCase.processStatusReports(statusReports);
-                publishDivergentStatusReports(result, recordsByPaymentId);
+                publishDivergentStatusReports(result, records);
+                publishUnauthorizedStatusReports(result, records);
             } catch (DataAccessResourceFailureException e) {
                 throw databaseUnavailable(
                         PAYMENT_STATUS_REPORTS_TOPIC,
@@ -157,22 +185,41 @@ public class PaymentMessageConsumer {
 
     private void publishDivergentStatusReports(
             StatusReportProcessingResult result,
-            Map<String, List<ConsumerRecord<String, byte[]>>> recordsByPaymentId
+            List<ConsumerRecord<String, byte[]>> records
     ) {
-        Set<String> divergentPaymentIds = new LinkedHashSet<>();
-        for (StatusReportCommand divergentStatusReport : result.divergentStatusReports()) {
-            divergentPaymentIds.add(divergentStatusReport.getOriginalPaymentId());
+        for (AuthenticatedStatusReport divergentStatusReport : result.divergentStatusReports()) {
+            divergentStatusReportDlqPublisher.publish(
+                    recordAt(records, divergentStatusReport.sourceOrdinal()),
+                    new DivergentStatusReportException(
+                            divergentStatusReport.command().getOriginalPaymentId()
+                    )
+            );
         }
+    }
 
-        for (String paymentId : divergentPaymentIds) {
-            List<ConsumerRecord<String, byte[]>> divergentRecords =
-                    recordsByPaymentId.getOrDefault(paymentId, List.of());
-            for (ConsumerRecord<String, byte[]> divergentRecord : divergentRecords) {
-                divergentStatusReportDlqPublisher.publish(
-                        divergentRecord,
-                        new DivergentStatusReportException(paymentId));
-            }
+    private void publishUnauthorizedStatusReports(
+            StatusReportProcessingResult result,
+            List<ConsumerRecord<String, byte[]>> records
+    ) {
+        for (AuthenticatedStatusReport unauthorizedStatusReport : result.unauthorizedStatusReports()) {
+            unauthorizedPspDlqPublisher.publish(
+                    recordAt(records, unauthorizedStatusReport.sourceOrdinal()),
+                    new UnauthorizedPspException(
+                            unauthorizedStatusReport.command().getOriginalPaymentId(),
+                            unauthorizedStatusReport.authenticatedIspb()
+                    )
+            );
         }
+    }
+
+    private ConsumerRecord<String, byte[]> recordAt(
+            List<ConsumerRecord<String, byte[]>> records,
+            int sourceOrdinal
+    ) {
+        if (sourceOrdinal < 0 || sourceOrdinal >= records.size()) {
+            throw new IllegalStateException("Invalid source record ordinal: " + sourceOrdinal);
+        }
+        return records.get(sourceOrdinal);
     }
 
     private InfrastructureUnavailableException databaseUnavailable(

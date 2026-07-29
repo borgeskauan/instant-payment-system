@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
@@ -15,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 class IncomingStatusReportPersistence {
@@ -23,6 +25,7 @@ class IncomingStatusReportPersistence {
     private static final String SETTLED_PAYMENT = "SETTLED_PAYMENT";
     private static final String REJECTED_NOTIFICATION = "REJECTED_NOTIFICATION";
     private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
+    private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
 
     private static final String STATUS_REPORT_SQL = """
             WITH incoming AS (
@@ -30,12 +33,22 @@ class IncomingStatusReportPersistence {
                 FROM unnest(
                     ?::int[],
                     ?::text[],
+                    ?::text[],
                     ?::text[]
                 ) AS i(
                     ordinal,
                     payment_id,
-                    requested_status
+                    requested_status,
+                    authenticated_ispb
                 )
+            ),
+            existing_lookup AS MATERIALIZED (
+                SELECT
+                    i.*,
+                    p.payment_id AS existing_payment_id,
+                    p.receiver_bank_code AS existing_receiver_bank_code
+                FROM incoming i
+                LEFT JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
             ),
             unknown_actions AS (
                 SELECT
@@ -45,9 +58,52 @@ class IncomingStatusReportPersistence {
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
                     NULL::text AS receiver_bank_code
-                FROM incoming i
-                LEFT JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-                WHERE p.payment_id IS NULL
+                FROM existing_lookup i
+                WHERE i.existing_payment_id IS NULL
+            ),
+            unauthorized_actions AS (
+                SELECT
+                    i.ordinal,
+                    'UNAUTHORIZED_PSP'::text AS action,
+                    i.payment_id,
+                    NULL::bigint AS amount_cents,
+                    NULL::text AS sender_bank_code,
+                    NULL::text AS receiver_bank_code
+                FROM existing_lookup i
+                WHERE i.existing_payment_id IS NOT NULL
+                  AND i.authenticated_ispb IS DISTINCT FROM i.existing_receiver_bank_code
+            ),
+            authorized_existing_input AS (
+                SELECT *
+                FROM existing_lookup
+                WHERE existing_payment_id IS NOT NULL
+                  AND authenticated_ispb IS NOT DISTINCT FROM existing_receiver_bank_code
+            ),
+            authorized_group_stats AS (
+                SELECT
+                    payment_id,
+                    COUNT(DISTINCT requested_status) > 1 AS divergent
+                FROM authorized_existing_input
+                GROUP BY payment_id
+            ),
+            same_batch_divergent_actions AS (
+                SELECT
+                    i.ordinal,
+                    'DIVERGENT_STATUS_REPORT'::text AS action,
+                    i.payment_id,
+                    NULL::bigint AS amount_cents,
+                    NULL::text AS sender_bank_code,
+                    NULL::text AS receiver_bank_code
+                FROM authorized_existing_input i
+                JOIN authorized_group_stats stats USING (payment_id)
+                WHERE stats.divergent
+            ),
+            logical_authorized_existing AS (
+                SELECT DISTINCT ON (i.payment_id) i.*
+                FROM authorized_existing_input i
+                JOIN authorized_group_stats stats USING (payment_id)
+                WHERE NOT stats.divergent
+                ORDER BY i.payment_id, i.ordinal
             ),
             locked_existing AS MATERIALIZED (
                 SELECT
@@ -59,7 +115,7 @@ class IncomingStatusReportPersistence {
                     p.sender_bank_code,
                     p.receiver_bank_code,
                     (ABS(hashtext(p.payment_id)) % ?) AS bucket_id
-                FROM incoming i
+                FROM logical_authorized_existing i
                 JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
                 ORDER BY p.payment_id
                 FOR UPDATE OF p
@@ -219,6 +275,12 @@ class IncomingStatusReportPersistence {
             FROM unknown_actions
             UNION ALL
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            FROM unauthorized_actions
+            UNION ALL
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            FROM same_batch_divergent_actions
+            UNION ALL
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
             FROM divergent_existing_actions
             UNION ALL
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
@@ -240,35 +302,37 @@ class IncomingStatusReportPersistence {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    StatusReportPersistenceResult classifyAndApply(List<StatusReportCommand> statusReports) {
+    StatusReportPersistenceResult classifyAndApply(List<AuthenticatedStatusReport> statusReports) {
         if (statusReports.isEmpty()) {
-            return new StatusReportPersistenceResult(List.of(), List.of(), List.of());
+            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
         BatchLocalStatusReportClassification batchLocalClassification =
                 classifyStatusReportsWithinBatch(statusReports);
+        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
         List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
         List<PaymentTransactionCommand> rejectedPayments = new ArrayList<>();
-        Set<Integer> divergentStatusReportOrdinals =
-                new LinkedHashSet<>(batchLocalClassification.sameBatchDivergentOrdinals());
-
-        if (batchLocalClassification.statusReportsToClassify().isEmpty()) {
-            return new StatusReportPersistenceResult(
-                    settledPayments,
-                    rejectedPayments,
-                    divergentStatusReports(statusReports, divergentStatusReportOrdinals)
-            );
-        }
+        Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
+        Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
 
         for (StatusReportActionRow actionRow : classifyAndApplyStatusReports(batchLocalClassification.statusReportsToClassify())) {
-            StatusReportCommand statusReport = statusReports.get(actionRow.ordinal());
+            AuthenticatedStatusReport statusReport = reportsByOrdinal.get(actionRow.ordinal());
+            if (statusReport == null) {
+                throw new IllegalStateException("Unknown status report ordinal: " + actionRow.ordinal());
+            }
+
             switch (actionRow.action()) {
                 case SETTLED_PAYMENT -> settledPayments.add(toPaymentTransaction(actionRow));
                 case REJECTED_NOTIFICATION -> rejectedPayments.add(toPaymentTransaction(actionRow));
-                case DIVERGENT_STATUS_REPORT -> addOriginalBatchRecordOrdinals(
+                case DIVERGENT_STATUS_REPORT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
-                        batchLocalClassification.originalOrdinalsByPaymentId(),
-                        statusReport.getOriginalPaymentId()
+                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        actionRow.ordinal()
+                );
+                case UNAUTHORIZED_PSP -> addExpandedOrdinals(
+                        unauthorizedStatusReportOrdinals,
+                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        actionRow.ordinal()
                 );
                 default -> throw new IllegalStateException("Unknown status report action: " + actionRow.action());
             }
@@ -277,75 +341,103 @@ class IncomingStatusReportPersistence {
         return new StatusReportPersistenceResult(
                 settledPayments,
                 rejectedPayments,
-                divergentStatusReports(statusReports, divergentStatusReportOrdinals)
+                reportsWithOrdinals(statusReports, divergentStatusReportOrdinals),
+                reportsWithOrdinals(statusReports, unauthorizedStatusReportOrdinals)
         );
     }
 
-    private void addOriginalBatchRecordOrdinals(
-            Set<Integer> divergentDuplicateOrdinals,
-            Map<String, List<Integer>> originalOrdinalsByPaymentId,
-            String paymentId
+    private Map<Integer, AuthenticatedStatusReport> reportsByOrdinal(
+            List<AuthenticatedStatusReport> statusReports
     ) {
-        divergentDuplicateOrdinals.addAll(originalOrdinalsByPaymentId.get(paymentId));
+        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal =
+                new LinkedHashMap<>(mapCapacity(statusReports.size()));
+        for (AuthenticatedStatusReport statusReport : statusReports) {
+            if (reportsByOrdinal.put(statusReport.sourceOrdinal(), statusReport) != null) {
+                throw new IllegalArgumentException(
+                        "Status report source ordinals must be unique: " + statusReport.sourceOrdinal());
+            }
+        }
+        return reportsByOrdinal;
+    }
+
+    private void addExpandedOrdinals(
+            Set<Integer> classifiedOrdinals,
+            Map<Integer, List<Integer>> originalOrdinalsByRepresentative,
+            int representativeOrdinal
+    ) {
+        List<Integer> originalOrdinals = originalOrdinalsByRepresentative.get(representativeOrdinal);
+        if (originalOrdinals == null) {
+            throw new IllegalStateException("Unknown status report representative ordinal: " + representativeOrdinal);
+        }
+        classifiedOrdinals.addAll(originalOrdinals);
     }
 
     private BatchLocalStatusReportClassification classifyStatusReportsWithinBatch(
-            List<StatusReportCommand> statusReports
+            List<AuthenticatedStatusReport> statusReports
     ) {
         Map<String, List<StatusReportRow>> rowsByPaymentId =
                 new LinkedHashMap<>(mapCapacity(statusReports.size()));
-        for (int ordinal = 0; ordinal < statusReports.size(); ordinal++) {
-            StatusReportCommand statusReport = statusReports.get(ordinal);
+        for (AuthenticatedStatusReport statusReport : statusReports) {
             rowsByPaymentId.computeIfAbsent(
-                    statusReport.getOriginalPaymentId(),
+                    statusReport.command().getOriginalPaymentId(),
                     ignored -> new ArrayList<>()
-            ).add(new StatusReportRow(ordinal, statusReport));
+            ).add(new StatusReportRow(statusReport));
         }
 
         List<StatusReportRow> statusReportsToClassify = new ArrayList<>(rowsByPaymentId.size());
-        List<Integer> divergentStatusReportOrdinals = new ArrayList<>();
-        Map<String, List<Integer>> originalOrdinalsByPaymentId = new LinkedHashMap<>(mapCapacity(rowsByPaymentId.size()));
+        Map<Integer, List<Integer>> originalOrdinalsByRepresentative =
+                new LinkedHashMap<>(mapCapacity(statusReports.size()));
 
-        for (var entry : rowsByPaymentId.entrySet()) {
-            List<StatusReportRow> statusReportRows = entry.getValue();
+        for (List<StatusReportRow> statusReportRows : rowsByPaymentId.values()) {
             List<Integer> originalOrdinals = new ArrayList<>(statusReportRows.size());
-            PaymentStatus firstStatus = statusReportRows.get(0).statusReport().getStatus();
-            boolean divergent = false;
+            StatusReportRow firstRow = statusReportRows.get(0);
+            boolean homogeneous = true;
             for (StatusReportRow statusReportRow : statusReportRows) {
                 originalOrdinals.add(statusReportRow.ordinal());
-                if (statusReportRow.statusReport().getStatus() != firstStatus) {
-                    divergent = true;
+                if (!sameSecurityAndStatus(firstRow, statusReportRow)) {
+                    homogeneous = false;
                 }
             }
-            originalOrdinalsByPaymentId.put(entry.getKey(), originalOrdinals);
 
-            if (divergent) {
-                for (StatusReportRow statusReportRow : statusReportRows) {
-                    divergentStatusReportOrdinals.add(statusReportRow.ordinal());
-                }
+            if (homogeneous) {
+                statusReportsToClassify.add(firstRow);
+                originalOrdinalsByRepresentative.put(firstRow.ordinal(), originalOrdinals);
             } else {
-                statusReportsToClassify.add(statusReportRows.get(0));
+                for (StatusReportRow statusReportRow : statusReportRows) {
+                    statusReportsToClassify.add(statusReportRow);
+                    originalOrdinalsByRepresentative.put(
+                            statusReportRow.ordinal(),
+                            List.of(statusReportRow.ordinal())
+                    );
+                }
             }
         }
 
         return new BatchLocalStatusReportClassification(
                 statusReportsToClassify,
-                divergentStatusReportOrdinals,
-                originalOrdinalsByPaymentId
+                originalOrdinalsByRepresentative
         );
     }
 
-    private List<StatusReportCommand> divergentStatusReports(
-            List<StatusReportCommand> statusReports,
-            Set<Integer> divergentStatusReportOrdinals
+    private boolean sameSecurityAndStatus(StatusReportRow firstRow, StatusReportRow row) {
+        return Objects.equals(
+                firstRow.statusReport().authenticatedIspb(),
+                row.statusReport().authenticatedIspb()
+        )
+                && firstRow.statusReport().command().getStatus() == row.statusReport().command().getStatus();
+    }
+
+    private List<AuthenticatedStatusReport> reportsWithOrdinals(
+            List<AuthenticatedStatusReport> statusReports,
+            Set<Integer> classifiedOrdinals
     ) {
-        List<StatusReportCommand> divergentStatusReports = new ArrayList<>(divergentStatusReportOrdinals.size());
-        for (int ordinal = 0; ordinal < statusReports.size(); ordinal++) {
-            if (divergentStatusReportOrdinals.contains(ordinal)) {
-                divergentStatusReports.add(statusReports.get(ordinal));
+        List<AuthenticatedStatusReport> classifiedReports = new ArrayList<>(classifiedOrdinals.size());
+        for (AuthenticatedStatusReport statusReport : statusReports) {
+            if (classifiedOrdinals.contains(statusReport.sourceOrdinal())) {
+                classifiedReports.add(statusReport);
             }
         }
-        return divergentStatusReports;
+        return classifiedReports;
     }
 
     private List<StatusReportActionRow> classifyAndApplyStatusReports(List<StatusReportRow> statusReports) {
@@ -354,16 +446,19 @@ class IncomingStatusReportPersistence {
             Array ordinalArray = null;
             Array paymentIdArray = null;
             Array requestedStatusArray = null;
+            Array authenticatedIspbArray = null;
             try {
                 ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
                 paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
                 requestedStatusArray = connection.createArrayOf("text", incoming.requestedStatuses());
+                authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
 
                 try (var statement = connection.prepareStatement(STATUS_REPORT_SQL)) {
                     int parameterIndex = 1;
                     statement.setArray(parameterIndex++, ordinalArray);
                     statement.setArray(parameterIndex++, paymentIdArray);
                     statement.setArray(parameterIndex++, requestedStatusArray);
+                    statement.setArray(parameterIndex++, authenticatedIspbArray);
                     statement.setInt(parameterIndex++, BUCKET_COUNT);
 
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
@@ -406,7 +501,7 @@ class IncomingStatusReportPersistence {
                     }
                 }
             } finally {
-                free(ordinalArray, paymentIdArray, requestedStatusArray);
+                free(ordinalArray, paymentIdArray, requestedStatusArray, authenticatedIspbArray);
             }
         });
     }
@@ -416,16 +511,24 @@ class IncomingStatusReportPersistence {
         Integer[] ordinals = new Integer[size];
         String[] paymentIds = new String[size];
         String[] requestedStatuses = new String[size];
+        String[] authenticatedIspbs = new String[size];
 
         for (int index = 0; index < statusReports.size(); index++) {
             StatusReportRow statusReportRow = statusReports.get(index);
-            StatusReportCommand statusReport = statusReportRow.statusReport();
+            AuthenticatedStatusReport authenticatedStatusReport = statusReportRow.statusReport();
+            StatusReportCommand statusReport = authenticatedStatusReport.command();
             ordinals[index] = statusReportRow.ordinal();
             paymentIds[index] = statusReport.getOriginalPaymentId();
             requestedStatuses[index] = statusReport.getStatus().name();
+            authenticatedIspbs[index] = authenticatedStatusReport.authenticatedIspb();
         }
 
-        return new IncomingStatusReportArrays(ordinals, paymentIds, requestedStatuses);
+        return new IncomingStatusReportArrays(
+                ordinals,
+                paymentIds,
+                requestedStatuses,
+                authenticatedIspbs
+        );
     }
 
     private void free(Array... arrays) throws SQLException {
@@ -450,15 +553,16 @@ class IncomingStatusReportPersistence {
     }
 
     private record StatusReportRow(
-            int ordinal,
-            StatusReportCommand statusReport
+            AuthenticatedStatusReport statusReport
     ) {
+        private int ordinal() {
+            return statusReport.sourceOrdinal();
+        }
     }
 
     private record BatchLocalStatusReportClassification(
             List<StatusReportRow> statusReportsToClassify,
-            List<Integer> sameBatchDivergentOrdinals,
-            Map<String, List<Integer>> originalOrdinalsByPaymentId
+            Map<Integer, List<Integer>> originalOrdinalsByRepresentative
     ) {
     }
 
@@ -475,11 +579,14 @@ class IncomingStatusReportPersistence {
     private record IncomingStatusReportArrays(
             Integer[] ordinals,
             String[] paymentIds,
-            String[] requestedStatuses
+            String[] requestedStatuses,
+            String[] authenticatedIspbs
     ) {
         private IncomingStatusReportArrays {
             int size = ordinals.length;
-            if (paymentIds.length != size || requestedStatuses.length != size) {
+            if (paymentIds.length != size
+                    || requestedStatuses.length != size
+                    || authenticatedIspbs.length != size) {
                 throw new IllegalStateException("Incoming status report arrays must have the same size");
             }
         }

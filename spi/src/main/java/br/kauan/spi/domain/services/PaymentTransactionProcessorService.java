@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services;
 
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.NotificationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
@@ -35,9 +36,9 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
-    public PaymentTransactionPersistenceResult processTransactions(List<PaymentTransactionCommand> transactions) {
+    public PaymentTransactionPersistenceResult processTransactions(List<AuthenticatedPaymentRequest> transactions) {
         if (transactions.isEmpty()) {
-            return new PaymentTransactionPersistenceResult(List.of(), List.of());
+            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of());
         }
 
         log.debug("[PIX FLOW - Step 3] SPI received transaction requests. payments={}",
@@ -58,10 +59,13 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
-    public StatusReportProcessingResult processStatusReports(List<StatusReportCommand> statusReports) {
+    public StatusReportProcessingResult processStatusReports(List<AuthenticatedStatusReport> statusReports) {
         StatusReportPersistenceResult persistenceResult =
                 paymentTransactionRepository.classifyAndApplyIncomingStatusReports(statusReports);
-        List<StatusReportCommand> divergentStatusReports = new ArrayList<>(persistenceResult.divergentStatusReports());
+        List<AuthenticatedStatusReport> divergentStatusReports =
+                new ArrayList<>(persistenceResult.divergentStatusReports());
+        List<AuthenticatedStatusReport> unauthorizedStatusReports =
+                new ArrayList<>(persistenceResult.unauthorizedStatusReports());
 
         if (!persistenceResult.settledPayments().isEmpty()) {
             processSettledPayments(persistenceResult.settledPayments());
@@ -71,7 +75,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             processRejectedPayments(persistenceResult.rejectedPayments());
         }
 
-        return new StatusReportProcessingResult(divergentStatusReports);
+        return new StatusReportProcessingResult(divergentStatusReports, unauthorizedStatusReports);
     }
 
     private void processRejectedPayments(List<PaymentTransactionCommand> rejectedPayments) {

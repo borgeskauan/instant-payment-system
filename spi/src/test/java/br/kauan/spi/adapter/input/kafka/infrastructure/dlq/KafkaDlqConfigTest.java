@@ -119,6 +119,44 @@ class KafkaDlqConfigTest {
     }
 
     @Test
+    void notAuthenticatedDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
+        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
+        DeadLetterPublishingRecoverer recoverer =
+                config.notAuthenticatedDeadLetterPublishingRecoverer(kafkaTemplate);
+        ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
+                "spi-payment-requests",
+                2,
+                10L,
+                "payment-key",
+                new byte[0]
+        );
+
+        recoverer.accept(sourceRecord, null, new IllegalStateException("missing identity"));
+
+        assertThat(capturedErrorType(kafkaTemplate)).isEqualTo("NOT_AUTHENTICATED");
+    }
+
+    @Test
+    void unauthorizedPspDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
+        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
+        DeadLetterPublishingRecoverer recoverer =
+                config.unauthorizedPspDeadLetterPublishingRecoverer(kafkaTemplate);
+        ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
+                "spi-payment-status-reports",
+                3,
+                11L,
+                "status-key",
+                new byte[0]
+        );
+
+        recoverer.accept(sourceRecord, null, new IllegalStateException("wrong PSP"));
+
+        assertThat(capturedErrorType(kafkaTemplate)).isEqualTo("UNAUTHORIZED_PSP");
+    }
+
+    @Test
     void batchLevelRecoveryPublishesEveryRecordIndividuallyToDlq() {
         KafkaDlqConfig config = new KafkaDlqConfig();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
@@ -169,5 +207,21 @@ class KafkaDlqConfigTest {
 
     private static String header(Headers headers, String name) {
         return new String(headers.lastHeader(name).value(), StandardCharsets.UTF_8);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static KafkaTemplate<String, byte[]> successfulKafkaTemplate() {
+        KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        return kafkaTemplate;
+    }
+
+    private static String capturedErrorType(KafkaTemplate<String, byte[]> kafkaTemplate) {
+        var captor = forClass(ProducerRecord.class);
+        verify(kafkaTemplate).send(captor.capture());
+        @SuppressWarnings("unchecked")
+        ProducerRecord<String, byte[]> dlqRecord = captor.getValue();
+        return header(dlqRecord.headers(), "dlq.error-type");
     }
 }

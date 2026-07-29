@@ -25,6 +25,8 @@ public class KafkaDlqConfig {
     private static final String INVALID_PAYLOAD = "INVALID_PAYLOAD";
     private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
     private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
+    private static final String NOT_AUTHENTICATED = "NOT_AUTHENTICATED";
+    private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
     private static final Duration DLQ_SEND_TIMEOUT = Duration.ofSeconds(10);
 
     @Value("${spring.kafka.bootstrap-servers}")
@@ -82,6 +84,20 @@ public class KafkaDlqConfig {
             @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
     ) {
         return createDeadLetterPublishingRecoverer(kafkaTemplate, DIVERGENT_STATUS_REPORT);
+    }
+
+    @Bean
+    public DeadLetterPublishingRecoverer notAuthenticatedDeadLetterPublishingRecoverer(
+            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
+    ) {
+        return createDeadLetterPublishingRecoverer(kafkaTemplate, NOT_AUTHENTICATED);
+    }
+
+    @Bean
+    public DeadLetterPublishingRecoverer unauthorizedPspDeadLetterPublishingRecoverer(
+            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
+    ) {
+        return createDeadLetterPublishingRecoverer(kafkaTemplate, UNAUTHORIZED_PSP);
     }
 
     private DeadLetterPublishingRecoverer createDeadLetterPublishingRecoverer(

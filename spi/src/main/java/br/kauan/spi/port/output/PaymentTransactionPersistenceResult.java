@@ -1,11 +1,13 @@
 package br.kauan.spi.port.output;
 
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 
 import java.util.List;
 
 public record PaymentTransactionPersistenceResult(
         List<PaymentTransactionCommand> acceptanceRequests,
-        List<PaymentTransactionCommand> divergentDuplicates
+        List<AuthenticatedPaymentRequest> divergentDuplicates,
+        List<AuthenticatedPaymentRequest> unauthorizedRequests
 ) {
 }

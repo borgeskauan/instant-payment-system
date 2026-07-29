@@ -119,6 +119,36 @@ Every internal Kafka record created from either endpoint contains exactly one
 `authenticated-ispb` header derived from the certificate. Client HTTP headers
 and ISPB values from the URL or payload are not used as authenticated identity.
 
+## SPI authorization contract
+
+The SPI accepts an internal payment record only when it contains exactly one
+`authenticated-ispb` header. The value must be valid UTF-8 and contain exactly
+eight decimal digits. A missing, duplicated, null, malformed, or invalid header
+is published per record to the source topic DLQ with
+`dlq.error-type=NOT_AUTHENTICATED`.
+
+Header validation happens before protobuf decoding. This means a record with
+both an invalid authentication header and an invalid payload is classified as
+`NOT_AUTHENTICATED`.
+
+For a `pacs.008`, the SPI requires the authenticated ISPB to match the payer in
+the payload. For an existing payment, it also compares the identity with the
+persisted `sender_bank_code` before fingerprint and status replay rules are
+evaluated.
+
+For a `pacs.002`, the SPI compares the authenticated ISPB with the persisted
+`receiver_bank_code` before acquiring payment or funds locks and before applying
+status changes or settlement. An unknown payment remains a
+`DIVERGENT_STATUS_REPORT`, because there is no persisted owner against which to
+authorize it.
+
+A valid identity that is not authorized for the message or payment is
+published per record with `dlq.error-type=UNAUTHORIZED_PSP`. Invalid or
+unauthorized records do not participate in business deduplication. Other
+authorized records in the same Kafka batch continue processing after the
+security DLQ publication succeeds. A security DLQ publication failure prevents
+the batch acknowledgment.
+
 ## Local model vs production model
 
 This local setup follows the same trust idea as production: each server trusts

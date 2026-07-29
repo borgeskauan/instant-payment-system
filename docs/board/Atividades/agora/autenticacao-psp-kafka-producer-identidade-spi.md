@@ -1,6 +1,6 @@
 # Autenticação PSP -> kafka-producer e identidade no SPI
 
-- [ ] Autenticação PSP -> `kafka-producer` e identidade no SPI
+- [x] Autenticação PSP -> `kafka-producer` e identidade no SPI
 
 **Por que existe**
 
@@ -32,18 +32,18 @@ As regras de autorização são:
 - [x] Propagar a identidade autenticada para o SPI.
   - [x] Publicar o ISPB autenticado no header Kafka `authenticated-ispb`.
   - [x] Criar o header exclusivamente a partir do certificado, nunca a partir de informação recebida do cliente HTTP.
-- [ ] Autorizar mensagens no SPI antes de qualquer efeito.
-  - [ ] Para `pacs.008`, comparar `authenticated-ispb` com o ISPB pagador do payload e, quando o pagamento já existir, com o `sender_bank_code` persistido.
-  - [ ] Para `pacs.002`, comparar `authenticated-ispb` com o `receiver_bank_code` persistido antes de update, idempotência ou settlement.
-  - [ ] Impedir que mensagem sem `authenticated-ispb`, com header duplicado ou com identidade incompatível altere estado, saldo ou produza efeitos laterais.
-  - [ ] Publicar erros determinísticos de segurança na DLQ: `NOT_AUTHENTICATED` para header ausente, duplicado ou malformado; `UNAUTHORIZED_PSP` para identidade válida sem autorização sobre a mensagem ou transação.
-- [ ] Cobrir autenticação e autorização com testes.
+- [x] Autorizar mensagens no SPI antes de qualquer efeito.
+  - [x] Para `pacs.008`, comparar `authenticated-ispb` com o ISPB pagador do payload e, quando o pagamento já existir, com o `sender_bank_code` persistido.
+  - [x] Para `pacs.002`, comparar `authenticated-ispb` com o `receiver_bank_code` persistido antes de update, idempotência ou settlement.
+  - [x] Impedir que mensagem sem `authenticated-ispb`, com header duplicado ou com identidade incompatível altere estado, saldo ou produza efeitos laterais.
+  - [x] Publicar erros determinísticos de segurança na DLQ: `NOT_AUTHENTICATED` para header ausente, duplicado ou malformado; `UNAUTHORIZED_PSP` para identidade válida sem autorização sobre a mensagem ou transação.
+- [x] Cobrir autenticação e autorização com testes.
   - [x] Testar PSP sem certificado e certificado inválido.
   - [x] Testar `pacs.008` com pagador divergente na borda HTTP.
-  - [ ] Testar replay de `paymentId` pertencente a outro pagador no SPI.
+  - [x] Testar replay de `paymentId` pertencente a outro pagador no SPI.
   - [x] Testar que um `pacs.008` com múltiplas transações, sendo uma delas não autorizada, é rejeitado integralmente e não publica nenhum record Kafka.
-  - [ ] Testar que um `pacs.002` enviado por PSP diferente do recebedor não altera a transação e é publicado na DLQ.
-- [ ] Documentar o contrato de confiança: certificado válido na borda HTTP do `kafka-producer` -> PSP autenticado -> header Kafka interno `authenticated-ispb` -> SPI autoriza a operação.
+  - [x] Testar que um `pacs.002` enviado por PSP diferente do recebedor não altera a transação e é publicado na DLQ.
+- [x] Documentar o contrato de confiança: certificado válido na borda HTTP do `kafka-producer` -> PSP autenticado -> header Kafka interno `authenticated-ispb` -> SPI autoriza a operação.
 
 **Notas**
 

@@ -1,15 +1,17 @@
 package br.kauan.spi.port.output;
 
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 
 import java.util.List;
 
 public interface PaymentTransactionRepository {
 
     PaymentTransactionPersistenceResult storeAndClassifyIncomingPaymentRequests(
-            List<PaymentTransactionCommand> paymentTransactions
+            List<AuthenticatedPaymentRequest> paymentTransactions
     );
 
-    StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(List<StatusReportCommand> statusReports);
+    StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(
+            List<AuthenticatedStatusReport> statusReports
+    );
 }
