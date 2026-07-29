@@ -1,7 +1,7 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
@@ -26,13 +26,15 @@ public class JpaAdapter implements PaymentTransactionRepository {
 
     @Override
     public PaymentTransactionPersistenceResult storeAndClassifyIncomingPaymentRequests(
-            List<PaymentTransactionCommand> paymentTransactions
+            List<AuthenticatedPaymentRequest> paymentTransactions
     ) {
         return incomingPaymentRequestPersistence.storeAndClassify(paymentTransactions);
     }
 
     @Override
-    public StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(List<StatusReportCommand> statusReports) {
+    public StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(
+            List<AuthenticatedStatusReport> statusReports
+    ) {
         return incomingStatusReportPersistence.classifyAndApply(statusReports);
     }
 }

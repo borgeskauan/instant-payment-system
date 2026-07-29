@@ -3,18 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Generate local development certificates for PSP <-> notification-gateway mTLS.
+Generate local development certificates for PSP mTLS connections.
 
 Usage:
   infra/certs/generate-local-mtls-certs.sh [--force] init
   infra/certs/generate-local-mtls-certs.sh [--force] [--psp-root DIR] psp <ispb>
 
 Commands:
-  init        Generate the local CA and notification-gateway server certificate.
+  init        Generate the local CA and server certificates.
   psp <ispb> Generate a PSP client certificate with SAN URI urn:pix:ispb:<ispb>.
 
 Options:
   --force         Recreate the target certificate files if they already exist.
+                  With init, also remove local PSP certificates signed by the old CA.
   --psp-root DIR  Write PSP certificates under DIR/psp-<ispb> instead of local/.
   -h, --help      Show this help.
 
@@ -75,14 +76,15 @@ all_exist() {
   return 0
 }
 
-write_gateway_extfile() {
+write_server_extfile() {
   local file="$1"
+  local server_name="$2"
 
-  cat >"$file" <<'EOF'
+  cat >"$file" <<EOF
 basicConstraints = critical,CA:FALSE
 keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = serverAuth
-subjectAltName = DNS:notification-gateway,DNS:localhost
+subjectAltName = DNS:$server_name,DNS:localhost
 EOF
 }
 
@@ -129,24 +131,25 @@ generate_ca() {
   echo "generated local CA: $ca_dir"
 }
 
-generate_gateway() {
+generate_server() {
   local force="$1"
   local ca_dir="$2"
-  local gateway_dir="$3"
+  local server_dir="$3"
+  local server_name="$4"
   local ca_crt="$ca_dir/ca.crt"
   local ca_key="$ca_dir/ca.key"
-  local server_crt="$gateway_dir/server.crt"
-  local server_key="$gateway_dir/server.key"
+  local server_crt="$server_dir/server.crt"
+  local server_key="$server_dir/server.key"
 
   [[ -f "$ca_crt" && -f "$ca_key" ]] || fail "local CA is missing. Run init first."
 
-  mkdir -p "$gateway_dir"
+  mkdir -p "$server_dir"
   if [[ "$force" != true ]]; then
-    ensure_complete_or_absent "notification-gateway certificate" "$server_crt" "$server_key"
+    ensure_complete_or_absent "$server_name certificate" "$server_crt" "$server_key"
   fi
 
   if all_exist "$server_crt" "$server_key" && [[ "$force" != true ]]; then
-    echo "notification-gateway certificate already exists: $gateway_dir"
+    echo "$server_name certificate already exists: $server_dir"
     return
   fi
 
@@ -157,12 +160,12 @@ generate_gateway() {
 
   local csr="$tmp_dir/server.csr"
   local extfile="$tmp_dir/server.ext"
-  write_gateway_extfile "$extfile"
+  write_server_extfile "$extfile" "$server_name"
 
   openssl req -newkey rsa:2048 -nodes \
     -keyout "$server_key" \
     -out "$csr" \
-    -subj "/CN=notification-gateway" \
+    -subj "/CN=$server_name" \
     >/dev/null 2>&1
 
   openssl x509 -req -sha256 -days 825 \
@@ -177,7 +180,7 @@ generate_gateway() {
 
   chmod 600 "$server_key"
   rm -rf "$tmp_dir"
-  echo "generated notification-gateway certificate: $gateway_dir"
+  echo "generated $server_name certificate: $server_dir"
 }
 
 generate_psp() {
@@ -232,6 +235,23 @@ generate_psp() {
   echo "generated PSP certificate: $psp_dir"
 }
 
+remove_local_psp_certificates() {
+  local local_dir="$1"
+  local psp_dir
+  local removed=false
+
+  for psp_dir in "$local_dir"/psp-*; do
+    [[ -d "$psp_dir" ]] || continue
+    rm -rf -- "$psp_dir"
+    echo "removed local PSP certificate: $psp_dir"
+    removed=true
+  done
+
+  if [[ "$removed" != true ]]; then
+    echo "no local PSP certificates to remove: $local_dir"
+  fi
+}
+
 main() {
   require_openssl
 
@@ -281,14 +301,21 @@ main() {
   local local_dir="$certs_dir/local"
   local ca_dir="$local_dir/ca"
   local gateway_dir="$local_dir/notification-gateway"
+  local kafka_producer_dir="$local_dir/kafka-producer"
   psp_root="${psp_root:-$local_dir}"
 
   case "$command" in
     init)
       [[ -z "$ispb" ]] || fail "init does not accept an ISPB"
       [[ "$psp_root" == "$local_dir" ]] || fail "--psp-root is only supported for psp"
+      if [[ "$force" == true ]]; then
+        echo "warning: --force init rotates the local CA and removes local PSP certificates"
+        remove_local_psp_certificates "$local_dir"
+        echo "PSP certificates must be regenerated and running PSP containers must be restarted"
+      fi
       generate_ca "$force" "$ca_dir"
-      generate_gateway "$force" "$ca_dir" "$gateway_dir"
+      generate_server "$force" "$ca_dir" "$gateway_dir" "notification-gateway"
+      generate_server "$force" "$ca_dir" "$kafka_producer_dir" "kafka-producer"
       ;;
     psp)
       [[ -n "$ispb" ]] || fail "missing ISPB for psp command"

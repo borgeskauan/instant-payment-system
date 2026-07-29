@@ -15,8 +15,8 @@ public class KafkaProducerClient implements ProducerClient {
     }
 
     @Override
-    public void send(String topic, byte[] payload, SendCallback callback) {
-        producer.send(new ProducerRecord<>(topic, payload), (metadata, exception) -> {
+    public void send(ProducerRecord<byte[], byte[]> record, SendCallback callback) {
+        producer.send(record, (metadata, exception) -> {
             if (exception == null) {
                 callback.complete(null);
                 return;

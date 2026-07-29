@@ -53,7 +53,7 @@ public class TransferRequestService {
             byte[] requestBytes = objectMapper.writeValueAsBytes(regulatoryRequest);
             log.info("[PIX FLOW - Step 3] Sending PACS.008 transfer request to kafka-producer for bank: {}, payload size: {} bytes", 
                     GlobalVariables.getBankCode(), requestBytes.length);
-            transferRestClient.requestTransfer(GlobalVariables.getBankCode(), requestBytes);
+            transferRestClient.requestTransfer(requestBytes);
             log.info("[PIX FLOW - Step 3] Transfer request sent successfully to kafka-producer (will be forwarded to SPI)");
         } catch (Exception e) {
             log.error("[PIX FLOW - Error] Failed to serialize or send transfer request", e);

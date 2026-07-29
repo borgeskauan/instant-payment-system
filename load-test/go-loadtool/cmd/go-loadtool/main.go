@@ -41,6 +41,9 @@ func runSimulate(args []string) error {
 	cfg := runtimeCfg.Sim
 	flags := flag.NewFlagSet("simulate", flag.ContinueOnError)
 	flags.StringVar(&cfg.OutputDir, "out", cfg.OutputDir, "output directory")
+	flags.StringVar(&cfg.CentralTransferCACert, "central-transfer-ca-cert", cfg.CentralTransferCACert, "kafka-producer CA certificate path")
+	flags.StringVar(&cfg.CentralTransferClientCertRoot, "central-transfer-client-cert-root", cfg.CentralTransferClientCertRoot, "root directory containing PSP client certificates for kafka-producer")
+	flags.StringVar(&cfg.CentralTransferServerName, "central-transfer-server-name", cfg.CentralTransferServerName, "TLS server name for kafka-producer")
 	flags.StringVar(&cfg.GatewayCACert, "gateway-ca-cert", cfg.GatewayCACert, "notification gateway CA certificate path")
 	flags.StringVar(&cfg.GatewayClientCertRoot, "gateway-client-cert-root", cfg.GatewayClientCertRoot, "root directory containing psp-<ISPB>/client certs")
 	flags.StringVar(&cfg.GatewayServerName, "gateway-server-name", cfg.GatewayServerName, "TLS server name for notification gateway")

@@ -10,7 +10,10 @@ import (
 func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "loadtool-config.json")
 	content := `{
-  "baseUrl": "http://127.0.0.1:8001",
+  "baseUrl": "https://127.0.0.1:8001",
+  "centralTransferCaCert": "/tmp/central-ca.crt",
+  "centralTransferClientCertRoot": "/tmp/central-certs",
+  "centralTransferServerName": "kafka-producer",
   "gatewayAddress": "127.0.0.1:9090",
   "targetTxRate": 1234,
   "warmup": "10s",
@@ -33,8 +36,17 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 		t.Fatalf("Load returned error: %v", err)
 	}
 
-	if cfg.Sim.BaseURL != "http://127.0.0.1:8001" {
+	if cfg.Sim.BaseURL != "https://127.0.0.1:8001" {
 		t.Fatalf("BaseURL = %q", cfg.Sim.BaseURL)
+	}
+	if cfg.Sim.CentralTransferCACert != "/tmp/central-ca.crt" {
+		t.Fatalf("CentralTransferCACert = %q", cfg.Sim.CentralTransferCACert)
+	}
+	if cfg.Sim.CentralTransferClientCertRoot != "/tmp/central-certs" {
+		t.Fatalf("CentralTransferClientCertRoot = %q", cfg.Sim.CentralTransferClientCertRoot)
+	}
+	if cfg.Sim.CentralTransferServerName != "kafka-producer" {
+		t.Fatalf("CentralTransferServerName = %q", cfg.Sim.CentralTransferServerName)
 	}
 	if cfg.Sim.GatewayAddress != "127.0.0.1:9090" {
 		t.Fatalf("GatewayAddress = %q", cfg.Sim.GatewayAddress)

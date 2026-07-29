@@ -2,6 +2,8 @@ package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -20,6 +22,7 @@ import java.sql.Array;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -84,7 +87,7 @@ class JpaAdapterTest {
         );
 
         PaymentTransactionPersistenceResult result =
-                adapter.storeAndClassifyIncomingPaymentRequests(List.of(first, second));
+                adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(first, second));
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate).execute(any(ConnectionCallback.class));
@@ -98,9 +101,9 @@ class JpaAdapterTest {
                 .contains("receiver_bank_code")
                 .contains("request_fingerprint")
                 .contains("request_fingerprint_version")
+                .contains("authenticated_ispb")
                 .contains("ON CONFLICT (payment_id) DO NOTHING")
                 .doesNotContain("VALUES")
-                .doesNotContain("COUNT(DISTINCT (request_fingerprint_version, request_fingerprint))")
                 .doesNotContain("sender_name")
                 .doesNotContain("sender_tax_id")
                 .doesNotContain("sender_pix_key")
@@ -134,8 +137,16 @@ class JpaAdapterTest {
 
         try {
             adapter.storeAndClassifyIncomingPaymentRequests(List.of(
-                    paymentTransaction("E2E-1", "11111111", "22222222"),
-                    paymentTransaction("E2E-2", "33333333", "44444444")
+                    new AuthenticatedPaymentRequest(
+                            0,
+                            "11111111",
+                            paymentTransaction("E2E-1", "11111111", "22222222")
+                    ),
+                    new AuthenticatedPaymentRequest(
+                            1,
+                            "33333333",
+                            paymentTransaction("E2E-2", "33333333", "44444444")
+                    )
             ));
         } catch (EmptyResultDataAccessException ignored) {
             // The mocked callback stops execution after proving the stable JDBC path is used.
@@ -150,7 +161,7 @@ class JpaAdapterTest {
     }
 
     @Test
-    void storeAndClassifyIncomingPaymentRequestsSkipsSqlForSameBatchDivergentPaymentId() {
+    void storeAndClassifyIncomingPaymentRequestsSendsAmbiguousBatchGroupToSql() throws Exception {
         Mapper repositoryMapper = new Mapper();
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         JpaAdapter adapter = new JpaAdapter(
@@ -159,13 +170,20 @@ class JpaAdapterTest {
         );
         PaymentTransactionCommand first = paymentTransaction("E2E-1", "11111111", "22222222");
         PaymentTransactionCommand second = paymentTransaction("E2E-1", "33333333", "22222222");
+        stubPaymentExecute(
+                jdbcTemplate,
+                new PaymentAction(0, "DIVERGENT_DUPLICATE"),
+                new PaymentAction(1, "DIVERGENT_DUPLICATE")
+        );
 
         PaymentTransactionPersistenceResult result =
-                adapter.storeAndClassifyIncomingPaymentRequests(List.of(first, second));
+                adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(first, second));
 
         assertThat(result.acceptanceRequests()).isEmpty();
-        assertThat(result.divergentDuplicates()).containsExactly(first, second);
-        verify(jdbcTemplate, never()).query(anyString(), any(PreparedStatementSetter.class), any(RowMapper.class));
+        assertThat(result.divergentDuplicates())
+                .extracting(AuthenticatedPaymentRequest::command)
+                .containsExactly(first, second);
+        verify(jdbcTemplate).execute(any(ConnectionCallback.class));
     }
 
     @Test
@@ -185,7 +203,7 @@ class JpaAdapterTest {
         );
 
         PaymentTransactionPersistenceResult result =
-                adapter.storeAndClassifyIncomingPaymentRequests(List.of(first, repeated));
+                adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(first, repeated));
 
         ArgumentCaptor<Object[]> ordinalsCaptor = ArgumentCaptor.forClass(Object[].class);
         verify(connection).createArrayOf(eq("int4"), ordinalsCaptor.capture());
@@ -211,10 +229,12 @@ class JpaAdapterTest {
         );
 
         PaymentTransactionPersistenceResult result =
-                adapter.storeAndClassifyIncomingPaymentRequests(List.of(first, repeated));
+                adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(first, repeated));
 
         assertThat(result.acceptanceRequests()).isEmpty();
-        assertThat(result.divergentDuplicates()).containsExactly(first, repeated);
+        assertThat(result.divergentDuplicates())
+                .extracting(AuthenticatedPaymentRequest::command)
+                .containsExactly(first, repeated);
     }
 
     @Test
@@ -232,10 +252,12 @@ class JpaAdapterTest {
         PaymentTransactionCommand sameBatchDivergentRepeated = paymentTransaction("E2E-2", "55555555", "44444444");
         stubPaymentExecute(
                 jdbcTemplate,
-                new PaymentAction(0, "DIVERGENT_DUPLICATE")
+                new PaymentAction(0, "DIVERGENT_DUPLICATE"),
+                new PaymentAction(1, "DIVERGENT_DUPLICATE"),
+                new PaymentAction(3, "DIVERGENT_DUPLICATE")
         );
 
-        PaymentTransactionPersistenceResult result = adapter.storeAndClassifyIncomingPaymentRequests(List.of(
+        PaymentTransactionPersistenceResult result = adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(
                 existingDivergent,
                 sameBatchDivergent,
                 existingDivergentRepeated,
@@ -243,7 +265,9 @@ class JpaAdapterTest {
         ));
 
         assertThat(result.acceptanceRequests()).isEmpty();
-        assertThat(result.divergentDuplicates()).containsExactly(
+        assertThat(result.divergentDuplicates())
+                .extracting(AuthenticatedPaymentRequest::command)
+                .containsExactly(
                 existingDivergent,
                 sameBatchDivergent,
                 existingDivergentRepeated,
@@ -268,10 +292,12 @@ class JpaAdapterTest {
         );
 
         PaymentTransactionPersistenceResult result =
-                adapter.storeAndClassifyIncomingPaymentRequests(List.of(first, second));
+                adapter.storeAndClassifyIncomingPaymentRequests(authenticatedPayments(first, second));
 
         assertThat(result.acceptanceRequests()).containsExactly(first);
-        assertThat(result.divergentDuplicates()).containsExactly(second);
+        assertThat(result.divergentDuplicates())
+                .extracting(AuthenticatedPaymentRequest::command)
+                .containsExactly(second);
     }
 
     @Test
@@ -291,7 +317,7 @@ class JpaAdapterTest {
         );
 
         StatusReportPersistenceResult result =
-                adapter.classifyAndApplyIncomingStatusReports(List.of(first, repeated));
+                adapter.classifyAndApplyIncomingStatusReports(authenticatedReports(first, repeated));
 
         ArgumentCaptor<Object[]> ordinalsCaptor = ArgumentCaptor.forClass(Object[].class);
         verify(connection).createArrayOf(eq("int4"), ordinalsCaptor.capture());
@@ -312,7 +338,7 @@ class JpaAdapterTest {
         );
         Connection connection = stubStatusExecute(jdbcTemplate);
 
-        adapter.classifyAndApplyIncomingStatusReports(List.of(
+        adapter.classifyAndApplyIncomingStatusReports(authenticatedReports(
                 statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS),
                 statusReport("E2E-2", PaymentStatus.REJECTED)
         ));
@@ -339,7 +365,7 @@ class JpaAdapterTest {
     }
 
     @Test
-    void classifyAndApplyIncomingStatusReportsSkipsSqlForSameBatchConflictingStatuses() {
+    void classifyAndApplyIncomingStatusReportsSendsAmbiguousBatchGroupToSql() throws Exception {
         Mapper repositoryMapper = new Mapper();
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         JpaAdapter adapter = new JpaAdapter(
@@ -348,14 +374,21 @@ class JpaAdapterTest {
         );
         StatusReportCommand accepted = statusReport("E2E-1", PaymentStatus.ACCEPTED_IN_PROCESS);
         StatusReportCommand rejected = statusReport("E2E-1", PaymentStatus.REJECTED);
+        stubStatusExecute(
+                jdbcTemplate,
+                new StatusAction(0, "DIVERGENT_STATUS_REPORT", "E2E-1"),
+                new StatusAction(1, "DIVERGENT_STATUS_REPORT", "E2E-1")
+        );
 
         StatusReportPersistenceResult result =
-                adapter.classifyAndApplyIncomingStatusReports(List.of(accepted, rejected));
+                adapter.classifyAndApplyIncomingStatusReports(authenticatedReports(accepted, rejected));
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.divergentStatusReports()).containsExactly(accepted, rejected);
-        verify(jdbcTemplate, never()).query(anyString(), any(PreparedStatementSetter.class), any(RowMapper.class));
+        assertThat(result.divergentStatusReports())
+                .extracting(AuthenticatedStatusReport::command)
+                .containsExactly(accepted, rejected);
+        verify(jdbcTemplate).execute(any(ConnectionCallback.class));
     }
 
     @Test
@@ -375,11 +408,13 @@ class JpaAdapterTest {
         );
 
         StatusReportPersistenceResult result =
-                adapter.classifyAndApplyIncomingStatusReports(List.of(first, repeated));
+                adapter.classifyAndApplyIncomingStatusReports(authenticatedReports(first, repeated));
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.divergentStatusReports()).containsExactly(first, repeated);
+        assertThat(result.divergentStatusReports())
+                .extracting(AuthenticatedStatusReport::command)
+                .containsExactly(first, repeated);
     }
 
     @Test
@@ -397,10 +432,12 @@ class JpaAdapterTest {
         StatusReportCommand sameBatchDivergentRepeated = statusReport("E2E-2", PaymentStatus.REJECTED);
         stubStatusExecute(
                 jdbcTemplate,
-                new StatusAction(0, "DIVERGENT_STATUS_REPORT", "E2E-1")
+                new StatusAction(0, "DIVERGENT_STATUS_REPORT", "E2E-1"),
+                new StatusAction(1, "DIVERGENT_STATUS_REPORT", "E2E-2"),
+                new StatusAction(3, "DIVERGENT_STATUS_REPORT", "E2E-2")
         );
 
-        StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(List.of(
+        StatusReportPersistenceResult result = adapter.classifyAndApplyIncomingStatusReports(authenticatedReports(
                 existingDivergent,
                 sameBatchDivergent,
                 existingDivergentRepeated,
@@ -409,7 +446,9 @@ class JpaAdapterTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.divergentStatusReports()).containsExactly(
+        assertThat(result.divergentStatusReports())
+                .extracting(AuthenticatedStatusReport::command)
+                .containsExactly(
                 existingDivergent,
                 sameBatchDivergent,
                 existingDivergentRepeated,
@@ -519,6 +558,35 @@ class JpaAdapterTest {
                 .originalPaymentId(paymentId)
                 .status(status)
                 .build();
+    }
+
+    private static List<AuthenticatedPaymentRequest> authenticatedPayments(
+            PaymentTransactionCommand... payments
+    ) {
+        List<AuthenticatedPaymentRequest> authenticatedPayments = new ArrayList<>(payments.length);
+        for (int ordinal = 0; ordinal < payments.length; ordinal++) {
+            PaymentTransactionCommand payment = payments[ordinal];
+            authenticatedPayments.add(new AuthenticatedPaymentRequest(
+                    ordinal,
+                    payment.getSender().getAccount().getBankCode(),
+                    payment
+            ));
+        }
+        return authenticatedPayments;
+    }
+
+    private static List<AuthenticatedStatusReport> authenticatedReports(
+            StatusReportCommand... reports
+    ) {
+        List<AuthenticatedStatusReport> authenticatedReports = new ArrayList<>(reports.length);
+        for (int ordinal = 0; ordinal < reports.length; ordinal++) {
+            authenticatedReports.add(new AuthenticatedStatusReport(
+                    ordinal,
+                    "22222222",
+                    reports[ordinal]
+            ));
+        }
+        return authenticatedReports;
     }
 
     private static Party party(String bankCode) {

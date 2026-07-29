@@ -2,6 +2,8 @@ package br.kauan.spi.domain.services;
 
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -16,6 +18,7 @@ import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.ArrayList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -40,12 +43,17 @@ class PaymentTransactionProcessorServiceTest {
                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
                 .build();
         PaymentTransactionCommand paymentTransaction = paymentTransaction();
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(statusReport)))
-                .thenReturn(new StatusReportPersistenceResult(List.of(paymentTransaction), List.of(), List.of()));
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(authenticatedReports(statusReport)))
+                .thenReturn(new StatusReportPersistenceResult(
+                        List.of(paymentTransaction),
+                        List.of(),
+                        List.of(),
+                        List.of()
+                ));
 
-        StatusReportProcessingResult result = service.processStatusReports(List.of(statusReport));
+        StatusReportProcessingResult result = service.processStatusReports(authenticatedReports(statusReport));
 
-        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(List.of(statusReport));
+        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(authenticatedReports(statusReport));
         verify(notificationService).sendConfirmationNotifications(List.of(paymentTransaction));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
@@ -72,14 +80,20 @@ class PaymentTransactionProcessorServiceTest {
                 .build();
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2");
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(firstReport, secondReport)))
-                .thenReturn(new StatusReportPersistenceResult(List.of(firstPayment, secondPayment), List.of(), List.of()));
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(
+                authenticatedReports(firstReport, secondReport)
+        )).thenReturn(new StatusReportPersistenceResult(
+                List.of(firstPayment, secondPayment),
+                List.of(),
+                List.of(),
+                List.of()
+        ));
 
-        service.processStatusReports(List.of(
-                firstReport,
-                secondReport));
+        service.processStatusReports(authenticatedReports(firstReport, secondReport));
 
-        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(List.of(firstReport, secondReport));
+        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(
+                authenticatedReports(firstReport, secondReport)
+        );
         verify(notificationService).sendConfirmationNotifications(List.of(firstPayment, secondPayment));
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
@@ -101,10 +115,10 @@ class PaymentTransactionProcessorServiceTest {
                 .originalPaymentId("E2E-1")
                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
                 .build();
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(statusReport)))
-                .thenReturn(new StatusReportPersistenceResult(List.of(), List.of(), List.of()));
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(authenticatedReports(statusReport)))
+                .thenReturn(new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of()));
 
-        service.processStatusReports(List.of(statusReport));
+        service.processStatusReports(authenticatedReports(statusReport));
 
         verifyNoInteractions(notificationService);
     }
@@ -129,18 +143,21 @@ class PaymentTransactionProcessorServiceTest {
                 .build();
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2");
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(firstReport, secondReport)))
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(
+                authenticatedReports(firstReport, secondReport)
+        ))
                 .thenReturn(new StatusReportPersistenceResult(
                         List.of(),
                         List.of(firstPayment, secondPayment),
+                        List.of(),
                         List.of()
                 ));
 
-        service.processStatusReports(List.of(
-                firstReport,
-                secondReport));
+        service.processStatusReports(authenticatedReports(firstReport, secondReport));
 
-        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(List.of(firstReport, secondReport));
+        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(
+                authenticatedReports(firstReport, secondReport)
+        );
         verify(notificationService).sendRejectionNotifications(List.of(firstPayment, secondPayment));
     }
 
@@ -160,12 +177,12 @@ class PaymentTransactionProcessorServiceTest {
                 .originalPaymentId("E2E-1")
                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
                 .build();
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(first, repeated)))
-                .thenReturn(new StatusReportPersistenceResult(List.of(), List.of(), List.of()));
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(authenticatedReports(first, repeated)))
+                .thenReturn(new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of()));
 
-        StatusReportProcessingResult result = service.processStatusReports(List.of(first, repeated));
+        StatusReportProcessingResult result = service.processStatusReports(authenticatedReports(first, repeated));
 
-        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(List.of(first, repeated));
+        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(authenticatedReports(first, repeated));
         assertThat(result.divergentStatusReports()).isEmpty();
     }
 
@@ -191,17 +208,25 @@ class PaymentTransactionProcessorServiceTest {
                 .status(PaymentStatus.ACCEPTED_IN_PROCESS)
                 .build();
         PaymentTransactionCommand settledPayment = paymentTransaction("E2E-2");
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(accepted, rejected, other)))
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(
+                authenticatedReports(accepted, rejected, other)
+        ))
                 .thenReturn(new StatusReportPersistenceResult(
                         List.of(settledPayment),
                         List.of(),
-                        List.of(accepted, rejected)
+                        authenticatedReports(accepted, rejected),
+                        List.of()
                 ));
 
-        StatusReportProcessingResult result = service.processStatusReports(List.of(accepted, rejected, other));
+        StatusReportProcessingResult result =
+                service.processStatusReports(authenticatedReports(accepted, rejected, other));
 
-        assertThat(result.divergentStatusReports()).containsExactly(accepted, rejected);
-        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(List.of(accepted, rejected, other));
+        assertThat(result.divergentStatusReports())
+                .extracting(AuthenticatedStatusReport::command)
+                .containsExactly(accepted, rejected);
+        verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(
+                authenticatedReports(accepted, rejected, other)
+        );
         verify(notificationService).sendConfirmationNotifications(List.of(settledPayment));
     }
 
@@ -217,12 +242,19 @@ class PaymentTransactionProcessorServiceTest {
                 .originalPaymentId("E2E-1")
                 .status(PaymentStatus.REJECTED)
                 .build();
-        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(List.of(divergent)))
-                .thenReturn(new StatusReportPersistenceResult(List.of(), List.of(), List.of(divergent)));
+        when(paymentTransactionRepository.classifyAndApplyIncomingStatusReports(authenticatedReports(divergent)))
+                .thenReturn(new StatusReportPersistenceResult(
+                        List.of(),
+                        List.of(),
+                        authenticatedReports(divergent),
+                        List.of()
+                ));
 
-        StatusReportProcessingResult result = service.processStatusReports(List.of(divergent));
+        StatusReportProcessingResult result = service.processStatusReports(authenticatedReports(divergent));
 
-        assertThat(result.divergentStatusReports()).containsExactly(divergent);
+        assertThat(result.divergentStatusReports())
+                .extracting(AuthenticatedStatusReport::command)
+                .containsExactly(divergent);
     }
 
     @Test
@@ -238,16 +270,17 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
         when(paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(
-                List.of(firstPayment, secondPayment)
+                authenticatedPayments(firstPayment, secondPayment)
         )).thenReturn(new PaymentTransactionPersistenceResult(
                 List.of(firstPayment, secondPayment),
+                List.of(),
                 List.of()
         ));
 
-        service.processTransactions(List.of(firstPayment, secondPayment));
+        service.processTransactions(authenticatedPayments(firstPayment, secondPayment));
 
         verify(paymentTransactionRepository).storeAndClassifyIncomingPaymentRequests(
-                List.of(firstPayment, secondPayment)
+                authenticatedPayments(firstPayment, secondPayment)
         );
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
@@ -270,13 +303,14 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionCommand advancedDuplicate = paymentTransaction("E2E-SETTLED", "10000002", "20000002");
         PaymentTransactionCommand divergentDuplicate = paymentTransaction("E2E-DIVERGENT", "10000003", "20000003");
         when(paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(
-                List.of(waitingDuplicate, advancedDuplicate, divergentDuplicate)
+                authenticatedPayments(waitingDuplicate, advancedDuplicate, divergentDuplicate)
         )).thenReturn(new PaymentTransactionPersistenceResult(
                 List.of(waitingDuplicate),
-                List.of(divergentDuplicate)
+                authenticatedPayments(divergentDuplicate),
+                List.of()
         ));
 
-        PaymentTransactionPersistenceResult result = service.processTransactions(List.of(
+        PaymentTransactionPersistenceResult result = service.processTransactions(authenticatedPayments(
                 waitingDuplicate,
                 advancedDuplicate,
                 divergentDuplicate
@@ -287,6 +321,7 @@ class PaymentTransactionProcessorServiceTest {
         verify(traceRecorder, never()).record("E2E-SETTLED", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder, never()).record("E2E-DIVERGENT", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         org.assertj.core.api.Assertions.assertThat(result.divergentDuplicates())
+                .extracting(AuthenticatedPaymentRequest::command)
                 .containsExactly(divergentDuplicate);
     }
 
@@ -305,6 +340,35 @@ class PaymentTransactionProcessorServiceTest {
                 .sender(party(senderBankCode))
                 .receiver(party(receiverBankCode))
                 .build();
+    }
+
+    private static List<AuthenticatedPaymentRequest> authenticatedPayments(
+            PaymentTransactionCommand... payments
+    ) {
+        List<AuthenticatedPaymentRequest> authenticatedPayments = new ArrayList<>(payments.length);
+        for (int ordinal = 0; ordinal < payments.length; ordinal++) {
+            PaymentTransactionCommand payment = payments[ordinal];
+            authenticatedPayments.add(new AuthenticatedPaymentRequest(
+                    ordinal,
+                    payment.getSender().getAccount().getBankCode(),
+                    payment
+            ));
+        }
+        return authenticatedPayments;
+    }
+
+    private static List<AuthenticatedStatusReport> authenticatedReports(
+            StatusReportCommand... reports
+    ) {
+        List<AuthenticatedStatusReport> authenticatedReports = new ArrayList<>(reports.length);
+        for (int ordinal = 0; ordinal < reports.length; ordinal++) {
+            authenticatedReports.add(new AuthenticatedStatusReport(
+                    ordinal,
+                    "20000001",
+                    reports[ordinal]
+            ));
+        }
+        return authenticatedReports;
     }
 
     private static Party party(String bankCode) {

@@ -4,9 +4,9 @@ import reactor.core.publisher.Mono;
 
 public interface PaymentPublisher extends AutoCloseable {
 
-    Mono<Void> publishPaymentRequest(byte[] payload);
+    Mono<Void> publishPaymentRequest(String authenticatedIspb, byte[] payload);
 
-    Mono<Void> publishStatusReport(byte[] payload);
+    Mono<Void> publishStatusReport(String authenticatedIspb, byte[] payload);
 
     void warmUp();
 
