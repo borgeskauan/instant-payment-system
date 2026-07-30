@@ -1,10 +1,10 @@
 # Autenticação PSP -> kafka-producer e identidade no SPI
 
-- [x] Autenticação PSP -> `kafka-producer` e identidade no SPI
+- [X] Autenticação PSP -> `kafka-producer` e identidade no SPI
 
 **Por que existe**
 
-Alguns fluxos do PSP não passam pelo `notification-gateway`. Eles chegam primeiro no `kafka-producer` por requisições HTTP e depois seguem para o SPI via Kafka. Nesse modelo, o PSP não se autentica no Kafka e o SPI não autentica diretamente o PSP na conexão original. Quem está na borda de confiança é o `kafka-producer`.
+Alguns fluxos do PSP não passam pelo `notification-gateway`. Eles chegam primeiro no `kafka-producer` por requisições HTTP e depois seg	uem para o SPI via Kafka. Nesse modelo, o PSP não se autentica no Kafka e o SPI não autentica diretamente o PSP na conexão original. Quem está na borda de confiança é o `kafka-producer`.
 
 Por isso, o `kafka-producer` precisa autenticar o PSP na borda HTTP, extrair o ISPB autenticado e validar o que for possível contra essa identidade antes de publicar a mensagem interna. Depois disso, ele propaga o ISPB autenticado para o SPI em um header Kafka. O SPI deve tratar esse header como contexto confiável apenas porque ele foi criado pelo `kafka-producer`, não porque veio do PSP. O ISPB informado no payload continua sendo validado, mas não deve ser tratado como identidade autenticada.
 
@@ -15,35 +15,35 @@ As regras de autorização são:
 
 **Tarefas**
 
-- [x] Configurar mTLS obrigatório entre PSP e `kafka-producer`.
-  - [x] Usar o mesmo contrato de identidade do `notification-gateway`: certificado com `SAN URI = urn:pix:ispb:<ISPB>`.
-  - [x] Alterar `generate-local-mtls-certs.sh init` para gerar o certificado de servidor do `kafka-producer`, assinado pela mesma CA local e com SAN DNS para `kafka-producer` e `localhost`.
-  - [x] Montar o certificado, a chave privada e a CA no container do `kafka-producer`, mantendo a chave legível apenas pelo usuário do processo.
-  - [x] Remover fallback automático para plaintext; falha de TLS ou certificado deve falhar a requisição ou a inicialização.
-  - [x] Extrair no `kafka-producer` o ISPB autenticado pelo certificado da conexão HTTP.
-- [x] Ajustar o contrato HTTP do `kafka-producer`.
-  - [x] Remover o ISPB das rotas `/{ispb}/transfer` e `/{ispb}/transfer/status`.
-  - [x] Atualizar PSP, load-tool e demais clientes para usar `/transfer` e `/transfer/status`.
-  - [x] Impedir que o `kafka-producer` confie apenas no ISPB informado no payload.
-- [x] Autorizar `pacs.008` na borda HTTP.
-  - [x] Validar todas as transações antes de publicar qualquer record.
-  - [x] Exigir que todos os `DbtrAgt` sejam iguais ao ISPB autenticado.
-  - [x] Rejeitar com HTTP `403` toda a requisição quando qualquer transação tentar agir em nome de outro ISPB, sem publicação parcial no Kafka.
-- [x] Propagar a identidade autenticada para o SPI.
-  - [x] Publicar o ISPB autenticado no header Kafka `authenticated-ispb`.
-  - [x] Criar o header exclusivamente a partir do certificado, nunca a partir de informação recebida do cliente HTTP.
-- [x] Autorizar mensagens no SPI antes de qualquer efeito.
-  - [x] Para `pacs.008`, comparar `authenticated-ispb` com o ISPB pagador do payload e, quando o pagamento já existir, com o `sender_bank_code` persistido.
-  - [x] Para `pacs.002`, comparar `authenticated-ispb` com o `receiver_bank_code` persistido antes de update, idempotência ou settlement.
-  - [x] Impedir que mensagem sem `authenticated-ispb`, com header duplicado ou com identidade incompatível altere estado, saldo ou produza efeitos laterais.
-  - [x] Publicar erros determinísticos de segurança na DLQ: `NOT_AUTHENTICATED` para header ausente, duplicado ou malformado; `UNAUTHORIZED_PSP` para identidade válida sem autorização sobre a mensagem ou transação.
-- [x] Cobrir autenticação e autorização com testes.
-  - [x] Testar PSP sem certificado e certificado inválido.
-  - [x] Testar `pacs.008` com pagador divergente na borda HTTP.
-  - [x] Testar replay de `paymentId` pertencente a outro pagador no SPI.
-  - [x] Testar que um `pacs.008` com múltiplas transações, sendo uma delas não autorizada, é rejeitado integralmente e não publica nenhum record Kafka.
-  - [x] Testar que um `pacs.002` enviado por PSP diferente do recebedor não altera a transação e é publicado na DLQ.
-- [x] Documentar o contrato de confiança: certificado válido na borda HTTP do `kafka-producer` -> PSP autenticado -> header Kafka interno `authenticated-ispb` -> SPI autoriza a operação.
+- [X] Configurar mTLS obrigatório entre PSP e `kafka-producer`.
+  - [X] Usar o mesmo contrato de identidade do `notification-gateway`: certificado com `SAN URI = urn:pix:ispb:<ISPB>`.
+  - [X] Alterar `generate-local-mtls-certs.sh init` para gerar o certificado de servidor do `kafka-producer`, assinado pela mesma CA local e com SAN DNS para `kafka-producer` e `localhost`.
+  - [X] Montar o certificado, a chave privada e a CA no container do `kafka-producer`, mantendo a chave legível apenas pelo usuário do processo.
+  - [X] Remover fallback automático para plaintext; falha de TLS ou certificado deve falhar a requisição ou a inicialização.
+  - [X] Extrair no `kafka-producer` o ISPB autenticado pelo certificado da conexão HTTP.
+- [X] Ajustar o contrato HTTP do `kafka-producer`.
+  - [X] Remover o ISPB das rotas `/{ispb}/transfer` e `/{ispb}/transfer/status`.
+  - [X] Atualizar PSP, load-tool e demais clientes para usar `/transfer` e `/transfer/status`.
+  - [X] Impedir que o `kafka-producer` confie apenas no ISPB informado no payload.
+- [X] Autorizar `pacs.008` na borda HTTP.
+  - [X] Validar todas as transações antes de publicar qualquer record.
+  - [X] Exigir que todos os `DbtrAgt` sejam iguais ao ISPB autenticado.
+  - [X] Rejeitar com HTTP `403` toda a requisição quando qualquer transação tentar agir em nome de outro ISPB, sem publicação parcial no Kafka.
+- [X] Propagar a identidade autenticada para o SPI.
+  - [X] Publicar o ISPB autenticado no header Kafka `authenticated-ispb`.
+  - [X] Criar o header exclusivamente a partir do certificado, nunca a partir de informação recebida do cliente HTTP.
+- [X] Autorizar mensagens no SPI antes de qualquer efeito.
+  - [X] Para `pacs.008`, comparar `authenticated-ispb` com o ISPB pagador do payload e, quando o pagamento já existir, com o `sender_bank_code` persistido.
+  - [X] Para `pacs.002`, comparar `authenticated-ispb` com o `receiver_bank_code` persistido antes de update, idempotência ou settlement.
+  - [X] Impedir que mensagem sem `authenticated-ispb`, com header duplicado ou com identidade incompatível altere estado, saldo ou produza efeitos laterais.
+  - [X] Publicar erros determinísticos de segurança na DLQ: `NOT_AUTHENTICATED` para header ausente, duplicado ou malformado; `UNAUTHORIZED_PSP` para identidade válida sem autorização sobre a mensagem ou transação.
+- [X] Cobrir autenticação e autorização com testes.
+  - [X] Testar PSP sem certificado e certificado inválido.
+  - [X] Testar `pacs.008` com pagador divergente na borda HTTP.
+  - [X] Testar replay de `paymentId` pertencente a outro pagador no SPI.
+  - [X] Testar que um `pacs.008` com múltiplas transações, sendo uma delas não autorizada, é rejeitado integralmente e não publica nenhum record Kafka.
+  - [X] Testar que um `pacs.002` enviado por PSP diferente do recebedor não altera a transação e é publicado na DLQ.
+- [X] Documentar o contrato de confiança: certificado válido na borda HTTP do `kafka-producer` -> PSP autenticado -> header Kafka interno `authenticated-ispb` -> SPI autoriza a operação.
 
 **Notas**
 
