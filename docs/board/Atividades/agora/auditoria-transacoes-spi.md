@@ -10,11 +10,11 @@ A `payment_transaction_entity` também não possui timestamps operacionais. A ne
 
 # Status da feature
 
-A implementação da auditoria está pausada.
+A implementação da auditoria está pronta para ser retomada.
 
-Antes de retomá-la, será corrigida a garantia de produção das notificações do SPI, pois atualmente o estado financeiro pode ser confirmado antes da publicação Kafka, deixando uma janela de perda.
+A notification outbox eliminou a janela entre a confirmação do fato financeiro e a criação da obrigação durável de notificação. A semântica de replay e o fluxo final das notificações também estão documentados.
 
-Depois da implementação da notification outbox, a auditoria e a semântica de replay deverão ser revisadas.
+Este trabalho agora trata somente dos fatos de negócio do SPI. A auditoria de entradas rejeitadas no `kafka-producer` e no SPI foi separada em [`auditoria-rejeicoes-entrada.md`](auditoria-rejeicoes-entrada.md), pois possui origens e garantias diferentes.
 
 # Escopo do MVP
 
@@ -25,7 +25,6 @@ Eventos previstos:
 * `PAYMENT_CREATED`;
 * `PAYMENT_STATUS_CHANGED`;
 * `SETTLEMENT_APPLIED`;
-* rejeições de entrada com causa;
 * replay quando produzir um efeito de negócio relevante.
 
 Ficam fora do MVP:
@@ -37,7 +36,8 @@ Ficam fora do MVP:
 * métricas e traces;
 * payload PACS original;
 * replay que resulte somente em `NOOP`;
-* duplicatas homogêneas eliminadas dentro do mesmo batch.
+* duplicatas homogêneas eliminadas dentro do mesmo batch;
+* rejeições de entrada no `kafka-producer` ou no SPI.
 
 # Decisões de modelagem
 
@@ -68,14 +68,6 @@ Eventos associados a alterações financeiras devem ser persistidos atomicamente
 * `PAYMENT_STATUS_CHANGED`;
 * `SETTLEMENT_APPLIED`.
 
-As rejeições ocorridas na borda do `kafka-producer` serão persistidas diretamente no banco de auditoria em regime best effort:
-
-* a falha da auditoria não altera a resposta HTTP de rejeição;
-* a falha deve permanecer visível em logs, métricas ou alertas;
-* rejeições sem `paymentId` confiável podem ser armazenadas com `paymentId` nulo.
-
-As garantias das rejeições pré-SQL dentro do SPI ainda deverão ser confirmadas com base no fluxo real do código.
-
 # Retenção e dados
 
 * O MVP utilizará apenas dados sintéticos.
@@ -92,8 +84,6 @@ Estas decisões deverão ser resolvidas ao retomar a auditoria, com base no cód
 * colunas tipadas e eventual uso de `JSONB`;
 * constraints de idempotência por tipo de evento;
 * índices mínimos;
-* códigos e detalhes das causas de rejeição;
-* garantia das rejeições pré-SQL no SPI;
 * representação final do replay;
 * necessidade de identificadores adicionais;
 * impacto em throughput, latência, WAL e crescimento da base.
@@ -102,12 +92,12 @@ Recomendações técnicas ainda não aprovadas não devem ser tratadas como deci
 
 # Critério para retomada
 
-A feature de auditoria deverá ser retomada depois que:
+A feature de auditoria foi retomada depois que:
 
-1. a obrigação de notificar estiver duravelmente persistida junto da decisão financeira;
-2. a publicação para o Kafka for recuperável;
-3. a semântica definitiva dos replays for conhecida;
-4. o fluxo final de notificações puder ser incluído na reconstrução auditável.
+1. a obrigação de notificar passou a ser persistida duravelmente junto da decisão financeira;
+2. a publicação para o Kafka tornou-se recuperável;
+3. a semântica dos replays foi documentada;
+4. o fluxo final de notificações passou a poder ser incluído na reconstrução auditável.
 
 Ao retomar a feature, preservar claramente a separação entre:
 
