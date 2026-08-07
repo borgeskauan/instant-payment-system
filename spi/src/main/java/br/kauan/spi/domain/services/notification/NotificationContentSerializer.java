@@ -2,25 +2,25 @@ package br.kauan.spi.domain.services.notification;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
-import java.util.Optional;
-
-@Slf4j
+@Component
 public class NotificationContentSerializer {
 
-    private final ObjectMapper objectMapper = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    private final ObjectMapper objectMapper;
 
-    public Optional<String> serialize(Object obj) {
+    public NotificationContentSerializer(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    public byte[] serialize(Object obj) {
         try {
-            return Optional.of(objectMapper.writeValueAsString(obj));
+            return objectMapper.writeValueAsBytes(obj);
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize object of type: {}", obj.getClass().getSimpleName(), e);
-            return Optional.empty();
+            throw new NotificationException(
+                    "Failed to serialize notification payload of type " + obj.getClass().getSimpleName(),
+                    e
+            );
         }
     }
 }

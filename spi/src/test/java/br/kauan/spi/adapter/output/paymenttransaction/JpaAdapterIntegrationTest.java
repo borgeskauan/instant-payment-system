@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
+import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.commons.Money;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -24,9 +26,12 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
+@SpringBootTest
 @Transactional
 class JpaAdapterIntegrationTest {
+
+    @MockitoBean
+    private NotificationOutboxWorker notificationOutboxWorker;
 
     @Autowired
     private JpaAdapter adapter;

@@ -3,7 +3,7 @@ package br.kauan.spi.domain.services;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.notification.NotificationService;
+import br.kauan.spi.domain.services.notification.NotificationObligationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
@@ -13,6 +13,7 @@ import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,20 +23,21 @@ import java.util.List;
 public class PaymentTransactionProcessorService implements PaymentTransactionProcessorUseCase {
 
     private final PaymentTransactionRepository paymentTransactionRepository;
-    private final NotificationService notificationService;
+    private final NotificationObligationService notificationObligationService;
     private final SpiTraceRecorder traceRecorder;
 
     public PaymentTransactionProcessorService(
             PaymentTransactionRepository paymentTransactionRepository,
-            NotificationService notificationService,
+            NotificationObligationService notificationObligationService,
             SpiTraceRecorder traceRecorder
     ) {
         this.paymentTransactionRepository = paymentTransactionRepository;
-        this.notificationService = notificationService;
+        this.notificationObligationService = notificationObligationService;
         this.traceRecorder = traceRecorder;
     }
 
     @Override
+    @Transactional
     public PaymentTransactionPersistenceResult processTransactions(List<AuthenticatedPaymentRequest> transactions) {
         if (transactions.isEmpty()) {
             return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of());
@@ -50,7 +52,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
         }
         if (!persistenceResult.acceptanceRequests().isEmpty()) {
-            notificationService.sendAcceptanceRequests(persistenceResult.acceptanceRequests());
+            notificationObligationService.storeAcceptanceObligations(persistenceResult.acceptanceRequests());
             for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
                 traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
             }
@@ -59,6 +61,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     }
 
     @Override
+    @Transactional
     public StatusReportProcessingResult processStatusReports(List<AuthenticatedStatusReport> statusReports) {
         StatusReportPersistenceResult persistenceResult =
                 paymentTransactionRepository.classifyAndApplyIncomingStatusReports(statusReports);
@@ -67,37 +70,35 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         List<AuthenticatedStatusReport> unauthorizedStatusReports =
                 new ArrayList<>(persistenceResult.unauthorizedStatusReports());
 
-        if (!persistenceResult.settledPayments().isEmpty()) {
-            processSettledPayments(persistenceResult.settledPayments());
+        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
+            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.SETTLEMENT_COMPLETED);
         }
 
         if (!persistenceResult.rejectedPayments().isEmpty()) {
-            processRejectedPayments(persistenceResult.rejectedPayments());
+            log.debug("[PIX FLOW - Rejection] Storing rejection obligations for PSP Pagador. payments={}",
+                    persistenceResult.rejectedPayments().size());
         }
+
+        if (!persistenceResult.settledPayments().isEmpty()
+                || !persistenceResult.rejectedPayments().isEmpty()) {
+            notificationObligationService.storeStatusObligations(
+                    persistenceResult.settledPayments(),
+                    persistenceResult.rejectedPayments()
+            );
+        }
+
+        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
+            traceRecorder.record(
+                    paymentTransaction.getPaymentId(),
+                    SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED
+            );
+        }
+
+        log.debug("[PIX FLOW - Complete] Status reports processed. settled={}, rejected={}",
+                persistenceResult.settledPayments().size(),
+                persistenceResult.rejectedPayments().size());
 
         return new StatusReportProcessingResult(divergentStatusReports, unauthorizedStatusReports);
-    }
-
-    private void processRejectedPayments(List<PaymentTransactionCommand> rejectedPayments) {
-        log.debug("[PIX FLOW - Rejection] Sending rejection notifications to PSP Pagador. payments={}",
-                rejectedPayments.size());
-        notificationService.sendRejectionNotifications(rejectedPayments);
-    }
-
-    private void processSettledPayments(List<PaymentTransactionCommand> settledPayments) {
-        for (PaymentTransactionCommand paymentTransaction : settledPayments) {
-            String paymentId = paymentTransaction.getPaymentId();
-            traceRecorder.record(paymentId, SpiTraceEvent.SETTLEMENT_COMPLETED);
-        }
-        if (!settledPayments.isEmpty()) {
-            notificationService.sendConfirmationNotifications(settledPayments);
-            for (PaymentTransactionCommand paymentTransaction : settledPayments) {
-                String paymentId = paymentTransaction.getPaymentId();
-                traceRecorder.record(paymentId, SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
-            }
-        }
-
-        log.debug("[PIX FLOW - Complete] Settlement processed. settled={}", settledPayments.size());
     }
 
 }

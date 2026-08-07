@@ -61,6 +61,8 @@ Currently classified as infrastructure outage:
 - `CannotGetJdbcConnectionException`;
 - `DataAccessResourceFailureException`.
 
+This classification also applies when PostgreSQL becomes unavailable during the notification outbox insert. The obligation service does not wrap Spring JDBC resource failures, allowing the consumer to classify them as infrastructure outages.
+
 Behavior:
 
 - do not publish to DLQ;

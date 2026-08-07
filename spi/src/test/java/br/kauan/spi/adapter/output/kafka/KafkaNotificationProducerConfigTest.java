@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.kafka;
 
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 
@@ -17,10 +18,11 @@ class KafkaNotificationProducerConfigTest {
         bootstrapServers.setAccessible(true);
         bootstrapServers.set(config, "localhost:9092");
 
-        DefaultKafkaProducerFactory<String, String> producerFactory =
-                (DefaultKafkaProducerFactory<String, String>) config.notificationProducerFactory();
+        DefaultKafkaProducerFactory<String, byte[]> producerFactory =
+                (DefaultKafkaProducerFactory<String, byte[]>) config.notificationProducerFactory();
 
         assertThat(producerFactory.getConfigurationProperties())
-                .containsEntry(ProducerConfig.ACKS_CONFIG, "all");
+                .containsEntry(ProducerConfig.ACKS_CONFIG, "all")
+                .containsEntry(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
     }
 }

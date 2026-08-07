@@ -6,8 +6,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 public record NotificationPublication(
-        String ispb,
-        String payload,
+        String recipientIspb,
+        byte[] payload,
         String communicationId,
         String eventType,
         String paymentId,
@@ -19,7 +19,7 @@ public record NotificationPublication(
 
     public static NotificationPublication create(
             String ispb,
-            String payload,
+            byte[] payload,
             String eventType,
             String paymentId,
             String status

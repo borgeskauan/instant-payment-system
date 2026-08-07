@@ -1,5 +1,8 @@
 package br.kauan.spi.domain.services.notification;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigInteger;
@@ -12,7 +15,7 @@ class NotificationContentSerializerTest {
 
     @Test
     void serializesNotificationWithOffsetDateTimeGroupHeader() {
-        NotificationContentSerializer serializer = new NotificationContentSerializer();
+        NotificationContentSerializer serializer = serializer();
 
         var groupHeader = new LinkedHashMap<String, Object>();
         groupHeader.put("MsgId", "MSG-1");
@@ -24,7 +27,14 @@ class NotificationContentSerializerTest {
 
         var serialized = serializer.serialize(notification);
 
-        assertThat(serialized).hasValueSatisfying(json ->
-                assertThat(json).contains("\"CreDtTm\":\"2026-06-23T20:00:01.123Z\""));
+        assertThat(new String(serialized, java.nio.charset.StandardCharsets.UTF_8))
+                .contains("\"CreDtTm\":\"2026-06-23T20:00:01.123Z\"");
+    }
+
+    private NotificationContentSerializer serializer() {
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        return new NotificationContentSerializer(objectMapper);
     }
 }

@@ -33,6 +33,10 @@ spring:
 
 spi:
   default-initial-balance: 1_000_000_000
+  notification-outbox:
+    batch-size: 1000
+    fixed-delay: 20ms
+    retry-delay: 1s
   kafka:
     listener-concurrency: 3
     payment-request-group-id: spi-payment-request-consumer-group
