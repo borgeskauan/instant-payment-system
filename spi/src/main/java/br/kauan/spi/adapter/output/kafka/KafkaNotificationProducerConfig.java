@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.kafka;
 
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,12 +20,12 @@ public class KafkaNotificationProducerConfig {
     private String bootstrapServers;
 
     @Bean
-    public ProducerFactory<String, String> notificationProducerFactory() {
+    public ProducerFactory<String, byte[]> notificationProducerFactory() {
         Map<String, Object> config = new HashMap<>();
         
         config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
         config.put("enable.metrics.push", false);
         
         config.put(ProducerConfig.ACKS_CONFIG, "all");
@@ -37,7 +38,7 @@ public class KafkaNotificationProducerConfig {
     }
 
     @Bean
-    public KafkaTemplate<String, String> notificationKafkaTemplate() {
+    public KafkaTemplate<String, byte[]> notificationKafkaTemplate() {
         return new KafkaTemplate<>(notificationProducerFactory());
     }
 }

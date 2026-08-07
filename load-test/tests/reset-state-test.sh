@@ -32,6 +32,11 @@ if ! grep -q "TRUNCATE TABLE notification_delivery" "$tmp_dir/docker-stdin.sql";
     exit 1
 fi
 
+if ! grep -q "TRUNCATE TABLE notification_outbox" "$tmp_dir/docker-stdin.sql"; then
+    echo "notification_outbox truncate missing" >&2
+    exit 1
+fi
+
 if ! grep -q "TRUNCATE TABLE payment_transaction_entity" "$tmp_dir/docker-stdin.sql"; then
     echo "payment_transaction_entity truncate missing" >&2
     exit 1

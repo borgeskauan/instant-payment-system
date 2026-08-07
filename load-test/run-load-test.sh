@@ -20,6 +20,7 @@ readonly POSTGRES_USER="${POSTGRES_USER:-postgres}"
 readonly POSTGRES_DB="${POSTGRES_DB:-postgres}"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
+readonly OUTBOX_STATE_FILE="notification-outbox-state.csv"
 readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
 readonly GRAFANA_DASHBOARD_PATH="/d/load-test/load-test"
 readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
@@ -348,6 +349,36 @@ current_notification_gateway_lag() {
     consumer_group_topic_lag "$NOTIFICATION_GATEWAY_CONSUMER_GROUP" "$PSP_NOTIFICATIONS_TOPIC"
 }
 
+notification_outbox_pending_count() {
+    docker exec "$POSTGRES_CONTAINER" psql \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
+        -tAc "SELECT count(*) FROM notification_outbox WHERE publication_status = 'PENDING'"
+}
+
+capture_and_assert_outbox_drained() {
+    local target_dir="$1"
+    local output_file="${target_dir}/${OUTBOX_STATE_FILE}"
+    local pending_count
+
+    log_phase "capturing final notification outbox state"
+    docker exec "$POSTGRES_CONTAINER" psql \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
+        -v ON_ERROR_STOP=1 \
+        --csv \
+        -c "SELECT publication_status, count(*) AS rows, min(created_at) AS oldest_created_at, max(updated_at) AS latest_updated_at FROM notification_outbox GROUP BY publication_status ORDER BY publication_status" \
+        > "$output_file"
+
+    pending_count="$(notification_outbox_pending_count)"
+    if (( pending_count > 0 )); then
+        echo "Load test finished with ${pending_count} PENDING rows in notification_outbox." >&2
+        echo "Healthy Kafka must allow the SPI worker set to drain the outbox during the configured drain window." >&2
+        return 1
+    fi
+    log_phase "notification outbox drained; pending rows=0"
+}
+
 assert_no_initial_kafka_lag() {
     local lag
     lag="$(current_spi_input_lag)"
@@ -552,6 +583,10 @@ BEGIN
         TRUNCATE TABLE notification_delivery;
     END IF;
 
+    IF to_regclass('public.notification_outbox') IS NOT NULL THEN
+        TRUNCATE TABLE notification_outbox;
+    END IF;
+
     IF to_regclass('public.payment_transaction_entity') IS NOT NULL THEN
         TRUNCATE TABLE payment_transaction_entity;
     END IF;
@@ -703,6 +738,7 @@ main() {
     start_optional_diagnostics "$target_dir"
     run_simulator "$target_dir" "$tool_out"
     drain_finished_at="$(iso_now)"
+    capture_and_assert_outbox_drained "$target_dir"
     collect_optional_diagnostics "$target_dir"
     generate_sla_report "$target_dir" "$tool_out"
     write_run_window_json "$target_dir" "$run_started_at" "$active_started_at" "$active_finished_at" "$drain_finished_at" "$grafana_available_at_run_start"

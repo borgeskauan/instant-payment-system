@@ -89,10 +89,9 @@ Processing payment transaction batch for ISPB: {ispb}, transactions: {count}
 [PIX FLOW - Step 4] SPI forwarding acceptance request to PSP Recebedor (Bank: {bank})
 ```
 
-**Service:** `NotificationOrchestrator.sendAcceptanceRequest()` (SPI)
+**Service:** `NotificationObligationService.storeAcceptanceObligations()` (SPI)
 ```
-[PIX FLOW - Step 4] Sending acceptance request (PACS.008) to PSP Recebedor. ISPB: {ispb}, Payment ID: {id}
-[PIX FLOW - Step 4] Acceptance request queued for delivery via Kafka
+Acceptance notification obligations stored. payments={count}
 ```
 
 **Consumer:** `NotificationConsumer.consumeNotification()` (PSP Recebedor)
@@ -166,12 +165,9 @@ Processing status report batch for ISPB: {ispb}, reports: {count}
 [PIX FLOW - Step 7] SPI sending confirmation notifications to both PSPs
 ```
 
-**Service:** `NotificationOrchestrator.sendConfirmationNotification()` (SPI)
+**Service:** `NotificationObligationService.storeStatusObligations()` (SPI)
 ```
-[PIX FLOW - Step 7] Building confirmation notifications for payment: {id}
-[PIX FLOW - Step 7] Receiver ISPB: {ispb1}, Sender ISPB: {ispb2}
-[PIX FLOW - Step 7] Confirmation notification sent to PSP Recebedor ({ispb})
-[PIX FLOW - Step 7] Confirmation notification sent to PSP Pagador ({ispb})
+Status notification obligations stored. settled={settled}, rejected={rejected}
 ```
 
 **Service:** `PaymentTransactionProcessorService.processAcceptedPayment()` (SPI)
@@ -322,8 +318,7 @@ grep "\[PIX FLOW - Rejection\]" *.log
 
 ### spi
 - `PaymentTransactionProcessorService` - Transaction and status processing (Steps 3-7)
-- `NotificationOrchestrator` - Notification building and sending (Steps 4, 7)
-- `NotificationService` - Notification coordination
+- `NotificationObligationService` - Notification obligation building and durable outbox storage (Steps 4, 7)
 - `SettlementService` - BCB PI account settlement (Step 6)
 - `PaymentMessageConsumer` - Kafka message consumption
 

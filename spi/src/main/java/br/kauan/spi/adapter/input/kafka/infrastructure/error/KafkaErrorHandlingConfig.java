@@ -1,6 +1,5 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.error;
 
-import br.kauan.spi.adapter.output.kafka.RecoverableNotificationPublishException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -64,7 +63,6 @@ public class KafkaErrorHandlingConfig {
         CommonDelegatingErrorHandler errorHandler = new CommonDelegatingErrorHandler(dlqKafkaErrorHandler);
         errorHandler.setCauseChainTraversing(true);
         errorHandler.addDelegate(InfrastructureUnavailableException.class, infrastructureKafkaErrorHandler);
-        errorHandler.addDelegate(RecoverableNotificationPublishException.class, infrastructureKafkaErrorHandler);
         return errorHandler;
     }
 }
