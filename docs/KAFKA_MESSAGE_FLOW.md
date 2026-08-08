@@ -11,6 +11,7 @@ flowchart LR
     PaymentRequestsDlq[("spi-payment-requests.dlq")]
     StatusReportsDlq[("spi-payment-status-reports.dlq")]
     SPI["SPI financial processing"]
+    Audit[("SPI payment_audit_event")]
     Outbox[("SPI notification_outbox")]
     Worker["SPI outbox workers"]
     Notifications[("psp-notifications")]
@@ -24,6 +25,7 @@ flowchart LR
     StatusReports -->|"consume status reports"| SPI
     SPI -.->|"invalid or deterministic conflict"| PaymentRequestsDlq
     SPI -.->|"invalid or deterministic conflict"| StatusReportsDlq
+    SPI -->|"same PostgreSQL transaction"| Audit
     SPI -->|"same PostgreSQL transaction"| Outbox
     Outbox -->|"select due PENDING rows"| Worker
     Worker -->|"at-least-once; acks=all"| Notifications
@@ -58,12 +60,25 @@ The SPI outbox and gateway delivery table protect different boundaries:
 
 SPI `PUBLISHED` is not an end-to-end PSP ACK.
 
-## Transactional Outbox Write Path
+## Transactional Financial, Audit, and Outbox Write Path
 
-For each input batch, the SPI performs two bulk database operations in one PostgreSQL transaction:
+For each input batch, the SPI performs three separate bulk database operations in one PostgreSQL transaction:
 
 1. classify and apply the current financial statement;
-2. insert obligations for only the effective results into `notification_outbox`.
+2. insert business events for only the effective results into `payment_audit_event`;
+3. insert obligations for only the effective results into `notification_outbox`.
+
+Atomicity does not depend on placing all work in one CTE. `PaymentTransactionProcessorService` keeps the transaction open across the three statements. Audit or outbox failure rolls back payment creation, status, balances, audit rows, and obligations together.
+
+The facts mapped to audit rows are:
+
+- new `pacs.008`: `PAYMENT_CREATED`;
+- effective status transition: `PAYMENT_STATUS_CHANGED`;
+- effective settlement: `PAYMENT_STATUS_CHANGED` and `SETTLEMENT_APPLIED` in the same bulk and transaction;
+- replay with an effective business change: the same normal events;
+- replay or processing that results in `NOOP`: no audit event.
+
+`event_id` is only a technical identity. There is no ordering guarantee between the status-change and settlement rows produced by the same operation.
 
 The facts mapped to outbox rows are:
 
@@ -71,7 +86,7 @@ The facts mapped to outbox rows are:
 - effective `REJECTED` transition: one `REJECTED_NOTIFICATION/RJCT` to the payer;
 - effective settlement: `SETTLED_NOTIFICATION/ACSC` to the payer and `SETTLED_NOTIFICATION/ACCC` to the receiver.
 
-Serialization uses `ObjectMapper.writeValueAsBytes(...)` before the bulk insert. Failure during validation, serialization, or outbox insertion rolls back the financial statement, status, and bucket balances. The input Kafka acknowledgment happens after the PostgreSQL commit; it does not wait for outbox publication.
+Notification serialization uses `ObjectMapper.writeValueAsBytes(...)` before the outbox bulk insert. Failure during audit persistence, validation, serialization, or outbox insertion rolls back the financial statement, status, and bucket balances. The input Kafka acknowledgment happens after the PostgreSQL commit; it does not wait for outbox publication.
 
 The `communication_id` primary key and `ON CONFLICT DO NOTHING` make replay idempotent at the obligation boundary. Identical `pacs.008` replay in `WAITING_ACCEPTANCE` keeps an existing `PENDING` or `PUBLISHED` row and recreates it if missing. Replay in advanced status and `pacs.002` that produces no new transition remain no-ops. There is no backfill for pre-migration payments.
 
@@ -122,6 +137,8 @@ SPI DLQ behavior is documented in [Kafka DLQ Policy](KAFKA_DLQ_POLICY.md). Repla
 
 PostgreSQL resource failures raised while inserting notification obligations are not wrapped as notification errors. They reach the input consumer as database infrastructure failures, so the batch remains unacknowledged and follows the indefinite infrastructure retry path instead of DLQ recovery.
 
+PostgreSQL resource failures raised by the business-audit insert follow the same path and are also not wrapped. Constraint failures remain visible and roll back the financial operation; audit inserts do not use `ON CONFLICT` to hide unexpected classification errors.
+
 Outbox publication failure is not sent to a DLQ in this cut. The row remains `PENDING` and retries indefinitely. `PUBLISHED` rows are not deleted automatically.
 
 ## Limitações Conscientes
@@ -137,6 +154,10 @@ Outbox publication failure is not sent to a DLQ in this cut. The row remains `PE
 - There is no `DEAD` state, attempt limit, or automatic recovery path for permanently invalid messages.
 - Observability is limited to logs and manual table queries; this cut adds no outbox metrics or dashboard.
 - There is no exactly-once guarantee; physical duplicates are an expected consequence of at-least-once delivery.
+- Business audit starts at its migration; there is no historical backfill.
+- Audit rows have no causal ordering guarantee, and `event_id` is only a technical identity.
+- Audit has no retention, cleanup, partitioning, archived history, dedicated metrics, or comparative load-test gate in this cut.
+- `NOOP` replay, retries, redelivery, rejected inputs, and original PACS payloads are outside the business audit.
 - These simplifications are suitable for the MVP, but do not necessarily represent the final production design.
 
 ## Sinais para Evolução
@@ -151,5 +172,6 @@ Introduce claim/lease, `FOR UPDATE SKIP LOCKED`, `claim_token`, fencing, coordin
 - automated failover, worker coordination, or duplicate-free rolling deploy becomes necessary;
 - exact per-attempt diagnostics become required, or approximate `attempt_count` / `last_error` is insufficient;
 - table growth requires retention, partitioning, or cleanup;
+- audit-table or WAL growth materially affects PostgreSQL capacity, throughput, or latency;
 - fixed retry produces a publication storm during outages;
 - a terminal state, operational treatment, or `DEAD` handling becomes necessary.

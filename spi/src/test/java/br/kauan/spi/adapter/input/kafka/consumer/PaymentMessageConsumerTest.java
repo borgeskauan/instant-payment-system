@@ -187,6 +187,7 @@ class PaymentMessageConsumerTest {
             return new PaymentTransactionPersistenceResult(
                     List.of(),
                     List.of(),
+                    List.of(),
                     List.of(requests.get(1))
             );
         });
@@ -276,6 +277,7 @@ class PaymentMessageConsumerTest {
         PaymentTransactionCommand divergent = paymentTransaction("E2E-DIVERGENT");
         when(processor.processTransactions(any(List.class))).thenReturn(new PaymentTransactionPersistenceResult(
                 List.of(),
+                List.of(),
                 List.of(new AuthenticatedPaymentRequest(0, "10000001", divergent)),
                 List.of()
         ));
@@ -304,6 +306,7 @@ class PaymentMessageConsumerTest {
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
         ConsumerRecord<String, byte[]> record = paymentRequestRecord("E2E-DIVERGENT", "123", "12");
         when(processor.processTransactions(any(List.class))).thenReturn(new PaymentTransactionPersistenceResult(
+                List.of(),
                 List.of(),
                 List.of(new AuthenticatedPaymentRequest(
                         0,
@@ -996,7 +999,8 @@ class PaymentMessageConsumerTest {
 
     private static void stubNoDivergentDuplicates(PaymentTransactionProcessorUseCase processor) {
         when(processor.processTransactions(any(List.class)))
-                .thenReturn(new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of()));
+                .thenReturn(new PaymentTransactionPersistenceResult(
+                        List.of(), List.of(), List.of(), List.of()));
     }
 
     private static void stubNoDivergentStatusReports(PaymentTransactionProcessorUseCase processor) {

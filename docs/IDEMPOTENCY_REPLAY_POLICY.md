@@ -15,6 +15,7 @@ There is no end-to-end exactly-once guarantee. Physical Kafka publication can be
 - A divergent replay with the same identity is a deterministic conflict and must be observable.
 - Batch-local duplicates are classified before relying on persisted state.
 - SPI outbox inserts use `ON CONFLICT (communication_id) DO NOTHING`.
+- SPI business audit records only facts effectively applied; `NOOP` creates no audit event.
 - The notification gateway deduplicates physical Kafka duplicates by `communicationId`.
 - Final PSP balance effects are idempotent by payment and final-status side.
 
@@ -28,17 +29,17 @@ request_fingerprint_version + request_fingerprint
 
 Version and fingerprint must be compared together. A matching hash with a different version is not automatically comparable.
 
-| Case | Financial classification | Outbox result |
-| ---- | ------------------------ | ------------- |
-| New payment | Insert as `WAITING_ACCEPTANCE`. | Insert one `ACCEPTANCE_REQUEST` for the receiver. |
-| Existing identical payment in `WAITING_ACCEPTANCE` | Classify as acceptance replay. | Try the same `communicationId`; keep an existing row or recreate a missing row. |
-| Existing identical payment in advanced status | No-op. | No outbox insert. |
-| Existing payment without comparable fingerprint | `DIVERGENT_DUPLICATE`. | No outbox insert; publish the original input to DLQ. |
-| Existing payment with divergent version/fingerprint | `DIVERGENT_DUPLICATE`. | No outbox insert; publish the original input to DLQ. |
-| Same batch, same `paymentId`, same fingerprint identity | Keep only the first logical record. | At most one obligation. |
-| Same batch, same `paymentId`, divergent fingerprint identity | Classify every record as `DIVERGENT_DUPLICATE`. | No outbox insert. |
+| Case | Financial classification | Audit result | Outbox result |
+| ---- | ------------------------ | ------------ | ------------- |
+| New payment | Insert as `WAITING_ACCEPTANCE`. | Insert `PAYMENT_CREATED`. | Insert one `ACCEPTANCE_REQUEST` for the receiver. |
+| Existing identical payment in `WAITING_ACCEPTANCE` | Classify as acceptance replay. | No event: the payment was not created again. | Try the same `communicationId`; keep an existing row or recreate a missing row. |
+| Existing identical payment in advanced status | No-op. | No event. | No outbox insert. |
+| Existing payment without comparable fingerprint | `DIVERGENT_DUPLICATE`. | No event in the business audit. | No outbox insert; publish the original input to DLQ. |
+| Existing payment with divergent version/fingerprint | `DIVERGENT_DUPLICATE`. | No event in the business audit. | No outbox insert; publish the original input to DLQ. |
+| Same batch, same `paymentId`, same fingerprint identity | Keep only the first logical record. | At most one effective event. | At most one obligation. |
+| Same batch, same `paymentId`, divergent fingerprint identity | Classify every record as `DIVERGENT_DUPLICATE`. | No event. | No outbox insert. |
 
-The financial statement and bulk outbox insert run in one PostgreSQL transaction. Validation, serialization, or outbox persistence failure rolls back the new payment. PostgreSQL resource failures during the outbox insert propagate unchanged to the consumer, remain on the infrastructure retry path, and do not acknowledge the source batch. The source Kafka input is acknowledged only after the database commit and any required DLQ publication; processing does not wait for the outbox worker to publish to Kafka.
+The financial statement, business-audit insert, and outbox insert run as separate bulk statements in one PostgreSQL transaction. Validation or persistence failure in audit or outbox rolls back the new payment. PostgreSQL resource failures during either insert propagate unchanged to the consumer, remain on the infrastructure retry path, and do not acknowledge the source batch. The source Kafka input is acknowledged only after the database commit and any required DLQ publication; processing does not wait for the outbox worker to publish to Kafka.
 
 Replay never publishes directly. A recreated or still-pending obligation is handled by the scheduled outbox worker.
 
@@ -46,14 +47,15 @@ Replay never publishes directly. A recreated or still-pending obligation is hand
 
 Incoming status reports are applied conditionally against the current persisted payment state.
 
-| Incoming status | Current status | Financial result | Outbox result |
-| --------------- | -------------- | ---------------- | ------------- |
-| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE` | Settle directly when possible. | On settlement, insert `ACSC` for the payer and `ACCC` for the receiver. |
-| `ACCEPTED_IN_PROCESS` | `ACCEPTED_IN_PROCESS` or `ACCEPTED_AND_SETTLED` | No-op. | No outbox insert. |
-| `REJECTED` | `WAITING_ACCEPTANCE` | Transition to `REJECTED`. | Insert `REJECTED_NOTIFICATION/RJCT` for the payer. |
-| `REJECTED` | `REJECTED` | No-op. | No outbox insert. |
-| Any incompatible transition | `DIVERGENT_STATUS_REPORT`. | No outbox insert; publish original input to DLQ. |
-| Missing payment | `DIVERGENT_STATUS_REPORT`. | No outbox insert; publish original input to DLQ. |
+| Incoming status | Current status | Financial result | Audit result | Outbox result |
+| --------------- | -------------- | ---------------- | ------------ | ------------- |
+| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE`, sufficient funds | Settle directly. | `PAYMENT_STATUS_CHANGED` + `SETTLEMENT_APPLIED`. | Insert `ACSC` for the payer and `ACCC` for the receiver. |
+| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE`, insufficient funds | Transition to `ACCEPTED_IN_PROCESS`. | `PAYMENT_STATUS_CHANGED`. | No outbox insert. |
+| `ACCEPTED_IN_PROCESS` | `ACCEPTED_IN_PROCESS` or `ACCEPTED_AND_SETTLED` | No-op. | No event. | No outbox insert. |
+| `REJECTED` | `WAITING_ACCEPTANCE` | Transition to `REJECTED`. | `PAYMENT_STATUS_CHANGED`. | Insert `REJECTED_NOTIFICATION/RJCT` for the payer. |
+| `REJECTED` | `REJECTED` | No-op. | No event. | No outbox insert. |
+| Any incompatible transition | Any incompatible current state | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No outbox insert; publish original input to DLQ. |
+| Any status | Missing payment | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No outbox insert; publish original input to DLQ. |
 
 Batch-local rules:
 
@@ -62,7 +64,15 @@ Batch-local rules:
 | Same batch, same `paymentId`, same status | Keep the first logical report; repeated records are batch-local no-ops. |
 | Same batch, same `paymentId`, different statuses | Classify every record for that `paymentId` as `DIVERGENT_STATUS_REPORT`. |
 
-Settlement, bucket balances, payment status, and both notification obligations commit or roll back together. Replaying a report that produces no new transition or settlement does not insert an obligation and cannot debit funds again.
+Settlement, bucket balances, both audit events, and both notification obligations commit or roll back together. Replaying a report that produces no new transition or settlement inserts neither audit nor outbox rows and cannot debit funds again.
+
+## SPI Business Audit
+
+`payment_audit_event` is append-only by application behavior and stores only normalized business facts. It does not store the original PACS payload, diagnostic attempts, input rejections, or `NOOP` replay events.
+
+`PAYMENT_STATUS_CHANGED` and `SETTLEMENT_APPLIED` from one settlement are inserted in the same bulk and transaction. Their `event_id` values are technical identities only; no relative or causal ordering is guaranteed. Creation and settlement are unique per payment in the current model, while repeated identical status transitions are deliberately allowed if the lifecycle evolves.
+
+There is no audit backfill. A replay that applies a real creation, transition, or settlement produces the normal events for that effect; a replay that applies nothing produces no event.
 
 ## SPI Notification Outbox
 
@@ -138,6 +148,8 @@ Current deterministic conflict types are `DIVERGENT_DUPLICATE` for `pacs.008` an
 - There is no `DEAD` state, attempt limit, or automatic handling for permanently invalid messages.
 - Outbox observability is limited to logs and manual SQL queries.
 - There is no backfill for payments created before the outbox migration.
+- There is no business-audit backfill, retention, cleanup, partitioning, or causal event ordering.
+- Business audit excludes `NOOP` replay, retries, redelivery, input rejection, and original PACS payloads.
 - PSP local idempotency remains in memory in the current simulated PSP.
 - These simplifications are suitable for the MVP, but do not necessarily represent the final production design.
 
@@ -153,5 +165,6 @@ Evolve to coordination, claim/lease, `SKIP LOCKED`, `claim_token`, richer retry,
 - automated worker failover, coordination, or duplicate-free rolling deploy becomes necessary;
 - exact attempt diagnostics become necessary, or approximate `attempt_count` / `last_error` is insufficient;
 - table growth requires retention, partitioning, or cleanup;
+- audit-table or WAL growth requires retention, partitioning, archival, or dedicated performance work;
 - fixed retry causes a publication storm during outages;
 - a terminal failure state, operational intervention, or `DEAD` handling becomes necessary.

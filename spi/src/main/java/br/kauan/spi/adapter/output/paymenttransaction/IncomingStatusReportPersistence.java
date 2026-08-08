@@ -4,6 +4,7 @@ import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.port.output.PaymentStatusTransition;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,6 +25,7 @@ class IncomingStatusReportPersistence {
     private static final int BUCKET_COUNT = 16;
     private static final String SETTLED_PAYMENT = "SETTLED_PAYMENT";
     private static final String REJECTED_NOTIFICATION = "REJECTED_NOTIFICATION";
+    private static final String ACCEPTED_IN_PROCESS_TRANSITION = "ACCEPTED_IN_PROCESS_TRANSITION";
     private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
     private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
 
@@ -249,7 +251,7 @@ class IncomingStatusReportPersistence {
                 WHERE p.payment_id = aw.payment_id
                   AND s.payment_id IS NULL
                   AND p.status = ?
-                RETURNING p.payment_id
+                RETURNING aw.ordinal, p.payment_id
             ),
             settled_payment_actions AS (
                 SELECT
@@ -270,6 +272,16 @@ class IncomingStatusReportPersistence {
                     sender_bank_code,
                     receiver_bank_code
                 FROM rejected_updates
+            ),
+            accepted_in_process_actions AS (
+                SELECT
+                    ordinal,
+                    'ACCEPTED_IN_PROCESS_TRANSITION'::text AS action,
+                    payment_id,
+                    NULL::bigint AS amount_cents,
+                    NULL::text AS sender_bank_code,
+                    NULL::text AS receiver_bank_code
+                FROM accepted_in_process_updates
             )
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
             FROM unknown_actions
@@ -288,6 +300,9 @@ class IncomingStatusReportPersistence {
             UNION ALL
             SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
             FROM rejected_notification_actions
+            UNION ALL
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            FROM accepted_in_process_actions
             ORDER BY ordinal
             """;
 
@@ -304,7 +319,7 @@ class IncomingStatusReportPersistence {
 
     StatusReportPersistenceResult classifyAndApply(List<AuthenticatedStatusReport> statusReports) {
         if (statusReports.isEmpty()) {
-            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of());
+            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
         BatchLocalStatusReportClassification batchLocalClassification =
@@ -312,6 +327,7 @@ class IncomingStatusReportPersistence {
         Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
         List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
         List<PaymentTransactionCommand> rejectedPayments = new ArrayList<>();
+        List<PaymentStatusTransition> appliedStatusTransitions = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
 
@@ -322,8 +338,21 @@ class IncomingStatusReportPersistence {
             }
 
             switch (actionRow.action()) {
-                case SETTLED_PAYMENT -> settledPayments.add(toPaymentTransaction(actionRow));
-                case REJECTED_NOTIFICATION -> rejectedPayments.add(toPaymentTransaction(actionRow));
+                case SETTLED_PAYMENT -> {
+                    settledPayments.add(toPaymentTransaction(actionRow));
+                    appliedStatusTransitions.add(transition(
+                            actionRow,
+                            PaymentStatus.ACCEPTED_AND_SETTLED
+                    ));
+                }
+                case REJECTED_NOTIFICATION -> {
+                    rejectedPayments.add(toPaymentTransaction(actionRow));
+                    appliedStatusTransitions.add(transition(actionRow, PaymentStatus.REJECTED));
+                }
+                case ACCEPTED_IN_PROCESS_TRANSITION -> appliedStatusTransitions.add(transition(
+                        actionRow,
+                        PaymentStatus.ACCEPTED_IN_PROCESS
+                ));
                 case DIVERGENT_STATUS_REPORT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
                         batchLocalClassification.originalOrdinalsByRepresentative(),
@@ -341,8 +370,20 @@ class IncomingStatusReportPersistence {
         return new StatusReportPersistenceResult(
                 settledPayments,
                 rejectedPayments,
+                appliedStatusTransitions,
                 reportsWithOrdinals(statusReports, divergentStatusReportOrdinals),
                 reportsWithOrdinals(statusReports, unauthorizedStatusReportOrdinals)
+        );
+    }
+
+    private PaymentStatusTransition transition(
+            StatusReportActionRow actionRow,
+            PaymentStatus resultingStatus
+    ) {
+        return new PaymentStatusTransition(
+                actionRow.paymentId(),
+                PaymentStatus.WAITING_ACCEPTANCE,
+                resultingStatus
         );
     }
 

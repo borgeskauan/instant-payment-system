@@ -3,6 +3,7 @@ package br.kauan.spi.domain.services;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.audit.PaymentAuditService;
 import br.kauan.spi.domain.services.notification.NotificationObligationService;
 import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
 import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
@@ -23,15 +24,18 @@ import java.util.List;
 public class PaymentTransactionProcessorService implements PaymentTransactionProcessorUseCase {
 
     private final PaymentTransactionRepository paymentTransactionRepository;
+    private final PaymentAuditService paymentAuditService;
     private final NotificationObligationService notificationObligationService;
     private final SpiTraceRecorder traceRecorder;
 
     public PaymentTransactionProcessorService(
             PaymentTransactionRepository paymentTransactionRepository,
+            PaymentAuditService paymentAuditService,
             NotificationObligationService notificationObligationService,
             SpiTraceRecorder traceRecorder
     ) {
         this.paymentTransactionRepository = paymentTransactionRepository;
+        this.paymentAuditService = paymentAuditService;
         this.notificationObligationService = notificationObligationService;
         this.traceRecorder = traceRecorder;
     }
@@ -40,7 +44,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     @Transactional
     public PaymentTransactionPersistenceResult processTransactions(List<AuthenticatedPaymentRequest> transactions) {
         if (transactions.isEmpty()) {
-            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of());
+            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
         log.debug("[PIX FLOW - Step 3] SPI received transaction requests. payments={}",
@@ -48,11 +52,14 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         PaymentTransactionPersistenceResult persistenceResult =
                 paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(transactions);
 
-        for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
+        paymentAuditService.storeCreationEvents(persistenceResult.createdPayments());
+        if (!persistenceResult.acceptanceRequests().isEmpty()) {
+            notificationObligationService.storeAcceptanceObligations(persistenceResult.acceptanceRequests());
+        }
+        for (var paymentTransaction : persistenceResult.createdPayments()) {
             traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
         }
         if (!persistenceResult.acceptanceRequests().isEmpty()) {
-            notificationObligationService.storeAcceptanceObligations(persistenceResult.acceptanceRequests());
             for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
                 traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
             }
@@ -70,9 +77,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         List<AuthenticatedStatusReport> unauthorizedStatusReports =
                 new ArrayList<>(persistenceResult.unauthorizedStatusReports());
 
-        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
-            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.SETTLEMENT_COMPLETED);
-        }
+        paymentAuditService.storeStatusEvents(
+                persistenceResult.appliedStatusTransitions(),
+                persistenceResult.settledPayments()
+        );
 
         if (!persistenceResult.rejectedPayments().isEmpty()) {
             log.debug("[PIX FLOW - Rejection] Storing rejection obligations for PSP Pagador. payments={}",
@@ -85,6 +93,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                     persistenceResult.settledPayments(),
                     persistenceResult.rejectedPayments()
             );
+        }
+
+        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
+            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.SETTLEMENT_COMPLETED);
         }
 
         for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {

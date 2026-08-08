@@ -21,6 +21,7 @@ import java.util.Set;
 
 class IncomingPaymentRequestPersistence {
 
+    private static final String PAYMENT_CREATED = "PAYMENT_CREATED";
     private static final String ACCEPTANCE_REQUEST = "ACCEPTANCE_REQUEST";
     private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
     private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
@@ -128,7 +129,7 @@ class IncomingPaymentRequestPersistence {
                 RETURNING payment_id
             ),
             inserted_actions AS (
-                SELECT i.ordinal, 'ACCEPTANCE_REQUEST'::text AS action
+                SELECT i.ordinal, 'PAYMENT_CREATED'::text AS action
                 FROM logical_incoming i
                 JOIN inserted ins ON ins.payment_id = i.payment_id
             ),
@@ -178,7 +179,7 @@ class IncomingPaymentRequestPersistence {
             List<AuthenticatedPaymentRequest> paymentRequests
     ) {
         if (paymentRequests.isEmpty()) {
-            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of());
+            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
         BatchLocalPaymentClassification batchLocalClassification =
@@ -186,6 +187,7 @@ class IncomingPaymentRequestPersistence {
         Map<Integer, AuthenticatedPaymentRequest> requestsByOrdinal =
                 requestsByOrdinal(paymentRequests);
         List<PaymentTransactionCommand> acceptanceRequests = new ArrayList<>();
+        List<PaymentTransactionCommand> createdPayments = new ArrayList<>();
         Set<Integer> divergentDuplicateOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedRequestOrdinals = new LinkedHashSet<>();
 
@@ -196,6 +198,10 @@ class IncomingPaymentRequestPersistence {
             }
 
             switch (actionRow.action()) {
+                case PAYMENT_CREATED -> {
+                    createdPayments.add(paymentRequest.command());
+                    acceptanceRequests.add(paymentRequest.command());
+                }
                 case ACCEPTANCE_REQUEST -> acceptanceRequests.add(paymentRequest.command());
                 case DIVERGENT_DUPLICATE -> addExpandedOrdinals(
                         divergentDuplicateOrdinals,
@@ -213,6 +219,7 @@ class IncomingPaymentRequestPersistence {
 
         return new PaymentTransactionPersistenceResult(
                 acceptanceRequests,
+                createdPayments,
                 requestsWithOrdinals(paymentRequests, divergentDuplicateOrdinals),
                 requestsWithOrdinals(paymentRequests, unauthorizedRequestOrdinals)
         );

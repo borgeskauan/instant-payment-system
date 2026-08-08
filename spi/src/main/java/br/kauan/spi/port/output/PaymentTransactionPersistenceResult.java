@@ -7,6 +7,7 @@ import java.util.List;
 
 public record PaymentTransactionPersistenceResult(
         List<PaymentTransactionCommand> acceptanceRequests,
+        List<PaymentTransactionCommand> createdPayments,
         List<AuthenticatedPaymentRequest> divergentDuplicates,
         List<AuthenticatedPaymentRequest> unauthorizedRequests
 ) {

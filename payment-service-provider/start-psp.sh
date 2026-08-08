@@ -19,6 +19,9 @@ Options:
   --central-transfer-url VALUE  Central transfer URL. Defaults to https://kafka-producer:8001.
   --notification-host VALUE     Notification gateway host. Defaults to notification-gateway.
   --notification-port VALUE     Notification gateway port. Defaults to 9090.
+  --spi-base-url VALUE          SPI URL used to provision funds. Defaults to http://localhost:8002.
+  --funds-balance VALUE         Initial settlement balance. Defaults to 1000.
+  --no-provision-funds          Do not create the settlement account in the local SPI.
   --java-tool-options VALUE     Optional JAVA_TOOL_OPTIONS value.
   --build                       Build the PSP image before starting.
   --replace                     Remove an existing container with the same name before starting.
@@ -29,6 +32,7 @@ Examples:
   payment-service-provider/start-psp.sh
   payment-service-provider/start-psp.sh 22222222
   payment-service-provider/start-psp.sh --bank-code 33333333 --host-port 8083 --replace
+  payment-service-provider/start-psp.sh 44444444 --funds-balance 5000
 EOF
 }
 
@@ -98,6 +102,9 @@ dict_url="http://dict:8003"
 central_transfer_url="https://kafka-producer:8001"
 notification_host="notification-gateway"
 notification_port="9090"
+spi_base_url="http://localhost:8002"
+funds_balance="1000"
+provision_funds=true
 java_tool_options=""
 build_image=false
 replace_existing=false
@@ -144,6 +151,22 @@ while (($#)); do
     --notification-port)
       notification_port="${2:?Missing value for --notification-port}"
       shift 2
+      ;;
+    --spi-base-url)
+      spi_base_url="${2:?Missing value for --spi-base-url}"
+      shift 2
+      ;;
+    --funds-balance)
+      funds_balance="${2:?Missing value for --funds-balance}"
+      if [[ ! "$funds_balance" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "--funds-balance requires a non-negative number" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --no-provision-funds)
+      provision_funds=false
+      shift
       ;;
     --java-tool-options)
       java_tool_options="${2:?Missing value for --java-tool-options}"
@@ -192,6 +215,15 @@ certs_local_dir="$root/infra/certs/local"
 ca_dir="$certs_local_dir/ca"
 psp_cert_dir="$certs_local_dir/psp-$bank_code"
 psp_client_crt="$psp_cert_dir/client.crt"
+provision_script="$root/scripts/provision-funds.sh"
+
+provision_funds_cmd=(
+  "$provision_script"
+  --base-url "$spi_base_url"
+  --ispb "$bank_code"
+  --balance "$funds_balance"
+  --preserve-if-exists
+)
 
 docker_run_cmd=(
   docker run -d
@@ -224,6 +256,9 @@ if $dry_run; then
   if $build_image; then
     quote_cmd docker build -t "$image" "$root/payment-service-provider"
   fi
+  if $provision_funds; then
+    quote_cmd "${provision_funds_cmd[@]}"
+  fi
   if $replace_existing; then
     quote_cmd docker rm -f "$container_name"
   fi
@@ -245,6 +280,10 @@ ensure_psp_certificate "$bank_code" "$cert_script" "$ca_dir/ca.crt" "$psp_client
 
 if $build_image; then
   docker build -t "$image" "$root/payment-service-provider"
+fi
+
+if $provision_funds; then
+  "${provision_funds_cmd[@]}"
 fi
 
 if $replace_existing && docker ps -a --format '{{.Names}}' | grep -Fxq "$container_name"; then
