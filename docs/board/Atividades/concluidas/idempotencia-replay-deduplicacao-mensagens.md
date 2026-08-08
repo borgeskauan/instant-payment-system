@@ -26,4 +26,4 @@ Replay a partir da DLQ entra aqui apenas como técnica de teste de idempotência
 
 **Nota**
 
-A automação ponta a ponta de duplicidade/replay, incluindo cenários no load-tool e reprocessamento de mensagens Kafka/DLQ, fica coberta pela task de backlog `Cenários realistas e reprocessamento no load-tool` em `docs/board/Backlog/operacao-testes.md`.
+A automação ponta a ponta de duplicidade/replay, incluindo cenários no load-tool e reprocessamento de mensagens Kafka/DLQ, fica coberta pela task ativa [`Cenários realistas e reprocessamento no load-tool`](../agora/cenarios-realistas-reprocessamento-load-tool.md).

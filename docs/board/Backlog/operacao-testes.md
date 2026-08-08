@@ -52,36 +52,6 @@ A meta é separar "processo está vivo" de "serviço está pronto para tráfego 
 - [ ] Expor métricas de startup/warmup: tempo até liveness, tempo até readiness, tempo de warmup, falhas de dependência e último motivo de not-ready.
 - [ ] Adicionar testes de contrato para readiness: dependência indisponível mantém serviço not-ready; warmup concluído torna serviço ready.
 
-## Cenários realistas e reprocessamento no load-tool
-
-**Por que existe**
-
-O teste atual sustenta alta taxa com um padrão bastante controlado. Para aproximar o experimento de produção, o load-tool precisa fornecer perfis de teste automatizados para cenários diferentes: caminho feliz, saldo insuficiente, rejeições, duplicidade, replay, hot participants e variações de carga.
-
-Kafka, retries, restarts e falhas de rede tornam duplicidade e replay inevitáveis. O fluxo precisa provar que reprocessar mensagens não duplica liquidação, que status já liquidado pode reemitir notificação de forma segura e que mensagens inválidas não travam o consumo.
-
-**Tarefas**
-
-- [ ] Adicionar perfis de teste no load-tool, com múltiplos arquivos `loadtool-config.json` por cenário.
-- [ ] Permitir selecionar o perfil de teste no script de execução, por exemplo caminho feliz, saldo insuficiente, rejeições funcionais, duplicidade, replay e hot participants.
-- [ ] Garantir que cada perfil defina carga, distribuição de participantes, valores, fundos provisionados, taxa esperada de confirmação e critérios de SLA.
-- [ ] Gerar valores de transação variados em vez de valor fixo.
-- [ ] Simular distribuição desigual entre ISPBs: poucos participantes quentes e muitos participantes frios.
-- [ ] Criar cenários com hot ISPB, hot sender, hot receiver e hot partition.
-- [ ] Variar taxa de chegada com ramp-up, pico, carga sustentada, queda e período ocioso.
-- [ ] Misturar transações aprovadas e rejeitadas no mesmo run.
-- [ ] Simular saldo insuficiente real para parte dos pagamentos.
-- [ ] Medir impacto de rejeições e saldo insuficiente em throughput, p95/p99, consumer lag e uso de CPU.
-- [ ] Validar que a taxa de confirmação considera apenas transações que deveriam confirmar.
-- [ ] Reprocessar mensagens Kafka já consumidas e validar que não ocorre dupla liquidação.
-- [ ] Reemitir status de pagamento já liquidado e validar replay idempotente da notificação.
-- [ ] Testar duplicidade de `pacs.008` com o mesmo `EndToEndId`.
-- [ ] Testar duplicidade de `pacs.002` para pagamento já confirmado.
-- [ ] Validar que `notSettledPaymentIds` e atualizações de status continuam corretos com IDs duplicados.
-- [ ] Automatizar cenários de reliable PSP delivery: PSP offline, retry após reconexão, restart do `notification-gateway`, ACK perdido e replay sem delivery duplicada.
-- [ ] Expor métricas de duplicidade, replay e retries.
-- [ ] Garantir que retry/replay não altera saldo nem gera confirmação inconsistente.
-- [ ] Comparar cenário uniforme atual contra cenários realistas para identificar regressões escondidas.
 
 ## Estabilizar teste de carga dentro do budget de CPU
 
