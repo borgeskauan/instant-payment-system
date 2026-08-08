@@ -3,7 +3,9 @@
 set -euo pipefail
 
 readonly RESULTS_DIR="results"
-readonly GO_LOADTOOL_CONFIG="go-loadtool/loadtool-config.json"
+readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/go-loadtool/profiles"
+readonly PROFILE_SNAPSHOT_FILENAME="profile.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
 readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/provision-funds.sh}"
 readonly SPI_CONTAINER="spi"
@@ -27,6 +29,8 @@ readonly GRAFANA_DASHBOARD_PATH="/d/load-test/load-test"
 readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
 
 RUN_TAG=""
+PROFILE_NAME="uniform-smoke"
+PROFILE_PATH=""
 PROVISION_FUNDS=true
 RESET_TEST_STATE=true
 ENABLE_JFR=false
@@ -46,8 +50,10 @@ LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
 LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--jfr] [--spi-trace] [--postgres-statements] [--reset-state|--no-reset-state] [--provision-funds|--no-provision-funds] <run-tag>"
-    echo "Edit ${GO_LOADTOOL_CONFIG} to change rate, duration, drain, PSP distribution, or SLA."
+    echo "Usage: $(basename "$0") [--profile NAME] [--jfr] [--spi-trace] [--postgres-statements] [--reset-state|--no-reset-state] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Examples:"
+    echo "  $(basename "$0") --profile uniform-smoke smoke-run"
+    echo "  $(basename "$0") smoke-run  # defaults to uniform-smoke"
 }
 
 log_phase() {
@@ -120,7 +126,9 @@ write_run_window_json() {
         "$grafana_available_at_run_start" \
         "$GRAFANA_BASE_URL" \
         "$full_run_url" \
-        "$active_window_url" <<'PY'
+        "$active_window_url" \
+        "$PROFILE_NAME" \
+        "$PROFILE_SNAPSHOT_FILENAME" <<'PY'
 import json
 import sys
 
@@ -134,10 +142,16 @@ grafana_available = sys.argv[7].lower() == "true"
 base_url = sys.argv[8]
 full_run_url = sys.argv[9]
 active_window_url = sys.argv[10]
+profile_name = sys.argv[11]
+profile_snapshot = sys.argv[12]
 
 payload = {
     "tag": tag,
     "result_dir": target_dir,
+    "profile": {
+        "name": profile_name,
+        "snapshot": profile_snapshot,
+    },
     "window": {
         "run_started_at": run_started_at,
         "active_started_at": active_started_at,
@@ -218,6 +232,15 @@ parse_args() {
                 ENABLE_POSTGRES_STATEMENTS=true
                 shift
                 ;;
+            --profile)
+                if [[ $# -lt 2 ]]; then
+                    usage
+                    echo "--profile requires a profile name." >&2
+                    exit 2
+                fi
+                PROFILE_NAME="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -246,6 +269,74 @@ parse_args() {
     fi
 }
 
+resolve_profile() {
+    if [[ ! "$PROFILE_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        echo "Invalid profile name '${PROFILE_NAME}': use only lowercase letters, digits, and hyphens, beginning with a letter or digit." >&2
+        return 2
+    fi
+
+    local candidate="${GO_LOADTOOL_PROFILES_DIR}/${PROFILE_NAME}.json"
+    if [[ ! -f "$candidate" ]]; then
+        echo "Profile '${PROFILE_NAME}' not found." >&2
+        return 2
+    fi
+
+    local validation_error
+    if ! validation_error="$(python3 - "$candidate" "$PROFILE_NAME" 2>&1 <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+name = sys.argv[2]
+
+try:
+    with open(path, encoding="utf-8") as handle:
+        profile = json.load(handle)
+    if not isinstance(profile, dict):
+        raise ValueError("root must be a JSON object")
+
+    required_strings = (
+        "baseUrl",
+        "centralTransferCaCert",
+        "centralTransferClientCertRoot",
+        "gatewayAddress",
+        "gatewayCaCert",
+        "gatewayClientCertRoot",
+    )
+    for key in required_strings:
+        if not isinstance(profile.get(key), str) or not profile[key]:
+            raise ValueError(f"{key} must be a non-empty string")
+
+    for key in ("centralTransferServerName", "gatewayServerName"):
+        if key in profile and not isinstance(profile[key], str):
+            raise ValueError(f"{key} must be a string")
+
+    duration_pattern = re.compile(r"[0-9]+(?:ns|us|µs|ms|s|m|h)")
+    for key in ("warmup", "duration", "drain"):
+        value = profile.get(key)
+        if not isinstance(value, str) or not value or "".join(duration_pattern.findall(value)) != value:
+            raise ValueError(f"{key} must be a duration such as 30s, 5m, or 1h")
+
+    for key in ("targetTxRate", "hotPspCount", "coldPspCount", "slaThresholdMs"):
+        value = profile.get(key)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"{key} must be a positive integer")
+
+    hot_share = profile.get("hotTrafficShare")
+    if type(hot_share) not in (int, float) or not 0 < hot_share < 1:
+        raise ValueError("hotTrafficShare must be greater than 0 and less than 1")
+except (OSError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"Profile '{name}' is malformed: {error}")
+PY
+)"; then
+        echo "$validation_error" >&2
+        return 2
+    fi
+
+    PROFILE_PATH="$candidate"
+}
+
 duration_seconds() {
     local key="$1"
     python3 -c '
@@ -256,15 +347,24 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     value = str(json.load(handle)[sys.argv[2]])
 
-match = re.fullmatch(r"([0-9]+)([smh]?)", value)
-if not match:
+parts = re.findall(r"([0-9]+)(ns|us|µs|ms|s|m|h)", value)
+if not parts or "".join(amount + unit for amount, unit in parts) != value:
     raise SystemExit(f"{sys.argv[2]} must be a duration like 60s, 5m, or 1h.")
 
-amount = int(match.group(1))
-unit = match.group(2) or "s"
-multipliers = {"s": 1, "m": 60, "h": 3600}
-print(amount * multipliers[unit])
-' "$GO_LOADTOOL_CONFIG" "$key"
+multipliers = {
+    "ns": 0.000000001,
+    "us": 0.000001,
+    "µs": 0.000001,
+    "ms": 0.001,
+    "s": 1,
+    "m": 60,
+    "h": 3600,
+}
+seconds = sum(int(amount) * multipliers[unit] for amount, unit in parts)
+if seconds != int(seconds):
+    raise SystemExit(f"{sys.argv[2]} must resolve to a whole number of seconds.")
+print(int(seconds))
+' "$PROFILE_PATH" "$key"
 }
 
 config_number() {
@@ -277,7 +377,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     value = json.load(handle)[sys.argv[2]]
 
 print(int(value))
-' "$GO_LOADTOOL_CONFIG" "$key"
+' "$PROFILE_PATH" "$key"
 }
 
 consumer_group_topic_lag() {
@@ -528,8 +628,8 @@ build_loadtool() {
 log_selected_options() {
     local target_dir="$1"
 
-    log_phase "starting load test: tag=${RUN_TAG} output=${target_dir}"
-    log_phase "using config: ${GO_LOADTOOL_CONFIG}"
+    log_phase "starting load test: tag=${RUN_TAG} profile=${PROFILE_NAME} output=${target_dir}"
+    log_phase "using profile: ${PROFILE_NAME}"
     log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
     log_phase "load-tool central transfer mTLS enabled: server_name=${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME}"
     if [[ "$ENABLE_JFR" == true ]]; then
@@ -552,8 +652,15 @@ prepare_run_workspace() {
     local tool_out="$1"
 
     mkdir -p "$tool_out"
+    copy_profile_snapshot "$(dirname "$tool_out")"
     LOADTOOL_BUILD_DIR="$(mktemp -d)"
     LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/go-loadtool"
+}
+
+copy_profile_snapshot() {
+    local target_dir="$1"
+
+    cp "$PROFILE_PATH" "${target_dir}/${PROFILE_SNAPSHOT_FILENAME}"
 }
 
 run_preflight_checks() {
@@ -687,6 +794,7 @@ run_simulator() {
     (
         cd go-loadtool
         "$LOADTOOL_BIN" simulate \
+            --profile "$PROFILE_NAME" \
             --out "../${tool_out}" \
             --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT" \
             --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT" \
@@ -705,6 +813,7 @@ generate_sla_report() {
     (
         cd go-loadtool
         "$LOADTOOL_BIN" report \
+            --profile "$PROFILE_NAME" \
             --starts "../${tool_out}/starts.csv" \
             --events "../${tool_out}/events.csv"
     ) | tee "${target_dir}/sla-report.json"
@@ -713,6 +822,7 @@ generate_sla_report() {
 
 main() {
     parse_args "$@"
+    resolve_profile
 
     local timestamp target_dir tool_out warmup_seconds active_seconds
     local run_started_at active_started_at active_finished_at drain_finished_at grafana_available_at_run_start

@@ -3,13 +3,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "loadtool-config.json")
-	content := `{
+const testProfile = `{
   "baseUrl": "https://127.0.0.1:8001",
   "centralTransferCaCert": "/tmp/central-ca.crt",
   "centralTransferClientCertRoot": "/tmp/central-certs",
@@ -27,13 +26,14 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
   "gatewayServerName": "notification-gateway",
   "slaThresholdMs": 3200
 }`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	cfg, err := Load(path)
+func TestLoadProfileReadsSimulatorAndReportSettings(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "explicit-profile", testProfile)
+
+	cfg, err := loadProfileFromDir(dir, "explicit-profile")
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("loadProfileFromDir returned error: %v", err)
 	}
 
 	if cfg.Sim.BaseURL != "https://127.0.0.1:8001" {
@@ -86,5 +86,65 @@ func TestLoadReadsSimulatorAndSLAConfig(t *testing.T) {
 	}
 	if cfg.SLAThresholdMs != 3200 {
 		t.Fatalf("SLAThresholdMs = %d", cfg.SLAThresholdMs)
+	}
+}
+
+func TestLoadProfileRejectsInvalidNames(t *testing.T) {
+	for _, name := range []string{"", "Uppercase", "-leading", "under_score", "../escape", "nested/profile"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadProfileFromDir(t.TempDir(), name)
+			if err == nil || !strings.Contains(err.Error(), "invalid profile name") {
+				t.Fatalf("error = %v, want clear invalid-name error", err)
+			}
+		})
+	}
+}
+
+func TestLoadProfileNameCannotEscapeProfilesDirectory(t *testing.T) {
+	root := t.TempDir()
+	profilesDir := filepath.Join(root, "profiles")
+	if err := os.Mkdir(profilesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, root, "escaped", testProfile)
+
+	_, err := loadProfileFromDir(profilesDir, "../escaped")
+	if err == nil || !strings.Contains(err.Error(), "invalid profile name") {
+		t.Fatalf("error = %v, want path escape to be rejected", err)
+	}
+}
+
+func TestLoadProfileRejectsUnknownProfile(t *testing.T) {
+	_, err := loadProfileFromDir(t.TempDir(), "missing-profile")
+	if err == nil || !strings.Contains(err.Error(), `profile "missing-profile" not found`) {
+		t.Fatalf("error = %v, want clear unknown-profile error", err)
+	}
+}
+
+func TestLoadProfileRejectsMalformedProfile(t *testing.T) {
+	dir := t.TempDir()
+	writeProfile(t, dir, "broken-profile", `{not JSON}`)
+
+	_, err := loadProfileFromDir(dir, "broken-profile")
+	if err == nil || !strings.Contains(err.Error(), `profile "broken-profile" is malformed`) {
+		t.Fatalf("error = %v, want clear malformed-profile error", err)
+	}
+}
+
+func TestLoadProfileRejectsInvalidProfileValue(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `"duration": "45s"`, `"duration": "soon"`, 1)
+	writeProfile(t, dir, "invalid-duration", content)
+
+	_, err := loadProfileFromDir(dir, "invalid-duration")
+	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
+		t.Fatalf("error = %v, want clear invalid-duration error", err)
+	}
+}
+
+func writeProfile(t *testing.T, dir string, name string, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

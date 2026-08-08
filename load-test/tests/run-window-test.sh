@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
 source "${ROOT_DIR}/run-load-test.sh"
 
@@ -29,6 +30,8 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 
 assert data["tag"] == "baseline-2000"
 assert data["result_dir"] == os.environ["EXPECTED_RESULT_DIR"]
+assert data["profile"]["name"] == "uniform-smoke"
+assert data["profile"]["snapshot"] == "profile.json"
 assert data["window"]["run_started_at"] == "2026-06-20T20:05:46-03:00"
 assert data["window"]["active_started_at"] == "2026-06-20T20:06:16-03:00"
 assert data["window"]["active_finished_at"] == "2026-06-20T20:21:16-03:00"
@@ -77,5 +80,13 @@ RESET_TEST_STATE=false
 parse_args --reset-state baseline
 if [[ "$RUN_TAG" != "baseline" || "$RESET_TEST_STATE" != true ]]; then
     echo "--reset-state was not parsed correctly" >&2
+    exit 1
+fi
+
+RUN_TAG=""
+PROFILE_NAME="uniform-smoke"
+parse_args --profile uniform-smoke explicit-profile
+if [[ "$RUN_TAG" != "explicit-profile" || "$PROFILE_NAME" != "uniform-smoke" ]]; then
+    echo "--profile was not parsed correctly" >&2
     exit 1
 fi
