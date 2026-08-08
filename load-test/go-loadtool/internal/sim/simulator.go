@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
 	"instant-payment-system/load-test/go-loadtool/internal/ids"
@@ -41,14 +42,17 @@ type Config struct {
 	HotPSPs                       int
 	ColdPSPs                      int
 	HotShare                      float64
+	TrafficSeed                   int64
+	Scenarios                     []config.Scenario
 	OutputDir                     string
 }
 
 type transferJob struct {
-	ID      string
-	Pair    ids.Pair
-	Created int64
-	Amount  int64
+	ID           string
+	Pair         ids.Pair
+	Created      int64
+	Amount       int64
+	ScenarioType string
 }
 
 type statusJob struct {
@@ -99,6 +103,13 @@ func Run(cfg Config) error {
 	}
 	if cfg.HotPSPs <= 0 || cfg.ColdPSPs <= 0 {
 		return fmt.Errorf("hot and cold PSP counts must be positive")
+	}
+	if len(cfg.Scenarios) != 1 || cfg.Scenarios[0].Type != config.ScenarioHappyPath || cfg.Scenarios[0].HappyPath == nil {
+		return fmt.Errorf("exactly one configured happy-path scenario is required")
+	}
+	amount := cfg.Scenarios[0].HappyPath.Amount
+	if amount.Type != config.AmountSequentialRange || amount.Minimum <= 0 || amount.Maximum < amount.Minimum {
+		return fmt.Errorf("happy-path requires a valid sequential-range amount")
 	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 		return err
@@ -275,11 +286,6 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 	start := time.Now()
 	next := start
 	endAfter := s.cfg.Warmup + s.cfg.Duration
-	hotCount := s.cfg.HotPSPs
-	coldEvery := int(1 / (1 - s.cfg.HotShare))
-	if coldEvery < 2 {
-		coldEvery = 2
-	}
 
 	for seq := uint64(0); time.Since(start) < endAfter; seq++ {
 		if sleep := next.Sub(time.Now()); sleep > 0 {
@@ -289,23 +295,36 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 		rate := loadRateForElapsed(elapsed, s.cfg.Warmup, s.cfg.TargetTxRate)
 		next = next.Add(time.Second / time.Duration(rate))
 
-		pairIndex := hotCount + int(seq)%s.cfg.ColdPSPs
-		if hotCount > 0 && seq%uint64(coldEvery) != 0 {
-			pairIndex = int(seq) % hotCount
-		}
-
-		job := transferJob{
-			ID:      ids.TransactionID(s.runID, seq),
-			Pair:    pairs[pairIndex],
-			Created: time.Now().UnixNano(),
-			Amount:  100 + int64(seq%99999),
-		}
+		job := s.transferJobForSequence(seq, pairs)
 
 		select {
 		case jobs <- job:
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func (s *simulator) transferJobForSequence(seq uint64, pairs []ids.Pair) transferJob {
+	hotCount := s.cfg.HotPSPs
+	coldEvery := int(1 / (1 - s.cfg.HotShare))
+	if coldEvery < 2 {
+		coldEvery = 2
+	}
+	pairIndex := hotCount + int(seq)%s.cfg.ColdPSPs
+	if hotCount > 0 && seq%uint64(coldEvery) != 0 {
+		pairIndex = int(seq) % hotCount
+	}
+
+	scenario := s.cfg.Scenarios[0]
+	amountRange := scenario.HappyPath.Amount
+	amountCount := amountRange.Maximum - amountRange.Minimum + 1
+	return transferJob{
+		ID:           ids.TransactionID(s.runID, seq),
+		Pair:         pairs[pairIndex],
+		Created:      time.Now().UnixNano(),
+		Amount:       amountRange.Minimum + int64(seq%uint64(amountCount)),
+		ScenarioType: scenario.Type,
 	}
 }
 
@@ -356,6 +375,7 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 		RequestStartedAtNS: startedAt,
 		RequestDoneAtNS:    doneAt,
 		HTTPStatus:         status,
+		ScenarioType:       job.ScenarioType,
 	})
 }
 

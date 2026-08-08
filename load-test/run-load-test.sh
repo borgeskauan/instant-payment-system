@@ -31,6 +31,14 @@ readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
+PROFILE_SCHEMA_VERSION=""
+PROFILE_WARMUP_SECONDS=""
+PROFILE_ACTIVE_SECONDS=""
+PROFILE_DRAIN_SECONDS=""
+PROFILE_HOT_PAIR_COUNT=""
+PROFILE_COLD_PAIR_COUNT=""
+PROFILE_FUNDING_BALANCE=""
+PROFILE_FUNDING_RESET_IF_EXISTS=""
 PROVISION_FUNDS=true
 RESET_TEST_STATE=true
 ENABLE_JFR=false
@@ -284,7 +292,6 @@ resolve_profile() {
     local validation_error
     if ! validation_error="$(python3 - "$candidate" "$PROFILE_NAME" 2>&1 <<'PY'
 import json
-import re
 import sys
 
 path = sys.argv[1]
@@ -295,39 +302,10 @@ try:
         profile = json.load(handle)
     if not isinstance(profile, dict):
         raise ValueError("root must be a JSON object")
-
-    required_strings = (
-        "baseUrl",
-        "centralTransferCaCert",
-        "centralTransferClientCertRoot",
-        "gatewayAddress",
-        "gatewayCaCert",
-        "gatewayClientCertRoot",
-    )
-    for key in required_strings:
-        if not isinstance(profile.get(key), str) or not profile[key]:
-            raise ValueError(f"{key} must be a non-empty string")
-
-    for key in ("centralTransferServerName", "gatewayServerName"):
-        if key in profile and not isinstance(profile[key], str):
-            raise ValueError(f"{key} must be a string")
-
-    duration_pattern = re.compile(r"[0-9]+(?:ns|us|µs|ms|s|m|h)")
-    for key in ("warmup", "duration", "drain"):
-        value = profile.get(key)
-        if not isinstance(value, str) or not value or "".join(duration_pattern.findall(value)) != value:
-            raise ValueError(f"{key} must be a duration such as 30s, 5m, or 1h")
-
-    for key in ("targetTxRate", "hotPspCount", "coldPspCount", "slaThresholdMs"):
-        value = profile.get(key)
-        if type(value) is not int or value <= 0:
-            raise ValueError(f"{key} must be a positive integer")
-
-    hot_share = profile.get("hotTrafficShare")
-    if type(hot_share) not in (int, float) or not 0 < hot_share < 1:
-        raise ValueError("hotTrafficShare must be greater than 0 and less than 1")
+    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 1:
+        raise ValueError("schemaVersion must be 1")
 except (OSError, json.JSONDecodeError, ValueError) as error:
-    raise SystemExit(f"Profile '{name}' is malformed: {error}")
+    raise SystemExit(f"Profile '{name}' failed shallow validation: {error}")
 PY
 )"; then
         echo "$validation_error" >&2
@@ -337,47 +315,48 @@ PY
     PROFILE_PATH="$candidate"
 }
 
-duration_seconds() {
-    local key="$1"
-    python3 -c '
-import json
-import re
-import sys
+validate_profile_with_loadtool() {
+    local validation_file="${LOADTOOL_BUILD_DIR}/profile-validation.json"
+    local -a values
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    value = str(json.load(handle)[sys.argv[2]])
+    log_phase "validating profile with Go loadtool"
+    (
+        cd go-loadtool
+        "$LOADTOOL_BIN" validate-profile --profile "$PROFILE_NAME"
+    ) > "$validation_file"
 
-parts = re.findall(r"([0-9]+)(ns|us|µs|ms|s|m|h)", value)
-if not parts or "".join(amount + unit for amount, unit in parts) != value:
-    raise SystemExit(f"{sys.argv[2]} must be a duration like 60s, 5m, or 1h.")
-
-multipliers = {
-    "ns": 0.000000001,
-    "us": 0.000001,
-    "µs": 0.000001,
-    "ms": 0.001,
-    "s": 1,
-    "m": 60,
-    "h": 3600,
-}
-seconds = sum(int(amount) * multipliers[unit] for amount, unit in parts)
-if seconds != int(seconds):
-    raise SystemExit(f"{sys.argv[2]} must resolve to a whole number of seconds.")
-print(int(seconds))
-' "$PROFILE_PATH" "$key"
-}
-
-config_number() {
-    local key="$1"
-    python3 -c '
+    mapfile -t values < <(python3 - "$validation_file" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    value = json.load(handle)[sys.argv[2]]
+    data = json.load(handle)
 
-print(int(value))
-' "$PROFILE_PATH" "$key"
+print(data["profile"])
+print(data["schemaVersion"])
+print(data["warmupSeconds"])
+print(data["activeSeconds"])
+print(data["drainSeconds"])
+print(data["participants"]["hotPairCount"])
+print(data["participants"]["coldPairCount"])
+print(data["funding"]["balance"])
+print(str(data["funding"]["resetIfExists"]).lower())
+PY
+)
+    if [[ "${#values[@]}" -ne 9 || "${values[0]}" != "$PROFILE_NAME" ]]; then
+        echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
+        return 1
+    fi
+
+    PROFILE_SCHEMA_VERSION="${values[1]}"
+    PROFILE_WARMUP_SECONDS="${values[2]}"
+    PROFILE_ACTIVE_SECONDS="${values[3]}"
+    PROFILE_DRAIN_SECONDS="${values[4]}"
+    PROFILE_HOT_PAIR_COUNT="${values[5]}"
+    PROFILE_COLD_PAIR_COUNT="${values[6]}"
+    PROFILE_FUNDING_BALANCE="${values[7]}"
+    PROFILE_FUNDING_RESET_IF_EXISTS="${values[8]}"
+    log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION}"
 }
 
 consumer_group_topic_lag() {
@@ -630,6 +609,7 @@ log_selected_options() {
 
     log_phase "starting load test: tag=${RUN_TAG} profile=${PROFILE_NAME} output=${target_dir}"
     log_phase "using profile: ${PROFILE_NAME}"
+    log_phase "execution window: warmup=${PROFILE_WARMUP_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
     log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
     log_phase "load-tool central transfer mTLS enabled: server_name=${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME}"
     if [[ "$ENABLE_JFR" == true ]]; then
@@ -648,13 +628,16 @@ log_selected_options() {
     fi
 }
 
+prepare_loadtool_binary() {
+    LOADTOOL_BUILD_DIR="$(mktemp -d)"
+    LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/go-loadtool"
+}
+
 prepare_run_workspace() {
     local tool_out="$1"
 
     mkdir -p "$tool_out"
     copy_profile_snapshot "$(dirname "$tool_out")"
-    LOADTOOL_BUILD_DIR="$(mktemp -d)"
-    LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/go-loadtool"
 }
 
 copy_profile_snapshot() {
@@ -710,11 +693,9 @@ SQL
 
 prepare_loadtool_certificates() {
     local target_dir="$1"
-    local hot_count cold_count total_count cert_script ca_cert target_dir_abs
+    local total_count cert_script ca_cert target_dir_abs
 
-    hot_count="$(config_number "hotPspCount")"
-    cold_count="$(config_number "coldPspCount")"
-    total_count=$((hot_count + cold_count))
+    total_count=$((PROFILE_HOT_PAIR_COUNT + PROFILE_COLD_PAIR_COUNT))
 
     target_dir_abs="$(cd "$target_dir" && pwd)"
     LOADTOOL_CERT_ROOT="${target_dir_abs}/certs"
@@ -746,10 +727,19 @@ prepare_loadtool_certificates() {
 
 provision_funds_if_enabled() {
     local target_dir="$1"
+    local total_count
+    local -a funding_args
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
+        total_count=$((PROFILE_HOT_PAIR_COUNT + PROFILE_COLD_PAIR_COUNT))
+        funding_args=(--vus "$total_count" --balance "$PROFILE_FUNDING_BALANCE")
+        if [[ "$PROFILE_FUNDING_RESET_IF_EXISTS" == true ]]; then
+            funding_args+=(--reset-if-exists)
+        else
+            funding_args+=(--preserve-if-exists)
+        fi
         log_phase "provisioning funds"
-        "$PROVISION_FUNDS_SCRIPT" > "${target_dir}/provision-funds.log" 2>&1
+        "$PROVISION_FUNDS_SCRIPT" "${funding_args[@]}" > "${target_dir}/provision-funds.log" 2>&1
         log_phase "funds provisioned"
     else
         log_phase "skipping funds provisioning"
@@ -823,20 +813,23 @@ generate_sla_report() {
 main() {
     parse_args "$@"
     resolve_profile
+    prepare_loadtool_binary
+    trap cleanup EXIT INT TERM
+    build_loadtool "$LOADTOOL_BIN"
+    validate_profile_with_loadtool
 
     local timestamp target_dir tool_out warmup_seconds active_seconds
     local run_started_at active_started_at active_finished_at drain_finished_at grafana_available_at_run_start
     timestamp="$(date +%Y%m%d_%H%M%S)"
     target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
     tool_out="${target_dir}/go-loadtool"
-    warmup_seconds="$(duration_seconds "warmup")"
-    active_seconds="$(duration_seconds "duration")"
+    warmup_seconds="$PROFILE_WARMUP_SECONDS"
+    active_seconds="$PROFILE_ACTIVE_SECONDS"
     run_started_at="$(iso_now)"
     active_started_at="$(iso_after_seconds "$run_started_at" "$warmup_seconds")"
     active_finished_at="$(iso_after_seconds "$active_started_at" "$active_seconds")"
 
     prepare_run_workspace "$tool_out"
-    trap cleanup EXIT INT TERM
     prepare_loadtool_certificates "$target_dir"
     if grafana_available; then
         grafana_available_at_run_start=true
@@ -846,7 +839,6 @@ main() {
 
     log_selected_options "$target_dir"
     log_grafana_status "$grafana_available_at_run_start"
-    build_loadtool "$LOADTOOL_BIN"
     run_preflight_checks
     reset_persistent_test_state_if_enabled "$target_dir"
     provision_funds_if_enabled "$target_dir"

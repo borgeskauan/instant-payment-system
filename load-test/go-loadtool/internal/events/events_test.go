@@ -22,6 +22,7 @@ func TestStartEventsRoundTrip(t *testing.T) {
 		RequestStartedAtNS: 15,
 		RequestDoneAtNS:    20,
 		HTTPStatus:         200,
+		ScenarioType:       "happy-path",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +49,26 @@ func TestStartEventsRoundTrip(t *testing.T) {
 	}
 	if rows[0].RequestDoneAtNS != 20 {
 		t.Fatalf("RequestDoneAtNS = %d, want 20", rows[0].RequestDoneAtNS)
+	}
+	if rows[0].ScenarioType != "happy-path" {
+		t.Fatalf("ScenarioType = %q, want happy-path", rows[0].ScenarioType)
+	}
+}
+
+func TestReadStartsAcceptsPreviousSevenColumnEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "starts.csv")
+	data := "end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_started_at_ns,request_done_at_ns,http_status\n" +
+		"tx-1,10000001,20000001,10,15,20,200\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := ReadStarts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RequestStartedAtNS != 15 || rows[0].ScenarioType != "" {
+		t.Fatalf("rows = %#v", rows)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/connectivity"
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
 	"instant-payment-system/load-test/go-loadtool/internal/ids"
@@ -37,6 +38,52 @@ func TestLoadRateUsesHalfTargetDuringWarmup(t *testing.T) {
 func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
 	if got := loadRateForElapsed(0, 30*time.Second, 1); got != 1 {
 		t.Fatalf("loadRateForElapsed with target rate 1 = %d, want 1", got)
+	}
+}
+
+func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testing.T) {
+	s := &simulator{
+		cfg: Config{
+			HotPSPs:  10,
+			ColdPSPs: 40,
+			HotShare: 0.8,
+			Scenarios: []config.Scenario{{
+				Type:  config.ScenarioHappyPath,
+				Share: 1,
+				HappyPath: &config.HappyPathScenario{Amount: config.SequentialRangeAmount{
+					Type:    config.AmountSequentialRange,
+					Minimum: 100,
+					Maximum: 102,
+				}},
+			}},
+		},
+		runID: "test-run",
+	}
+	pairs := buildPairs(50)
+	hotPairs := make(map[string]bool)
+	for _, pair := range pairs[:10] {
+		hotPairs[pair.Payer] = true
+	}
+
+	hotCount := 0
+	coldCount := 0
+	for seq := uint64(0); seq < 100; seq++ {
+		job := s.transferJobForSequence(seq, pairs)
+		if job.ScenarioType != config.ScenarioHappyPath {
+			t.Fatalf("sequence %d ScenarioType = %q", seq, job.ScenarioType)
+		}
+		wantAmount := int64(100 + seq%3)
+		if job.Amount != wantAmount {
+			t.Fatalf("sequence %d Amount = %d, want %d", seq, job.Amount, wantAmount)
+		}
+		if hotPairs[job.Pair.Payer] {
+			hotCount++
+		} else {
+			coldCount++
+		}
+	}
+	if hotCount != 80 || coldCount != 20 {
+		t.Fatalf("hot/cold jobs = %d/%d, want 80/20", hotCount, coldCount)
 	}
 }
 

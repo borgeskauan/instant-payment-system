@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -12,11 +13,16 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: go-loadtool <simulate|report>")
+		fmt.Fprintln(os.Stderr, "usage: go-loadtool <validate-profile|simulate|report>")
 		os.Exit(2)
 	}
 
 	switch os.Args[1] {
+	case "validate-profile":
+		if err := runValidateProfile(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "validate-profile failed: %v\n", err)
+			os.Exit(1)
+		}
 	case "simulate":
 		if err := runSimulate(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "simulate failed: %v\n", err)
@@ -74,7 +80,7 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 	if err != nil {
 		return sim.Config{}, err
 	}
-	cfg := runtimeCfg.Sim
+	cfg := simulatorConfig(runtimeCfg)
 	flags.Visit(func(parsedFlag *flag.Flag) {
 		switch parsedFlag.Name {
 		case "out":
@@ -95,6 +101,29 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 	})
 
 	return cfg, nil
+}
+
+func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
+	return sim.Config{
+		BaseURL:                       runtimeCfg.Connections.CentralTransfer.BaseURL,
+		CentralTransferCACert:         runtimeCfg.Connections.CentralTransfer.CACert,
+		CentralTransferClientCertRoot: runtimeCfg.Connections.CentralTransfer.ClientCertRoot,
+		CentralTransferServerName:     runtimeCfg.Connections.CentralTransfer.ServerName,
+		GatewayAddress:                runtimeCfg.Connections.NotificationGateway.Address,
+		GatewayCACert:                 runtimeCfg.Connections.NotificationGateway.CACert,
+		GatewayClientCertRoot:         runtimeCfg.Connections.NotificationGateway.ClientCertRoot,
+		GatewayServerName:             runtimeCfg.Connections.NotificationGateway.ServerName,
+		TargetTxRate:                  runtimeCfg.Load.TargetTxRate,
+		Warmup:                        runtimeCfg.Load.Warmup,
+		Duration:                      runtimeCfg.Load.Duration,
+		Drain:                         runtimeCfg.Load.Drain,
+		HotPSPs:                       runtimeCfg.Participants.Distribution.HotPairCount,
+		ColdPSPs:                      runtimeCfg.Participants.Distribution.ColdPairCount,
+		HotShare:                      runtimeCfg.Participants.Distribution.HotTrafficShare,
+		TrafficSeed:                   runtimeCfg.Traffic.Seed,
+		Scenarios:                     runtimeCfg.Traffic.Scenarios,
+		OutputDir:                     config.DefaultOutputDir,
+	}
 }
 
 func runReport(args []string) error {
@@ -136,10 +165,73 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 		startsPath: startsPath,
 		eventsPath: eventsPath,
 		options: report.Options{
-			SLAThresholdMs: runtimeCfg.SLAThresholdMs,
-			TargetTxRate:   runtimeCfg.Sim.TargetTxRate,
-			Warmup:         runtimeCfg.Sim.Warmup,
-			Duration:       runtimeCfg.Sim.Duration,
+			SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
+			TargetTxRate:   runtimeCfg.Load.TargetTxRate,
+			Warmup:         runtimeCfg.Load.Warmup,
+			Duration:       runtimeCfg.Load.Duration,
+			Scenarios:      runtimeCfg.Traffic.Scenarios,
+		},
+	}, nil
+}
+
+type profileValidation struct {
+	Profile       string                        `json:"profile"`
+	SchemaVersion int                           `json:"schemaVersion"`
+	WarmupSeconds int64                         `json:"warmupSeconds"`
+	ActiveSeconds int64                         `json:"activeSeconds"`
+	DrainSeconds  int64                         `json:"drainSeconds"`
+	Participants  profileValidationParticipants `json:"participants"`
+	Funding       profileValidationFunding      `json:"funding"`
+}
+
+type profileValidationParticipants struct {
+	HotPairCount  int `json:"hotPairCount"`
+	ColdPairCount int `json:"coldPairCount"`
+}
+
+type profileValidationFunding struct {
+	Balance       int64 `json:"balance"`
+	ResetIfExists bool  `json:"resetIfExists"`
+}
+
+func runValidateProfile(args []string) error {
+	validation, err := parseValidateProfile(args, config.LoadProfile)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(validation)
+}
+
+func parseValidateProfile(args []string, loadProfile profileLoader) (profileValidation, error) {
+	profileName := config.DefaultProfile
+	flags := flag.NewFlagSet("validate-profile", flag.ContinueOnError)
+	flags.StringVar(&profileName, "profile", profileName, "load-test profile name")
+	if err := flags.Parse(args); err != nil {
+		return profileValidation{}, err
+	}
+	if flags.NArg() != 0 {
+		return profileValidation{}, fmt.Errorf("validate-profile accepts no positional arguments")
+	}
+
+	runtimeCfg, err := loadProfile(profileName)
+	if err != nil {
+		return profileValidation{}, err
+	}
+	return profileValidation{
+		Profile:       profileName,
+		SchemaVersion: runtimeCfg.SchemaVersion,
+		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
+		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
+		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),
+		Participants: profileValidationParticipants{
+			HotPairCount:  runtimeCfg.Participants.Distribution.HotPairCount,
+			ColdPairCount: runtimeCfg.Participants.Distribution.ColdPairCount,
+		},
+		Funding: profileValidationFunding{
+			Balance:       runtimeCfg.Funding.Balance,
+			ResetIfExists: runtimeCfg.Funding.ResetIfExists,
 		},
 	}, nil
 }

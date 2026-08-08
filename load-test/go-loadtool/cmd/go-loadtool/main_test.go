@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
-	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
 
 func TestSimulateUsesExplicitProfile(t *testing.T) {
@@ -51,6 +50,9 @@ func TestReportUsesExplicitProfile(t *testing.T) {
 	if command.options.TargetTxRate != 321 || command.options.Warmup != 12*time.Second || command.options.Duration != 34*time.Second || command.options.SLAThresholdMs != 987 {
 		t.Fatalf("report settings were not loaded from selected profile: %#v", command.options)
 	}
+	if len(command.options.Scenarios) != 1 || command.options.Scenarios[0].Type != config.ScenarioHappyPath {
+		t.Fatalf("report scenarios = %#v", command.options.Scenarios)
+	}
 }
 
 func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
@@ -58,6 +60,13 @@ func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
 		name string
 		run  func(profileLoader) error
 	}{
+		{
+			name: "validate-profile",
+			run: func(loader profileLoader) error {
+				_, err := parseValidateProfile(nil, loader)
+				return err
+			},
+		},
 		{
 			name: "simulate",
 			run: func(loader profileLoader) error {
@@ -86,6 +95,39 @@ func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
 				t.Fatalf("loaded profile = %q, want %q", loadedProfile, config.DefaultProfile)
 			}
 		})
+	}
+}
+
+func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
+	var loadedProfile string
+	validation, err := parseValidateProfile([]string{"--profile", "custom-validation"}, func(name string) (config.Runtime, error) {
+		loadedProfile = name
+		return commandTestRuntime(), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loadedProfile != "custom-validation" || validation.Profile != "custom-validation" {
+		t.Fatalf("loaded/output profile = %q/%q", loadedProfile, validation.Profile)
+	}
+	if validation.SchemaVersion != 1 || validation.WarmupSeconds != 12 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
+		t.Fatalf("validation window = %#v", validation)
+	}
+	if validation.Participants.HotPairCount != 7 || validation.Participants.ColdPairCount != 13 {
+		t.Fatalf("validation participants = %#v", validation.Participants)
+	}
+	if validation.Funding.Balance != 123456 || validation.Funding.ResetIfExists {
+		t.Fatalf("validation funding = %#v", validation.Funding)
+	}
+}
+
+func TestValidateProfileRejectsPositionalArguments(t *testing.T) {
+	_, err := parseValidateProfile([]string{"unexpected"}, func(string) (config.Runtime, error) {
+		return commandTestRuntime(), nil
+	})
+	if err == nil {
+		t.Fatal("validate-profile accepted positional argument")
 	}
 }
 
@@ -147,18 +189,56 @@ func TestCommandsReturnSelectedProfileLoadError(t *testing.T) {
 
 func commandTestRuntime() config.Runtime {
 	return config.Runtime{
-		Sim: sim.Config{
-			CentralTransferCACert:         "/profile/central-ca.crt",
-			CentralTransferClientCertRoot: "/profile/central-clients",
-			CentralTransferServerName:     "profile-central",
-			GatewayCACert:                 "/profile/gateway-ca.crt",
-			GatewayClientCertRoot:         "/profile/gateway-clients",
-			GatewayServerName:             "profile-gateway",
-			TargetTxRate:                  321,
-			Warmup:                        12 * time.Second,
-			Duration:                      34 * time.Second,
-			OutputDir:                     "/profile/output",
+		SchemaVersion: 1,
+		Connections: config.Connections{
+			CentralTransfer: config.CentralTransferConnection{
+				BaseURL:        "https://profile-central:8001",
+				CACert:         "/profile/central-ca.crt",
+				ClientCertRoot: "/profile/central-clients",
+				ServerName:     "profile-central",
+			},
+			NotificationGateway: config.NotificationGatewayConnection{
+				Address:        "profile-gateway:9090",
+				CACert:         "/profile/gateway-ca.crt",
+				ClientCertRoot: "/profile/gateway-clients",
+				ServerName:     "profile-gateway",
+			},
 		},
-		SLAThresholdMs: 987,
+		Load: config.Load{
+			TargetTxRate: 321,
+			Warmup:       12 * time.Second,
+			Duration:     34 * time.Second,
+			Drain:        9 * time.Second,
+		},
+		Participants: config.Participants{Distribution: config.HotColdPairDistribution{
+			Type:            config.DistributionHotColdPairs,
+			HotPairCount:    7,
+			ColdPairCount:   13,
+			HotTrafficShare: 0.75,
+		}},
+		Traffic: config.Traffic{
+			Seed: 42,
+			Scenarios: []config.Scenario{{
+				Type:  config.ScenarioHappyPath,
+				Share: 1,
+				HappyPath: &config.HappyPathScenario{
+					Amount: config.SequentialRangeAmount{
+						Type:    config.AmountSequentialRange,
+						Minimum: 100,
+						Maximum: 100098,
+					},
+					Expectations: config.HappyPathExpectations{
+						HTTPStatus:        config.ExpectedHTTP2xx,
+						PayerConfirmation: config.ConfirmationRequired,
+					},
+				},
+			}},
+		},
+		Funding: config.Funding{
+			Type:          config.FundingUniform,
+			Balance:       123456,
+			ResetIfExists: false,
+		},
+		Reporting: config.Reporting{SLAThresholdMs: 987},
 	}
 }

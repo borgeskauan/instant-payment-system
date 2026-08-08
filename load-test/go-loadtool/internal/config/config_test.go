@@ -9,25 +9,64 @@ import (
 )
 
 const testProfile = `{
-  "baseUrl": "https://127.0.0.1:8001",
-  "centralTransferCaCert": "/tmp/central-ca.crt",
-  "centralTransferClientCertRoot": "/tmp/central-certs",
-  "centralTransferServerName": "kafka-producer",
-  "gatewayAddress": "127.0.0.1:9090",
-  "targetTxRate": 1234,
-  "warmup": "10s",
-  "duration": "45s",
-  "drain": "12s",
-  "hotPspCount": 7,
-  "coldPspCount": 13,
-  "hotTrafficShare": 0.75,
-  "gatewayCaCert": "/tmp/ca.crt",
-  "gatewayClientCertRoot": "/tmp/loadtool-certs",
-  "gatewayServerName": "notification-gateway",
-  "slaThresholdMs": 3200
+  "schemaVersion": 1,
+  "connections": {
+    "centralTransfer": {
+      "baseUrl": "https://127.0.0.1:8001",
+      "caCert": "/tmp/central-ca.crt",
+      "clientCertRoot": "/tmp/central-certs",
+      "serverName": "kafka-producer"
+    },
+    "notificationGateway": {
+      "address": "127.0.0.1:9090",
+      "caCert": "/tmp/gateway-ca.crt",
+      "clientCertRoot": "/tmp/gateway-certs",
+      "serverName": "notification-gateway"
+    }
+  },
+  "load": {
+    "targetTxRate": 1234,
+    "warmup": "10s",
+    "duration": "45s",
+    "drain": "12s"
+  },
+  "participants": {
+    "distribution": {
+      "type": "hot-cold-pairs",
+      "hotPairCount": 7,
+      "coldPairCount": 13,
+      "hotTrafficShare": 0.75
+    }
+  },
+  "traffic": {
+    "seed": 42,
+    "scenarios": [
+      {
+        "type": "happy-path",
+        "share": 1.0,
+        "amount": {
+          "type": "sequential-range",
+          "minimum": 100,
+          "maximum": 100098
+        },
+        "expectations": {
+          "httpStatus": "2xx",
+          "payerConfirmation": "required"
+        }
+      }
+    ]
+  },
+  "funding": {
+    "type": "uniform",
+    "balance": 1000000000,
+    "resetIfExists": true
+  },
+  "reporting": {
+    "slaThresholdMs": 3200
+  }
 }`
 
-func TestLoadProfileReadsSimulatorAndReportSettings(t *testing.T) {
+func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "explicit-profile", testProfile)
 
@@ -36,56 +75,65 @@ func TestLoadProfileReadsSimulatorAndReportSettings(t *testing.T) {
 		t.Fatalf("loadProfileFromDir returned error: %v", err)
 	}
 
-	if cfg.Sim.BaseURL != "https://127.0.0.1:8001" {
-		t.Fatalf("BaseURL = %q", cfg.Sim.BaseURL)
+	if cfg.SchemaVersion != 1 {
+		t.Fatalf("SchemaVersion = %d", cfg.SchemaVersion)
 	}
-	if cfg.Sim.CentralTransferCACert != "/tmp/central-ca.crt" {
-		t.Fatalf("CentralTransferCACert = %q", cfg.Sim.CentralTransferCACert)
+	if cfg.Connections.CentralTransfer.BaseURL != "https://127.0.0.1:8001" {
+		t.Fatalf("central transfer BaseURL = %q", cfg.Connections.CentralTransfer.BaseURL)
 	}
-	if cfg.Sim.CentralTransferClientCertRoot != "/tmp/central-certs" {
-		t.Fatalf("CentralTransferClientCertRoot = %q", cfg.Sim.CentralTransferClientCertRoot)
+	if cfg.Connections.CentralTransfer.CACert != "/tmp/central-ca.crt" {
+		t.Fatalf("central transfer CACert = %q", cfg.Connections.CentralTransfer.CACert)
 	}
-	if cfg.Sim.CentralTransferServerName != "kafka-producer" {
-		t.Fatalf("CentralTransferServerName = %q", cfg.Sim.CentralTransferServerName)
+	if cfg.Connections.NotificationGateway.Address != "127.0.0.1:9090" {
+		t.Fatalf("gateway Address = %q", cfg.Connections.NotificationGateway.Address)
 	}
-	if cfg.Sim.GatewayAddress != "127.0.0.1:9090" {
-		t.Fatalf("GatewayAddress = %q", cfg.Sim.GatewayAddress)
+	if cfg.Load.TargetTxRate != 1234 || cfg.Load.Warmup != 10*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
+		t.Fatalf("Load = %#v", cfg.Load)
 	}
-	if cfg.Sim.TargetTxRate != 1234 {
-		t.Fatalf("TargetTxRate = %d", cfg.Sim.TargetTxRate)
+	distribution := cfg.Participants.Distribution
+	if distribution.Type != DistributionHotColdPairs || distribution.HotPairCount != 7 || distribution.ColdPairCount != 13 || distribution.HotTrafficShare != 0.75 {
+		t.Fatalf("Distribution = %#v", distribution)
 	}
-	if cfg.Sim.Duration != 45*time.Second {
-		t.Fatalf("Duration = %s", cfg.Sim.Duration)
+	if cfg.Traffic.Seed != 42 || len(cfg.Traffic.Scenarios) != 1 {
+		t.Fatalf("Traffic = %#v", cfg.Traffic)
 	}
-	if cfg.Sim.Warmup != 10*time.Second {
-		t.Fatalf("Warmup = %s", cfg.Sim.Warmup)
+	scenario := cfg.Traffic.Scenarios[0]
+	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath == nil {
+		t.Fatalf("Scenario = %#v", scenario)
 	}
-	if cfg.Sim.Drain != 12*time.Second {
-		t.Fatalf("Drain = %s", cfg.Sim.Drain)
+	if scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
+		t.Fatalf("Amount = %#v", scenario.HappyPath.Amount)
 	}
-	if cfg.Sim.HotPSPs != 7 {
-		t.Fatalf("HotPSPs = %d", cfg.Sim.HotPSPs)
+	if scenario.HappyPath.Expectations.HTTPStatus != ExpectedHTTP2xx || scenario.HappyPath.Expectations.PayerConfirmation != ConfirmationRequired {
+		t.Fatalf("Expectations = %#v", scenario.HappyPath.Expectations)
 	}
-	if cfg.Sim.ColdPSPs != 13 {
-		t.Fatalf("ColdPSPs = %d", cfg.Sim.ColdPSPs)
+	if cfg.Funding.Type != FundingUniform || cfg.Funding.Balance != 1_000_000_000 || !cfg.Funding.ResetIfExists {
+		t.Fatalf("Funding = %#v", cfg.Funding)
 	}
-	if cfg.Sim.HotShare != 0.75 {
-		t.Fatalf("HotShare = %f", cfg.Sim.HotShare)
+	if cfg.Reporting.SLAThresholdMs != 3200 {
+		t.Fatalf("Reporting = %#v", cfg.Reporting)
 	}
-	if cfg.Sim.GatewayCACert != "/tmp/ca.crt" {
-		t.Fatalf("GatewayCACert = %q", cfg.Sim.GatewayCACert)
+}
+
+func TestUniformSmokePreservesCompatibilityWorkload(t *testing.T) {
+	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "profiles"), DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if cfg.Sim.GatewayClientCertRoot != "/tmp/loadtool-certs" {
-		t.Fatalf("GatewayClientCertRoot = %q", cfg.Sim.GatewayClientCertRoot)
+
+	if cfg.Load.TargetTxRate != 2000 || cfg.Load.Warmup != time.Minute || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
+		t.Fatalf("uniform-smoke Load = %#v", cfg.Load)
 	}
-	if cfg.Sim.GatewayServerName != "notification-gateway" {
-		t.Fatalf("GatewayServerName = %q", cfg.Sim.GatewayServerName)
+	distribution := cfg.Participants.Distribution
+	if distribution.HotPairCount != 10 || distribution.ColdPairCount != 40 || distribution.HotTrafficShare != 0.8 {
+		t.Fatalf("uniform-smoke Distribution = %#v", distribution)
 	}
-	if cfg.Sim.OutputDir != "results/go-loadtool/manual" {
-		t.Fatalf("OutputDir = %q", cfg.Sim.OutputDir)
+	scenario := cfg.Traffic.Scenarios[0]
+	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
+		t.Fatalf("uniform-smoke Scenario = %#v", scenario)
 	}
-	if cfg.SLAThresholdMs != 3200 {
-		t.Fatalf("SLAThresholdMs = %d", cfg.SLAThresholdMs)
+	if cfg.Funding.Balance != 1_000_000_000 || !cfg.Funding.ResetIfExists || cfg.Reporting.SLAThresholdMs != 1000 {
+		t.Fatalf("uniform-smoke Funding/Reporting = %#v/%#v", cfg.Funding, cfg.Reporting)
 	}
 }
 
@@ -121,7 +169,7 @@ func TestLoadProfileRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
-func TestLoadProfileRejectsMalformedProfile(t *testing.T) {
+func TestLoadProfileRejectsMalformedJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "broken-profile", `{not JSON}`)
 
@@ -131,14 +179,88 @@ func TestLoadProfileRejectsMalformedProfile(t *testing.T) {
 	}
 }
 
-func TestLoadProfileRejectsInvalidProfileValue(t *testing.T) {
+func TestLoadProfileRejectsFlatLegacyContract(t *testing.T) {
 	dir := t.TempDir()
-	content := strings.Replace(testProfile, `"duration": "45s"`, `"duration": "soon"`, 1)
-	writeProfile(t, dir, "invalid-duration", content)
+	writeProfile(t, dir, "legacy", `{"schemaVersion":1,"targetTxRate":2000}`)
 
-	_, err := loadProfileFromDir(dir, "invalid-duration")
-	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
-		t.Fatalf("error = %v, want clear invalid-duration error", err)
+	_, err := loadProfileFromDir(dir, "legacy")
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("error = %v, want flat contract rejection", err)
+	}
+}
+
+func TestLoadProfileRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `"schemaVersion": 1,`, `"schemaVersion": 1, "unexpected": true,`, 1)
+	writeProfile(t, dir, "unknown-field", content)
+
+	_, err := loadProfileFromDir(dir, "unknown-field")
+	if err == nil || !strings.Contains(err.Error(), `unknown field "unexpected"`) {
+		t.Fatalf("error = %v, want unknown-field error", err)
+	}
+}
+
+func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
+	tests := []struct {
+		name        string
+		old         string
+		new         string
+		wantMessage string
+	}{
+		{name: "schema version", old: `"schemaVersion": 1`, new: `"schemaVersion": 2`, wantMessage: "schemaVersion"},
+		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
+		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
+		{name: "distribution", old: `"type": "hot-cold-pairs"`, new: `"type": "hot-senders"`, wantMessage: "unsupported type"},
+		{name: "seed", old: `"seed": 42`, new: `"seed": -1`, wantMessage: "traffic.seed"},
+		{name: "scenario", old: `"type": "happy-path",`, new: `"type": "insufficient-funds",`, wantMessage: `unsupported scenario type "insufficient-funds"`},
+		{name: "share", old: `"share": 1.0`, new: `"share": 0.5`, wantMessage: "must be 1.0"},
+		{name: "amount type", old: `"type": "sequential-range",`, new: `"type": "random-range",`, wantMessage: "amount.type"},
+		{name: "amount range", old: `"maximum": 100098`, new: `"maximum": 99`, wantMessage: "amount.maximum"},
+		{name: "HTTP expectation", old: `"httpStatus": "2xx"`, new: `"httpStatus": "4xx"`, wantMessage: "expectations.httpStatus"},
+		{name: "confirmation expectation", old: `"payerConfirmation": "required"`, new: `"payerConfirmation": "forbidden"`, wantMessage: "expectations.payerConfirmation"},
+		{name: "funding type", old: `"type": "uniform",`, new: `"type": "tiered",`, wantMessage: "funding.type"},
+		{name: "funding balance", old: `"balance": 1000000000`, new: `"balance": 0`, wantMessage: "funding.balance"},
+		{name: "SLA", old: `"slaThresholdMs": 3200`, new: `"slaThresholdMs": 0`, wantMessage: "reporting.slaThresholdMs"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			content := strings.Replace(testProfile, test.old, test.new, 1)
+			if content == testProfile {
+				t.Fatalf("test replacement %q was not applied", test.old)
+			}
+			writeProfile(t, dir, "invalid-profile", content)
+
+			_, err := loadProfileFromDir(dir, "invalid-profile")
+			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("error = %v, want message containing %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestLoadProfileRequiresFundingResetBehavior(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `,
+    "resetIfExists": true`, "", 1)
+	writeProfile(t, dir, "missing-reset", content)
+
+	_, err := loadProfileFromDir(dir, "missing-reset")
+	if err == nil || !strings.Contains(err.Error(), "funding.resetIfExists") {
+		t.Fatalf("error = %v, want required reset behavior", err)
+	}
+}
+
+func TestLoadProfileRequiresTrafficSeed(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `    "seed": 42,
+`, "", 1)
+	writeProfile(t, dir, "missing-seed", content)
+
+	_, err := loadProfileFromDir(dir, "missing-seed")
+	if err == nil || !strings.Contains(err.Error(), "traffic.seed") {
+		t.Fatalf("error = %v, want required traffic seed", err)
 	}
 }
 

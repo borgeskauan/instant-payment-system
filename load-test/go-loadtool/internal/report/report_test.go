@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 )
 
@@ -20,7 +21,7 @@ func TestSummaryCountsSLA(t *testing.T) {
 		{EndToEndID: "tx-2", ISPB: "10000002", EventType: events.EventPacs002Received, ReceivedAtNS: 5_000_000_000},
 	}
 
-	summary := BuildWithOptions(starts, notifications, Options{SLAThresholdMs: 4600})
+	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
 
 	if summary.Transactions.Started != 3 {
 		t.Fatalf("Started = %d, want 3", summary.Transactions.Started)
@@ -47,7 +48,7 @@ func TestSummaryCountsNeverConfirmed(t *testing.T) {
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 	}
 
-	summary := BuildWithOptions(starts, nil, Options{SLAThresholdMs: 4600})
+	summary := mustBuildSummary(t, starts, nil, Options{SLAThresholdMs: 4600})
 
 	if summary.Transactions.Confirmation.NotConfirmed != 1 {
 		t.Fatalf("NotConfirmed = %d, want 1", summary.Transactions.Confirmation.NotConfirmed)
@@ -64,7 +65,7 @@ func TestSummaryUsesEarliestPayerConfirmation(t *testing.T) {
 		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000_000},
 	}
 
-	summary := BuildWithOptions(starts, notifications, Options{SLAThresholdMs: 4600})
+	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
 
 	if summary.LatencyMs.P50 != 1000 {
 		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
@@ -85,7 +86,7 @@ func TestSummaryMeasuresLatencyFromRequestStart(t *testing.T) {
 		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 3_000_000_000},
 	}
 
-	summary := BuildWithOptions(starts, notifications, Options{SLAThresholdMs: 1500})
+	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1500})
 
 	if summary.LatencyMs.P50 != 1000 {
 		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
@@ -102,7 +103,7 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 		{EndToEndID: "after-active", PayerISPB: "10000002", CreatedAtNS: 2_000_000_000, RequestStartedAtNS: 16_000_000_000, HTTPStatus: 200},
 	}
 
-	summary := BuildWithOptions(starts, nil, Options{
+	summary := mustBuildSummary(t, starts, nil, Options{
 		SLAThresholdMs: 4600,
 		Warmup:         10 * time.Second,
 		Duration:       5 * time.Second,
@@ -120,7 +121,7 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 		{EndToEndID: "tx-3", PayerISPB: "10000003", CreatedAtNS: 1_000_000_000, HTTPStatus: 200},
 	}
 
-	summary := BuildWithOptions(starts, nil, Options{
+	summary := mustBuildSummary(t, starts, nil, Options{
 		SLAThresholdMs: 4600,
 		TargetTxRate:   2,
 		Duration:       2 * time.Second,
@@ -132,7 +133,7 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 }
 
 func TestSummaryIncludesRunConfiguration(t *testing.T) {
-	summary := BuildWithOptions(nil, nil, Options{
+	summary := mustBuildSummary(t, nil, nil, Options{
 		SLAThresholdMs: 1000,
 		TargetTxRate:   2000,
 		Warmup:         30 * time.Second,
@@ -154,7 +155,7 @@ func TestSummaryIncludesRunConfiguration(t *testing.T) {
 }
 
 func TestSummaryJSONUsesFinalReportShape(t *testing.T) {
-	summary := BuildWithOptions([]events.Start{
+	summary := mustBuildSummary(t, []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 	}, []events.Notification{
 		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
@@ -216,7 +217,7 @@ func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing
 		{EndToEndID: "tx-3", ISPB: "10000003", EventType: events.EventPacs002Received, ReceivedAtNS: 3_000_000_000},
 	}
 
-	summary := BuildWithOptions(starts, notifications, Options{
+	summary := mustBuildSummary(t, starts, notifications, Options{
 		SLAThresholdMs: 4600,
 		Duration:       2 * time.Second,
 	})
@@ -249,7 +250,7 @@ func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
 		{EndToEndID: "after-window-tx", ISPB: "10000004", EventType: events.EventPacs002Received, ReceivedAtNS: 16_500_000_000},
 	}
 
-	summary := BuildWithOptions(starts, notifications, Options{
+	summary := mustBuildSummary(t, starts, notifications, Options{
 		SLAThresholdMs: 4600,
 		Warmup:         10 * time.Second,
 		Duration:       5 * time.Second,
@@ -269,5 +270,73 @@ func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
 	}
 	if summary.ThroughputPerSecond.Started != 0.4 {
 		t.Fatalf("Started throughput = %f, want 0.4", summary.ThroughputPerSecond.Started)
+	}
+}
+
+func TestSummaryUsesConfiguredHappyPathScenario(t *testing.T) {
+	scenario := reportTestHappyPathScenario()
+	summary := mustBuildSummary(t, []events.Start{{
+		EndToEndID:   "tx-1",
+		PayerISPB:    "10000001",
+		HTTPStatus:   200,
+		ScenarioType: config.ScenarioHappyPath,
+	}}, []events.Notification{{
+		EndToEndID:   "tx-1",
+		ISPB:         "10000001",
+		EventType:    events.EventPacs002Received,
+		ReceivedAtNS: 1_000_000,
+	}}, Options{
+		SLAThresholdMs: 1000,
+		Scenarios:      []config.Scenario{scenario},
+	})
+
+	if summary.Transactions.Accepted != 1 || summary.Transactions.Confirmation.Confirmed != 1 {
+		t.Fatalf("Transactions = %#v", summary.Transactions)
+	}
+}
+
+func TestSummaryInfersSoleScenarioForHistoricalStart(t *testing.T) {
+	summary := mustBuildSummary(t, []events.Start{{
+		EndToEndID: "legacy",
+		PayerISPB:  "10000001",
+		HTTPStatus: 200,
+	}}, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
+
+	if summary.Transactions.Accepted != 1 {
+		t.Fatalf("Accepted = %d, want historical start to use sole scenario", summary.Transactions.Accepted)
+	}
+}
+
+func TestSummaryRejectsUnknownScenarioType(t *testing.T) {
+	_, err := BuildWithOptions([]events.Start{{
+		EndToEndID:   "tx-1",
+		ScenarioType: "not-supported",
+	}}, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
+
+	if err == nil {
+		t.Fatal("BuildWithOptions accepted unknown scenario type")
+	}
+}
+
+func mustBuildSummary(t *testing.T, starts []events.Start, notifications []events.Notification, options Options) Summary {
+	t.Helper()
+	if len(options.Scenarios) == 0 {
+		options.Scenarios = []config.Scenario{reportTestHappyPathScenario()}
+	}
+	summary, err := BuildWithOptions(starts, notifications, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return summary
+}
+
+func reportTestHappyPathScenario() config.Scenario {
+	return config.Scenario{
+		Type:  config.ScenarioHappyPath,
+		Share: 1,
+		HappyPath: &config.HappyPathScenario{Expectations: config.HappyPathExpectations{
+			HTTPStatus:        config.ExpectedHTTP2xx,
+			PayerConfirmation: config.ConfirmationRequired,
+		}},
 	}
 }

@@ -2,10 +2,12 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"sort"
 	"time"
 
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 )
 
@@ -68,10 +70,18 @@ type Options struct {
 	TargetTxRate   int
 	Warmup         time.Duration
 	Duration       time.Duration
+	Scenarios      []config.Scenario
 }
 
-func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
+func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) (Summary, error) {
 	var summary Summary
+	scenarios := options.Scenarios
+	if len(scenarios) != 1 {
+		return Summary{}, fmt.Errorf("report requires exactly one configured scenario")
+	}
+	if err := validateStartScenarios(starts, scenarios); err != nil {
+		return Summary{}, err
+	}
 	summary.Run.TargetTPS = options.TargetTxRate
 	summary.Run.SLAThresholdMs = options.SLAThresholdMs
 	if options.Warmup > 0 {
@@ -91,10 +101,20 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	confirmedDuringActive := 0
 	var durations []float64
 	for _, start := range measuredStarts {
+		scenario, err := scenarioForStart(start, scenarios)
+		if err != nil {
+			return Summary{}, err
+		}
+		if scenario.HappyPath.Expectations.HTTPStatus != config.ExpectedHTTP2xx {
+			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", scenario.HappyPath.Expectations.HTTPStatus, scenario.Type)
+		}
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
 			continue
 		}
 		summary.Transactions.Accepted++
+		if scenario.HappyPath.Expectations.PayerConfirmation != config.ConfirmationRequired {
+			return Summary{}, fmt.Errorf("unsupported payer confirmation expectation %q for scenario %q", scenario.HappyPath.Expectations.PayerConfirmation, scenario.Type)
+		}
 		receivedAt, ok := confirmations[confirmationKey{
 			endToEndID: start.EndToEndID,
 			ispb:       start.PayerISPB,
@@ -130,7 +150,33 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	if len(durations) > 0 {
 		summary.LatencyMs.Max = durations[len(durations)-1]
 	}
-	return summary
+	return summary, nil
+}
+
+func validateStartScenarios(starts []events.Start, scenarios []config.Scenario) error {
+	for _, start := range starts {
+		if _, err := scenarioForStart(start, scenarios); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scenarioForStart(start events.Start, scenarios []config.Scenario) (config.Scenario, error) {
+	scenarioType := start.ScenarioType
+	if scenarioType == "" && len(scenarios) == 1 {
+		scenarioType = scenarios[0].Type
+	}
+	for _, scenario := range scenarios {
+		if scenario.Type != scenarioType {
+			continue
+		}
+		if scenario.Type != config.ScenarioHappyPath || scenario.HappyPath == nil {
+			return config.Scenario{}, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
+		}
+		return scenario, nil
+	}
+	return config.Scenario{}, fmt.Errorf("start %q uses unknown scenario type %q", start.EndToEndID, scenarioType)
 }
 
 func configuredActiveWindowEndNS(starts []events.Start, warmup time.Duration, duration time.Duration) int64 {
@@ -212,7 +258,10 @@ func Print(startsPath string, eventsPath string, options Options, output io.Writ
 		return err
 	}
 
-	summary := BuildWithOptions(starts, notifications, options)
+	summary, err := BuildWithOptions(starts, notifications, options)
+	if err != nil {
+		return err
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(summary)

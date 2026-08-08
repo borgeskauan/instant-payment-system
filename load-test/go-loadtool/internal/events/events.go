@@ -17,6 +17,7 @@ type Start struct {
 	RequestStartedAtNS int64
 	RequestDoneAtNS    int64
 	HTTPStatus         int
+	ScenarioType       string
 }
 
 type Notification struct {
@@ -45,7 +46,7 @@ func NewStartWriter(path string) (*StartWriter, error) {
 	}
 	buffer := bufio.NewWriterSize(file, 4*1024*1024)
 	writer := csv.NewWriter(buffer)
-	if err := writer.Write([]string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status"}); err != nil {
+	if err := writer.Write([]string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_type"}); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -61,6 +62,7 @@ func (w *StartWriter) Write(row Start) error {
 		strconv.FormatInt(row.RequestStartedAtNS, 10),
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
+		row.ScenarioType,
 	})
 }
 
@@ -178,8 +180,8 @@ func ReadNotifications(path string) ([]Notification, error) {
 }
 
 func parseStart(record []string) (Start, error) {
-	if len(record) != 6 && len(record) != 7 {
-		return Start{}, fmt.Errorf("start record has %d columns, want 6 or 7", len(record))
+	if len(record) != 6 && len(record) != 7 && len(record) != 8 {
+		return Start{}, fmt.Errorf("start record has %d columns, want 6, 7, or 8", len(record))
 	}
 	createdAtNS, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
@@ -188,7 +190,7 @@ func parseStart(record []string) (Start, error) {
 	requestStartedAtNS := createdAtNS
 	requestDoneColumn := 4
 	statusColumn := 5
-	if len(record) == 7 {
+	if len(record) >= 7 {
 		requestStartedAtNS, err = strconv.ParseInt(record[4], 10, 64)
 		if err != nil {
 			return Start{}, err
@@ -204,6 +206,10 @@ func parseStart(record []string) (Start, error) {
 	if err != nil {
 		return Start{}, err
 	}
+	scenarioType := ""
+	if len(record) == 8 {
+		scenarioType = record[7]
+	}
 	return Start{
 		EndToEndID:         record[0],
 		PayerISPB:          record[1],
@@ -212,6 +218,7 @@ func parseStart(record []string) (Start, error) {
 		RequestStartedAtNS: requestStartedAtNS,
 		RequestDoneAtNS:    requestDoneAtNS,
 		HTTPStatus:         status,
+		ScenarioType:       scenarioType,
 	}, nil
 }
 
