@@ -82,8 +82,8 @@ class JpaAdapterTest {
 
         Connection connection = stubPaymentExecute(
                 jdbcTemplate,
-                new PaymentAction(0, "ACCEPTANCE_REQUEST"),
-                new PaymentAction(1, "ACCEPTANCE_REQUEST")
+                new PaymentAction(0, "PAYMENT_CREATED"),
+                new PaymentAction(1, "PAYMENT_CREATED")
         );
 
         PaymentTransactionPersistenceResult result =
@@ -115,6 +115,7 @@ class JpaAdapterTest {
                 .doesNotContain("currency")
                 .doesNotContain("description");
         assertThat(result.acceptanceRequests()).containsExactly(first, second);
+        assertThat(result.createdPayments()).containsExactly(first, second);
         assertThat(result.divergentDuplicates()).isEmpty();
         verify(jdbcTemplate, never()).batchUpdate(
                 anyString(),
@@ -199,7 +200,7 @@ class JpaAdapterTest {
         PaymentTransactionCommand repeated = paymentTransaction("E2E-1", "11111111", "22222222");
         Connection connection = stubPaymentExecute(
                 jdbcTemplate,
-                new PaymentAction(0, "ACCEPTANCE_REQUEST")
+                new PaymentAction(0, "PAYMENT_CREATED")
         );
 
         PaymentTransactionPersistenceResult result =
@@ -209,6 +210,7 @@ class JpaAdapterTest {
         verify(connection).createArrayOf(eq("int4"), ordinalsCaptor.capture());
         assertThat(ordinalsCaptor.getValue()).containsExactly(0);
         assertThat(result.acceptanceRequests()).containsExactly(first);
+        assertThat(result.createdPayments()).containsExactly(first);
         assertThat(result.divergentDuplicates()).isEmpty();
     }
 

@@ -6,18 +6,25 @@ readonly SCRIPT_NAME="$(basename "$0")"
 
 BASE_URL="http://localhost:8002"
 VUS=50
+VUS_WAS_SET=false
 BALANCE="1000000000"
 RESET_IF_EXISTS=true
+ISPBS=()
 
 usage() {
-    echo "Usage: $SCRIPT_NAME [--base-url URL] [--vus N] [--balance AMOUNT] [--reset-if-exists|--preserve-if-exists]"
+    echo "Usage: $SCRIPT_NAME [--base-url URL] [--vus N | --ispb ISPB...] [--balance AMOUNT] [--reset-if-exists|--preserve-if-exists]"
     echo
     echo "Options:"
     echo "  --base-url URL          SPI base URL (default: $BASE_URL)"
     echo "  --vus N                 Number of VUs to provision as payer/receiver pairs (default: $VUS)"
+    echo "  --ispb ISPB             Provision an explicit 8-digit ISPB; may be repeated"
     echo "  --balance AMOUNT        Balance used for provisioned accounts (default: $BALANCE)"
     echo "  --reset-if-exists       Reset existing accounts to the configured balance (default)"
     echo "  --preserve-if-exists    Keep existing balances when accounts already exist"
+    echo
+    echo "Examples:"
+    echo "  $SCRIPT_NAME --vus 50 --balance 1000000000"
+    echo "  $SCRIPT_NAME --ispb 11111111 --ispb 22222222 --balance 1000 --preserve-if-exists"
 }
 
 error_exit() {
@@ -37,6 +44,13 @@ parse_args() {
                 VUS="${2:-}"
                 [[ "$VUS" =~ ^[0-9]+$ ]] || error_exit "--vus requires a positive integer"
                 [[ "$VUS" -gt 0 ]] || error_exit "--vus must be greater than zero"
+                VUS_WAS_SET=true
+                shift 2
+                ;;
+            --ispb)
+                local ispb="${2:-}"
+                [[ "$ispb" =~ ^[0-9]{8}$ ]] || error_exit "--ispb requires exactly 8 digits"
+                ISPBS+=("$ispb")
                 shift 2
                 ;;
             --balance)
@@ -62,6 +76,10 @@ parse_args() {
                 ;;
         esac
     done
+
+    if [[ "${#ISPBS[@]}" -gt 0 ]] && $VUS_WAS_SET; then
+        error_exit "--vus cannot be combined with --ispb"
+    fi
 }
 
 require_curl() {
@@ -95,10 +113,20 @@ main() {
 
     echo "Provisioning funds through SPI admin API..."
     echo "SPI base URL: $BASE_URL"
-    echo "VUs: $VUS"
     echo "Balance: $BALANCE"
     echo "Reset if exists: $RESET_IF_EXISTS"
 
+    if [[ "${#ISPBS[@]}" -gt 0 ]]; then
+        echo "Explicit ISPBs: ${ISPBS[*]}"
+        for ispb in "${ISPBS[@]}"; do
+            provision_ispb "$ispb"
+        done
+
+        echo "Provisioned ${#ISPBS[@]} settlement account(s)."
+        return
+    fi
+
+    echo "VUs: $VUS"
     for vu in $(seq 1 "$VUS"); do
         suffix=$(printf "%06d" "$vu")
         provision_ispb "10${suffix}"

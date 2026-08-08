@@ -5,6 +5,7 @@ set -euo pipefail
 readonly RESULTS_DIR="results"
 readonly GO_LOADTOOL_CONFIG="go-loadtool/loadtool-config.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
+readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/provision-funds.sh}"
 readonly SPI_CONTAINER="spi"
 readonly KAFKA_PRODUCER_CONTAINER="kafka-producer"
 readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
@@ -587,6 +588,10 @@ BEGIN
         TRUNCATE TABLE notification_outbox;
     END IF;
 
+    IF to_regclass('public.payment_audit_event') IS NOT NULL THEN
+        TRUNCATE TABLE payment_audit_event;
+    END IF;
+
     IF to_regclass('public.payment_transaction_entity') IS NOT NULL THEN
         TRUNCATE TABLE payment_transaction_entity;
     END IF;
@@ -637,7 +642,7 @@ provision_funds_if_enabled() {
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
-        "${SCRIPTS_DIR}/provision-funds.sh" > "${target_dir}/provision-funds.log" 2>&1
+        "$PROVISION_FUNDS_SCRIPT" > "${target_dir}/provision-funds.log" 2>&1
         log_phase "funds provisioned"
     else
         log_phase "skipping funds provisioning"

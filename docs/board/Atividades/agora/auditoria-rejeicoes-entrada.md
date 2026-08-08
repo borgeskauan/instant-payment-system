@@ -6,7 +6,7 @@
 
 Entradas podem ser recusadas antes de produzir um fato financeiro. Essas recusas não pertencem ao histórico de negócio append-only das transações do SPI: elas surgem em serviços e etapas diferentes, não alteram o pagamento e possuem garantias distintas.
 
-Esta task foi separada de [`auditoria-transacoes-spi.md`](auditoria-transacoes-spi.md) para que a auditoria financeira possa permanecer atômica e simples, sem acoplar seu desenho ao tratamento de rejeições nas bordas.
+Esta task foi separada de [`auditoria-transacoes-spi.md`](../concluidas/auditoria-transacoes-spi.md) para que a auditoria financeira possa permanecer atômica e simples, sem acoplar seu desenho ao tratamento de rejeições nas bordas.
 
 # Objetivo
 

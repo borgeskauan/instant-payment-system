@@ -7,6 +7,11 @@ payment-service-provider/start-psp.sh 11111111 --host-port 8081 --replace
 payment-service-provider/start-psp.sh 22222222 --host-port 8082 --replace
 ```
 
+The launcher automatically creates each PSP settlement account in the local SPI
+with an initial balance of `1000`, without resetting an existing account. Use
+`--funds-balance VALUE` to choose another initial balance or
+`--no-provision-funds` when the account must be prepared separately.
+
 Select the `local` environment in Bruno. It defaults:
 
 ```text
