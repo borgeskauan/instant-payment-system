@@ -117,7 +117,6 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		Warmup:                        runtimeCfg.Load.Warmup,
 		Duration:                      runtimeCfg.Load.Duration,
 		Drain:                         runtimeCfg.Load.Drain,
-		Seed:                          runtimeCfg.Seed,
 		Scenarios:                     runtimeCfg.Scenarios,
 		OutputDir:                     config.DefaultOutputDir,
 	}
@@ -184,18 +183,19 @@ type profileValidationScenario struct {
 	Type         string                        `json:"type"`
 	Share        float64                       `json:"share"`
 	Participants profileValidationParticipants `json:"participants"`
-	Funding      profileValidationFunding      `json:"funding"`
+	Provisioning profileValidationProvisioning `json:"provisioning"`
 }
 
 type profileValidationParticipants struct {
-	FirstPair     int `json:"firstPair"`
-	HotPairCount  int `json:"hotPairCount"`
-	ColdPairCount int `json:"coldPairCount"`
+	PairNumberStart int `json:"pairNumberStart"`
+	HotPairCount    int `json:"hotPairCount"`
+	ColdPairCount   int `json:"coldPairCount"`
 }
 
-type profileValidationFunding struct {
-	Balance       int64 `json:"balance"`
-	ResetIfExists bool  `json:"resetIfExists"`
+type profileValidationProvisioning struct {
+	PayerBalance    int64 `json:"payerBalance"`
+	ReceiverBalance int64 `json:"receiverBalance"`
+	ResetIfExists   bool  `json:"resetIfExists"`
 }
 
 func runValidateProfile(args []string) error {
@@ -223,29 +223,37 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 	if err != nil {
 		return profileValidation{}, err
 	}
-	if len(runtimeCfg.Scenarios) != 1 || runtimeCfg.Scenarios[0].HappyPath == nil {
-		return profileValidation{}, fmt.Errorf("profile %q does not contain exactly one happy-path scenario", profileName)
+	provisioning, err := sim.DeriveProvisioning(simulatorConfig(runtimeCfg))
+	if err != nil {
+		return profileValidation{}, fmt.Errorf("derive provisioning for profile %q: %w", profileName, err)
 	}
-	scenario := runtimeCfg.Scenarios[0]
-	happyPath := scenario.HappyPath
-	return profileValidation{
+	validation := profileValidation{
 		Profile:       profileName,
 		SchemaVersion: runtimeCfg.SchemaVersion,
 		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
 		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
 		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),
-		Scenarios: []profileValidationScenario{{
+		Scenarios:     make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
+	}
+	for index, scenario := range runtimeCfg.Scenarios {
+		participants, ok := scenario.Participants()
+		if !ok {
+			return profileValidation{}, fmt.Errorf("profile %q contains unsupported scenario %q", profileName, scenario.Type)
+		}
+		validation.Scenarios[index] = profileValidationScenario{
 			Type:  scenario.Type,
 			Share: scenario.Share,
 			Participants: profileValidationParticipants{
-				FirstPair:     happyPath.Participants.FirstPair,
-				HotPairCount:  happyPath.Participants.HotPairCount,
-				ColdPairCount: happyPath.Participants.ColdPairCount,
+				PairNumberStart: participants.PairNumberStart,
+				HotPairCount:    participants.HotPairCount,
+				ColdPairCount:   participants.ColdPairCount,
 			},
-			Funding: profileValidationFunding{
-				Balance:       happyPath.Funding.Balance,
-				ResetIfExists: happyPath.Funding.ResetIfExists,
+			Provisioning: profileValidationProvisioning{
+				PayerBalance:    provisioning[index].PayerBalance,
+				ReceiverBalance: provisioning[index].ReceiverBalance,
+				ResetIfExists:   provisioning[index].ResetIfExists,
 			},
-		}},
-	}, nil
+		}
+	}
+	return validation, nil
 }

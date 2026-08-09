@@ -15,18 +15,18 @@
     }
   },
   "load": {
-    "targetTxRate": 2000,
-    "warmup": "1m",
-    "duration": "1m",
-    "drain": "30s"
+    "targetTxRate": 100,
+    "warmup": "5s",
+    "duration": "10s",
+    "drain": "10s"
   },
   "scenarios": [
     {
       "type": "happy-path",
-      "share": 1.0,
+      "share": 0.8,
       "participants": {
-        "hotPairCount": 10,
-        "coldPairCount": 40,
+        "hotPairCount": 8,
+        "coldPairCount": 32,
         "hotTrafficShare": 0.8
       },
       "amount": {
@@ -36,6 +36,23 @@
       "expectations": {
         "httpStatus": "2xx",
         "payerConfirmation": "required"
+      }
+    },
+    {
+      "type": "insufficient-funds",
+      "share": 0.2,
+      "participants": {
+        "hotPairCount": 2,
+        "coldPairCount": 8,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerConfirmation": "forbidden"
       }
     }
   ],

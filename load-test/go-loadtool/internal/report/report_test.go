@@ -318,6 +318,53 @@ func TestSummaryRejectsUnknownScenarioType(t *testing.T) {
 	}
 }
 
+func TestSummaryReportsMixedScenarioExpectationsWithoutTreatingExpectedAbsenceAsLoss(t *testing.T) {
+	scenarios := []config.Scenario{reportTestHappyPathScenario(), reportTestInsufficientFundsScenario()}
+	scenarios[0].Share = 0.8
+	starts := []events.Start{
+		{EndToEndID: "happy-confirmed", PayerISPB: "10000001", HTTPStatus: 200, ScenarioType: config.ScenarioHappyPath},
+		{EndToEndID: "happy-missing", PayerISPB: "10000002", HTTPStatus: 200, ScenarioType: config.ScenarioHappyPath},
+		{EndToEndID: "insufficient-absent", PayerISPB: "10000041", HTTPStatus: 200, ScenarioType: config.ScenarioInsufficientFunds},
+		{EndToEndID: "insufficient-unexpected", PayerISPB: "10000042", HTTPStatus: 200, ScenarioType: config.ScenarioInsufficientFunds},
+		{EndToEndID: "insufficient-http", PayerISPB: "10000043", HTTPStatus: 500, ScenarioType: config.ScenarioInsufficientFunds},
+	}
+	notifications := []events.Notification{
+		{EndToEndID: "happy-confirmed", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
+		{EndToEndID: "insufficient-unexpected", ISPB: "10000042", EventType: events.EventPacs002Received, ReceivedAtNS: 2_000_000},
+	}
+	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1000, Scenarios: scenarios})
+
+	if summary.Transactions.Started != 5 || summary.Transactions.Accepted != 4 {
+		t.Fatalf("aggregate transaction counts = %#v", summary.Transactions)
+	}
+	if summary.Transactions.Confirmation.Confirmed != 1 || summary.Transactions.Confirmation.NotConfirmed != 1 {
+		t.Fatalf("aggregate required confirmations = %#v", summary.Transactions.Confirmation)
+	}
+	if len(summary.Scenarios) != 2 || summary.Scenarios[0].Type != config.ScenarioHappyPath || summary.Scenarios[1].Type != config.ScenarioInsufficientFunds {
+		t.Fatalf("ordered scenarios = %#v", summary.Scenarios)
+	}
+	happy := summary.Scenarios[0].Transactions
+	if happy.PayerConfirmation.Received != 1 || happy.PayerConfirmation.Absent != 1 || happy.PayerConfirmation.Violations != 1 || happy.Violations != 1 {
+		t.Fatalf("happy-path summary = %#v", happy)
+	}
+	insufficient := summary.Scenarios[1].Transactions
+	if insufficient.Started != 3 || insufficient.Accepted != 2 || insufficient.PayerConfirmation.Received != 1 || insufficient.PayerConfirmation.Absent != 1 {
+		t.Fatalf("insufficient-funds counts = %#v", insufficient)
+	}
+	if insufficient.HTTPStatus.Violations != 1 || insufficient.PayerConfirmation.Violations != 1 || insufficient.Violations != 2 {
+		t.Fatalf("insufficient-funds violations = %#v", insufficient)
+	}
+}
+
+func TestSummaryRejectsUntaggedStartsForMixedProfile(t *testing.T) {
+	_, err := BuildWithOptions([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, Options{
+		Scenarios: []config.Scenario{reportTestHappyPathScenario(), reportTestInsufficientFundsScenario()},
+	})
+	if err == nil || err.Error() == "" {
+		t.Fatal("mixed report accepted an untagged start")
+	}
+}
+
 func mustBuildSummary(t *testing.T, starts []events.Start, notifications []events.Notification, options Options) Summary {
 	t.Helper()
 	if len(options.Scenarios) == 0 {
@@ -337,6 +384,17 @@ func reportTestHappyPathScenario() config.Scenario {
 		HappyPath: &config.HappyPathScenario{Expectations: config.HappyPathExpectations{
 			HTTPStatus:        config.ExpectedHTTP2xx,
 			PayerConfirmation: config.ConfirmationRequired,
+		}},
+	}
+}
+
+func reportTestInsufficientFundsScenario() config.Scenario {
+	return config.Scenario{
+		Type:  config.ScenarioInsufficientFunds,
+		Share: 0.2,
+		InsufficientFunds: &config.InsufficientFundsScenario{Expectations: config.InsufficientFundsExpectations{
+			HTTPStatus:        config.ExpectedHTTP2xx,
+			PayerConfirmation: config.ConfirmationForbidden,
 		}},
 	}
 }

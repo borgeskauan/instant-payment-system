@@ -34,13 +34,13 @@ trap 'cleanup; rm -rf "$tmp_dir"' EXIT
 cat > "$tmp_dir/validating-loadtool" <<'SH'
 #!/bin/bash
 set -euo pipefail
-if [[ "$1" != "validate-profile" || "$2" != "--profile" || "$3" != "uniform-smoke" ]]; then
+if [[ "$1" != "validate-profile" || "$2" != "--profile" || "$3" != "mixed-outcomes-smoke" ]]; then
     echo "unexpected validate-profile invocation: $*" >&2
     exit 1
 fi
 cat <<'JSON'
 {
-  "profile": "uniform-smoke",
+  "profile": "mixed-outcomes-smoke",
   "schemaVersion": 1,
   "warmupSeconds": 60,
   "activeSeconds": 60,
@@ -48,14 +48,29 @@ cat <<'JSON'
   "scenarios": [
     {
       "type": "happy-path",
-      "share": 1.0,
+      "share": 0.8,
       "participants": {
-        "firstPair": 41,
+        "pairNumberStart": 1,
         "hotPairCount": 2,
         "coldPairCount": 1
       },
-      "funding": {
-        "balance": 1000000000,
+      "provisioning": {
+        "payerBalance": 12345,
+        "receiverBalance": 0,
+        "resetIfExists": true
+      }
+    },
+    {
+      "type": "insufficient-funds",
+      "share": 0.2,
+      "participants": {
+        "pairNumberStart": 4,
+        "hotPairCount": 1,
+        "coldPairCount": 1
+      },
+      "provisioning": {
+        "payerBalance": 0,
+        "receiverBalance": 0,
         "resetIfExists": true
       }
     }
@@ -65,7 +80,7 @@ JSON
 SH
 chmod +x "$tmp_dir/validating-loadtool"
 
-PROFILE_NAME="uniform-smoke"
+PROFILE_NAME="mixed-outcomes-smoke"
 LOADTOOL_BUILD_DIR="$tmp_dir"
 LOADTOOL_BIN="$tmp_dir/validating-loadtool"
 validate_profile_with_loadtool
@@ -74,16 +89,27 @@ if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PRO
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi
-if [[ "${#PROFILE_SCENARIO_TYPES[@]}" != 1 || "${PROFILE_SCENARIO_TYPES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 1.0 ]]; then
+if [[ "${#PROFILE_SCENARIO_TYPES[@]}" != 2 || "${PROFILE_SCENARIO_TYPES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 0.8 || "${PROFILE_SCENARIO_TYPES[1]}" != insufficient-funds ]]; then
     echo "runner did not consume normalized scenario metadata" >&2
     exit 1
 fi
-if [[ "${PROFILE_SCENARIO_FIRST_PAIRS[0]}" != 41 || "${PROFILE_SCENARIO_HOT_PAIR_COUNTS[0]}" != 2 || "${PROFILE_SCENARIO_COLD_PAIR_COUNTS[0]}" != 1 ]]; then
+if [[ "${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[0]}" != 1 || "${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[1]}" != 4 || "${PROFILE_SCENARIO_HOT_PAIR_COUNTS[0]}" != 2 || "${PROFILE_SCENARIO_COLD_PAIR_COUNTS[0]}" != 1 ]]; then
     echo "runner did not consume normalized participant range" >&2
     exit 1
 fi
-if [[ "${PROFILE_SCENARIO_FUNDING_BALANCES[0]}" != 1000000000 || "${PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS[0]}" != true ]]; then
-    echo "runner did not consume normalized funding settings" >&2
+if [[ "${PROFILE_SCENARIO_PAYER_BALANCES[0]}" != 12345 || "${PROFILE_SCENARIO_RECEIVER_BALANCES[0]}" != 0 || "${PROFILE_SCENARIO_PAYER_BALANCES[1]}" != 0 || "${PROFILE_SCENARIO_RESET_BEHAVIORS[0]}" != true ]]; then
+    echo "runner did not consume normalized provisioning settings" >&2
+    exit 1
+fi
+
+PROFILE_PATH="$ROOT_DIR/go-loadtool/profiles/mixed-outcomes-smoke.json"
+prepare_run_workspace "$tmp_dir/workspace/go-loadtool"
+if ! cmp -s "$LOADTOOL_VALIDATION_FILE" "$tmp_dir/workspace/execution-plan.json"; then
+    echo "execution-plan.json is not byte-identical to validate-profile output" >&2
+    exit 1
+fi
+if ! cmp -s "$PROFILE_PATH" "$tmp_dir/workspace/profile.json"; then
+    echo "profile.json is not byte-identical to the selected profile" >&2
     exit 1
 fi
 
@@ -91,12 +117,18 @@ mkdir -p "$tmp_dir/result"
 prepare_loadtool_certificates "$tmp_dir/result"
 PROVISION_FUNDS=true
 provision_funds_if_enabled "$tmp_dir/result"
-PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS[0]=false
+PROFILE_SCENARIO_RESET_BEHAVIORS[0]=false
 provision_funds_if_enabled "$tmp_dir/result"
 
 cat > "$tmp_dir/expected-funding-commands.log" <<'EOF'
---balance 1000000000 --reset-if-exists --ispb 10000041 --ispb 20000041 --ispb 10000042 --ispb 20000042 --ispb 10000043 --ispb 20000043
---balance 1000000000 --preserve-if-exists --ispb 10000041 --ispb 20000041 --ispb 10000042 --ispb 20000042 --ispb 10000043 --ispb 20000043
+--balance 12345 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
+--balance 0 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
+--balance 0 --reset-if-exists --ispb 10000004 --ispb 10000005
+--balance 0 --reset-if-exists --ispb 20000004 --ispb 20000005
+--balance 12345 --preserve-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
+--balance 0 --preserve-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
+--balance 0 --reset-if-exists --ispb 10000004 --ispb 10000005
+--balance 0 --reset-if-exists --ispb 20000004 --ispb 20000005
 EOF
 if ! diff -u "$tmp_dir/expected-funding-commands.log" "$FUNDING_COMMAND_LOG"; then
     echo "runner did not pass normalized funding settings to provision-funds" >&2
@@ -104,12 +136,16 @@ if ! diff -u "$tmp_dir/expected-funding-commands.log" "$FUNDING_COMMAND_LOG"; th
 fi
 
 cat > "$tmp_dir/expected-cert-commands.log" <<EOF
---psp-root $tmp_dir/result/certs psp 10000041
---psp-root $tmp_dir/result/certs psp 20000041
---psp-root $tmp_dir/result/certs psp 10000042
---psp-root $tmp_dir/result/certs psp 20000042
---psp-root $tmp_dir/result/certs psp 10000043
---psp-root $tmp_dir/result/certs psp 20000043
+--psp-root $tmp_dir/result/certs psp 10000001
+--psp-root $tmp_dir/result/certs psp 20000001
+--psp-root $tmp_dir/result/certs psp 10000002
+--psp-root $tmp_dir/result/certs psp 20000002
+--psp-root $tmp_dir/result/certs psp 10000003
+--psp-root $tmp_dir/result/certs psp 20000003
+--psp-root $tmp_dir/result/certs psp 10000004
+--psp-root $tmp_dir/result/certs psp 20000004
+--psp-root $tmp_dir/result/certs psp 10000005
+--psp-root $tmp_dir/result/certs psp 20000005
 EOF
 if ! diff -u "$tmp_dir/expected-cert-commands.log" "$CERT_COMMAND_LOG"; then
     echo "runner did not generate certificates for the normalized participant range" >&2
@@ -136,7 +172,7 @@ build_loadtool() {
 prepare_run_workspace() {
     touch "$PROFILE_CONTRACT_TEST_TMP_DIR/result-side-effect"
 }
-main --profile uniform-smoke semantic-order-test
+main --profile mixed-outcomes-smoke semantic-order-test
 SH
 chmod +x "$tmp_dir/run-semantic-order-test"
 

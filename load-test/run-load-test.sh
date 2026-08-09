@@ -6,6 +6,7 @@ readonly RESULTS_DIR="results"
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/go-loadtool/profiles"
 readonly PROFILE_SNAPSHOT_FILENAME="profile.json"
+readonly EXECUTION_PLAN_FILENAME="execution-plan.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
 readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/provision-funds.sh}"
 readonly LOADTOOL_CERT_SCRIPT="${LOADTOOL_CERT_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/infra/certs/generate-local-mtls-certs.sh}"
@@ -39,11 +40,12 @@ PROFILE_ACTIVE_SECONDS=""
 PROFILE_DRAIN_SECONDS=""
 PROFILE_SCENARIO_TYPES=()
 PROFILE_SCENARIO_SHARES=()
-PROFILE_SCENARIO_FIRST_PAIRS=()
+PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
 PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
 PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
-PROFILE_SCENARIO_FUNDING_BALANCES=()
-PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS=()
+PROFILE_SCENARIO_PAYER_BALANCES=()
+PROFILE_SCENARIO_RECEIVER_BALANCES=()
+PROFILE_SCENARIO_RESET_BEHAVIORS=()
 PROVISION_FUNDS=true
 RESET_TEST_STATE=true
 ENABLE_JFR=false
@@ -56,6 +58,7 @@ JFR_TARGET_DIR=""
 POSTGRES_STATEMENTS_TARGET_DIR=""
 LOADTOOL_BUILD_DIR=""
 LOADTOOL_BIN=""
+LOADTOOL_VALIDATION_FILE=""
 LOADTOOL_CERT_ROOT=""
 LOADTOOL_GATEWAY_CA_CERT=""
 LOADTOOL_GATEWAY_SERVER_NAME="${LOADTOOL_GATEWAY_SERVER_NAME:-localhost}"
@@ -141,7 +144,8 @@ write_run_window_json() {
         "$full_run_url" \
         "$active_window_url" \
         "$PROFILE_NAME" \
-        "$PROFILE_SNAPSHOT_FILENAME" <<'PY'
+        "$PROFILE_SNAPSHOT_FILENAME" \
+        "$EXECUTION_PLAN_FILENAME" <<'PY'
 import json
 import sys
 
@@ -157,6 +161,7 @@ full_run_url = sys.argv[9]
 active_window_url = sys.argv[10]
 profile_name = sys.argv[11]
 profile_snapshot = sys.argv[12]
+execution_plan = sys.argv[13]
 
 payload = {
     "tag": tag,
@@ -164,6 +169,7 @@ payload = {
     "profile": {
         "name": profile_name,
         "snapshot": profile_snapshot,
+        "execution_plan": execution_plan,
     },
     "window": {
         "run_started_at": run_started_at,
@@ -321,16 +327,16 @@ PY
 }
 
 validate_profile_with_loadtool() {
-    local validation_file="${LOADTOOL_BUILD_DIR}/profile-validation.json"
     local -a records
 
+    LOADTOOL_VALIDATION_FILE="${LOADTOOL_BUILD_DIR}/profile-validation.json"
     log_phase "validating profile with Go loadtool"
     (
         cd go-loadtool
         "$LOADTOOL_BIN" validate-profile --profile "$PROFILE_NAME"
-    ) > "$validation_file"
+    ) > "$LOADTOOL_VALIDATION_FILE"
 
-    mapfile -t records < <(python3 - "$validation_file" <<'PY'
+    mapfile -t records < <(python3 - "$LOADTOOL_VALIDATION_FILE" <<'PY'
 import json
 import sys
 
@@ -347,16 +353,17 @@ print("\t".join([
 ]))
 for scenario in data["scenarios"]:
     participants = scenario["participants"]
-    funding = scenario["funding"]
+    provisioning = scenario["provisioning"]
     print("\t".join([
         "scenario",
         scenario["type"],
         str(scenario["share"]),
-        str(participants["firstPair"]),
+        str(participants["pairNumberStart"]),
         str(participants["hotPairCount"]),
         str(participants["coldPairCount"]),
-        str(funding["balance"]),
-        str(funding["resetIfExists"]).lower(),
+        str(provisioning["payerBalance"]),
+        str(provisioning["receiverBalance"]),
+        str(provisioning["resetIfExists"]).lower(),
     ]))
 PY
 )
@@ -374,27 +381,29 @@ PY
 
     PROFILE_SCENARIO_TYPES=()
     PROFILE_SCENARIO_SHARES=()
-    PROFILE_SCENARIO_FIRST_PAIRS=()
+    PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
     PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
     PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
-    PROFILE_SCENARIO_FUNDING_BALANCES=()
-    PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS=()
+    PROFILE_SCENARIO_PAYER_BALANCES=()
+    PROFILE_SCENARIO_RECEIVER_BALANCES=()
+    PROFILE_SCENARIO_RESET_BEHAVIORS=()
 
-    local scenario_type scenario_share first_pair hot_pair_count cold_pair_count funding_balance reset_if_exists
+    local scenario_type scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists
     local record
     for record in "${records[@]:1}"; do
-        IFS=$'\t' read -r record_kind scenario_type scenario_share first_pair hot_pair_count cold_pair_count funding_balance reset_if_exists <<< "$record"
-        if [[ "$record_kind" != scenario || -z "$scenario_type" || -z "$first_pair" || -z "$hot_pair_count" || -z "$cold_pair_count" || -z "$funding_balance" || -z "$reset_if_exists" ]]; then
+        IFS=$'\t' read -r record_kind scenario_type scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists <<< "$record"
+        if [[ "$record_kind" != scenario || -z "$scenario_type" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" || -z "$payer_balance" || -z "$receiver_balance" || -z "$reset_if_exists" ]]; then
             echo "Go loadtool returned invalid normalized scenario metadata for profile '${PROFILE_NAME}'." >&2
             return 1
         fi
         PROFILE_SCENARIO_TYPES+=("$scenario_type")
         PROFILE_SCENARIO_SHARES+=("$scenario_share")
-        PROFILE_SCENARIO_FIRST_PAIRS+=("$first_pair")
+        PROFILE_SCENARIO_PAIR_NUMBER_STARTS+=("$pair_number_start")
         PROFILE_SCENARIO_HOT_PAIR_COUNTS+=("$hot_pair_count")
         PROFILE_SCENARIO_COLD_PAIR_COUNTS+=("$cold_pair_count")
-        PROFILE_SCENARIO_FUNDING_BALANCES+=("$funding_balance")
-        PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS+=("$reset_if_exists")
+        PROFILE_SCENARIO_PAYER_BALANCES+=("$payer_balance")
+        PROFILE_SCENARIO_RECEIVER_BALANCES+=("$receiver_balance")
+        PROFILE_SCENARIO_RESET_BEHAVIORS+=("$reset_if_exists")
     done
     log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION} scenarios=${#PROFILE_SCENARIO_TYPES[@]}"
 }
@@ -653,7 +662,7 @@ log_selected_options() {
     log_phase "execution window: warmup=${PROFILE_WARMUP_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
     for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
-        log_phase "scenario: type=${PROFILE_SCENARIO_TYPES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} first_pair=${PROFILE_SCENARIO_FIRST_PAIRS[scenario_index]} pairs=${pair_count}"
+        log_phase "scenario: type=${PROFILE_SCENARIO_TYPES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} pair_number_start=${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]} pairs=${pair_count}"
     done
     log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
     log_phase "load-tool central transfer mTLS enabled: server_name=${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME}"
@@ -683,6 +692,7 @@ prepare_run_workspace() {
 
     mkdir -p "$tool_out"
     copy_profile_snapshot "$(dirname "$tool_out")"
+    cp "$LOADTOOL_VALIDATION_FILE" "$(dirname "$tool_out")/${EXECUTION_PLAN_FILENAME}"
 }
 
 copy_profile_snapshot() {
@@ -739,7 +749,7 @@ SQL
 prepare_loadtool_certificates() {
     local target_dir="$1"
     local cert_script ca_cert target_dir_abs
-    local scenario_index first_pair pair_count last_pair pair_number suffix total_psps=0
+    local scenario_index pair_number_start pair_count last_pair pair_number suffix total_psps=0
 
     target_dir_abs="$(cd "$target_dir" && pwd)"
     LOADTOOL_CERT_ROOT="${target_dir_abs}/certs"
@@ -766,10 +776,10 @@ prepare_loadtool_certificates() {
     done
     log_phase "generating ephemeral load-tool PSP certificates: psps=${total_psps} root=${LOADTOOL_CERT_ROOT}"
     for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
-        first_pair="${PROFILE_SCENARIO_FIRST_PAIRS[scenario_index]}"
+        pair_number_start="${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]}"
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
-        last_pair=$((first_pair + pair_count - 1))
-        for pair_number in $(seq "$first_pair" "$last_pair"); do
+        last_pair=$((pair_number_start + pair_count - 1))
+        for pair_number in $(seq "$pair_number_start" "$last_pair"); do
             suffix="$(printf "%06d" "$pair_number")"
             "$cert_script" --psp-root "$LOADTOOL_CERT_ROOT" psp "10${suffix}" >/dev/null
             "$cert_script" --psp-root "$LOADTOOL_CERT_ROOT" psp "20${suffix}" >/dev/null
@@ -780,27 +790,39 @@ prepare_loadtool_certificates() {
 
 provision_funds_if_enabled() {
     local target_dir="$1"
-    local scenario_index first_pair pair_count last_pair pair_number suffix
+    local scenario_index pair_number_start pair_count last_pair pair_number suffix
+    local role balance
     local -a funding_args
 
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
         : > "${target_dir}/provision-funds.log"
         for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
-            funding_args=(--balance "${PROFILE_SCENARIO_FUNDING_BALANCES[scenario_index]}")
-            if [[ "${PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS[scenario_index]}" == true ]]; then
-                funding_args+=(--reset-if-exists)
-            else
-                funding_args+=(--preserve-if-exists)
-            fi
-            first_pair="${PROFILE_SCENARIO_FIRST_PAIRS[scenario_index]}"
-            pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
-            last_pair=$((first_pair + pair_count - 1))
-            for pair_number in $(seq "$first_pair" "$last_pair"); do
-                suffix="$(printf "%06d" "$pair_number")"
-                funding_args+=(--ispb "10${suffix}" --ispb "20${suffix}")
+            for role in payer receiver; do
+                if [[ "$role" == payer ]]; then
+                    balance="${PROFILE_SCENARIO_PAYER_BALANCES[scenario_index]}"
+                else
+                    balance="${PROFILE_SCENARIO_RECEIVER_BALANCES[scenario_index]}"
+                fi
+                funding_args=(--balance "$balance")
+                if [[ "${PROFILE_SCENARIO_RESET_BEHAVIORS[scenario_index]}" == true ]]; then
+                    funding_args+=(--reset-if-exists)
+                else
+                    funding_args+=(--preserve-if-exists)
+                fi
+                pair_number_start="${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]}"
+                pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
+                last_pair=$((pair_number_start + pair_count - 1))
+                for pair_number in $(seq "$pair_number_start" "$last_pair"); do
+                    suffix="$(printf "%06d" "$pair_number")"
+                    if [[ "$role" == payer ]]; then
+                        funding_args+=(--ispb "10${suffix}")
+                    else
+                        funding_args+=(--ispb "20${suffix}")
+                    fi
+                done
+                "$PROVISION_FUNDS_SCRIPT" "${funding_args[@]}" >> "${target_dir}/provision-funds.log" 2>&1
             done
-            "$PROVISION_FUNDS_SCRIPT" "${funding_args[@]}" >> "${target_dir}/provision-funds.log" 2>&1
         done
         log_phase "funds provisioned"
     else

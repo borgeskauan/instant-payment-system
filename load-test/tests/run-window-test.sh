@@ -32,6 +32,7 @@ assert data["tag"] == "baseline-2000"
 assert data["result_dir"] == os.environ["EXPECTED_RESULT_DIR"]
 assert data["profile"]["name"] == "uniform-smoke"
 assert data["profile"]["snapshot"] == "profile.json"
+assert data["profile"]["execution_plan"] == "execution-plan.json"
 assert data["window"]["run_started_at"] == "2026-06-20T20:05:46-03:00"
 assert data["window"]["active_started_at"] == "2026-06-20T20:06:16-03:00"
 assert data["window"]["active_finished_at"] == "2026-06-20T20:21:16-03:00"

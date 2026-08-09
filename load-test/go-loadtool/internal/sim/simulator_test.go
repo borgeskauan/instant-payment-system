@@ -49,7 +49,7 @@ func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testin
 				Share: 1,
 				HappyPath: &config.HappyPathScenario{
 					Participants: config.HotColdPairDistribution{
-						FirstPair:       101,
+						PairNumberStart: 101,
 						HotPairCount:    10,
 						ColdPairCount:   40,
 						HotTrafficShare: 0.8,
@@ -63,6 +63,10 @@ func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testin
 		},
 		runID: "test-run",
 	}
+	planner, err := newWorkloadPlanner(s.cfg.Scenarios)
+	if err != nil {
+		t.Fatal(err)
+	}
 	pairs := buildPairs(101, 50)
 	if pairs[0] != ids.PSPPair(101) || pairs[len(pairs)-1] != ids.PSPPair(150) {
 		t.Fatalf("pair range = %#v...%#v, want 101...150", pairs[0], pairs[len(pairs)-1])
@@ -75,7 +79,7 @@ func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testin
 	hotCount := 0
 	coldCount := 0
 	for seq := uint64(0); seq < 100; seq++ {
-		job := s.transferJobForSequence(seq, pairs)
+		job := s.transferJobForSequence(seq, planner.Next())
 		if job.ScenarioType != config.ScenarioHappyPath {
 			t.Fatalf("sequence %d ScenarioType = %q", seq, job.ScenarioType)
 		}

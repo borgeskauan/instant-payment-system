@@ -74,6 +74,7 @@ chmod +x "$tmp_dir/fake-go-loadtool"
 
 export LOADTOOL_COMMAND_LOG="$tmp_dir/go-loadtool-commands.log"
 LOADTOOL_BIN="$tmp_dir/fake-go-loadtool"
+PROFILE_NAME="mixed-outcomes-smoke"
 LOADTOOL_CENTRAL_TRANSFER_CA_CERT="central-ca.crt"
 LOADTOOL_CERT_ROOT="$tmp_dir/client-certs"
 LOADTOOL_GATEWAY_CA_CERT="gateway-ca.crt"
@@ -93,6 +94,7 @@ assert len(commands) == 2, commands
 assert commands[0][0] == "simulate", commands
 assert commands[1][0] == "report", commands
 for command in commands:
+    assert "--seed" not in command, command
     profile_index = command.index("--profile")
-    assert command[profile_index + 1] == "uniform-smoke", command
+    assert command[profile_index + 1] == "mixed-outcomes-smoke", command
 PY

@@ -30,20 +30,14 @@ const testProfile = `{
     "duration": "45s",
     "drain": "12s"
   },
-  "seed": 42,
   "scenarios": [
     {
       "type": "happy-path",
       "share": 1.0,
       "participants": {
-        "firstPair": 101,
         "hotPairCount": 7,
         "coldPairCount": 13,
         "hotTrafficShare": 0.75
-      },
-      "funding": {
-        "balance": 1000000000,
-        "resetIfExists": true
       },
       "amount": {
         "minimum": 100,
@@ -84,15 +78,15 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	if cfg.Load.TargetTxRate != 1234 || cfg.Load.Warmup != 10*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
 		t.Fatalf("Load = %#v", cfg.Load)
 	}
-	if cfg.Seed != 42 || len(cfg.Scenarios) != 1 {
-		t.Fatalf("Seed/Scenarios = %d/%#v", cfg.Seed, cfg.Scenarios)
+	if len(cfg.Scenarios) != 1 {
+		t.Fatalf("Scenarios = %#v", cfg.Scenarios)
 	}
 	scenario := cfg.Scenarios[0]
 	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath == nil {
 		t.Fatalf("Scenario = %#v", scenario)
 	}
 	distribution := scenario.HappyPath.Participants
-	if distribution.FirstPair != 101 || distribution.HotPairCount != 7 || distribution.ColdPairCount != 13 || distribution.HotTrafficShare != 0.75 {
+	if distribution.PairNumberStart != 1 || distribution.HotPairCount != 7 || distribution.ColdPairCount != 13 || distribution.HotTrafficShare != 0.75 {
 		t.Fatalf("Participants = %#v", distribution)
 	}
 	if scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
@@ -100,9 +94,6 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	}
 	if scenario.HappyPath.Expectations.HTTPStatus != ExpectedHTTP2xx || scenario.HappyPath.Expectations.PayerConfirmation != ConfirmationRequired {
 		t.Fatalf("Expectations = %#v", scenario.HappyPath.Expectations)
-	}
-	if scenario.HappyPath.Funding.Balance != 1_000_000_000 || !scenario.HappyPath.Funding.ResetIfExists {
-		t.Fatalf("Funding = %#v", scenario.HappyPath.Funding)
 	}
 	if cfg.Reporting.SLAThresholdMs != 3200 {
 		t.Fatalf("Reporting = %#v", cfg.Reporting)
@@ -120,14 +111,14 @@ func TestUniformSmokePreservesCompatibilityWorkload(t *testing.T) {
 	}
 	scenario := cfg.Scenarios[0]
 	distribution := scenario.HappyPath.Participants
-	if distribution.FirstPair != 1 || distribution.HotPairCount != 10 || distribution.ColdPairCount != 40 || distribution.HotTrafficShare != 0.8 {
+	if distribution.PairNumberStart != 1 || distribution.HotPairCount != 10 || distribution.ColdPairCount != 40 || distribution.HotTrafficShare != 0.8 {
 		t.Fatalf("uniform-smoke Distribution = %#v", distribution)
 	}
 	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
 		t.Fatalf("uniform-smoke Scenario = %#v", scenario)
 	}
-	if scenario.HappyPath.Funding.Balance != 1_000_000_000 || !scenario.HappyPath.Funding.ResetIfExists || cfg.Reporting.SLAThresholdMs != 1000 {
-		t.Fatalf("uniform-smoke Funding/Reporting = %#v/%#v", scenario.HappyPath.Funding, cfg.Reporting)
+	if cfg.Reporting.SLAThresholdMs != 1000 {
+		t.Fatalf("uniform-smoke Reporting = %#v", cfg.Reporting)
 	}
 }
 
@@ -185,10 +176,10 @@ func TestLoadProfileRejectsFlatLegacyContract(t *testing.T) {
 
 func TestLoadProfileRejectsPreviousNestedContract(t *testing.T) {
 	dir := t.TempDir()
-	content := strings.Replace(testProfile, `  "seed": 42,`, `  "participants": {},
+	content := strings.Replace(testProfile, `  "scenarios": [`, `  "participants": {},
   "traffic": {},
   "funding": {},
-  "seed": 42,`, 1)
+  "scenarios": [`, 1)
 	writeProfile(t, dir, "previous-contract", content)
 
 	_, err := loadProfileFromDir(dir, "previous-contract")
@@ -207,11 +198,6 @@ func TestLoadProfileRejectsRemovedSingletonTypeFields(t *testing.T) {
 			name: "participants",
 			old:  `"participants": {`,
 			new:  `"participants": {"type": "hot-cold-pairs",`,
-		},
-		{
-			name: "funding",
-			old:  `"funding": {`,
-			new:  `"funding": {"type": "uniform",`,
 		},
 		{
 			name: "amount",
@@ -255,15 +241,12 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "schema version", old: `"schemaVersion": 1`, new: `"schemaVersion": 2`, wantMessage: "schemaVersion"},
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
-		{name: "seed", old: `"seed": 42`, new: `"seed": -1`, wantMessage: "invalid seed"},
-		{name: "scenario", old: `"type": "happy-path",`, new: `"type": "insufficient-funds",`, wantMessage: `unsupported scenario type "insufficient-funds"`},
-		{name: "share", old: `"share": 1.0`, new: `"share": 0.5`, wantMessage: "must be 1.0"},
-		{name: "first pair", old: `"firstPair": 101`, new: `"firstPair": 0`, wantMessage: "participants.firstPair"},
-		{name: "pair range overflow", old: `"firstPair": 101`, new: `"firstPair": 999990`, wantMessage: "maximum is 999999"},
+		{name: "scenario", old: `"type": "happy-path",`, new: `"type": "not-supported",`, wantMessage: `unsupported scenario type "not-supported"`},
+		{name: "share", old: `"share": 1.0`, new: `"share": 0.5`, wantMessage: "shares must sum"},
+		{name: "pair range overflow", old: `"hotPairCount": 7`, new: `"hotPairCount": 1000000`, wantMessage: "maximum pair number 999999"},
 		{name: "amount range", old: `"maximum": 100098`, new: `"maximum": 99`, wantMessage: "amount.maximum"},
 		{name: "HTTP expectation", old: `"httpStatus": "2xx"`, new: `"httpStatus": "4xx"`, wantMessage: "expectations.httpStatus"},
 		{name: "confirmation expectation", old: `"payerConfirmation": "required"`, new: `"payerConfirmation": "forbidden"`, wantMessage: "expectations.payerConfirmation"},
-		{name: "funding balance", old: `"balance": 1000000000`, new: `"balance": 0`, wantMessage: "funding.balance"},
 		{name: "SLA", old: `"slaThresholdMs": 3200`, new: `"slaThresholdMs": 0`, wantMessage: "reporting.slaThresholdMs"},
 	}
 
@@ -284,41 +267,103 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 	}
 }
 
-func TestLoadProfileRequiresFundingResetBehavior(t *testing.T) {
+func TestLoadProfileRejectsDuplicateScenarioTypes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "mixed-outcomes-smoke.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
-	content := strings.Replace(testProfile, `,
-        "resetIfExists": true`, "", 1)
-	writeProfile(t, dir, "missing-reset", content)
+	content := strings.Replace(string(data), `"type": "insufficient-funds"`, `"type": "happy-path"`, 1)
+	content = strings.Replace(content, `"payerConfirmation": "forbidden"`, `"payerConfirmation": "required"`, 1)
+	writeProfile(t, dir, "duplicate-scenario", content)
 
-	_, err := loadProfileFromDir(dir, "missing-reset")
-	if err == nil || !strings.Contains(err.Error(), "scenarios[0].funding.resetIfExists") {
-		t.Fatalf("error = %v, want required reset behavior", err)
+	_, err = loadProfileFromDir(dir, "duplicate-scenario")
+	if err == nil || !strings.Contains(err.Error(), "duplicate scenario type") {
+		t.Fatalf("error = %v, want duplicate scenario rejection", err)
 	}
 }
 
-func TestLoadProfileRejectsMultipleScenarios(t *testing.T) {
-	dir := t.TempDir()
-	content := strings.Replace(testProfile, `  ],
-  "reporting"`, `    ,{"type":"happy-path"}
-  ],
-  "reporting"`, 1)
-	writeProfile(t, dir, "multiple-scenarios", content)
-
-	_, err := loadProfileFromDir(dir, "multiple-scenarios")
-	if err == nil || !strings.Contains(err.Error(), "must contain exactly one happy-path scenario") {
-		t.Fatalf("error = %v, want multiple-scenario rejection", err)
+func TestMixedOutcomesSmokeLoadsBothTypedScenarios(t *testing.T) {
+	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "profiles"), "mixed-outcomes-smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Load.TargetTxRate != 100 || cfg.Load.Warmup != 5*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
+		t.Fatalf("mixed load = %#v", cfg.Load)
+	}
+	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].HappyPath == nil || cfg.Scenarios[1].InsufficientFunds == nil {
+		t.Fatalf("mixed scenarios = %#v", cfg.Scenarios)
+	}
+	if cfg.Scenarios[0].Share != 0.8 || cfg.Scenarios[1].Share != 0.2 {
+		t.Fatalf("mixed shares = %#v", cfg.Scenarios)
+	}
+	if cfg.Scenarios[1].InsufficientFunds.Expectations.PayerConfirmation != ConfirmationForbidden {
+		t.Fatalf("insufficient expectations = %#v", cfg.Scenarios[1].InsufficientFunds.Expectations)
+	}
+	if cfg.Scenarios[0].HappyPath.Participants.PairNumberStart != 1 || cfg.Scenarios[1].InsufficientFunds.Participants.PairNumberStart != 41 {
+		t.Fatalf("allocated ranges = %#v", cfg.Scenarios)
 	}
 }
 
-func TestLoadProfileRequiresSeed(t *testing.T) {
+func TestLoadProfileRejectsRemovedFundingField(t *testing.T) {
 	dir := t.TempDir()
-	content := strings.Replace(testProfile, `  "seed": 42,
-`, "", 1)
-	writeProfile(t, dir, "missing-seed", content)
+	content := strings.Replace(testProfile, `      "amount": {`, `      "funding": {"balance": 1, "resetIfExists": true},
+      "amount": {`, 1)
+	writeProfile(t, dir, "removed-funding", content)
+	_, err := loadProfileFromDir(dir, "removed-funding")
+	if err == nil || !strings.Contains(err.Error(), `unknown field "funding"`) {
+		t.Fatalf("error = %v, want removed funding rejection", err)
+	}
+}
 
-	_, err := loadProfileFromDir(dir, "missing-seed")
-	if err == nil || !strings.Contains(err.Error(), "invalid seed") {
-		t.Fatalf("error = %v, want required seed", err)
+func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "mixed-outcomes-smoke.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeProfile(t, dir, "allocated", string(data))
+	cfg, err := loadProfileFromDir(dir, "allocated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := cfg.Scenarios[0].Participants()
+	second, _ := cfg.Scenarios[1].Participants()
+	if first.PairNumberStart != 1 || second.PairNumberStart != 41 {
+		t.Fatalf("allocated starts = %d/%d, want 1/41", first.PairNumberStart, second.PairNumberStart)
+	}
+}
+
+func TestLoadProfileRejectsFractionalBlockQuota(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `"share": 1.0`, `"share": 0.999`, 1)
+	writeProfile(t, dir, "fractional-quota", content)
+	_, err := loadProfileFromDir(dir, "fractional-quota")
+	if err == nil || !strings.Contains(err.Error(), "whole number of entries") {
+		t.Fatalf("error = %v, want exact block quota rejection", err)
+	}
+}
+
+func TestLoadProfileRejectsRemovedSeedAndPairStartFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		field   string
+	}{
+		{name: "seed", content: strings.Replace(testProfile, `  "scenarios": [`, `  "seed": 1,
+  "scenarios": [`, 1), field: `unknown field "seed"`},
+		{name: "first-pair", content: strings.Replace(testProfile, `        "hotPairCount": 7,`, `        "firstPair": 1,
+        "hotPairCount": 7,`, 1), field: `unknown field "firstPair"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeProfile(t, dir, "removed-field", test.content)
+			_, err := loadProfileFromDir(dir, "removed-field")
+			if err == nil || !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("error = %v, want %s rejection", err, test.field)
+			}
+		})
 	}
 }
 

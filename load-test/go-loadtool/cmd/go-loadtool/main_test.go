@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,11 +123,48 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if scenario.Type != config.ScenarioHappyPath || scenario.Share != 1 {
 		t.Fatalf("validation scenario = %#v", scenario)
 	}
-	if scenario.Participants.FirstPair != 101 || scenario.Participants.HotPairCount != 7 || scenario.Participants.ColdPairCount != 13 {
+	if scenario.Participants.PairNumberStart != 101 || scenario.Participants.HotPairCount != 7 || scenario.Participants.ColdPairCount != 13 {
 		t.Fatalf("validation participants = %#v", scenario.Participants)
 	}
-	if scenario.Funding.Balance != 123456 || scenario.Funding.ResetIfExists {
-		t.Fatalf("validation funding = %#v", scenario.Funding)
+	if scenario.Provisioning.PayerBalance <= 0 || scenario.Provisioning.ReceiverBalance != 0 || !scenario.Provisioning.ResetIfExists {
+		t.Fatalf("validation provisioning = %#v", scenario.Provisioning)
+	}
+	encoded, err := json.Marshal(validation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"seed"`) || strings.Contains(string(encoded), `"firstPair"`) || !strings.Contains(string(encoded), `"pairNumberStart"`) {
+		t.Fatalf("normalized execution plan exposes removed fields: %s", encoded)
+	}
+}
+
+func TestValidateProfileReturnsMixedScenarioProvisioning(t *testing.T) {
+	runtimeCfg := commandTestRuntime()
+	runtimeCfg.Load = config.Load{TargetTxRate: 100, Warmup: 5 * time.Second, Duration: 10 * time.Second, Drain: 10 * time.Second}
+	runtimeCfg.Scenarios[0].Share = 0.8
+	runtimeCfg.Scenarios = append(runtimeCfg.Scenarios, config.Scenario{
+		Type:  config.ScenarioInsufficientFunds,
+		Share: 0.2,
+		InsufficientFunds: &config.InsufficientFundsScenario{
+			Participants: config.HotColdPairDistribution{PairNumberStart: 121, HotPairCount: 2, ColdPairCount: 8, HotTrafficShare: 0.8},
+			Amount:       config.SequentialRangeAmount{Minimum: 100, Maximum: 100098},
+			Expectations: config.InsufficientFundsExpectations{HTTPStatus: config.ExpectedHTTP2xx, PayerConfirmation: config.ConfirmationForbidden},
+		},
+	})
+	validation, err := parseValidateProfile([]string{"--profile", "mixed"}, func(string) (config.Runtime, error) {
+		return runtimeCfg, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validation.Scenarios) != 2 {
+		t.Fatalf("scenarios = %#v", validation.Scenarios)
+	}
+	if validation.Scenarios[0].Provisioning.PayerBalance <= 0 || validation.Scenarios[0].Provisioning.ReceiverBalance != 0 {
+		t.Fatalf("happy provisioning = %#v", validation.Scenarios[0].Provisioning)
+	}
+	if validation.Scenarios[1].Type != config.ScenarioInsufficientFunds || validation.Scenarios[1].Provisioning.PayerBalance != 0 || validation.Scenarios[1].Provisioning.ReceiverBalance != 0 {
+		t.Fatalf("insufficient provisioning = %#v", validation.Scenarios[1])
 	}
 }
 
@@ -135,6 +174,19 @@ func TestValidateProfileRejectsPositionalArguments(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("validate-profile accepted positional argument")
+	}
+}
+
+func TestCommandsExposeNoSeedOption(t *testing.T) {
+	loader := func(string) (config.Runtime, error) { return commandTestRuntime(), nil }
+	if _, err := parseValidateProfile([]string{"--seed", "1"}, loader); err == nil {
+		t.Fatal("validate-profile accepted --seed")
+	}
+	if _, err := parseSimulateConfig([]string{"--seed", "1"}, loader); err == nil {
+		t.Fatal("simulate accepted --seed")
+	}
+	if _, err := parseReportConfig([]string{"--seed", "1", "--starts", "starts.csv", "--events", "events.csv"}, loader); err == nil {
+		t.Fatal("report accepted --seed")
 	}
 }
 
@@ -217,20 +269,15 @@ func commandTestRuntime() config.Runtime {
 			Duration:     34 * time.Second,
 			Drain:        9 * time.Second,
 		},
-		Seed: 42,
 		Scenarios: []config.Scenario{{
 			Type:  config.ScenarioHappyPath,
 			Share: 1,
 			HappyPath: &config.HappyPathScenario{
 				Participants: config.HotColdPairDistribution{
-					FirstPair:       101,
+					PairNumberStart: 101,
 					HotPairCount:    7,
 					ColdPairCount:   13,
 					HotTrafficShare: 0.75,
-				},
-				Funding: config.Funding{
-					Balance:       123456,
-					ResetIfExists: false,
 				},
 				Amount: config.SequentialRangeAmount{
 					Minimum: 100,

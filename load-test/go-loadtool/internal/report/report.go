@@ -16,7 +16,38 @@ type Summary struct {
 	Transactions        TransactionSummary `json:"transactions"`
 	ThroughputPerSecond ThroughputSummary  `json:"throughput_per_second"`
 	LatencyMs           LatencySummary     `json:"latency_ms"`
+	Scenarios           []ScenarioSummary  `json:"scenarios"`
 	Diagnostics         DiagnosticSummary  `json:"diagnostics"`
+}
+
+type ScenarioSummary struct {
+	Type            string                     `json:"type"`
+	ConfiguredShare float64                    `json:"configured_share"`
+	Transactions    ScenarioTransactionSummary `json:"transactions"`
+	LatencyMs       LatencySummary             `json:"latency_ms"`
+}
+
+type ScenarioTransactionSummary struct {
+	Started           int                            `json:"started"`
+	Accepted          int                            `json:"accepted"`
+	HTTPStatus        ExpectationMatchSummary        `json:"http_status"`
+	PayerConfirmation ConfirmationExpectationSummary `json:"payer_confirmation"`
+	ConfirmedBySLA    ConfirmedBySLASummary          `json:"confirmed_by_sla"`
+	Violations        int                            `json:"violations"`
+}
+
+type ExpectationMatchSummary struct {
+	Expectation string `json:"expectation"`
+	Matched     int    `json:"matched"`
+	Violations  int    `json:"violations"`
+}
+
+type ConfirmationExpectationSummary struct {
+	Expectation string `json:"expectation"`
+	Eligible    int    `json:"eligible"`
+	Received    int    `json:"received"`
+	Absent      int    `json:"absent"`
+	Violations  int    `json:"violations"`
 }
 
 type RunSummary struct {
@@ -76,8 +107,8 @@ type Options struct {
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) (Summary, error) {
 	var summary Summary
 	scenarios := options.Scenarios
-	if len(scenarios) != 1 {
-		return Summary{}, fmt.Errorf("report requires exactly one configured scenario")
+	if len(scenarios) == 0 {
+		return Summary{}, fmt.Errorf("report requires at least one configured scenario")
 	}
 	if err := validateStartScenarios(starts, scenarios); err != nil {
 		return Summary{}, err
@@ -89,6 +120,24 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	}
 	if options.Duration > 0 {
 		summary.Run.ActiveSeconds = options.Duration.Seconds()
+	}
+	summary.Scenarios = make([]ScenarioSummary, len(scenarios))
+	scenarioIndexes := make(map[string]int, len(scenarios))
+	scenarioDurations := make([][]float64, len(scenarios))
+	for index, scenario := range scenarios {
+		httpExpectation, confirmationExpectation, ok := scenario.Expectations()
+		if !ok {
+			return Summary{}, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
+		}
+		scenarioIndexes[scenario.Type] = index
+		summary.Scenarios[index] = ScenarioSummary{
+			Type:            scenario.Type,
+			ConfiguredShare: scenario.Share,
+			Transactions: ScenarioTransactionSummary{
+				HTTPStatus:        ExpectationMatchSummary{Expectation: httpExpectation},
+				PayerConfirmation: ConfirmationExpectationSummary{Expectation: confirmationExpectation},
+			},
+		}
 	}
 	measuredStarts := measuredWindowStarts(starts, options.Warmup, options.Duration)
 	summary.Transactions.Started = len(measuredStarts)
@@ -105,34 +154,61 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 		if err != nil {
 			return Summary{}, err
 		}
-		if scenario.HappyPath.Expectations.HTTPStatus != config.ExpectedHTTP2xx {
-			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", scenario.HappyPath.Expectations.HTTPStatus, scenario.Type)
+		httpExpectation, confirmationExpectation, _ := scenario.Expectations()
+		if httpExpectation != config.ExpectedHTTP2xx {
+			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", httpExpectation, scenario.Type)
 		}
+		scenarioSummary := &summary.Scenarios[scenarioIndexes[scenario.Type]]
+		scenarioSummary.Transactions.Started++
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
+			scenarioSummary.Transactions.HTTPStatus.Violations++
+			scenarioSummary.Transactions.Violations++
 			continue
 		}
 		summary.Transactions.Accepted++
-		if scenario.HappyPath.Expectations.PayerConfirmation != config.ConfirmationRequired {
-			return Summary{}, fmt.Errorf("unsupported payer confirmation expectation %q for scenario %q", scenario.HappyPath.Expectations.PayerConfirmation, scenario.Type)
-		}
+		scenarioSummary.Transactions.Accepted++
+		scenarioSummary.Transactions.HTTPStatus.Matched++
+		scenarioSummary.Transactions.PayerConfirmation.Eligible++
 		receivedAt, ok := confirmations[confirmationKey{
 			endToEndID: start.EndToEndID,
 			ispb:       start.PayerISPB,
 		}]
-		if !ok {
-			summary.Transactions.Confirmation.NotConfirmed++
+		if ok {
+			scenarioSummary.Transactions.PayerConfirmation.Received++
+		} else {
+			scenarioSummary.Transactions.PayerConfirmation.Absent++
+		}
+		switch confirmationExpectation {
+		case config.ConfirmationRequired:
+			if !ok {
+				summary.Transactions.Confirmation.NotConfirmed++
+				scenarioSummary.Transactions.PayerConfirmation.Violations++
+				scenarioSummary.Transactions.Violations++
+				continue
+			}
+		case config.ConfirmationForbidden:
+			if ok {
+				scenarioSummary.Transactions.PayerConfirmation.Violations++
+				scenarioSummary.Transactions.Violations++
+			}
 			continue
+		default:
+			return Summary{}, fmt.Errorf("unsupported payer confirmation expectation %q for scenario %q", confirmationExpectation, scenario.Type)
 		}
 		durationMs := float64(receivedAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
+		scenarioIndex := scenarioIndexes[scenario.Type]
+		scenarioDurations[scenarioIndex] = append(scenarioDurations[scenarioIndex], durationMs)
 		summary.Transactions.Confirmation.Confirmed++
 		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
 			confirmedDuringActive++
 		}
 		if durationMs > float64(options.SLAThresholdMs) {
 			summary.Transactions.ConfirmedBySLA.AfterSLA++
+			scenarioSummary.Transactions.ConfirmedBySLA.AfterSLA++
 		} else {
 			summary.Transactions.ConfirmedBySLA.WithinSLA++
+			scenarioSummary.Transactions.ConfirmedBySLA.WithinSLA++
 		}
 	}
 	if options.Duration > 0 {
@@ -149,6 +225,15 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	summary.LatencyMs.P99 = percentile(durations, 0.99)
 	if len(durations) > 0 {
 		summary.LatencyMs.Max = durations[len(durations)-1]
+	}
+	for index := range summary.Scenarios {
+		sort.Float64s(scenarioDurations[index])
+		summary.Scenarios[index].LatencyMs.P50 = percentile(scenarioDurations[index], 0.50)
+		summary.Scenarios[index].LatencyMs.P95 = percentile(scenarioDurations[index], 0.95)
+		summary.Scenarios[index].LatencyMs.P99 = percentile(scenarioDurations[index], 0.99)
+		if len(scenarioDurations[index]) > 0 {
+			summary.Scenarios[index].LatencyMs.Max = scenarioDurations[index][len(scenarioDurations[index])-1]
+		}
 	}
 	return summary, nil
 }
@@ -171,7 +256,7 @@ func scenarioForStart(start events.Start, scenarios []config.Scenario) (config.S
 		if scenario.Type != scenarioType {
 			continue
 		}
-		if scenario.Type != config.ScenarioHappyPath || scenario.HappyPath == nil {
+		if _, _, ok := scenario.Expectations(); !ok {
 			return config.Scenario{}, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
 		}
 		return scenario, nil
