@@ -114,11 +114,18 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if validation.SchemaVersion != 1 || validation.WarmupSeconds != 12 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
 		t.Fatalf("validation window = %#v", validation)
 	}
-	if validation.Participants.HotPairCount != 7 || validation.Participants.ColdPairCount != 13 {
-		t.Fatalf("validation participants = %#v", validation.Participants)
+	if len(validation.Scenarios) != 1 {
+		t.Fatalf("validation scenarios = %#v", validation.Scenarios)
 	}
-	if validation.Funding.Balance != 123456 || validation.Funding.ResetIfExists {
-		t.Fatalf("validation funding = %#v", validation.Funding)
+	scenario := validation.Scenarios[0]
+	if scenario.Type != config.ScenarioHappyPath || scenario.Share != 1 {
+		t.Fatalf("validation scenario = %#v", scenario)
+	}
+	if scenario.Participants.FirstPair != 101 || scenario.Participants.HotPairCount != 7 || scenario.Participants.ColdPairCount != 13 {
+		t.Fatalf("validation participants = %#v", scenario.Participants)
+	}
+	if scenario.Funding.Balance != 123456 || scenario.Funding.ResetIfExists {
+		t.Fatalf("validation funding = %#v", scenario.Funding)
 	}
 }
 
@@ -210,35 +217,31 @@ func commandTestRuntime() config.Runtime {
 			Duration:     34 * time.Second,
 			Drain:        9 * time.Second,
 		},
-		Participants: config.Participants{Distribution: config.HotColdPairDistribution{
-			Type:            config.DistributionHotColdPairs,
-			HotPairCount:    7,
-			ColdPairCount:   13,
-			HotTrafficShare: 0.75,
-		}},
-		Traffic: config.Traffic{
-			Seed: 42,
-			Scenarios: []config.Scenario{{
-				Type:  config.ScenarioHappyPath,
-				Share: 1,
-				HappyPath: &config.HappyPathScenario{
-					Amount: config.SequentialRangeAmount{
-						Type:    config.AmountSequentialRange,
-						Minimum: 100,
-						Maximum: 100098,
-					},
-					Expectations: config.HappyPathExpectations{
-						HTTPStatus:        config.ExpectedHTTP2xx,
-						PayerConfirmation: config.ConfirmationRequired,
-					},
+		Seed: 42,
+		Scenarios: []config.Scenario{{
+			Type:  config.ScenarioHappyPath,
+			Share: 1,
+			HappyPath: &config.HappyPathScenario{
+				Participants: config.HotColdPairDistribution{
+					FirstPair:       101,
+					HotPairCount:    7,
+					ColdPairCount:   13,
+					HotTrafficShare: 0.75,
 				},
-			}},
-		},
-		Funding: config.Funding{
-			Type:          config.FundingUniform,
-			Balance:       123456,
-			ResetIfExists: false,
-		},
+				Funding: config.Funding{
+					Balance:       123456,
+					ResetIfExists: false,
+				},
+				Amount: config.SequentialRangeAmount{
+					Minimum: 100,
+					Maximum: 100098,
+				},
+				Expectations: config.HappyPathExpectations{
+					HTTPStatus:        config.ExpectedHTTP2xx,
+					PayerConfirmation: config.ConfirmationRequired,
+				},
+			},
+		}},
 		Reporting: config.Reporting{SLAThresholdMs: 987},
 	}
 }

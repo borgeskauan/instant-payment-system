@@ -20,37 +20,31 @@
     "duration": "1m",
     "drain": "30s"
   },
-  "participants": {
-    "distribution": {
-      "type": "hot-cold-pairs",
-      "hotPairCount": 10,
-      "coldPairCount": 40,
-      "hotTrafficShare": 0.8
-    }
-  },
-  "traffic": {
-    "seed": 1,
-    "scenarios": [
-      {
-        "type": "happy-path",
-        "share": 1.0,
-        "amount": {
-          "type": "sequential-range",
-          "minimum": 100,
-          "maximum": 100098
-        },
-        "expectations": {
-          "httpStatus": "2xx",
-          "payerConfirmation": "required"
-        }
+  "seed": 1,
+  "scenarios": [
+    {
+      "type": "happy-path",
+      "share": 1.0,
+      "participants": {
+        "firstPair": 1,
+        "hotPairCount": 10,
+        "coldPairCount": 40,
+        "hotTrafficShare": 0.8
+      },
+      "funding": {
+        "balance": 1000000000,
+        "resetIfExists": true
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerConfirmation": "required"
       }
-    ]
-  },
-  "funding": {
-    "type": "uniform",
-    "balance": 1000000000,
-    "resetIfExists": true
-  },
+    }
+  ],
   "reporting": {
     "slaThresholdMs": 1000
   }

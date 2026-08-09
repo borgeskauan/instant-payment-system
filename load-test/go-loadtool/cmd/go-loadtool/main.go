@@ -117,11 +117,8 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		Warmup:                        runtimeCfg.Load.Warmup,
 		Duration:                      runtimeCfg.Load.Duration,
 		Drain:                         runtimeCfg.Load.Drain,
-		HotPSPs:                       runtimeCfg.Participants.Distribution.HotPairCount,
-		ColdPSPs:                      runtimeCfg.Participants.Distribution.ColdPairCount,
-		HotShare:                      runtimeCfg.Participants.Distribution.HotTrafficShare,
-		TrafficSeed:                   runtimeCfg.Traffic.Seed,
-		Scenarios:                     runtimeCfg.Traffic.Scenarios,
+		Seed:                          runtimeCfg.Seed,
+		Scenarios:                     runtimeCfg.Scenarios,
 		OutputDir:                     config.DefaultOutputDir,
 	}
 }
@@ -169,22 +166,29 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 			TargetTxRate:   runtimeCfg.Load.TargetTxRate,
 			Warmup:         runtimeCfg.Load.Warmup,
 			Duration:       runtimeCfg.Load.Duration,
-			Scenarios:      runtimeCfg.Traffic.Scenarios,
+			Scenarios:      runtimeCfg.Scenarios,
 		},
 	}, nil
 }
 
 type profileValidation struct {
-	Profile       string                        `json:"profile"`
-	SchemaVersion int                           `json:"schemaVersion"`
-	WarmupSeconds int64                         `json:"warmupSeconds"`
-	ActiveSeconds int64                         `json:"activeSeconds"`
-	DrainSeconds  int64                         `json:"drainSeconds"`
-	Participants  profileValidationParticipants `json:"participants"`
-	Funding       profileValidationFunding      `json:"funding"`
+	Profile       string                      `json:"profile"`
+	SchemaVersion int                         `json:"schemaVersion"`
+	WarmupSeconds int64                       `json:"warmupSeconds"`
+	ActiveSeconds int64                       `json:"activeSeconds"`
+	DrainSeconds  int64                       `json:"drainSeconds"`
+	Scenarios     []profileValidationScenario `json:"scenarios"`
+}
+
+type profileValidationScenario struct {
+	Type         string                        `json:"type"`
+	Share        float64                       `json:"share"`
+	Participants profileValidationParticipants `json:"participants"`
+	Funding      profileValidationFunding      `json:"funding"`
 }
 
 type profileValidationParticipants struct {
+	FirstPair     int `json:"firstPair"`
 	HotPairCount  int `json:"hotPairCount"`
 	ColdPairCount int `json:"coldPairCount"`
 }
@@ -219,19 +223,29 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 	if err != nil {
 		return profileValidation{}, err
 	}
+	if len(runtimeCfg.Scenarios) != 1 || runtimeCfg.Scenarios[0].HappyPath == nil {
+		return profileValidation{}, fmt.Errorf("profile %q does not contain exactly one happy-path scenario", profileName)
+	}
+	scenario := runtimeCfg.Scenarios[0]
+	happyPath := scenario.HappyPath
 	return profileValidation{
 		Profile:       profileName,
 		SchemaVersion: runtimeCfg.SchemaVersion,
 		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
 		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
 		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),
-		Participants: profileValidationParticipants{
-			HotPairCount:  runtimeCfg.Participants.Distribution.HotPairCount,
-			ColdPairCount: runtimeCfg.Participants.Distribution.ColdPairCount,
-		},
-		Funding: profileValidationFunding{
-			Balance:       runtimeCfg.Funding.Balance,
-			ResetIfExists: runtimeCfg.Funding.ResetIfExists,
-		},
+		Scenarios: []profileValidationScenario{{
+			Type:  scenario.Type,
+			Share: scenario.Share,
+			Participants: profileValidationParticipants{
+				FirstPair:     happyPath.Participants.FirstPair,
+				HotPairCount:  happyPath.Participants.HotPairCount,
+				ColdPairCount: happyPath.Participants.ColdPairCount,
+			},
+			Funding: profileValidationFunding{
+				Balance:       happyPath.Funding.Balance,
+				ResetIfExists: happyPath.Funding.ResetIfExists,
+			},
+		}},
 	}, nil
 }

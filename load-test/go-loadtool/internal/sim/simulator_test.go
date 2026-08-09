@@ -44,22 +44,29 @@ func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
 func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testing.T) {
 	s := &simulator{
 		cfg: Config{
-			HotPSPs:  10,
-			ColdPSPs: 40,
-			HotShare: 0.8,
 			Scenarios: []config.Scenario{{
 				Type:  config.ScenarioHappyPath,
 				Share: 1,
-				HappyPath: &config.HappyPathScenario{Amount: config.SequentialRangeAmount{
-					Type:    config.AmountSequentialRange,
-					Minimum: 100,
-					Maximum: 102,
-				}},
+				HappyPath: &config.HappyPathScenario{
+					Participants: config.HotColdPairDistribution{
+						FirstPair:       101,
+						HotPairCount:    10,
+						ColdPairCount:   40,
+						HotTrafficShare: 0.8,
+					},
+					Amount: config.SequentialRangeAmount{
+						Minimum: 100,
+						Maximum: 102,
+					},
+				},
 			}},
 		},
 		runID: "test-run",
 	}
-	pairs := buildPairs(50)
+	pairs := buildPairs(101, 50)
+	if pairs[0] != ids.PSPPair(101) || pairs[len(pairs)-1] != ids.PSPPair(150) {
+		t.Fatalf("pair range = %#v...%#v, want 101...150", pairs[0], pairs[len(pairs)-1])
+	}
 	hotPairs := make(map[string]bool)
 	for _, pair := range pairs[:10] {
 		hotPairs[pair.Payer] = true

@@ -15,8 +15,19 @@ printf '%s\n' "$*" >> "$FUNDING_COMMAND_LOG"
 SH
 chmod +x "$tmp_dir/fake-provision-funds"
 
+cat > "$tmp_dir/fake-cert-generator" <<'SH'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$CERT_COMMAND_LOG"
+SH
+chmod +x "$tmp_dir/fake-cert-generator"
+touch "$tmp_dir/ca.crt"
+
 export FUNDING_COMMAND_LOG="$tmp_dir/funding-commands.log"
+export CERT_COMMAND_LOG="$tmp_dir/cert-commands.log"
 export PROVISION_FUNDS_SCRIPT="$tmp_dir/fake-provision-funds"
+export LOADTOOL_CERT_SCRIPT="$tmp_dir/fake-cert-generator"
+export LOADTOOL_CA_CERT="$tmp_dir/ca.crt"
 source "$ROOT_DIR/run-load-test.sh"
 trap 'cleanup; rm -rf "$tmp_dir"' EXIT
 
@@ -34,14 +45,21 @@ cat <<'JSON'
   "warmupSeconds": 60,
   "activeSeconds": 60,
   "drainSeconds": 30,
-  "participants": {
-    "hotPairCount": 10,
-    "coldPairCount": 40
-  },
-  "funding": {
-    "balance": 1000000000,
-    "resetIfExists": true
-  }
+  "scenarios": [
+    {
+      "type": "happy-path",
+      "share": 1.0,
+      "participants": {
+        "firstPair": 41,
+        "hotPairCount": 2,
+        "coldPairCount": 1
+      },
+      "funding": {
+        "balance": 1000000000,
+        "resetIfExists": true
+      }
+    }
+  ]
 }
 JSON
 SH
@@ -56,27 +74,45 @@ if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PRO
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi
-if [[ "$PROFILE_HOT_PAIR_COUNT" != 10 || "$PROFILE_COLD_PAIR_COUNT" != 40 ]]; then
-    echo "runner did not consume normalized participant counts" >&2
+if [[ "${#PROFILE_SCENARIO_TYPES[@]}" != 1 || "${PROFILE_SCENARIO_TYPES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 1.0 ]]; then
+    echo "runner did not consume normalized scenario metadata" >&2
     exit 1
 fi
-if [[ "$PROFILE_FUNDING_BALANCE" != 1000000000 || "$PROFILE_FUNDING_RESET_IF_EXISTS" != true ]]; then
+if [[ "${PROFILE_SCENARIO_FIRST_PAIRS[0]}" != 41 || "${PROFILE_SCENARIO_HOT_PAIR_COUNTS[0]}" != 2 || "${PROFILE_SCENARIO_COLD_PAIR_COUNTS[0]}" != 1 ]]; then
+    echo "runner did not consume normalized participant range" >&2
+    exit 1
+fi
+if [[ "${PROFILE_SCENARIO_FUNDING_BALANCES[0]}" != 1000000000 || "${PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS[0]}" != true ]]; then
     echo "runner did not consume normalized funding settings" >&2
     exit 1
 fi
 
 mkdir -p "$tmp_dir/result"
+prepare_loadtool_certificates "$tmp_dir/result"
 PROVISION_FUNDS=true
 provision_funds_if_enabled "$tmp_dir/result"
-PROFILE_FUNDING_RESET_IF_EXISTS=false
+PROFILE_SCENARIO_FUNDING_RESET_BEHAVIORS[0]=false
 provision_funds_if_enabled "$tmp_dir/result"
 
 cat > "$tmp_dir/expected-funding-commands.log" <<'EOF'
---vus 50 --balance 1000000000 --reset-if-exists
---vus 50 --balance 1000000000 --preserve-if-exists
+--balance 1000000000 --reset-if-exists --ispb 10000041 --ispb 20000041 --ispb 10000042 --ispb 20000042 --ispb 10000043 --ispb 20000043
+--balance 1000000000 --preserve-if-exists --ispb 10000041 --ispb 20000041 --ispb 10000042 --ispb 20000042 --ispb 10000043 --ispb 20000043
 EOF
 if ! diff -u "$tmp_dir/expected-funding-commands.log" "$FUNDING_COMMAND_LOG"; then
     echo "runner did not pass normalized funding settings to provision-funds" >&2
+    exit 1
+fi
+
+cat > "$tmp_dir/expected-cert-commands.log" <<EOF
+--psp-root $tmp_dir/result/certs psp 10000041
+--psp-root $tmp_dir/result/certs psp 20000041
+--psp-root $tmp_dir/result/certs psp 10000042
+--psp-root $tmp_dir/result/certs psp 20000042
+--psp-root $tmp_dir/result/certs psp 10000043
+--psp-root $tmp_dir/result/certs psp 20000043
+EOF
+if ! diff -u "$tmp_dir/expected-cert-commands.log" "$CERT_COMMAND_LOG"; then
+    echo "runner did not generate certificates for the normalized participant range" >&2
     exit 1
 fi
 

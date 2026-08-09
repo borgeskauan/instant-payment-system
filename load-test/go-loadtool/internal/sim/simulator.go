@@ -39,10 +39,7 @@ type Config struct {
 	Warmup                        time.Duration
 	Duration                      time.Duration
 	Drain                         time.Duration
-	HotPSPs                       int
-	ColdPSPs                      int
-	HotShare                      float64
-	TrafficSeed                   int64
+	Seed                          int64
 	Scenarios                     []config.Scenario
 	OutputDir                     string
 }
@@ -101,14 +98,16 @@ func Run(cfg Config) error {
 	if cfg.TargetTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
 	}
-	if cfg.HotPSPs <= 0 || cfg.ColdPSPs <= 0 {
-		return fmt.Errorf("hot and cold PSP counts must be positive")
-	}
 	if len(cfg.Scenarios) != 1 || cfg.Scenarios[0].Type != config.ScenarioHappyPath || cfg.Scenarios[0].HappyPath == nil {
 		return fmt.Errorf("exactly one configured happy-path scenario is required")
 	}
-	amount := cfg.Scenarios[0].HappyPath.Amount
-	if amount.Type != config.AmountSequentialRange || amount.Minimum <= 0 || amount.Maximum < amount.Minimum {
+	happyPath := cfg.Scenarios[0].HappyPath
+	participants := happyPath.Participants
+	if participants.FirstPair <= 0 || participants.HotPairCount <= 0 || participants.ColdPairCount <= 0 || participants.HotTrafficShare <= 0 || participants.HotTrafficShare >= 1 {
+		return fmt.Errorf("happy-path requires a valid participant range")
+	}
+	amount := happyPath.Amount
+	if amount.Minimum <= 0 || amount.Maximum < amount.Minimum {
 		return fmt.Errorf("happy-path requires a valid sequential-range amount")
 	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
@@ -127,7 +126,7 @@ func Run(cfg Config) error {
 	}
 	defer eventWriter.Close()
 
-	pairs := buildPairs(cfg.HotPSPs + cfg.ColdPSPs)
+	pairs := buildPairs(participants.FirstPair, participants.HotPairCount+participants.ColdPairCount)
 	httpClients, err := newHTTPClients(cfg, pairs)
 	if err != nil {
 		return err
@@ -274,9 +273,9 @@ func statusQueueCapacity(targetRate int) int {
 	return max(1024, targetRate*4)
 }
 
-func buildPairs(count int) []ids.Pair {
+func buildPairs(firstPair int, count int) []ids.Pair {
 	pairs := make([]ids.Pair, 0, count)
-	for i := 1; i <= count; i++ {
+	for i := firstPair; i < firstPair+count; i++ {
 		pairs = append(pairs, ids.PSPPair(i))
 	}
 	return pairs
@@ -306,17 +305,18 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, pairs
 }
 
 func (s *simulator) transferJobForSequence(seq uint64, pairs []ids.Pair) transferJob {
-	hotCount := s.cfg.HotPSPs
-	coldEvery := int(1 / (1 - s.cfg.HotShare))
+	scenario := s.cfg.Scenarios[0]
+	participants := scenario.HappyPath.Participants
+	hotCount := participants.HotPairCount
+	coldEvery := int(1 / (1 - participants.HotTrafficShare))
 	if coldEvery < 2 {
 		coldEvery = 2
 	}
-	pairIndex := hotCount + int(seq)%s.cfg.ColdPSPs
+	pairIndex := hotCount + int(seq)%participants.ColdPairCount
 	if hotCount > 0 && seq%uint64(coldEvery) != 0 {
 		pairIndex = int(seq) % hotCount
 	}
 
-	scenario := s.cfg.Scenarios[0]
 	amountRange := scenario.HappyPath.Amount
 	amountCount := amountRange.Maximum - amountRange.Minimum + 1
 	return transferJob{
