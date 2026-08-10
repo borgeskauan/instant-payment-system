@@ -56,31 +56,14 @@ func TestSummaryCountsMissingPayerNotification(t *testing.T) {
 	}
 }
 
-func TestSummaryAllowsExpectedPayerNotificationAbsence(t *testing.T) {
-	scenario := reportTestHappyPathScenario()
-	scenario.Name = "no-payer-notification"
-	scenario.Expectations.PayerNotification.Count = 0
-	summary := mustBuildSummary(t, []events.Start{{
-		EndToEndID:   "tx-1",
-		PayerISPB:    "10000001",
-		HTTPStatus:   200,
-		ScenarioName: scenario.Name,
-	}}, nil, Options{Scenarios: []config.Scenario{scenario}})
-
-	got := summary.Scenarios[0].Transactions.PayerNotification
-	if got.Matched != 1 || got.Violations != 0 || summary.Transactions.PayerNotification.NotNotified != 0 {
-		t.Fatalf("payer notification summary = %#v / %#v", got, summary.Transactions.PayerNotification)
-	}
-}
-
-func TestSummaryUsesEarliestPayerNotificationAndReportsExcess(t *testing.T) {
+func TestSummaryAllowsRepeatedExpectedPayerNotificationsAndUsesEarliest(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 	}
 	notifications := []events.Notification{
-		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 3_000_000_000},
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, StatusCode: "ACSC", ReasonCodes: []string{}, ReceivedAtNS: 3_000_000_000},
 		{EndToEndID: "tx-1", ISPB: "20000001", EventType: events.EventPacs002Received, ReceivedAtNS: 500_000_000},
-		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000_000},
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, StatusCode: "ACSC", ReasonCodes: []string{}, ReceivedAtNS: 1_000_000_000},
 	}
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
@@ -88,11 +71,42 @@ func TestSummaryUsesEarliestPayerNotificationAndReportsExcess(t *testing.T) {
 	if summary.PayerNotificationLatencyMs.P50 != 1000 {
 		t.Fatalf("P50 = %f, want 1000", summary.PayerNotificationLatencyMs.P50)
 	}
-	if summary.Transactions.PayerNotification.Excess != 1 {
-		t.Fatalf("Excess = %d, want 1", summary.Transactions.PayerNotification.Excess)
-	}
-	if summary.Scenarios[0].Transactions.PayerNotification.Violations != 1 {
+	got := summary.Scenarios[0].Transactions.PayerNotification
+	if got.Observed != 1 || got.Matched != 1 || got.Violations != 0 || summary.Transactions.PayerNotification.Notified != 1 {
 		t.Fatalf("payer notification summary = %#v", summary.Scenarios[0].Transactions.PayerNotification)
+	}
+}
+
+func TestSummaryRejectsContradictoryPayerNotificationAlongsideExpectedOutcome(t *testing.T) {
+	starts := []events.Start{{EndToEndID: "tx-1", PayerISPB: "10000001", RequestStartedAtNS: 1_000_000_000, HTTPStatus: 200}}
+	notifications := []events.Notification{
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, StatusCode: "ACSC", ReasonCodes: []string{}, ReceivedAtNS: 2_000_000_000},
+		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, StatusCode: "RJCT", ReasonCodes: []string{"AM04"}, ReceivedAtNS: 3_000_000_000},
+	}
+
+	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1_500})
+	got := summary.Scenarios[0].Transactions.PayerNotification
+	if got.Observed != 1 || got.Matched != 1 || got.StatusMismatch != 1 || got.ReasonCodesMismatch != 1 || got.Violations != 1 {
+		t.Fatalf("payer notification summary = %#v", got)
+	}
+	if summary.PayerNotificationLatencyMs.P50 != 1000 || summary.Diagnostics.ResultCollection.PayerNotifiedTotal != 1 || summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
+		t.Fatalf("matching outcome was not counted once in performance metrics: summary=%#v", summary)
+	}
+}
+
+func TestSummaryComparesReasonCodesWithoutDependingOnOrder(t *testing.T) {
+	scenario := reportTestInsufficientFundsScenario()
+	scenario.Expectations.PayerNotification.ReasonCodes = []string{"AM04", "AB03"}
+	summary := mustBuildSummary(t, []events.Start{{
+		EndToEndID: "tx-1", PayerISPB: "10000041", HTTPStatus: 200, ScenarioName: scenario.Name,
+	}}, []events.Notification{{
+		EndToEndID: "tx-1", ISPB: "10000041", EventType: events.EventPacs002Received,
+		StatusCode: "RJCT", ReasonCodes: []string{"AB03", "AM04"},
+	}}, Options{Scenarios: []config.Scenario{scenario}})
+
+	got := summary.Scenarios[0].Transactions.PayerNotification
+	if got.Matched != 1 || got.ReasonCodesMismatch != 0 || got.Violations != 0 {
+		t.Fatalf("payer notification summary = %#v", got)
 	}
 }
 
@@ -133,8 +147,11 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 		Duration:       5 * time.Second,
 	})
 
-	if summary.Transactions.Started != 1 {
-		t.Fatalf("Started = %d, want 1", summary.Transactions.Started)
+	if summary.Transactions.Started != 3 {
+		t.Fatalf("full-run Started = %d, want 3", summary.Transactions.Started)
+	}
+	if summary.ThroughputPerSecond.Started != 0.2 {
+		t.Fatalf("active-window throughput = %f, want 0.2", summary.ThroughputPerSecond.Started)
 	}
 }
 
@@ -215,6 +232,17 @@ func TestSummaryJSONUsesFinalReportShape(t *testing.T) {
 	if _, ok := root["payer_notification_latency_ms"]; !ok {
 		t.Fatal("summary missing payer_notification_latency_ms section")
 	}
+	scenarioTransactions := root["scenarios"].([]any)[0].(map[string]any)["transactions"].(map[string]any)
+	payerNotification := scenarioTransactions["payer_notification"].(map[string]any)
+	if payerNotification["delivery_semantics"] != "at-least-once" || payerNotification["expected_status"] != "ACSC" {
+		t.Fatalf("payer notification expectation missing from report: %#v", payerNotification)
+	}
+	if _, ok := payerNotification["expected_count"]; ok {
+		t.Fatalf("report retained exact-count expectation: %#v", payerNotification)
+	}
+	if _, ok := payerNotification["excess"]; ok {
+		t.Fatalf("report treats repeated delivery as excess: %#v", payerNotification)
+	}
 
 	throughput := root["throughput_per_second"].(map[string]any)
 	if _, ok := throughput["payer_notified_during_active"]; !ok {
@@ -266,7 +294,7 @@ func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing
 	}
 }
 
-func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
+func TestSummaryValidatesFullRunButMeasuresOnlyActiveWindow(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "warmup-tx", PayerISPB: "10000001", CreatedAtNS: 1_000_000_000, HTTPStatus: 200},
 		{EndToEndID: "measured-tx-1", PayerISPB: "10000002", CreatedAtNS: 11_000_000_000, HTTPStatus: 200},
@@ -286,11 +314,11 @@ func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
 		Duration:       5 * time.Second,
 	})
 
-	if summary.Transactions.Started != 2 {
-		t.Fatalf("Started = %d, want 2", summary.Transactions.Started)
+	if summary.Transactions.Started != 4 {
+		t.Fatalf("full-run Started = %d, want 4", summary.Transactions.Started)
 	}
-	if summary.Transactions.Accepted != 2 {
-		t.Fatalf("Accepted = %d, want 2", summary.Transactions.Accepted)
+	if summary.Transactions.Accepted != 4 {
+		t.Fatalf("full-run Accepted = %d, want 4", summary.Transactions.Accepted)
 	}
 	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
 		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
@@ -404,6 +432,26 @@ func mustBuildSummary(t *testing.T, starts []events.Start, notifications []event
 			}
 		}
 	}
+	startsByID := make(map[string]events.Start, len(starts))
+	for _, start := range starts {
+		startsByID[start.EndToEndID] = start
+	}
+	for index := range notifications {
+		if notifications[index].EventType != events.EventPacs002Received || notifications[index].StatusCode != "" || notifications[index].ReasonCodes != nil {
+			continue
+		}
+		start, exists := startsByID[notifications[index].EndToEndID]
+		if !exists {
+			continue
+		}
+		for _, scenario := range options.Scenarios {
+			if scenario.Name == start.ScenarioName {
+				notifications[index].StatusCode = scenario.Expectations.PayerNotification.Status
+				notifications[index].ReasonCodes = append([]string(nil), scenario.Expectations.PayerNotification.ReasonCodes...)
+				break
+			}
+		}
+	}
 	summary, err := BuildWithOptions(starts, notifications, options)
 	if err != nil {
 		t.Fatal(err)
@@ -417,7 +465,7 @@ func reportTestHappyPathScenario() config.Scenario {
 		Share: 1,
 		Expectations: config.ScenarioExpectations{
 			HTTPStatus:        config.ExpectedHTTP2xx,
-			PayerNotification: config.PayerNotificationExpectation{Count: 1},
+			PayerNotification: config.PayerNotificationExpectation{DeliverySemantics: config.DeliveryAtLeastOnce, Status: "ACSC", ReasonCodes: []string{}},
 		},
 	}
 }
@@ -428,7 +476,7 @@ func reportTestInsufficientFundsScenario() config.Scenario {
 		Share: 0.2,
 		Expectations: config.ScenarioExpectations{
 			HTTPStatus:        config.ExpectedHTTP2xx,
-			PayerNotification: config.PayerNotificationExpectation{Count: 1},
+			PayerNotification: config.PayerNotificationExpectation{DeliverySemantics: config.DeliveryAtLeastOnce, Status: "RJCT", ReasonCodes: []string{"AM04"}},
 		},
 	}
 }

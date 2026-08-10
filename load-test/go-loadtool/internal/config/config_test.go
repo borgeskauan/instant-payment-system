@@ -56,7 +56,9 @@ const testProfile = `{
       "expectations": {
         "httpStatus": "2xx",
         "payerNotification": {
-          "count": 1
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
         }
       }
     }
@@ -107,7 +109,11 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	if scenario.Funding.Payer.Mode != FundingCoverGeneratedDebits || scenario.Funding.Receiver.Mode != FundingFixed || scenario.Funding.Receiver.Balance != "0.00" || !scenario.Funding.ResetIfExists {
 		t.Fatalf("Funding = %#v", scenario.Funding)
 	}
-	if scenario.Expectations.HTTPStatus != ExpectedHTTP2xx || scenario.Expectations.PayerNotification.Count != 1 {
+	if scenario.Expectations.HTTPStatus != ExpectedHTTP2xx ||
+		scenario.Expectations.PayerNotification.DeliverySemantics != DeliveryAtLeastOnce ||
+		scenario.Expectations.PayerNotification.Status != "ACSC" ||
+		scenario.Expectations.PayerNotification.ReasonCodes == nil ||
+		len(scenario.Expectations.PayerNotification.ReasonCodes) != 0 {
 		t.Fatalf("Expectations = %#v", scenario.Expectations)
 	}
 	if cfg.Reporting.SLAThresholdMs != 3200 {
@@ -261,7 +267,10 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "pair range overflow", old: `"hotPairCount": 7`, new: `"hotPairCount": 1000000`, wantMessage: "maximum pair number 999999"},
 		{name: "amount range", old: `"maximum": 100098`, new: `"maximum": 99`, wantMessage: "amount.maximum"},
 		{name: "HTTP expectation", old: `"httpStatus": "2xx"`, new: `"httpStatus": "4xx"`, wantMessage: "expectations.httpStatus"},
-		{name: "notification expectation", old: `"count": 1`, new: `"count": 2`, wantMessage: "expectations.payerNotification.count"},
+		{name: "delivery semantics", old: `"deliverySemantics": "at-least-once"`, new: `"deliverySemantics": "exactly-once"`, wantMessage: "expectations.payerNotification.deliverySemantics"},
+		{name: "notification status", old: `"status": "ACSC"`, new: `"status": "accepted"`, wantMessage: "expectations.payerNotification.status"},
+		{name: "notification reason", old: `"reasonCodes": []`, new: `"reasonCodes": ["am04"]`, wantMessage: "expectations.payerNotification.reasonCodes"},
+		{name: "duplicate notification reason", old: `"reasonCodes": []`, new: `"reasonCodes": ["AM04", "AM04"]`, wantMessage: "duplicate reason code"},
 		{name: "SLA", old: `"slaThresholdMs": 3200`, new: `"slaThresholdMs": 0`, wantMessage: "reporting.slaThresholdMs"},
 	}
 
@@ -311,7 +320,10 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if cfg.Scenarios[0].Share != 0.8 || cfg.Scenarios[1].Share != 0.2 {
 		t.Fatalf("mixed shares = %#v", cfg.Scenarios)
 	}
-	if cfg.Scenarios[0].Expectations.PayerNotification.Count != 1 || cfg.Scenarios[1].Expectations.PayerNotification.Count != 1 {
+	happyNotification := cfg.Scenarios[0].Expectations.PayerNotification
+	insufficientNotification := cfg.Scenarios[1].Expectations.PayerNotification
+	if happyNotification.DeliverySemantics != DeliveryAtLeastOnce || happyNotification.Status != "ACSC" || len(happyNotification.ReasonCodes) != 0 ||
+		insufficientNotification.DeliverySemantics != DeliveryAtLeastOnce || insufficientNotification.Status != "RJCT" || len(insufficientNotification.ReasonCodes) != 1 || insufficientNotification.ReasonCodes[0] != "AM04" {
 		t.Fatalf("mixed expectations = %#v", cfg.Scenarios)
 	}
 	if cfg.Scenarios[0].Participants.PairNumberStart != 1 || cfg.Scenarios[1].Participants.PairNumberStart != 41 {
@@ -348,6 +360,7 @@ func TestLoadProfileRejectsRemovedScenarioAndConfirmationFields(t *testing.T) {
 	}{
 		{name: "scenario type", content: strings.Replace(testProfile, `"name": "happy-path",`, `"name": "happy-path", "type": "happy-path",`, 1), field: `unknown field "type"`},
 		{name: "payer confirmation", content: strings.Replace(testProfile, `"payerNotification": {`, `"payerConfirmation": "required", "payerNotification": {`, 1), field: `unknown field "payerConfirmation"`},
+		{name: "notification count", content: strings.Replace(testProfile, `"payerNotification": {`, `"payerNotification": {"count": 1,`, 1), field: `unknown field "count"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -356,6 +369,35 @@ func TestLoadProfileRejectsRemovedScenarioAndConfirmationFields(t *testing.T) {
 			_, err := loadProfileFromDir(dir, "removed-contract")
 			if err == nil || !strings.Contains(err.Error(), test.field) {
 				t.Fatalf("error = %v, want %s rejection", err, test.field)
+			}
+		})
+	}
+}
+
+func TestLoadProfileRequiresObservablePayerNotificationFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		old         string
+		wantMessage string
+	}{
+		{name: "delivery semantics", old: `          "deliverySemantics": "at-least-once",
+`, wantMessage: "expectations.payerNotification.deliverySemantics"},
+		{name: "status", old: `          "status": "ACSC",
+`, wantMessage: "expectations.payerNotification.status"},
+		{name: "reason codes", old: `,
+          "reasonCodes": []`, wantMessage: "expectations.payerNotification.reasonCodes"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			content := strings.Replace(testProfile, test.old, "", 1)
+			if content == testProfile {
+				t.Fatalf("test replacement %q was not applied", test.old)
+			}
+			writeProfile(t, dir, "missing-notification-field", content)
+			_, err := loadProfileFromDir(dir, "missing-notification-field")
+			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("error = %v, want message containing %q", err, test.wantMessage)
 			}
 		})
 	}

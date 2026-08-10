@@ -46,7 +46,9 @@
       "expectations": {
         "httpStatus": "2xx",
         "payerNotification": {
-          "count": 1
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
         }
       }
     }

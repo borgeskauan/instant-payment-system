@@ -224,7 +224,9 @@ type profileValidationExpectations struct {
 }
 
 type profileValidationPayerNotification struct {
-	Count int `json:"count"`
+	DeliverySemantics string   `json:"deliverySemantics"`
+	Status            string   `json:"status"`
+	ReasonCodes       []string `json:"reasonCodes"`
 }
 
 func runValidateProfile(args []string) error {
@@ -297,7 +299,9 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 			Expectations: profileValidationExpectations{
 				HTTPStatus: scenario.Expectations.HTTPStatus,
 				PayerNotification: profileValidationPayerNotification{
-					Count: scenario.Expectations.PayerNotification.Count,
+					DeliverySemantics: scenario.Expectations.PayerNotification.DeliverySemantics,
+					Status:            scenario.Expectations.PayerNotification.Status,
+					ReasonCodes:       scenario.Expectations.PayerNotification.ReasonCodes,
 				},
 			},
 		}

@@ -43,13 +43,16 @@ type ExpectationMatchSummary struct {
 }
 
 type PayerNotificationExpectationSummary struct {
-	ExpectedCount int `json:"expected_count"`
-	Eligible      int `json:"eligible"`
-	Observed      int `json:"observed"`
-	Matched       int `json:"matched"`
-	Missing       int `json:"missing"`
-	Excess        int `json:"excess"`
-	Violations    int `json:"violations"`
+	DeliverySemantics   string   `json:"delivery_semantics"`
+	ExpectedStatus      string   `json:"expected_status"`
+	ExpectedReasonCodes []string `json:"expected_reason_codes"`
+	Eligible            int      `json:"eligible"`
+	Observed            int      `json:"observed"`
+	Matched             int      `json:"matched"`
+	Missing             int      `json:"missing"`
+	StatusMismatch      int      `json:"status_mismatch"`
+	ReasonCodesMismatch int      `json:"reason_codes_mismatch"`
+	Violations          int      `json:"violations"`
 }
 
 type RunSummary struct {
@@ -69,7 +72,6 @@ type TransactionSummary struct {
 type PayerNotificationSummary struct {
 	Notified    int `json:"notified"`
 	NotNotified int `json:"not_notified"`
-	Excess      int `json:"excess"`
 }
 
 type NotifiedBySLASummary struct {
@@ -131,8 +133,8 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 		if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx {
 			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", scenario.Expectations.HTTPStatus, scenario.Name)
 		}
-		if scenario.Expectations.PayerNotification.Count < 0 || scenario.Expectations.PayerNotification.Count > 1 {
-			return Summary{}, fmt.Errorf("unsupported payer notification count %d for scenario %q", scenario.Expectations.PayerNotification.Count, scenario.Name)
+		if scenario.Expectations.PayerNotification.DeliverySemantics != config.DeliveryAtLeastOnce {
+			return Summary{}, fmt.Errorf("unsupported payer notification delivery semantics %q for scenario %q", scenario.Expectations.PayerNotification.DeliverySemantics, scenario.Name)
 		}
 		scenarioIndexes[scenario.Name] = index
 		summary.Scenarios[index] = ScenarioSummary{
@@ -141,22 +143,21 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 			Transactions: ScenarioTransactionSummary{
 				HTTPStatus: ExpectationMatchSummary{Expectation: scenario.Expectations.HTTPStatus},
 				PayerNotification: PayerNotificationExpectationSummary{
-					ExpectedCount: scenario.Expectations.PayerNotification.Count,
+					DeliverySemantics:   scenario.Expectations.PayerNotification.DeliverySemantics,
+					ExpectedStatus:      scenario.Expectations.PayerNotification.Status,
+					ExpectedReasonCodes: cloneStrings(scenario.Expectations.PayerNotification.ReasonCodes),
 				},
 			},
 		}
 	}
 	measuredStarts := measuredWindowStarts(starts, options.Warmup, options.Duration)
-	summary.Transactions.Started = len(measuredStarts)
+	summary.Transactions.Started = len(starts)
 	if options.Duration > 0 {
-		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
+		summary.ThroughputPerSecond.Started = float64(len(measuredStarts)) / options.Duration.Seconds()
 	}
 
 	payerNotifications := collectPayerNotifications(notifications)
-	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
-	payerNotifiedDuringActive := 0
-	var durations []float64
-	for _, start := range measuredStarts {
+	for _, start := range starts {
 		scenario, err := scenarioForStart(start, scenarios)
 		if err != nil {
 			return Summary{}, err
@@ -172,40 +173,61 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 		scenarioSummary.Transactions.Accepted++
 		scenarioSummary.Transactions.HTTPStatus.Matched++
 		scenarioSummary.Transactions.PayerNotification.Eligible++
-		expectedCount := scenario.Expectations.PayerNotification.Count
 		observation := payerNotifications[notificationKey{
 			endToEndID: start.EndToEndID,
 			ispb:       start.PayerISPB,
 		}]
-		scenarioSummary.Transactions.PayerNotification.Observed += observation.count
-		if observation.count == expectedCount {
-			scenarioSummary.Transactions.PayerNotification.Matched++
-		} else {
+		if len(observation.deliveries) == 0 {
+			scenarioSummary.Transactions.PayerNotification.Missing++
 			scenarioSummary.Transactions.PayerNotification.Violations++
 			scenarioSummary.Transactions.Violations++
-			if observation.count < expectedCount {
-				scenarioSummary.Transactions.PayerNotification.Missing += expectedCount - observation.count
-			} else {
-				excess := observation.count - expectedCount
-				scenarioSummary.Transactions.PayerNotification.Excess += excess
-				summary.Transactions.PayerNotification.Excess += excess
-			}
-		}
-		if observation.count > 0 {
-			summary.Transactions.PayerNotification.Notified++
-		} else if expectedCount > 0 {
 			summary.Transactions.PayerNotification.NotNotified++
-		}
-		if expectedCount != 1 || observation.count == 0 {
 			continue
 		}
-		durationMs := float64(observation.earliestAt-requestStartedAt(start)) / 1_000_000
+		scenarioSummary.Transactions.PayerNotification.Observed++
+		summary.Transactions.PayerNotification.Notified++
+		match := matchPayerNotification(observation, scenario.Expectations.PayerNotification)
+		if match.statusMismatch {
+			scenarioSummary.Transactions.PayerNotification.StatusMismatch++
+		}
+		if match.reasonCodesMismatch {
+			scenarioSummary.Transactions.PayerNotification.ReasonCodesMismatch++
+		}
+		if match.matched {
+			scenarioSummary.Transactions.PayerNotification.Matched++
+		}
+		if match.statusMismatch || match.reasonCodesMismatch {
+			scenarioSummary.Transactions.PayerNotification.Violations++
+			scenarioSummary.Transactions.Violations++
+		}
+	}
+
+	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
+	payerNotifiedDuringActive := 0
+	matchedActivePayments := 0
+	var durations []float64
+	for _, start := range measuredStarts {
+		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
+			continue
+		}
+		scenario, err := scenarioForStart(start, scenarios)
+		if err != nil {
+			return Summary{}, err
+		}
+		observation := payerNotifications[notificationKey{endToEndID: start.EndToEndID, ispb: start.PayerISPB}]
+		match := matchPayerNotification(observation, scenario.Expectations.PayerNotification)
+		if !match.matched {
+			continue
+		}
+		matchedActivePayments++
+		durationMs := float64(match.earliestMatchingAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
 		scenarioIndex := scenarioIndexes[scenario.Name]
 		scenarioDurations[scenarioIndex] = append(scenarioDurations[scenarioIndex], durationMs)
-		if activeWindowEndNS > 0 && observation.earliestAt <= activeWindowEndNS {
+		if activeWindowEndNS > 0 && match.earliestMatchingAt <= activeWindowEndNS {
 			payerNotifiedDuringActive++
 		}
+		scenarioSummary := &summary.Scenarios[scenarioIndex]
 		if durationMs > float64(options.SLAThresholdMs) {
 			summary.Transactions.PayerNotifiedBySLA.AfterSLA++
 			scenarioSummary.Transactions.PayerNotifiedBySLA.AfterSLA++
@@ -217,10 +239,10 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
 		summary.ThroughputPerSecond.PayerNotifiedDuringActive = float64(payerNotifiedDuringActive) / durationSeconds
-		summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate = float64(summary.Transactions.PayerNotification.Notified) / durationSeconds
+		summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate = float64(matchedActivePayments) / durationSeconds
 	}
-	summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive = summary.Transactions.PayerNotification.Notified - payerNotifiedDuringActive
-	summary.Diagnostics.ResultCollection.PayerNotifiedTotal = summary.Transactions.PayerNotification.Notified
+	summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive = matchedActivePayments - payerNotifiedDuringActive
+	summary.Diagnostics.ResultCollection.PayerNotifiedTotal = matchedActivePayments
 
 	sort.Float64s(durations)
 	summary.PayerNotificationLatencyMs.P50 = percentile(durations, 0.50)
@@ -313,8 +335,7 @@ type notificationKey struct {
 }
 
 type notificationObservation struct {
-	count      int
-	earliestAt int64
+	deliveries []events.Notification
 }
 
 func collectPayerNotifications(notifications []events.Notification) map[notificationKey]notificationObservation {
@@ -328,13 +349,63 @@ func collectPayerNotifications(notifications []events.Notification) map[notifica
 			ispb:       notification.ISPB,
 		}
 		observation := observations[key]
-		observation.count++
-		if observation.earliestAt == 0 || notification.ReceivedAtNS < observation.earliestAt {
-			observation.earliestAt = notification.ReceivedAtNS
-		}
+		observation.deliveries = append(observation.deliveries, notification)
 		observations[key] = observation
 	}
 	return observations
+}
+
+type payerNotificationMatch struct {
+	matched             bool
+	statusMismatch      bool
+	reasonCodesMismatch bool
+	earliestMatchingAt  int64
+}
+
+func matchPayerNotification(observation notificationObservation, expectation config.PayerNotificationExpectation) payerNotificationMatch {
+	if len(observation.deliveries) == 0 {
+		return payerNotificationMatch{}
+	}
+	result := payerNotificationMatch{}
+	for _, delivery := range observation.deliveries {
+		statusMatches := delivery.StatusCode == expectation.Status
+		reasonsMatch := equalReasonCodes(delivery.ReasonCodes, expectation.ReasonCodes)
+		if !statusMatches {
+			result.statusMismatch = true
+		}
+		if !reasonsMatch {
+			result.reasonCodesMismatch = true
+		}
+		if statusMatches && reasonsMatch {
+			if !result.matched || delivery.ReceivedAtNS < result.earliestMatchingAt {
+				result.earliestMatchingAt = delivery.ReceivedAtNS
+			}
+			result.matched = true
+		}
+	}
+	return result
+}
+
+func equalReasonCodes(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := cloneStrings(left)
+	rightCopy := cloneStrings(right)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneStrings(values []string) []string {
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
 }
 
 func Print(startsPath string, eventsPath string, options Options, output io.Writer) error {

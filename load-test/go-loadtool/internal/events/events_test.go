@@ -84,6 +84,8 @@ func TestNotificationEventsRoundTrip(t *testing.T) {
 		ISPB:         "10000001",
 		EventType:    EventPacs002Received,
 		ReceivedAtNS: 30,
+		StatusCode:   "RJCT",
+		ReasonCodes:  []string{"AM04", "AB03"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +98,40 @@ func TestNotificationEventsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EventType != EventPacs002Received {
+	if len(rows) != 1 || rows[0].EventType != EventPacs002Received || rows[0].StatusCode != "RJCT" || len(rows[0].ReasonCodes) != 2 || rows[0].ReasonCodes[0] != "AM04" || rows[0].ReasonCodes[1] != "AB03" {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestReadNotificationsRejectsPreviousHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.csv")
+	data := "end_to_end_id,ispb,event_type,received_at_ns\n" +
+		"tx-1,10000001,pacs002_received,30\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadNotifications(path); err == nil {
+		t.Fatal("ReadNotifications accepted the previous four-column header")
+	}
+}
+
+func TestNotificationEventsUseEmptyOutcomeForNonPacs002(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := NewNotificationWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(Notification{EndToEndID: "tx-1", ISPB: "20000001", EventType: EventPacs008Received, ReceivedAtNS: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadNotifications(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].StatusCode != "" || len(rows[0].ReasonCodes) != 0 {
 		t.Fatalf("rows = %#v", rows)
 	}
 }

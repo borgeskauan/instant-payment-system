@@ -71,7 +71,11 @@ cat <<'JSON'
       },
       "expectations": {
         "httpStatus": "2xx",
-        "payerNotification": {"count": 1}
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
+        }
       }
     },
     {
@@ -99,7 +103,11 @@ cat <<'JSON'
       },
       "expectations": {
         "httpStatus": "2xx",
-        "payerNotification": {"count": 1}
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "RJCT",
+          "reasonCodes": ["AM04"]
+        }
       }
     }
   ]
@@ -127,6 +135,28 @@ if [[ "${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[0]}" != 1 || "${PROFILE_SCENARIO_PA
 fi
 if [[ "${PROFILE_SCENARIO_PAYER_BALANCES[0]}" != 123.45 || "${PROFILE_SCENARIO_RECEIVER_BALANCES[0]}" != 0.00 || "${PROFILE_SCENARIO_PAYER_BALANCES[1]}" != 0.00 || "${PROFILE_SCENARIO_RESET_BEHAVIORS[0]}" != true ]]; then
     echo "runner did not consume normalized provisioning settings" >&2
+    exit 1
+fi
+if ! python3 - "$LOADTOOL_VALIDATION_FILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    scenarios = json.load(handle)["scenarios"]
+
+assert scenarios[0]["expectations"]["payerNotification"] == {
+    "deliverySemantics": "at-least-once",
+    "status": "ACSC",
+    "reasonCodes": [],
+}
+assert scenarios[1]["expectations"]["payerNotification"] == {
+    "deliverySemantics": "at-least-once",
+    "status": "RJCT",
+    "reasonCodes": ["AM04"],
+}
+PY
+then
+    echo "execution plan did not preserve observable payer-notification expectations" >&2
     exit 1
 fi
 

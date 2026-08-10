@@ -3,6 +3,7 @@ package events
 import (
 	"bufio"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,8 @@ type Notification struct {
 	ISPB         string
 	EventType    string
 	ReceivedAtNS int64
+	StatusCode   string
+	ReasonCodes  []string
 }
 
 const (
@@ -35,6 +38,7 @@ const (
 )
 
 var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name"}
+var notificationHeader = []string{"end_to_end_id", "ispb", "event_type", "received_at_ns", "status_code", "reason_codes"}
 
 type StartWriter struct {
 	file   *os.File
@@ -95,7 +99,7 @@ func NewNotificationWriter(path string) (*NotificationWriter, error) {
 	}
 	buffer := bufio.NewWriterSize(file, 4*1024*1024)
 	writer := csv.NewWriter(buffer)
-	if err := writer.Write([]string{"end_to_end_id", "ispb", "event_type", "received_at_ns"}); err != nil {
+	if err := writer.Write(notificationHeader); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -103,11 +107,21 @@ func NewNotificationWriter(path string) (*NotificationWriter, error) {
 }
 
 func (w *NotificationWriter) Write(row Notification) error {
+	reasonCodes := row.ReasonCodes
+	if reasonCodes == nil {
+		reasonCodes = []string{}
+	}
+	encodedReasonCodes, err := json.Marshal(reasonCodes)
+	if err != nil {
+		return err
+	}
 	return w.csv.Write([]string{
 		row.EndToEndID,
 		row.ISPB,
 		row.EventType,
 		strconv.FormatInt(row.ReceivedAtNS, 10),
+		row.StatusCode,
+		string(encodedReasonCodes),
 	})
 }
 
@@ -165,8 +179,12 @@ func ReadNotifications(path string) ([]Notification, error) {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	if _, err := reader.Read(); err != nil {
+	header, err := reader.Read()
+	if err != nil {
 		return nil, err
+	}
+	if !slices.Equal(header, notificationHeader) {
+		return nil, fmt.Errorf("notifications header is %v, want %v", header, notificationHeader)
 	}
 
 	var rows []Notification
@@ -219,17 +237,26 @@ func parseStart(record []string) (Start, error) {
 }
 
 func parseNotification(record []string) (Notification, error) {
-	if len(record) != 4 {
-		return Notification{}, fmt.Errorf("notification record has %d columns, want 4", len(record))
+	if len(record) != len(notificationHeader) {
+		return Notification{}, fmt.Errorf("notification record has %d columns, want %d", len(record), len(notificationHeader))
 	}
 	receivedAtNS, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
 		return Notification{}, err
+	}
+	var reasonCodes []string
+	if err := json.Unmarshal([]byte(record[5]), &reasonCodes); err != nil {
+		return Notification{}, fmt.Errorf("parse notification reason codes: %w", err)
+	}
+	if reasonCodes == nil {
+		return Notification{}, fmt.Errorf("notification reason codes must be a JSON array")
 	}
 	return Notification{
 		EndToEndID:   record[0],
 		ISPB:         record[1],
 		EventType:    record[2],
 		ReceivedAtNS: receivedAtNS,
+		StatusCode:   record[4],
+		ReasonCodes:  reasonCodes,
 	}, nil
 }

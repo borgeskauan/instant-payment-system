@@ -217,11 +217,11 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	writer, err := events.NewNotificationWriter(filepath.Join(t.TempDir(), "events.csv"))
+	eventsPath := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := events.NewNotificationWriter(eventsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
 
 	stream := newFakeNotificationStream()
 	s := &simulator{eventWriter: writer}
@@ -259,6 +259,16 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 	cancel()
 	close(stream.received)
 	wg.Wait()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := events.ReadNotifications(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].StatusCode != "ACSP" || len(rows[0].ReasonCodes) != 0 {
+		t.Fatalf("notification rows = %#v", rows)
+	}
 }
 
 func TestOpenNotificationStreamsClosesAlreadyOpenedSessionsOnFailure(t *testing.T) {

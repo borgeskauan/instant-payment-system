@@ -135,7 +135,7 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if scenario.Provisioning.PayerBalance == "0.00" || scenario.Provisioning.ReceiverBalance != "0.00" || !scenario.Provisioning.ResetIfExists {
 		t.Fatalf("validation provisioning = %#v", scenario.Provisioning)
 	}
-	if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx || scenario.Expectations.PayerNotification.Count != 1 {
+	if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx || scenario.Expectations.PayerNotification.DeliverySemantics != config.DeliveryAtLeastOnce || scenario.Expectations.PayerNotification.Status != "ACSC" || len(scenario.Expectations.PayerNotification.ReasonCodes) != 0 {
 		t.Fatalf("validation expectations = %#v", scenario.Expectations)
 	}
 	encoded, err := json.Marshal(validation)
@@ -161,7 +161,7 @@ func TestValidateProfileReturnsMixedScenarioProvisioning(t *testing.T) {
 			Receiver:      config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
 			ResetIfExists: true,
 		},
-		Expectations: config.ScenarioExpectations{HTTPStatus: config.ExpectedHTTP2xx, PayerNotification: config.PayerNotificationExpectation{Count: 1}},
+		Expectations: config.ScenarioExpectations{HTTPStatus: config.ExpectedHTTP2xx, PayerNotification: config.PayerNotificationExpectation{DeliverySemantics: config.DeliveryAtLeastOnce, Status: "RJCT", ReasonCodes: []string{"AM04"}}},
 	})
 	validation, err := parseValidateProfile([]string{"--profile", "mixed"}, func(string) (config.Runtime, error) {
 		return runtimeCfg, nil
@@ -301,7 +301,7 @@ func commandTestRuntime() config.Runtime {
 			},
 			Expectations: config.ScenarioExpectations{
 				HTTPStatus:        config.ExpectedHTTP2xx,
-				PayerNotification: config.PayerNotificationExpectation{Count: 1},
+				PayerNotification: config.PayerNotificationExpectation{DeliverySemantics: config.DeliveryAtLeastOnce, Status: "ACSC", ReasonCodes: []string{}},
 			},
 		}},
 		Reporting: config.Reporting{SLAThresholdMs: 987},

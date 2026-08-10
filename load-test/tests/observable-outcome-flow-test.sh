@@ -1,0 +1,58 @@
+#!/bin/bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+source "${ROOT_DIR}/run-load-test.sh"
+
+export FLOW_LOG="$tmp_dir/flow.log"
+
+parse_args() { RUN_TAG="observable-flow"; }
+resolve_profile() { :; }
+prepare_loadtool_binary() { LOADTOOL_BUILD_DIR=""; LOADTOOL_BIN="fake"; }
+build_loadtool() { :; }
+validate_profile_with_loadtool() {
+    PROFILE_WARMUP_SECONDS=0
+    PROFILE_ACTIVE_SECONDS=1
+    PROFILE_DRAIN_SECONDS=0
+}
+prepare_run_workspace() { :; }
+prepare_loadtool_certificates() { :; }
+grafana_available() { return 1; }
+log_selected_options() { :; }
+log_grafana_status() { :; }
+run_preflight_checks() { :; }
+reset_persistent_test_state_if_enabled() { :; }
+provision_funds_if_enabled() { :; }
+start_optional_diagnostics() { :; }
+run_simulator() { echo simulator >> "$FLOW_LOG"; }
+capture_and_assert_outbox_drained() {
+    echo outbox-validation >> "$FLOW_LOG"
+    return 1
+}
+collect_optional_diagnostics() { echo diagnostics >> "$FLOW_LOG"; }
+generate_sla_report() { echo report >> "$FLOW_LOG"; }
+write_run_window_json() { echo run-window >> "$FLOW_LOG"; }
+print_grafana_links() { :; }
+
+main observable-flow
+
+if grep -q outbox-validation "$FLOW_LOG"; then
+    echo "runner still performs persisted outbox validation" >&2
+    exit 1
+fi
+
+cat > "$tmp_dir/expected-flow.log" <<'EOF'
+simulator
+diagnostics
+report
+run-window
+EOF
+
+if ! diff -u "$tmp_dir/expected-flow.log" "$FLOW_LOG"; then
+    echo "runner did not report directly after observable-flow collection" >&2
+    exit 1
+fi

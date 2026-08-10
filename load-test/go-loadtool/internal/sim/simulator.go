@@ -618,6 +618,8 @@ func (s *simulator) consumeNotificationStream(ctx context.Context, wg *sync.Wait
 					ISPB:         session.ispb,
 					EventType:    events.EventPacs002Received,
 					ReceivedAtNS: time.Now().UnixNano(),
+					StatusCode:   notification.StatusCode,
+					ReasonCodes:  notification.ReasonCodes,
 				})
 			}
 		}

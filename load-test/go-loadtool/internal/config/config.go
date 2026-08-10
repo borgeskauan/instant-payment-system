@@ -20,6 +20,7 @@ const (
 	SchemaVersion               = 1
 	DefaultProfile              = "uniform-smoke"
 	ExpectedHTTP2xx             = "2xx"
+	DeliveryAtLeastOnce         = "at-least-once"
 	FundingFixed                = "fixed"
 	FundingCoverGeneratedDebits = "cover-generated-debits"
 	ScenarioSelectionBlockSize  = 100
@@ -29,6 +30,7 @@ const (
 )
 
 var contractNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var pacsCodePattern = regexp.MustCompile(`^[A-Z0-9]{4}$`)
 
 type Runtime struct {
 	SchemaVersion int
@@ -103,7 +105,9 @@ type ScenarioExpectations struct {
 }
 
 type PayerNotificationExpectation struct {
-	Count int
+	DeliverySemantics string
+	Status            string
+	ReasonCodes       []string
 }
 
 type Reporting struct {
@@ -181,7 +185,9 @@ type fileScenarioExpectations struct {
 }
 
 type filePayerNotificationExpectation struct {
-	Count *int `json:"count"`
+	DeliverySemantics string   `json:"deliverySemantics"`
+	Status            string   `json:"status"`
+	ReasonCodes       []string `json:"reasonCodes"`
 }
 
 type fileReporting struct {
@@ -337,11 +343,9 @@ func decodeScenario(profileName string, index int, file fileScenario) (Scenario,
 	if file.Expectations.HTTPStatus != ExpectedHTTP2xx {
 		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].expectations.httpStatus", index), fmt.Errorf("must be %q", ExpectedHTTP2xx))
 	}
-	if file.Expectations.PayerNotification.Count == nil {
-		return Scenario{}, malformedProfile(profileName, prefix+".expectations.payerNotification.count", errors.New("must be specified"))
-	}
-	if *file.Expectations.PayerNotification.Count < 0 || *file.Expectations.PayerNotification.Count > 1 {
-		return Scenario{}, malformedProfile(profileName, prefix+".expectations.payerNotification.count", errors.New("must be 0 or 1"))
+	payerNotification, err := validatePayerNotification(profileName, index, file.Expectations.PayerNotification)
+	if err != nil {
+		return Scenario{}, err
 	}
 	return Scenario{
 		Name:         file.Name,
@@ -350,11 +354,39 @@ func decodeScenario(profileName string, index int, file fileScenario) (Scenario,
 		Amount:       runtimeAmount(file.Amount),
 		Funding:      funding,
 		Expectations: ScenarioExpectations{
-			HTTPStatus: file.Expectations.HTTPStatus,
-			PayerNotification: PayerNotificationExpectation{
-				Count: *file.Expectations.PayerNotification.Count,
-			},
+			HTTPStatus:        file.Expectations.HTTPStatus,
+			PayerNotification: payerNotification,
 		},
+	}, nil
+}
+
+func validatePayerNotification(profileName string, index int, notification filePayerNotificationExpectation) (PayerNotificationExpectation, error) {
+	prefix := fmt.Sprintf("scenarios[%d].expectations.payerNotification", index)
+	if notification.DeliverySemantics != DeliveryAtLeastOnce {
+		return PayerNotificationExpectation{}, malformedProfile(profileName, prefix+".deliverySemantics", fmt.Errorf("must be %q", DeliveryAtLeastOnce))
+	}
+	if !pacsCodePattern.MatchString(notification.Status) {
+		return PayerNotificationExpectation{}, malformedProfile(profileName, prefix+".status", errors.New("must be a four-character uppercase alphanumeric PACS status code"))
+	}
+	if notification.ReasonCodes == nil {
+		return PayerNotificationExpectation{}, malformedProfile(profileName, prefix+".reasonCodes", errors.New("must be specified as an array"))
+	}
+	seenReasons := make(map[string]struct{}, len(notification.ReasonCodes))
+	for _, reasonCode := range notification.ReasonCodes {
+		if !pacsCodePattern.MatchString(reasonCode) {
+			return PayerNotificationExpectation{}, malformedProfile(profileName, prefix+".reasonCodes", fmt.Errorf("reason code %q must be four uppercase alphanumeric characters", reasonCode))
+		}
+		if _, exists := seenReasons[reasonCode]; exists {
+			return PayerNotificationExpectation{}, malformedProfile(profileName, prefix+".reasonCodes", fmt.Errorf("duplicate reason code %q", reasonCode))
+		}
+		seenReasons[reasonCode] = struct{}{}
+	}
+	reasonCodes := make([]string, len(notification.ReasonCodes))
+	copy(reasonCodes, notification.ReasonCodes)
+	return PayerNotificationExpectation{
+		DeliverySemantics: notification.DeliverySemantics,
+		Status:            notification.Status,
+		ReasonCodes:       reasonCodes,
 	}, nil
 }
 
