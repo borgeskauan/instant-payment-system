@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,23 +43,37 @@ func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
 	}
 }
 
+func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "run")
+	err := Run(Config{
+		TargetTxRate: math.MaxInt/4 + 1,
+		Duration:     time.Second,
+		Scenarios:    mixedPlannerScenarios(),
+		OutputDir:    outputDir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
+		t.Fatalf("Run error = %v, want rate is too large", err)
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("output directory was created before rate validation: %v", statErr)
+	}
+}
+
 func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testing.T) {
 	s := &simulator{
 		cfg: Config{
 			Scenarios: []config.Scenario{{
-				Type:  config.ScenarioHappyPath,
+				Name:  "renamed-workload",
 				Share: 1,
-				HappyPath: &config.HappyPathScenario{
-					Participants: config.HotColdPairDistribution{
-						PairNumberStart: 101,
-						HotPairCount:    10,
-						ColdPairCount:   40,
-						HotTrafficShare: 0.8,
-					},
-					Amount: config.SequentialRangeAmount{
-						Minimum: 100,
-						Maximum: 102,
-					},
+				Participants: config.HotColdPairDistribution{
+					PairNumberStart: 101,
+					HotPairCount:    10,
+					ColdPairCount:   40,
+					HotTrafficShare: 0.8,
+				},
+				Amount: config.SequentialRangeAmount{
+					Minimum: 100,
+					Maximum: 102,
 				},
 			}},
 		},
@@ -80,8 +96,8 @@ func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testin
 	coldCount := 0
 	for seq := uint64(0); seq < 100; seq++ {
 		job := s.transferJobForSequence(seq, planner.Next())
-		if job.ScenarioType != config.ScenarioHappyPath {
-			t.Fatalf("sequence %d ScenarioType = %q", seq, job.ScenarioType)
+		if job.ScenarioName != "renamed-workload" {
+			t.Fatalf("sequence %d ScenarioName = %q", seq, job.ScenarioName)
 		}
 		wantAmount := int64(100 + seq%3)
 		if job.Amount != wantAmount {

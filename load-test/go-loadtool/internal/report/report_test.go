@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,33 +30,50 @@ func TestSummaryCountsSLA(t *testing.T) {
 	if summary.Transactions.Accepted != 2 {
 		t.Fatalf("Accepted = %d, want 2", summary.Transactions.Accepted)
 	}
-	if summary.Transactions.Confirmation.Confirmed != 2 {
-		t.Fatalf("Confirmed = %d, want 2", summary.Transactions.Confirmation.Confirmed)
+	if summary.Transactions.PayerNotification.Notified != 2 {
+		t.Fatalf("Notified = %d, want 2", summary.Transactions.PayerNotification.Notified)
 	}
-	if summary.Transactions.ConfirmedBySLA.AfterSLA != 1 {
-		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.AfterSLA)
+	if summary.Transactions.PayerNotifiedBySLA.AfterSLA != 1 {
+		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.AfterSLA)
 	}
-	if summary.Transactions.ConfirmedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.WithinSLA)
+	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
+		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
 	}
-	if summary.Transactions.Confirmation.NotConfirmed != 0 {
-		t.Fatalf("NotConfirmed = %d, want 0", summary.Transactions.Confirmation.NotConfirmed)
+	if summary.Transactions.PayerNotification.NotNotified != 0 {
+		t.Fatalf("NotNotified = %d, want 0", summary.Transactions.PayerNotification.NotNotified)
 	}
 }
 
-func TestSummaryCountsNeverConfirmed(t *testing.T) {
+func TestSummaryCountsMissingPayerNotification(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 	}
 
 	summary := mustBuildSummary(t, starts, nil, Options{SLAThresholdMs: 4600})
 
-	if summary.Transactions.Confirmation.NotConfirmed != 1 {
-		t.Fatalf("NotConfirmed = %d, want 1", summary.Transactions.Confirmation.NotConfirmed)
+	if summary.Transactions.PayerNotification.NotNotified != 1 {
+		t.Fatalf("NotNotified = %d, want 1", summary.Transactions.PayerNotification.NotNotified)
 	}
 }
 
-func TestSummaryUsesEarliestPayerConfirmation(t *testing.T) {
+func TestSummaryAllowsExpectedPayerNotificationAbsence(t *testing.T) {
+	scenario := reportTestHappyPathScenario()
+	scenario.Name = "no-payer-notification"
+	scenario.Expectations.PayerNotification.Count = 0
+	summary := mustBuildSummary(t, []events.Start{{
+		EndToEndID:   "tx-1",
+		PayerISPB:    "10000001",
+		HTTPStatus:   200,
+		ScenarioName: scenario.Name,
+	}}, nil, Options{Scenarios: []config.Scenario{scenario}})
+
+	got := summary.Scenarios[0].Transactions.PayerNotification
+	if got.Matched != 1 || got.Violations != 0 || summary.Transactions.PayerNotification.NotNotified != 0 {
+		t.Fatalf("payer notification summary = %#v / %#v", got, summary.Transactions.PayerNotification)
+	}
+}
+
+func TestSummaryUsesEarliestPayerNotificationAndReportsExcess(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 	}
@@ -67,8 +85,14 @@ func TestSummaryUsesEarliestPayerConfirmation(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
 
-	if summary.LatencyMs.P50 != 1000 {
-		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
+	if summary.PayerNotificationLatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.PayerNotificationLatencyMs.P50)
+	}
+	if summary.Transactions.PayerNotification.Excess != 1 {
+		t.Fatalf("Excess = %d, want 1", summary.Transactions.PayerNotification.Excess)
+	}
+	if summary.Scenarios[0].Transactions.PayerNotification.Violations != 1 {
+		t.Fatalf("payer notification summary = %#v", summary.Scenarios[0].Transactions.PayerNotification)
 	}
 }
 
@@ -88,11 +112,11 @@ func TestSummaryMeasuresLatencyFromRequestStart(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1500})
 
-	if summary.LatencyMs.P50 != 1000 {
-		t.Fatalf("P50 = %f, want 1000", summary.LatencyMs.P50)
+	if summary.PayerNotificationLatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.PayerNotificationLatencyMs.P50)
 	}
-	if summary.Transactions.ConfirmedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.WithinSLA)
+	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
+		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
 	}
 }
 
@@ -182,22 +206,28 @@ func TestSummaryJSONUsesFinalReportShape(t *testing.T) {
 	}
 
 	transactions := root["transactions"].(map[string]any)
-	if _, ok := transactions["confirmation"]; !ok {
-		t.Fatal("transactions missing confirmation section")
+	if _, ok := transactions["payer_notification"]; !ok {
+		t.Fatal("transactions missing payer_notification section")
 	}
-	if _, ok := transactions["confirmed_by_sla"]; !ok {
-		t.Fatal("transactions missing confirmed_by_sla section")
+	if _, ok := transactions["payer_notified_by_sla"]; !ok {
+		t.Fatal("transactions missing payer_notified_by_sla section")
+	}
+	if _, ok := root["payer_notification_latency_ms"]; !ok {
+		t.Fatal("summary missing payer_notification_latency_ms section")
 	}
 
 	throughput := root["throughput_per_second"].(map[string]any)
-	if _, ok := throughput["confirmed_during_active"]; !ok {
-		t.Fatal("throughput missing confirmed_during_active")
+	if _, ok := throughput["payer_notified_during_active"]; !ok {
+		t.Fatal("throughput missing payer_notified_during_active")
 	}
 
 	diagnostics := root["diagnostics"].(map[string]any)
 	resultCollection := diagnostics["result_collection"].(map[string]any)
-	if _, ok := resultCollection["confirmed_total"]; !ok {
-		t.Fatal("diagnostics missing confirmed_total")
+	if _, ok := resultCollection["payer_notified_total"]; !ok {
+		t.Fatal("diagnostics missing payer_notified_total")
+	}
+	if strings.Contains(string(data), "confirm") {
+		t.Fatalf("summary retains obsolete confirmation terminology: %s", data)
 	}
 	if _, ok := diagnostics["resources"]; ok {
 		t.Fatal("diagnostics contains resource summary that belongs in Prometheus/Grafana")
@@ -222,17 +252,17 @@ func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing
 		Duration:       2 * time.Second,
 	})
 
-	if summary.ThroughputPerSecond.ConfirmedDuringActive != 1 {
-		t.Fatalf("ConfirmedDuringActive = %f, want 1", summary.ThroughputPerSecond.ConfirmedDuringActive)
+	if summary.ThroughputPerSecond.PayerNotifiedDuringActive != 1 {
+		t.Fatalf("PayerNotifiedDuringActive = %f, want 1", summary.ThroughputPerSecond.PayerNotifiedDuringActive)
 	}
-	if summary.Diagnostics.ResultCollection.ConfirmedAfterActive != 1 {
-		t.Fatalf("ConfirmedAfterActive = %d, want 1", summary.Diagnostics.ResultCollection.ConfirmedAfterActive)
+	if summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive != 1 {
+		t.Fatalf("PayerNotifiedAfterActive = %d, want 1", summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive)
 	}
-	if summary.Diagnostics.ResultCollection.ConfirmedTotal != 3 {
-		t.Fatalf("ConfirmedTotal = %d, want 3", summary.Diagnostics.ResultCollection.ConfirmedTotal)
+	if summary.Diagnostics.ResultCollection.PayerNotifiedTotal != 3 {
+		t.Fatalf("PayerNotifiedTotal = %d, want 3", summary.Diagnostics.ResultCollection.PayerNotifiedTotal)
 	}
-	if summary.Diagnostics.ResultCollection.ConfirmedTotalRate != 1.5 {
-		t.Fatalf("ConfirmedTotalRate = %f, want 1.5", summary.Diagnostics.ResultCollection.ConfirmedTotalRate)
+	if summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate != 1.5 {
+		t.Fatalf("PayerNotifiedTotalRate = %f, want 1.5", summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate)
 	}
 }
 
@@ -262,24 +292,24 @@ func TestSummaryExcludesWarmupTransactionsFromMeasuredWindow(t *testing.T) {
 	if summary.Transactions.Accepted != 2 {
 		t.Fatalf("Accepted = %d, want 2", summary.Transactions.Accepted)
 	}
-	if summary.Transactions.ConfirmedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.WithinSLA)
+	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
+		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
 	}
-	if summary.Transactions.ConfirmedBySLA.AfterSLA != 1 {
-		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.ConfirmedBySLA.AfterSLA)
+	if summary.Transactions.PayerNotifiedBySLA.AfterSLA != 1 {
+		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.AfterSLA)
 	}
 	if summary.ThroughputPerSecond.Started != 0.4 {
 		t.Fatalf("Started throughput = %f, want 0.4", summary.ThroughputPerSecond.Started)
 	}
 }
 
-func TestSummaryUsesConfiguredHappyPathScenario(t *testing.T) {
+func TestSummaryUsesConfiguredScenarioName(t *testing.T) {
 	scenario := reportTestHappyPathScenario()
 	summary := mustBuildSummary(t, []events.Start{{
 		EndToEndID:   "tx-1",
 		PayerISPB:    "10000001",
 		HTTPStatus:   200,
-		ScenarioType: config.ScenarioHappyPath,
+		ScenarioName: "happy-path",
 	}}, []events.Notification{{
 		EndToEndID:   "tx-1",
 		ISPB:         "10000001",
@@ -290,68 +320,56 @@ func TestSummaryUsesConfiguredHappyPathScenario(t *testing.T) {
 		Scenarios:      []config.Scenario{scenario},
 	})
 
-	if summary.Transactions.Accepted != 1 || summary.Transactions.Confirmation.Confirmed != 1 {
+	if summary.Transactions.Accepted != 1 || summary.Transactions.PayerNotification.Notified != 1 {
 		t.Fatalf("Transactions = %#v", summary.Transactions)
 	}
 }
 
-func TestSummaryInfersSoleScenarioForHistoricalStart(t *testing.T) {
-	summary := mustBuildSummary(t, []events.Start{{
-		EndToEndID: "legacy",
-		PayerISPB:  "10000001",
-		HTTPStatus: 200,
-	}}, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
-
-	if summary.Transactions.Accepted != 1 {
-		t.Fatalf("Accepted = %d, want historical start to use sole scenario", summary.Transactions.Accepted)
-	}
-}
-
-func TestSummaryRejectsUnknownScenarioType(t *testing.T) {
+func TestSummaryRejectsUnknownScenarioName(t *testing.T) {
 	_, err := BuildWithOptions([]events.Start{{
 		EndToEndID:   "tx-1",
-		ScenarioType: "not-supported",
+		ScenarioName: "not-configured",
 	}}, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
 
 	if err == nil {
-		t.Fatal("BuildWithOptions accepted unknown scenario type")
+		t.Fatal("BuildWithOptions accepted unknown scenario name")
 	}
 }
 
-func TestSummaryReportsMixedScenarioExpectationsWithoutTreatingExpectedAbsenceAsLoss(t *testing.T) {
+func TestSummaryReportsMixedScenarioNotificationCounts(t *testing.T) {
 	scenarios := []config.Scenario{reportTestHappyPathScenario(), reportTestInsufficientFundsScenario()}
 	scenarios[0].Share = 0.8
 	starts := []events.Start{
-		{EndToEndID: "happy-confirmed", PayerISPB: "10000001", HTTPStatus: 200, ScenarioType: config.ScenarioHappyPath},
-		{EndToEndID: "happy-missing", PayerISPB: "10000002", HTTPStatus: 200, ScenarioType: config.ScenarioHappyPath},
-		{EndToEndID: "insufficient-absent", PayerISPB: "10000041", HTTPStatus: 200, ScenarioType: config.ScenarioInsufficientFunds},
-		{EndToEndID: "insufficient-unexpected", PayerISPB: "10000042", HTTPStatus: 200, ScenarioType: config.ScenarioInsufficientFunds},
-		{EndToEndID: "insufficient-http", PayerISPB: "10000043", HTTPStatus: 500, ScenarioType: config.ScenarioInsufficientFunds},
+		{EndToEndID: "happy-notified", PayerISPB: "10000001", HTTPStatus: 200, ScenarioName: "happy-path"},
+		{EndToEndID: "happy-missing", PayerISPB: "10000002", HTTPStatus: 200, ScenarioName: "happy-path"},
+		{EndToEndID: "insufficient-notified", PayerISPB: "10000041", HTTPStatus: 200, ScenarioName: "insufficient-funds"},
+		{EndToEndID: "insufficient-missing", PayerISPB: "10000042", HTTPStatus: 200, ScenarioName: "insufficient-funds"},
+		{EndToEndID: "insufficient-http", PayerISPB: "10000043", HTTPStatus: 500, ScenarioName: "insufficient-funds"},
 	}
 	notifications := []events.Notification{
-		{EndToEndID: "happy-confirmed", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
-		{EndToEndID: "insufficient-unexpected", ISPB: "10000042", EventType: events.EventPacs002Received, ReceivedAtNS: 2_000_000},
+		{EndToEndID: "happy-notified", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
+		{EndToEndID: "insufficient-notified", ISPB: "10000041", EventType: events.EventPacs002Received, ReceivedAtNS: 2_000_000},
 	}
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1000, Scenarios: scenarios})
 
 	if summary.Transactions.Started != 5 || summary.Transactions.Accepted != 4 {
 		t.Fatalf("aggregate transaction counts = %#v", summary.Transactions)
 	}
-	if summary.Transactions.Confirmation.Confirmed != 1 || summary.Transactions.Confirmation.NotConfirmed != 1 {
-		t.Fatalf("aggregate required confirmations = %#v", summary.Transactions.Confirmation)
+	if summary.Transactions.PayerNotification.Notified != 2 || summary.Transactions.PayerNotification.NotNotified != 2 {
+		t.Fatalf("aggregate payer notifications = %#v", summary.Transactions.PayerNotification)
 	}
-	if len(summary.Scenarios) != 2 || summary.Scenarios[0].Type != config.ScenarioHappyPath || summary.Scenarios[1].Type != config.ScenarioInsufficientFunds {
+	if len(summary.Scenarios) != 2 || summary.Scenarios[0].Name != "happy-path" || summary.Scenarios[1].Name != "insufficient-funds" {
 		t.Fatalf("ordered scenarios = %#v", summary.Scenarios)
 	}
 	happy := summary.Scenarios[0].Transactions
-	if happy.PayerConfirmation.Received != 1 || happy.PayerConfirmation.Absent != 1 || happy.PayerConfirmation.Violations != 1 || happy.Violations != 1 {
+	if happy.PayerNotification.Observed != 1 || happy.PayerNotification.Missing != 1 || happy.PayerNotification.Violations != 1 || happy.Violations != 1 {
 		t.Fatalf("happy-path summary = %#v", happy)
 	}
 	insufficient := summary.Scenarios[1].Transactions
-	if insufficient.Started != 3 || insufficient.Accepted != 2 || insufficient.PayerConfirmation.Received != 1 || insufficient.PayerConfirmation.Absent != 1 {
+	if insufficient.Started != 3 || insufficient.Accepted != 2 || insufficient.PayerNotification.Observed != 1 || insufficient.PayerNotification.Missing != 1 {
 		t.Fatalf("insufficient-funds counts = %#v", insufficient)
 	}
-	if insufficient.HTTPStatus.Violations != 1 || insufficient.PayerConfirmation.Violations != 1 || insufficient.Violations != 2 {
+	if insufficient.HTTPStatus.Violations != 1 || insufficient.PayerNotification.Violations != 1 || insufficient.Violations != 2 {
 		t.Fatalf("insufficient-funds violations = %#v", insufficient)
 	}
 }
@@ -365,10 +383,26 @@ func TestSummaryRejectsUntaggedStartsForMixedProfile(t *testing.T) {
 	}
 }
 
+func TestSummaryRejectsUntaggedStartForSingleScenario(t *testing.T) {
+	_, err := BuildWithOptions([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, Options{
+		Scenarios: []config.Scenario{reportTestHappyPathScenario()},
+	})
+	if err == nil {
+		t.Fatal("single-scenario report accepted an untagged start")
+	}
+}
+
 func mustBuildSummary(t *testing.T, starts []events.Start, notifications []events.Notification, options Options) Summary {
 	t.Helper()
 	if len(options.Scenarios) == 0 {
 		options.Scenarios = []config.Scenario{reportTestHappyPathScenario()}
+	}
+	if len(options.Scenarios) == 1 {
+		for index := range starts {
+			if starts[index].ScenarioName == "" {
+				starts[index].ScenarioName = options.Scenarios[0].Name
+			}
+		}
 	}
 	summary, err := BuildWithOptions(starts, notifications, options)
 	if err != nil {
@@ -379,22 +413,22 @@ func mustBuildSummary(t *testing.T, starts []events.Start, notifications []event
 
 func reportTestHappyPathScenario() config.Scenario {
 	return config.Scenario{
-		Type:  config.ScenarioHappyPath,
+		Name:  "happy-path",
 		Share: 1,
-		HappyPath: &config.HappyPathScenario{Expectations: config.HappyPathExpectations{
+		Expectations: config.ScenarioExpectations{
 			HTTPStatus:        config.ExpectedHTTP2xx,
-			PayerConfirmation: config.ConfirmationRequired,
-		}},
+			PayerNotification: config.PayerNotificationExpectation{Count: 1},
+		},
 	}
 }
 
 func reportTestInsufficientFundsScenario() config.Scenario {
 	return config.Scenario{
-		Type:  config.ScenarioInsufficientFunds,
+		Name:  "insufficient-funds",
 		Share: 0.2,
-		InsufficientFunds: &config.InsufficientFundsScenario{Expectations: config.InsufficientFundsExpectations{
+		Expectations: config.ScenarioExpectations{
 			HTTPStatus:        config.ExpectedHTTP2xx,
-			PayerConfirmation: config.ConfirmationForbidden,
-		}},
+			PayerNotification: config.PayerNotificationExpectation{Count: 1},
+		},
 	}
 }

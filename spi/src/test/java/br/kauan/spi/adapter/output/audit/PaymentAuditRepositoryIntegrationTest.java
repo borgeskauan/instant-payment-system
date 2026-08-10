@@ -32,6 +32,52 @@ class PaymentAuditRepositoryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
+    void databaseAllowsInsufficientFundsReasonOnARejectedStatusChange() {
+        jdbcTemplate.update(
+                """
+                        INSERT INTO payment_audit_event (
+                            payment_id,
+                            event_type,
+                            previous_status,
+                            resulting_status,
+                            reason
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                "E2E-AUDIT-REPOSITORY-REJECTION-REASON",
+                PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
+                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentStatus.REJECTED.name(),
+                "INSUFFICIENT_FUNDS"
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT reason FROM payment_audit_event WHERE payment_id = ?",
+                String.class,
+                "E2E-AUDIT-REPOSITORY-REJECTION-REASON"
+        )).isEqualTo("INSUFFICIENT_FUNDS");
+    }
+
+    @Test
+    void databaseRejectsAReasonOnANonRejectedAuditEvent() {
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                """
+                        INSERT INTO payment_audit_event (
+                            payment_id,
+                            event_type,
+                            previous_status,
+                            resulting_status,
+                            reason
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                "E2E-AUDIT-REPOSITORY-INVALID-REJECTION-REASON",
+                PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
+                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentStatus.ACCEPTED_IN_PROCESS.name(),
+                "INSUFFICIENT_FUNDS"
+        )).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void insertsMixedEventsInOneBulkWithDatabaseTimestamps() {
         repository.insertAll(List.of(
                 creation("E2E-AUDIT-REPOSITORY-CREATED"),

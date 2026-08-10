@@ -63,7 +63,8 @@ public class PaymentAuditService {
                     null,
                     null,
                     null,
-                    null
+                    null,
+                    transition.rejectionReason()
             ));
         }
         for (PaymentTransactionCommand payment : settledPayments) {

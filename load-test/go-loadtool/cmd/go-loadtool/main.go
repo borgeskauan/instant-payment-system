@@ -180,22 +180,51 @@ type profileValidation struct {
 }
 
 type profileValidationScenario struct {
-	Type         string                        `json:"type"`
+	Name         string                        `json:"name"`
 	Share        float64                       `json:"share"`
 	Participants profileValidationParticipants `json:"participants"`
+	Amount       profileValidationAmount       `json:"amount"`
+	Funding      profileValidationFunding      `json:"funding"`
 	Provisioning profileValidationProvisioning `json:"provisioning"`
+	Expectations profileValidationExpectations `json:"expectations"`
 }
 
 type profileValidationParticipants struct {
-	PairNumberStart int `json:"pairNumberStart"`
-	HotPairCount    int `json:"hotPairCount"`
-	ColdPairCount   int `json:"coldPairCount"`
+	PairNumberStart int     `json:"pairNumberStart"`
+	HotPairCount    int     `json:"hotPairCount"`
+	ColdPairCount   int     `json:"coldPairCount"`
+	HotTrafficShare float64 `json:"hotTrafficShare"`
+}
+
+type profileValidationAmount struct {
+	Minimum int64 `json:"minimum"`
+	Maximum int64 `json:"maximum"`
+}
+
+type profileValidationFunding struct {
+	Payer         profileValidationFundingAccount `json:"payer"`
+	Receiver      profileValidationFundingAccount `json:"receiver"`
+	ResetIfExists bool                            `json:"resetIfExists"`
+}
+
+type profileValidationFundingAccount struct {
+	Mode    string `json:"mode"`
+	Balance string `json:"balance,omitempty"`
 }
 
 type profileValidationProvisioning struct {
-	PayerBalance    int64 `json:"payerBalance"`
-	ReceiverBalance int64 `json:"receiverBalance"`
-	ResetIfExists   bool  `json:"resetIfExists"`
+	PayerBalance    string `json:"payerBalance"`
+	ReceiverBalance string `json:"receiverBalance"`
+	ResetIfExists   bool   `json:"resetIfExists"`
+}
+
+type profileValidationExpectations struct {
+	HTTPStatus        string                             `json:"httpStatus"`
+	PayerNotification profileValidationPayerNotification `json:"payerNotification"`
+}
+
+type profileValidationPayerNotification struct {
+	Count int `json:"count"`
 }
 
 func runValidateProfile(args []string) error {
@@ -236,22 +265,40 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 		Scenarios:     make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
 	}
 	for index, scenario := range runtimeCfg.Scenarios {
-		participants, ok := scenario.Participants()
-		if !ok {
-			return profileValidation{}, fmt.Errorf("profile %q contains unsupported scenario %q", profileName, scenario.Type)
-		}
 		validation.Scenarios[index] = profileValidationScenario{
-			Type:  scenario.Type,
+			Name:  scenario.Name,
 			Share: scenario.Share,
 			Participants: profileValidationParticipants{
-				PairNumberStart: participants.PairNumberStart,
-				HotPairCount:    participants.HotPairCount,
-				ColdPairCount:   participants.ColdPairCount,
+				PairNumberStart: scenario.Participants.PairNumberStart,
+				HotPairCount:    scenario.Participants.HotPairCount,
+				ColdPairCount:   scenario.Participants.ColdPairCount,
+				HotTrafficShare: scenario.Participants.HotTrafficShare,
+			},
+			Amount: profileValidationAmount{
+				Minimum: scenario.Amount.Minimum,
+				Maximum: scenario.Amount.Maximum,
+			},
+			Funding: profileValidationFunding{
+				Payer: profileValidationFundingAccount{
+					Mode:    scenario.Funding.Payer.Mode,
+					Balance: scenario.Funding.Payer.Balance,
+				},
+				Receiver: profileValidationFundingAccount{
+					Mode:    scenario.Funding.Receiver.Mode,
+					Balance: scenario.Funding.Receiver.Balance,
+				},
+				ResetIfExists: scenario.Funding.ResetIfExists,
 			},
 			Provisioning: profileValidationProvisioning{
 				PayerBalance:    provisioning[index].PayerBalance,
 				ReceiverBalance: provisioning[index].ReceiverBalance,
 				ResetIfExists:   provisioning[index].ResetIfExists,
+			},
+			Expectations: profileValidationExpectations{
+				HTTPStatus: scenario.Expectations.HTTPStatus,
+				PayerNotification: profileValidationPayerNotification{
+					Count: scenario.Expectations.PayerNotification.Count,
+				},
 			},
 		}
 	}

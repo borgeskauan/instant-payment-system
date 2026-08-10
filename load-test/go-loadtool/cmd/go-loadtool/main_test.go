@@ -52,7 +52,7 @@ func TestReportUsesExplicitProfile(t *testing.T) {
 	if command.options.TargetTxRate != 321 || command.options.Warmup != 12*time.Second || command.options.Duration != 34*time.Second || command.options.SLAThresholdMs != 987 {
 		t.Fatalf("report settings were not loaded from selected profile: %#v", command.options)
 	}
-	if len(command.options.Scenarios) != 1 || command.options.Scenarios[0].Type != config.ScenarioHappyPath {
+	if len(command.options.Scenarios) != 1 || command.options.Scenarios[0].Name != "happy-path" {
 		t.Fatalf("report scenarios = %#v", command.options.Scenarios)
 	}
 }
@@ -120,20 +120,29 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 		t.Fatalf("validation scenarios = %#v", validation.Scenarios)
 	}
 	scenario := validation.Scenarios[0]
-	if scenario.Type != config.ScenarioHappyPath || scenario.Share != 1 {
+	if scenario.Name != "happy-path" || scenario.Share != 1 {
 		t.Fatalf("validation scenario = %#v", scenario)
 	}
 	if scenario.Participants.PairNumberStart != 101 || scenario.Participants.HotPairCount != 7 || scenario.Participants.ColdPairCount != 13 {
 		t.Fatalf("validation participants = %#v", scenario.Participants)
 	}
-	if scenario.Provisioning.PayerBalance <= 0 || scenario.Provisioning.ReceiverBalance != 0 || !scenario.Provisioning.ResetIfExists {
+	if scenario.Amount.Minimum != 100 || scenario.Amount.Maximum != 100098 {
+		t.Fatalf("validation amount = %#v", scenario.Amount)
+	}
+	if scenario.Funding.Payer.Mode != config.FundingCoverGeneratedDebits || scenario.Funding.Payer.Balance != "" || scenario.Funding.Receiver.Balance != "0.00" || !scenario.Funding.ResetIfExists {
+		t.Fatalf("validation funding = %#v", scenario.Funding)
+	}
+	if scenario.Provisioning.PayerBalance == "0.00" || scenario.Provisioning.ReceiverBalance != "0.00" || !scenario.Provisioning.ResetIfExists {
 		t.Fatalf("validation provisioning = %#v", scenario.Provisioning)
+	}
+	if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx || scenario.Expectations.PayerNotification.Count != 1 {
+		t.Fatalf("validation expectations = %#v", scenario.Expectations)
 	}
 	encoded, err := json.Marshal(validation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), `"seed"`) || strings.Contains(string(encoded), `"firstPair"`) || !strings.Contains(string(encoded), `"pairNumberStart"`) {
+	if strings.Contains(string(encoded), `"seed"`) || strings.Contains(string(encoded), `"firstPair"`) || strings.Contains(string(encoded), `"type"`) || strings.Contains(string(encoded), `"payerConfirmation"`) || !strings.Contains(string(encoded), `"pairNumberStart"`) {
 		t.Fatalf("normalized execution plan exposes removed fields: %s", encoded)
 	}
 }
@@ -143,13 +152,16 @@ func TestValidateProfileReturnsMixedScenarioProvisioning(t *testing.T) {
 	runtimeCfg.Load = config.Load{TargetTxRate: 100, Warmup: 5 * time.Second, Duration: 10 * time.Second, Drain: 10 * time.Second}
 	runtimeCfg.Scenarios[0].Share = 0.8
 	runtimeCfg.Scenarios = append(runtimeCfg.Scenarios, config.Scenario{
-		Type:  config.ScenarioInsufficientFunds,
-		Share: 0.2,
-		InsufficientFunds: &config.InsufficientFundsScenario{
-			Participants: config.HotColdPairDistribution{PairNumberStart: 121, HotPairCount: 2, ColdPairCount: 8, HotTrafficShare: 0.8},
-			Amount:       config.SequentialRangeAmount{Minimum: 100, Maximum: 100098},
-			Expectations: config.InsufficientFundsExpectations{HTTPStatus: config.ExpectedHTTP2xx, PayerConfirmation: config.ConfirmationForbidden},
+		Name:         "insufficient-funds",
+		Share:        0.2,
+		Participants: config.HotColdPairDistribution{PairNumberStart: 121, HotPairCount: 2, ColdPairCount: 8, HotTrafficShare: 0.8},
+		Amount:       config.SequentialRangeAmount{Minimum: 100, Maximum: 100098},
+		Funding: config.ScenarioFunding{
+			Payer:         config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+			Receiver:      config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+			ResetIfExists: true,
 		},
+		Expectations: config.ScenarioExpectations{HTTPStatus: config.ExpectedHTTP2xx, PayerNotification: config.PayerNotificationExpectation{Count: 1}},
 	})
 	validation, err := parseValidateProfile([]string{"--profile", "mixed"}, func(string) (config.Runtime, error) {
 		return runtimeCfg, nil
@@ -160,10 +172,10 @@ func TestValidateProfileReturnsMixedScenarioProvisioning(t *testing.T) {
 	if len(validation.Scenarios) != 2 {
 		t.Fatalf("scenarios = %#v", validation.Scenarios)
 	}
-	if validation.Scenarios[0].Provisioning.PayerBalance <= 0 || validation.Scenarios[0].Provisioning.ReceiverBalance != 0 {
+	if validation.Scenarios[0].Provisioning.PayerBalance == "0.00" || validation.Scenarios[0].Provisioning.ReceiverBalance != "0.00" {
 		t.Fatalf("happy provisioning = %#v", validation.Scenarios[0].Provisioning)
 	}
-	if validation.Scenarios[1].Type != config.ScenarioInsufficientFunds || validation.Scenarios[1].Provisioning.PayerBalance != 0 || validation.Scenarios[1].Provisioning.ReceiverBalance != 0 {
+	if validation.Scenarios[1].Name != "insufficient-funds" || validation.Scenarios[1].Provisioning.PayerBalance != "0.00" || validation.Scenarios[1].Provisioning.ReceiverBalance != "0.00" {
 		t.Fatalf("insufficient provisioning = %#v", validation.Scenarios[1])
 	}
 }
@@ -270,23 +282,26 @@ func commandTestRuntime() config.Runtime {
 			Drain:        9 * time.Second,
 		},
 		Scenarios: []config.Scenario{{
-			Type:  config.ScenarioHappyPath,
+			Name:  "happy-path",
 			Share: 1,
-			HappyPath: &config.HappyPathScenario{
-				Participants: config.HotColdPairDistribution{
-					PairNumberStart: 101,
-					HotPairCount:    7,
-					ColdPairCount:   13,
-					HotTrafficShare: 0.75,
-				},
-				Amount: config.SequentialRangeAmount{
-					Minimum: 100,
-					Maximum: 100098,
-				},
-				Expectations: config.HappyPathExpectations{
-					HTTPStatus:        config.ExpectedHTTP2xx,
-					PayerConfirmation: config.ConfirmationRequired,
-				},
+			Participants: config.HotColdPairDistribution{
+				PairNumberStart: 101,
+				HotPairCount:    7,
+				ColdPairCount:   13,
+				HotTrafficShare: 0.75,
+			},
+			Amount: config.SequentialRangeAmount{
+				Minimum: 100,
+				Maximum: 100098,
+			},
+			Funding: config.ScenarioFunding{
+				Payer:         config.FundingAccount{Mode: config.FundingCoverGeneratedDebits},
+				Receiver:      config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+				ResetIfExists: true,
+			},
+			Expectations: config.ScenarioExpectations{
+				HTTPStatus:        config.ExpectedHTTP2xx,
+				PayerNotification: config.PayerNotificationExpectation{Count: 1},
 			},
 		}},
 		Reporting: config.Reporting{SLAThresholdMs: 987},

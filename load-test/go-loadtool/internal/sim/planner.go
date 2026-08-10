@@ -13,7 +13,7 @@ const settlementBucketCount = 16
 
 type plannedTransfer struct {
 	ScenarioIndex int
-	ScenarioType  string
+	ScenarioName  string
 	Pair          ids.Pair
 	Amount        int64
 }
@@ -28,10 +28,12 @@ type workloadPlanner struct {
 }
 
 type ProvisioningScenario struct {
-	Type            string
-	PayerBalance    int64
-	ReceiverBalance int64
-	ResetIfExists   bool
+	Name                 string
+	PayerBalance         string
+	ReceiverBalance      string
+	ResetIfExists        bool
+	payerBalanceCents    int64
+	receiverBalanceCents int64
 }
 
 func newWorkloadPlanner(scenarios []config.Scenario) (*workloadPlanner, error) {
@@ -45,20 +47,17 @@ func newWorkloadPlanner(scenarios []config.Scenario) (*workloadPlanner, error) {
 	}
 	totalQuota := 0
 	for index, scenario := range scenarios {
-		participants, ok := scenario.Participants()
-		if !ok {
-			return nil, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
-		}
-		amount, ok := scenario.Amount()
-		if !ok || amount.Minimum <= 0 || amount.Maximum < amount.Minimum {
-			return nil, fmt.Errorf("scenario %q requires a valid amount range", scenario.Type)
+		participants := scenario.Participants
+		amount := scenario.Amount
+		if amount.Minimum <= 0 || amount.Maximum < amount.Minimum {
+			return nil, fmt.Errorf("scenario %q requires a valid amount range", scenario.Name)
 		}
 		if participants.PairNumberStart <= 0 || participants.HotPairCount <= 0 || participants.ColdPairCount <= 0 || participants.HotTrafficShare <= 0 || participants.HotTrafficShare >= 1 {
-			return nil, fmt.Errorf("scenario %q requires a valid participant range", scenario.Type)
+			return nil, fmt.Errorf("scenario %q requires a valid participant range", scenario.Name)
 		}
 		quota := int(math.Round(scenario.Share * config.ScenarioSelectionBlockSize))
 		if scenario.Share <= 0 || math.Abs(scenario.Share*config.ScenarioSelectionBlockSize-float64(quota)) > 1e-9 {
-			return nil, fmt.Errorf("scenario %q share must select a whole number of entries in a %d-entry block", scenario.Type, config.ScenarioSelectionBlockSize)
+			return nil, fmt.Errorf("scenario %q share must select a whole number of entries in a %d-entry block", scenario.Name, config.ScenarioSelectionBlockSize)
 		}
 		totalQuota += quota
 		planner.pairs[index] = buildPairs(participants.PairNumberStart, participants.HotPairCount+participants.ColdPairCount)
@@ -80,8 +79,8 @@ func (planner *workloadPlanner) Next() plannedTransfer {
 	localOrdinal := planner.localOrdinals[scenarioIndex]
 	planner.localOrdinals[scenarioIndex]++
 	scenario := planner.scenarios[scenarioIndex]
-	participants, _ := scenario.Participants()
-	amountRange, _ := scenario.Amount()
+	participants := scenario.Participants
+	amountRange := scenario.Amount
 
 	hotCount := participants.HotPairCount
 	coldEvery := int(1 / (1 - participants.HotTrafficShare))
@@ -95,7 +94,7 @@ func (planner *workloadPlanner) Next() plannedTransfer {
 	amountCount := amountRange.Maximum - amountRange.Minimum + 1
 	return plannedTransfer{
 		ScenarioIndex: scenarioIndex,
-		ScenarioType:  scenario.Type,
+		ScenarioName:  scenario.Name,
 		Pair:          planner.pairs[scenarioIndex][pairIndex],
 		Amount:        amountRange.Minimum + int64(localOrdinal%uint64(amountCount)),
 	}
@@ -133,12 +132,28 @@ func maximumGeneratedTransfers(targetTxRate int, warmup time.Duration, duration 
 	if targetTxRate <= 0 || warmup < 0 || duration <= 0 || warmup%time.Second != 0 || duration%time.Second != 0 {
 		return 0, fmt.Errorf("load window must use a positive rate and whole seconds")
 	}
-	warmupCount := uint64(warmupRate(targetTxRate)) * uint64(warmup/time.Second)
-	activeCount := uint64(targetTxRate) * uint64(duration/time.Second)
+	if targetTxRate > math.MaxInt/4 {
+		return 0, fmt.Errorf("load window rate is too large to size simulator queues safely")
+	}
+	warmupCount, ok := checkedUint64Product(uint64(warmupRate(targetTxRate)), uint64(warmup/time.Second))
+	if !ok {
+		return 0, fmt.Errorf("load window generates too many transfers")
+	}
+	activeCount, ok := checkedUint64Product(uint64(targetTxRate), uint64(duration/time.Second))
+	if !ok {
+		return 0, fmt.Errorf("load window generates too many transfers")
+	}
 	if math.MaxUint64-warmupCount <= activeCount {
 		return 0, fmt.Errorf("load window generates too many transfers")
 	}
 	return warmupCount + activeCount + 1, nil
+}
+
+func checkedUint64Product(left, right uint64) (uint64, bool) {
+	if left != 0 && right > math.MaxUint64/left {
+		return 0, false
+	}
+	return left * right, true
 }
 
 func DeriveProvisioning(cfg Config) ([]ProvisioningScenario, error) {
@@ -156,20 +171,28 @@ func DeriveProvisioning(cfg Config) ([]ProvisioningScenario, error) {
 	}
 	for range transferCount {
 		transfer := planner.Next()
-		if transfer.ScenarioType != config.ScenarioHappyPath {
+		if cfg.Scenarios[transfer.ScenarioIndex].Funding.Payer.Mode != config.FundingCoverGeneratedDebits {
 			continue
 		}
 		current := debitsByScenario[transfer.ScenarioIndex][transfer.Pair.Payer]
 		if transfer.Amount > math.MaxInt64-current {
-			return nil, fmt.Errorf("derived debit total overflows for scenario %q payer %s", transfer.ScenarioType, transfer.Pair.Payer)
+			return nil, fmt.Errorf("derived debit total overflows for scenario %q payer %s", transfer.ScenarioName, transfer.Pair.Payer)
 		}
 		debitsByScenario[transfer.ScenarioIndex][transfer.Pair.Payer] = current + transfer.Amount
 	}
 
 	provisioning := make([]ProvisioningScenario, len(cfg.Scenarios))
 	for index, scenario := range cfg.Scenarios {
-		entry := ProvisioningScenario{Type: scenario.Type, ResetIfExists: true}
-		if scenario.Type == config.ScenarioHappyPath {
+		entry := ProvisioningScenario{
+			Name:                 scenario.Name,
+			PayerBalance:         scenario.Funding.Payer.Balance,
+			ReceiverBalance:      scenario.Funding.Receiver.Balance,
+			ResetIfExists:        scenario.Funding.ResetIfExists,
+			payerBalanceCents:    scenario.Funding.Payer.BalanceCents,
+			receiverBalanceCents: scenario.Funding.Receiver.BalanceCents,
+		}
+		switch scenario.Funding.Payer.Mode {
+		case config.FundingCoverGeneratedDebits:
 			var maximumDebit int64
 			for _, debit := range debitsByScenario[index] {
 				if debit > maximumDebit {
@@ -177,13 +200,20 @@ func DeriveProvisioning(cfg Config) ([]ProvisioningScenario, error) {
 				}
 			}
 			if maximumDebit > math.MaxInt64/settlementBucketCount {
-				return nil, fmt.Errorf("derived payer funding overflows for scenario %q", scenario.Type)
+				return nil, fmt.Errorf("derived payer funding overflows for scenario %q", scenario.Name)
 			}
 			requiredCents := maximumDebit * settlementBucketCount
-			entry.PayerBalance = requiredCents / 100
-			if requiredCents%100 != 0 {
-				entry.PayerBalance++
+			entry.PayerBalance = config.FormatBalance(requiredCents)
+			entry.payerBalanceCents = requiredCents
+		case config.FundingFixed:
+			if entry.PayerBalance == "" {
+				return nil, fmt.Errorf("scenario %q fixed payer funding requires a resolved balance", scenario.Name)
 			}
+		default:
+			return nil, fmt.Errorf("scenario %q has unsupported payer funding mode %q", scenario.Name, scenario.Funding.Payer.Mode)
+		}
+		if scenario.Funding.Receiver.Mode != config.FundingFixed || entry.ReceiverBalance == "" {
+			return nil, fmt.Errorf("scenario %q requires fixed receiver funding with a resolved balance", scenario.Name)
 		}
 		provisioning[index] = entry
 	}

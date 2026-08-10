@@ -2,6 +2,8 @@ package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
@@ -79,7 +81,7 @@ class NotificationObligationServiceTest {
         PaymentTransactionCommand settled = payment("E2E-SETTLED", "10000001", "20000001");
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000002", "20000002");
 
-        service.storeStatusObligations(List.of(settled), List.of(rejected));
+        service.storeStatusObligations(List.of(settled), List.of(new PaymentRejection(rejected, null)));
 
         List<NotificationPublication> obligations = capturedObligations(outboxRepository);
         assertThat(obligations)
@@ -99,6 +101,32 @@ class NotificationObligationServiceTest {
         assertThat(payload(obligations.get(0))).contains("\"TxSts\":\"ACCC\"");
         assertThat(payload(obligations.get(1))).contains("\"TxSts\":\"ACSC\"");
         assertThat(payload(obligations.get(2))).contains("\"TxSts\":\"RJCT\"");
+    }
+
+    @Test
+    void insufficientFundsRejectionUsesAm04InThePayerRjctObligation() {
+        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
+        NotificationObligationService service = service(outboxRepository);
+        PaymentTransactionCommand rejected = payment("E2E-INSUFFICIENT", "10000001", "20000001");
+
+        service.storeStatusObligations(
+                List.of(),
+                List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+        );
+
+        List<NotificationPublication> obligations = capturedObligations(outboxRepository);
+        assertThat(obligations)
+                .extracting(
+                        NotificationPublication::recipientIspb,
+                        NotificationPublication::eventType,
+                        NotificationPublication::paymentId,
+                        NotificationPublication::status
+                )
+                .containsExactly(tuple("10000001", "REJECTED_NOTIFICATION", "E2E-INSUFFICIENT", "RJCT"));
+        assertThat(payload(obligations.getFirst()))
+                .contains("\"TxSts\":\"RJCT\"")
+                .contains("\"Cd\":\"AM04\"")
+                .doesNotContain("\"Cd\":\"AB03\"");
     }
 
     @Test

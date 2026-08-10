@@ -503,6 +503,8 @@ class JpaAdapterTest {
         when(resultSet.getString("sender_bank_code")).thenAnswer(ignored -> rows[rowIndex.get()].senderBankCode());
         when(resultSet.getString(6)).thenAnswer(ignored -> rows[rowIndex.get()].receiverBankCode());
         when(resultSet.getString("receiver_bank_code")).thenAnswer(ignored -> rows[rowIndex.get()].receiverBankCode());
+        when(resultSet.getString(7)).thenAnswer(ignored -> rows[rowIndex.get()].rejectionReason());
+        when(resultSet.getString("rejection_reason")).thenAnswer(ignored -> rows[rowIndex.get()].rejectionReason());
         when(jdbcTemplate.execute(any(ConnectionCallback.class))).thenAnswer(invocation -> {
             ConnectionCallback<?> callback = invocation.getArgument(0);
             return callback.doInConnection(connection);
@@ -519,10 +521,22 @@ class JpaAdapterTest {
             String paymentId,
             Long amountCents,
             String senderBankCode,
-            String receiverBankCode
+            String receiverBankCode,
+            String rejectionReason
     ) {
+        private StatusAction(
+                int ordinal,
+                String action,
+                String paymentId,
+                Long amountCents,
+                String senderBankCode,
+                String receiverBankCode
+        ) {
+            this(ordinal, action, paymentId, amountCents, senderBankCode, receiverBankCode, null);
+        }
+
         private StatusAction(int ordinal, String action, String paymentId) {
-            this(ordinal, action, paymentId, null, null, null);
+            this(ordinal, action, paymentId, null, null, null, null);
         }
     }
 

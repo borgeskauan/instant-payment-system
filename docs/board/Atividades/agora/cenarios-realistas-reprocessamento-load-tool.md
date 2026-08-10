@@ -15,10 +15,11 @@ Esta task não faz tuning, runs longos de performance nem define gates finais de
 ## Estado atual
 
 - `uniform-smoke` preserva a carga uniforme anterior no contrato novo;
-- `mixed-outcomes-smoke` executa caminho feliz e saldo insuficiente no mesmo run, com participantes isolados e provisionamento derivado;
-- o relatório separa aceitação HTTP, confirmação esperada ou ausente, latência, SLA e violações por cenário;
-- o run funcional curto de 2026-08-08 terminou com 1.251 requisições aceitas, confirmações completas no caminho feliz, ausência de confirmação para saldo insuficiente e zero violações;
-- falta validar o resultado de negócio persistido: hoje a SPI grava falta de liquidez como `ACCEPTED_IN_PROCESS`, sem distingui-la de outros processamentos pendentes.
+- `mixed-outcomes-smoke` executa caminho feliz e saldo insuficiente no mesmo run, com participantes isolados e políticas explícitas de provisionamento;
+- nomes de cenário identificam e agrupam resultados, sem selecionar comportamento implícito no Go;
+- o relatório separa aceitação HTTP, contagem de notificações `pacs.002` ao pagador, latência, SLA e violações por cenário;
+- o run funcional curto de 2026-08-09 (`explicit-scenario-contract-smoke-current-spi`) terminou com 1.251 requisições aceitas; na janela ativa, os 802 pagamentos `happy-path` e os 198 `insufficient-funds` receberam exatamente uma notificação ao pagador, sem violações, e o outbox terminou drenado;
+- a SPI já grava falta de liquidez como `REJECTED` com motivo `INSUFFICIENT_FUNDS`; falta exportar e validar esse resultado nos artefatos autocontidos do run.
 
 ## Fatia 0 — Contrato e execução reproduzível (concluída)
 
@@ -28,16 +29,16 @@ Esta task não faz tuning, runs longos de performance nem define gates finais de
 - [x] Permitir selecionar o perfil no script de execução.
 - [x] Fazer simulação e relatório usarem exatamente o mesmo perfil selecionado.
 - [x] Copiar o perfil e o plano de execução resolvido para o diretório de resultados de cada run.
-- [x] Fazer cada perfil definir carga, distribuição de participantes, valores e resultados de negócio esperados, derivando o provisionamento no Go.
+- [x] Fazer cada perfil definir carga, distribuição de participantes, valores, política de provisionamento e resultados observáveis esperados, resolvendo no Go apenas os valores concretos de execução.
 - [x] Preservar `uniform-smoke` como comparação compatível com a carga uniforme anterior.
 - [x] Alocar automaticamente faixas consecutivas de participantes, sem expor `firstPair` no perfil.
 - [x] Remover seed do contrato e gerar blocos embaralhados de 100 transações de forma determinística pelo índice do bloco.
 - [x] Registrar em `execution-plan.json` as faixas de participantes e o provisionamento efetivamente usados.
 - [x] Gerar valores de transação variados.
 - [x] Simular distribuição desigual entre poucos participantes quentes e muitos participantes frios.
+- [x] Provisionar pagadores com saldo fixo ou cobertura dos débitos gerados conforme a política declarada por cenário.
 - [x] Provisionar pagadores do cenário de saldo insuficiente deterministicamente com saldo zero.
-- [x] Medir saldo insuficiente separadamente do caminho que deve receber confirmação final.
-- [x] Calcular a taxa de confirmação somente sobre cenários cujo resultado esperado exige confirmação.
+- [x] Medir a contagem e a latência de notificações ao pagador separadamente por cenário, sem tratar toda `pacs.002` como confirmação positiva.
 
 ## Fatia 1 — Resultado persistido de saldo insuficiente (ativa)
 
@@ -45,9 +46,9 @@ Esta task não faz tuning, runs longos de performance nem define gates finais de
 
 ### Semântica e auditoria na SPI
 
-- [ ] Persistir falta de saldo como status `REJECTED` com motivo `INSUFFICIENT_FUNDS`, em vez de `ACCEPTED_IN_PROCESS`.
-- [ ] Auditar a transição para rejeição com status e motivo estáveis.
-- [ ] Provar que a rejeição não cria `SETTLEMENT_APPLIED` nem altera os fundos.
+- [x] Persistir falta de saldo como status `REJECTED` com motivo `INSUFFICIENT_FUNDS`, em vez de `ACCEPTED_IN_PROCESS`.
+- [x] Auditar a transição para rejeição com status e motivo estáveis.
+- [x] Provar que a rejeição não cria `SETTLEMENT_APPLIED` nem altera os fundos.
 
 ### Evidências produzidas pela orquestração do load-test
 
@@ -59,7 +60,7 @@ Esta task não faz tuning, runs longos de performance nem define gates finais de
 
 ### Correlação e validação no relatório
 
-- [ ] Cruzar o resultado persistido de cada `EndToEndId` com o `scenario_type` registrado pelo simulador.
+- [ ] Cruzar o resultado persistido de cada `EndToEndId` com o `scenario_name` registrado pelo simulador.
 - [ ] Contabilizar violações por cenário sem misturar rejeição esperada com perda técnica.
 - [ ] Validar que `happy-path` termina liquidado exatamente uma vez.
 - [ ] Validar que `insufficient-funds` termina em `REJECTED` com motivo `INSUFFICIENT_FUNDS`, sem settlement.
@@ -79,15 +80,15 @@ A fatia termina quando o diretório de um run contém dados suficientes para rep
 
 ## Fatia 3 — Duplicidade e replay pelo ingresso normal
 
-**Resultado:** pagamentos e status repetidos atravessam o mesmo ingresso normal das mensagens originais e não duplicam liquidação nem corrompem status, saldo, auditoria, outbox ou confirmação.
+**Resultado:** pagamentos e status repetidos atravessam o mesmo ingresso normal das mensagens originais e não duplicam liquidação nem corrompem status, saldo, auditoria, outbox ou notificação ao pagador.
 
 - [ ] Reenviar um `pacs.008` idêntico, com o mesmo `EndToEndId` e conteúdo, pela interface normal de ingresso usada pelo PSP.
 - [ ] Enviar duplicatas divergentes de `pacs.008` ou `pacs.002`/status, nos casos em que o contrato as distingue, e validar rejeição explícita sem efeitos de negócio adicionais.
-- [ ] Reenviar `pacs.002`/status pela interface normal de ingresso, incluindo mensagens repetidas para pagamentos já liquidados ou confirmados.
+- [ ] Reenviar `pacs.002`/status pela interface normal de ingresso, incluindo mensagens repetidas para pagamentos já liquidados, rejeitados ou notificados.
 - [ ] Fazer todo replay funcional passar pelas APIs e protocolos normais do sistema; o load-tool não publica records diretamente no Kafka nem manipula offsets de consumers.
 - [ ] Validar `notSettledPaymentIds` e atualizações de status com IDs duplicados.
 - [ ] Expor nos resultados contagens de duplicidade e replay.
-- [ ] Validar automaticamente ausência de dupla liquidação, alteração indevida de saldo e confirmação inconsistente.
+- [ ] Validar automaticamente ausência de dupla liquidação, alteração indevida de saldo e notificação inconsistente ao pagador.
 
 ## Fatia 4 — Matriz final e handoff para estabilização
 
@@ -105,7 +106,7 @@ A fatia termina quando o diretório de um run contém dados suficientes para rep
 - rejeição esperada não é classificada como perda técnica;
 - a distribuição hot-pair existente representa o tráfego concentrado do MVP;
 - um workload funcional percorre ramp-up, pico, carga sustentada, queda e período ocioso;
-- duplicidade e replay possuem invariantes automáticas de saldo, auditoria, outbox e confirmação;
+- duplicidade e replay possuem invariantes automáticas de saldo, auditoria, outbox e notificação ao pagador;
 - cada perfil ou workload entregue possui pelo menos um run funcional curto registrado;
 - o handoff identifica quais perfis e workloads serão usados pela task de estabilização e por quê;
 - falhas funcionais encontradas geram correção ou task focada.

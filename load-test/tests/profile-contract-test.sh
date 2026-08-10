@@ -47,31 +47,59 @@ cat <<'JSON'
   "drainSeconds": 30,
   "scenarios": [
     {
-      "type": "happy-path",
+      "name": "happy-path",
       "share": 0.8,
       "participants": {
         "pairNumberStart": 1,
         "hotPairCount": 2,
-        "coldPairCount": 1
+        "coldPairCount": 1,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "funding": {
+        "payer": {"mode": "cover-generated-debits"},
+        "receiver": {"mode": "fixed", "balance": "0.00"},
+        "resetIfExists": true
       },
       "provisioning": {
-        "payerBalance": 12345,
-        "receiverBalance": 0,
+        "payerBalance": "123.45",
+        "receiverBalance": "0.00",
         "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {"count": 1}
       }
     },
     {
-      "type": "insufficient-funds",
+      "name": "insufficient-funds",
       "share": 0.2,
       "participants": {
         "pairNumberStart": 4,
         "hotPairCount": 1,
-        "coldPairCount": 1
+        "coldPairCount": 1,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "funding": {
+        "payer": {"mode": "fixed", "balance": "0.00"},
+        "receiver": {"mode": "fixed", "balance": "0.00"},
+        "resetIfExists": true
       },
       "provisioning": {
-        "payerBalance": 0,
-        "receiverBalance": 0,
+        "payerBalance": "0.00",
+        "receiverBalance": "0.00",
         "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {"count": 1}
       }
     }
   ]
@@ -89,7 +117,7 @@ if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PRO
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi
-if [[ "${#PROFILE_SCENARIO_TYPES[@]}" != 2 || "${PROFILE_SCENARIO_TYPES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 0.8 || "${PROFILE_SCENARIO_TYPES[1]}" != insufficient-funds ]]; then
+if [[ "${#PROFILE_SCENARIO_NAMES[@]}" != 2 || "${PROFILE_SCENARIO_NAMES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 0.8 || "${PROFILE_SCENARIO_NAMES[1]}" != insufficient-funds ]]; then
     echo "runner did not consume normalized scenario metadata" >&2
     exit 1
 fi
@@ -97,7 +125,7 @@ if [[ "${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[0]}" != 1 || "${PROFILE_SCENARIO_PA
     echo "runner did not consume normalized participant range" >&2
     exit 1
 fi
-if [[ "${PROFILE_SCENARIO_PAYER_BALANCES[0]}" != 12345 || "${PROFILE_SCENARIO_RECEIVER_BALANCES[0]}" != 0 || "${PROFILE_SCENARIO_PAYER_BALANCES[1]}" != 0 || "${PROFILE_SCENARIO_RESET_BEHAVIORS[0]}" != true ]]; then
+if [[ "${PROFILE_SCENARIO_PAYER_BALANCES[0]}" != 123.45 || "${PROFILE_SCENARIO_RECEIVER_BALANCES[0]}" != 0.00 || "${PROFILE_SCENARIO_PAYER_BALANCES[1]}" != 0.00 || "${PROFILE_SCENARIO_RESET_BEHAVIORS[0]}" != true ]]; then
     echo "runner did not consume normalized provisioning settings" >&2
     exit 1
 fi
@@ -121,14 +149,14 @@ PROFILE_SCENARIO_RESET_BEHAVIORS[0]=false
 provision_funds_if_enabled "$tmp_dir/result"
 
 cat > "$tmp_dir/expected-funding-commands.log" <<'EOF'
---balance 12345 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
---balance 0 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
---balance 0 --reset-if-exists --ispb 10000004 --ispb 10000005
---balance 0 --reset-if-exists --ispb 20000004 --ispb 20000005
---balance 12345 --preserve-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
---balance 0 --preserve-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
---balance 0 --reset-if-exists --ispb 10000004 --ispb 10000005
---balance 0 --reset-if-exists --ispb 20000004 --ispb 20000005
+--balance 123.45 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
+--balance 0.00 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
+--balance 0.00 --reset-if-exists --ispb 10000004 --ispb 10000005
+--balance 0.00 --reset-if-exists --ispb 20000004 --ispb 20000005
+--balance 123.45 --preserve-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
+--balance 0.00 --preserve-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
+--balance 0.00 --reset-if-exists --ispb 10000004 --ispb 10000005
+--balance 0.00 --reset-if-exists --ispb 20000004 --ispb 20000005
 EOF
 if ! diff -u "$tmp_dir/expected-funding-commands.log" "$FUNDING_COMMAND_LOG"; then
     echo "runner did not pass normalized funding settings to provision-funds" >&2

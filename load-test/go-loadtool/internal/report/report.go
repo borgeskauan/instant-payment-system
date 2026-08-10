@@ -12,28 +12,28 @@ import (
 )
 
 type Summary struct {
-	Run                 RunSummary         `json:"run"`
-	Transactions        TransactionSummary `json:"transactions"`
-	ThroughputPerSecond ThroughputSummary  `json:"throughput_per_second"`
-	LatencyMs           LatencySummary     `json:"latency_ms"`
-	Scenarios           []ScenarioSummary  `json:"scenarios"`
-	Diagnostics         DiagnosticSummary  `json:"diagnostics"`
+	Run                        RunSummary         `json:"run"`
+	Transactions               TransactionSummary `json:"transactions"`
+	ThroughputPerSecond        ThroughputSummary  `json:"throughput_per_second"`
+	PayerNotificationLatencyMs LatencySummary     `json:"payer_notification_latency_ms"`
+	Scenarios                  []ScenarioSummary  `json:"scenarios"`
+	Diagnostics                DiagnosticSummary  `json:"diagnostics"`
 }
 
 type ScenarioSummary struct {
-	Type            string                     `json:"type"`
-	ConfiguredShare float64                    `json:"configured_share"`
-	Transactions    ScenarioTransactionSummary `json:"transactions"`
-	LatencyMs       LatencySummary             `json:"latency_ms"`
+	Name                       string                     `json:"name"`
+	ConfiguredShare            float64                    `json:"configured_share"`
+	Transactions               ScenarioTransactionSummary `json:"transactions"`
+	PayerNotificationLatencyMs LatencySummary             `json:"payer_notification_latency_ms"`
 }
 
 type ScenarioTransactionSummary struct {
-	Started           int                            `json:"started"`
-	Accepted          int                            `json:"accepted"`
-	HTTPStatus        ExpectationMatchSummary        `json:"http_status"`
-	PayerConfirmation ConfirmationExpectationSummary `json:"payer_confirmation"`
-	ConfirmedBySLA    ConfirmedBySLASummary          `json:"confirmed_by_sla"`
-	Violations        int                            `json:"violations"`
+	Started            int                                 `json:"started"`
+	Accepted           int                                 `json:"accepted"`
+	HTTPStatus         ExpectationMatchSummary             `json:"http_status"`
+	PayerNotification  PayerNotificationExpectationSummary `json:"payer_notification"`
+	PayerNotifiedBySLA NotifiedBySLASummary                `json:"payer_notified_by_sla"`
+	Violations         int                                 `json:"violations"`
 }
 
 type ExpectationMatchSummary struct {
@@ -42,12 +42,14 @@ type ExpectationMatchSummary struct {
 	Violations  int    `json:"violations"`
 }
 
-type ConfirmationExpectationSummary struct {
-	Expectation string `json:"expectation"`
-	Eligible    int    `json:"eligible"`
-	Received    int    `json:"received"`
-	Absent      int    `json:"absent"`
-	Violations  int    `json:"violations"`
+type PayerNotificationExpectationSummary struct {
+	ExpectedCount int `json:"expected_count"`
+	Eligible      int `json:"eligible"`
+	Observed      int `json:"observed"`
+	Matched       int `json:"matched"`
+	Missing       int `json:"missing"`
+	Excess        int `json:"excess"`
+	Violations    int `json:"violations"`
 }
 
 type RunSummary struct {
@@ -58,25 +60,26 @@ type RunSummary struct {
 }
 
 type TransactionSummary struct {
-	Started        int                   `json:"started"`
-	Accepted       int                   `json:"accepted"`
-	Confirmation   ConfirmationSummary   `json:"confirmation"`
-	ConfirmedBySLA ConfirmedBySLASummary `json:"confirmed_by_sla"`
+	Started            int                      `json:"started"`
+	Accepted           int                      `json:"accepted"`
+	PayerNotification  PayerNotificationSummary `json:"payer_notification"`
+	PayerNotifiedBySLA NotifiedBySLASummary     `json:"payer_notified_by_sla"`
 }
 
-type ConfirmationSummary struct {
-	Confirmed    int `json:"confirmed"`
-	NotConfirmed int `json:"not_confirmed"`
+type PayerNotificationSummary struct {
+	Notified    int `json:"notified"`
+	NotNotified int `json:"not_notified"`
+	Excess      int `json:"excess"`
 }
 
-type ConfirmedBySLASummary struct {
+type NotifiedBySLASummary struct {
 	WithinSLA int `json:"within_sla"`
 	AfterSLA  int `json:"after_sla"`
 }
 
 type ThroughputSummary struct {
-	Started               float64 `json:"started"`
-	ConfirmedDuringActive float64 `json:"confirmed_during_active"`
+	Started                   float64 `json:"started"`
+	PayerNotifiedDuringActive float64 `json:"payer_notified_during_active"`
 }
 
 type LatencySummary struct {
@@ -91,9 +94,9 @@ type DiagnosticSummary struct {
 }
 
 type ResultCollectionSummary struct {
-	ConfirmedAfterActive int     `json:"confirmed_after_active"`
-	ConfirmedTotal       int     `json:"confirmed_total"`
-	ConfirmedTotalRate   float64 `json:"confirmed_total_per_second"`
+	PayerNotifiedAfterActive int     `json:"payer_notified_after_active"`
+	PayerNotifiedTotal       int     `json:"payer_notified_total"`
+	PayerNotifiedTotalRate   float64 `json:"payer_notified_total_per_second"`
 }
 
 type Options struct {
@@ -125,17 +128,21 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 	scenarioIndexes := make(map[string]int, len(scenarios))
 	scenarioDurations := make([][]float64, len(scenarios))
 	for index, scenario := range scenarios {
-		httpExpectation, confirmationExpectation, ok := scenario.Expectations()
-		if !ok {
-			return Summary{}, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
+		if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx {
+			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", scenario.Expectations.HTTPStatus, scenario.Name)
 		}
-		scenarioIndexes[scenario.Type] = index
+		if scenario.Expectations.PayerNotification.Count < 0 || scenario.Expectations.PayerNotification.Count > 1 {
+			return Summary{}, fmt.Errorf("unsupported payer notification count %d for scenario %q", scenario.Expectations.PayerNotification.Count, scenario.Name)
+		}
+		scenarioIndexes[scenario.Name] = index
 		summary.Scenarios[index] = ScenarioSummary{
-			Type:            scenario.Type,
+			Name:            scenario.Name,
 			ConfiguredShare: scenario.Share,
 			Transactions: ScenarioTransactionSummary{
-				HTTPStatus:        ExpectationMatchSummary{Expectation: httpExpectation},
-				PayerConfirmation: ConfirmationExpectationSummary{Expectation: confirmationExpectation},
+				HTTPStatus: ExpectationMatchSummary{Expectation: scenario.Expectations.HTTPStatus},
+				PayerNotification: PayerNotificationExpectationSummary{
+					ExpectedCount: scenario.Expectations.PayerNotification.Count,
+				},
 			},
 		}
 	}
@@ -145,20 +152,16 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
 	}
 
-	confirmations := payerConfirmations(notifications)
+	payerNotifications := collectPayerNotifications(notifications)
 	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
-	confirmedDuringActive := 0
+	payerNotifiedDuringActive := 0
 	var durations []float64
 	for _, start := range measuredStarts {
 		scenario, err := scenarioForStart(start, scenarios)
 		if err != nil {
 			return Summary{}, err
 		}
-		httpExpectation, confirmationExpectation, _ := scenario.Expectations()
-		if httpExpectation != config.ExpectedHTTP2xx {
-			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", httpExpectation, scenario.Type)
-		}
-		scenarioSummary := &summary.Scenarios[scenarioIndexes[scenario.Type]]
+		scenarioSummary := &summary.Scenarios[scenarioIndexes[scenario.Name]]
 		scenarioSummary.Transactions.Started++
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
 			scenarioSummary.Transactions.HTTPStatus.Violations++
@@ -168,71 +171,71 @@ func BuildWithOptions(starts []events.Start, notifications []events.Notification
 		summary.Transactions.Accepted++
 		scenarioSummary.Transactions.Accepted++
 		scenarioSummary.Transactions.HTTPStatus.Matched++
-		scenarioSummary.Transactions.PayerConfirmation.Eligible++
-		receivedAt, ok := confirmations[confirmationKey{
+		scenarioSummary.Transactions.PayerNotification.Eligible++
+		expectedCount := scenario.Expectations.PayerNotification.Count
+		observation := payerNotifications[notificationKey{
 			endToEndID: start.EndToEndID,
 			ispb:       start.PayerISPB,
 		}]
-		if ok {
-			scenarioSummary.Transactions.PayerConfirmation.Received++
+		scenarioSummary.Transactions.PayerNotification.Observed += observation.count
+		if observation.count == expectedCount {
+			scenarioSummary.Transactions.PayerNotification.Matched++
 		} else {
-			scenarioSummary.Transactions.PayerConfirmation.Absent++
+			scenarioSummary.Transactions.PayerNotification.Violations++
+			scenarioSummary.Transactions.Violations++
+			if observation.count < expectedCount {
+				scenarioSummary.Transactions.PayerNotification.Missing += expectedCount - observation.count
+			} else {
+				excess := observation.count - expectedCount
+				scenarioSummary.Transactions.PayerNotification.Excess += excess
+				summary.Transactions.PayerNotification.Excess += excess
+			}
 		}
-		switch confirmationExpectation {
-		case config.ConfirmationRequired:
-			if !ok {
-				summary.Transactions.Confirmation.NotConfirmed++
-				scenarioSummary.Transactions.PayerConfirmation.Violations++
-				scenarioSummary.Transactions.Violations++
-				continue
-			}
-		case config.ConfirmationForbidden:
-			if ok {
-				scenarioSummary.Transactions.PayerConfirmation.Violations++
-				scenarioSummary.Transactions.Violations++
-			}
+		if observation.count > 0 {
+			summary.Transactions.PayerNotification.Notified++
+		} else if expectedCount > 0 {
+			summary.Transactions.PayerNotification.NotNotified++
+		}
+		if expectedCount != 1 || observation.count == 0 {
 			continue
-		default:
-			return Summary{}, fmt.Errorf("unsupported payer confirmation expectation %q for scenario %q", confirmationExpectation, scenario.Type)
 		}
-		durationMs := float64(receivedAt-requestStartedAt(start)) / 1_000_000
+		durationMs := float64(observation.earliestAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
-		scenarioIndex := scenarioIndexes[scenario.Type]
+		scenarioIndex := scenarioIndexes[scenario.Name]
 		scenarioDurations[scenarioIndex] = append(scenarioDurations[scenarioIndex], durationMs)
-		summary.Transactions.Confirmation.Confirmed++
-		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
-			confirmedDuringActive++
+		if activeWindowEndNS > 0 && observation.earliestAt <= activeWindowEndNS {
+			payerNotifiedDuringActive++
 		}
 		if durationMs > float64(options.SLAThresholdMs) {
-			summary.Transactions.ConfirmedBySLA.AfterSLA++
-			scenarioSummary.Transactions.ConfirmedBySLA.AfterSLA++
+			summary.Transactions.PayerNotifiedBySLA.AfterSLA++
+			scenarioSummary.Transactions.PayerNotifiedBySLA.AfterSLA++
 		} else {
-			summary.Transactions.ConfirmedBySLA.WithinSLA++
-			scenarioSummary.Transactions.ConfirmedBySLA.WithinSLA++
+			summary.Transactions.PayerNotifiedBySLA.WithinSLA++
+			scenarioSummary.Transactions.PayerNotifiedBySLA.WithinSLA++
 		}
 	}
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
-		summary.ThroughputPerSecond.ConfirmedDuringActive = float64(confirmedDuringActive) / durationSeconds
-		summary.Diagnostics.ResultCollection.ConfirmedTotalRate = float64(summary.Transactions.Confirmation.Confirmed) / durationSeconds
+		summary.ThroughputPerSecond.PayerNotifiedDuringActive = float64(payerNotifiedDuringActive) / durationSeconds
+		summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate = float64(summary.Transactions.PayerNotification.Notified) / durationSeconds
 	}
-	summary.Diagnostics.ResultCollection.ConfirmedAfterActive = summary.Transactions.Confirmation.Confirmed - confirmedDuringActive
-	summary.Diagnostics.ResultCollection.ConfirmedTotal = summary.Transactions.Confirmation.Confirmed
+	summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive = summary.Transactions.PayerNotification.Notified - payerNotifiedDuringActive
+	summary.Diagnostics.ResultCollection.PayerNotifiedTotal = summary.Transactions.PayerNotification.Notified
 
 	sort.Float64s(durations)
-	summary.LatencyMs.P50 = percentile(durations, 0.50)
-	summary.LatencyMs.P95 = percentile(durations, 0.95)
-	summary.LatencyMs.P99 = percentile(durations, 0.99)
+	summary.PayerNotificationLatencyMs.P50 = percentile(durations, 0.50)
+	summary.PayerNotificationLatencyMs.P95 = percentile(durations, 0.95)
+	summary.PayerNotificationLatencyMs.P99 = percentile(durations, 0.99)
 	if len(durations) > 0 {
-		summary.LatencyMs.Max = durations[len(durations)-1]
+		summary.PayerNotificationLatencyMs.Max = durations[len(durations)-1]
 	}
 	for index := range summary.Scenarios {
 		sort.Float64s(scenarioDurations[index])
-		summary.Scenarios[index].LatencyMs.P50 = percentile(scenarioDurations[index], 0.50)
-		summary.Scenarios[index].LatencyMs.P95 = percentile(scenarioDurations[index], 0.95)
-		summary.Scenarios[index].LatencyMs.P99 = percentile(scenarioDurations[index], 0.99)
+		summary.Scenarios[index].PayerNotificationLatencyMs.P50 = percentile(scenarioDurations[index], 0.50)
+		summary.Scenarios[index].PayerNotificationLatencyMs.P95 = percentile(scenarioDurations[index], 0.95)
+		summary.Scenarios[index].PayerNotificationLatencyMs.P99 = percentile(scenarioDurations[index], 0.99)
 		if len(scenarioDurations[index]) > 0 {
-			summary.Scenarios[index].LatencyMs.Max = scenarioDurations[index][len(scenarioDurations[index])-1]
+			summary.Scenarios[index].PayerNotificationLatencyMs.Max = scenarioDurations[index][len(scenarioDurations[index])-1]
 		}
 	}
 	return summary, nil
@@ -248,20 +251,13 @@ func validateStartScenarios(starts []events.Start, scenarios []config.Scenario) 
 }
 
 func scenarioForStart(start events.Start, scenarios []config.Scenario) (config.Scenario, error) {
-	scenarioType := start.ScenarioType
-	if scenarioType == "" && len(scenarios) == 1 {
-		scenarioType = scenarios[0].Type
-	}
 	for _, scenario := range scenarios {
-		if scenario.Type != scenarioType {
+		if scenario.Name != start.ScenarioName {
 			continue
-		}
-		if _, _, ok := scenario.Expectations(); !ok {
-			return config.Scenario{}, fmt.Errorf("unsupported configured scenario type %q", scenario.Type)
 		}
 		return scenario, nil
 	}
-	return config.Scenario{}, fmt.Errorf("start %q uses unknown scenario type %q", start.EndToEndID, scenarioType)
+	return config.Scenario{}, fmt.Errorf("start %q uses unknown scenario name %q", start.EndToEndID, start.ScenarioName)
 }
 
 func configuredActiveWindowEndNS(starts []events.Start, warmup time.Duration, duration time.Duration) int64 {
@@ -311,26 +307,34 @@ func requestStartedAt(start events.Start) int64 {
 	return start.CreatedAtNS
 }
 
-type confirmationKey struct {
+type notificationKey struct {
 	endToEndID string
 	ispb       string
 }
 
-func payerConfirmations(notifications []events.Notification) map[confirmationKey]int64 {
-	confirmations := make(map[confirmationKey]int64)
+type notificationObservation struct {
+	count      int
+	earliestAt int64
+}
+
+func collectPayerNotifications(notifications []events.Notification) map[notificationKey]notificationObservation {
+	observations := make(map[notificationKey]notificationObservation)
 	for _, notification := range notifications {
 		if notification.EventType != events.EventPacs002Received {
 			continue
 		}
-		key := confirmationKey{
+		key := notificationKey{
 			endToEndID: notification.EndToEndID,
 			ispb:       notification.ISPB,
 		}
-		if receivedAt, ok := confirmations[key]; !ok || notification.ReceivedAtNS < receivedAt {
-			confirmations[key] = notification.ReceivedAtNS
+		observation := observations[key]
+		observation.count++
+		if observation.earliestAt == 0 || notification.ReceivedAtNS < observation.earliestAt {
+			observation.earliestAt = notification.ReceivedAtNS
 		}
+		observations[key] = observation
 	}
-	return confirmations
+	return observations
 }
 
 func Print(startsPath string, eventsPath string, options Options, output io.Writer) error {

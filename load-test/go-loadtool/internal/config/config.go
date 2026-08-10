@@ -11,24 +11,24 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	SchemaVersion              = 1
-	DefaultProfile             = "uniform-smoke"
-	ScenarioHappyPath          = "happy-path"
-	ScenarioInsufficientFunds  = "insufficient-funds"
-	ExpectedHTTP2xx            = "2xx"
-	ConfirmationRequired       = "required"
-	ConfirmationForbidden      = "forbidden"
-	ScenarioSelectionBlockSize = 100
-	profilesDir                = "profiles"
-	DefaultOutputDir           = "results/go-loadtool/manual"
-	maxPairSuffix              = 999999
+	SchemaVersion               = 1
+	DefaultProfile              = "uniform-smoke"
+	ExpectedHTTP2xx             = "2xx"
+	FundingFixed                = "fixed"
+	FundingCoverGeneratedDebits = "cover-generated-debits"
+	ScenarioSelectionBlockSize  = 100
+	profilesDir                 = "profiles"
+	DefaultOutputDir            = "results/go-loadtool/manual"
+	maxPairSuffix               = 999999
 )
 
-var profileNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var contractNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 type Runtime struct {
 	SchemaVersion int
@@ -72,22 +72,24 @@ type HotColdPairDistribution struct {
 }
 
 type Scenario struct {
-	Type              string
-	Share             float64
-	HappyPath         *HappyPathScenario
-	InsufficientFunds *InsufficientFundsScenario
-}
-
-type HappyPathScenario struct {
+	Name         string
+	Share        float64
 	Participants HotColdPairDistribution
 	Amount       SequentialRangeAmount
-	Expectations HappyPathExpectations
+	Funding      ScenarioFunding
+	Expectations ScenarioExpectations
 }
 
-type InsufficientFundsScenario struct {
-	Participants HotColdPairDistribution
-	Amount       SequentialRangeAmount
-	Expectations InsufficientFundsExpectations
+type ScenarioFunding struct {
+	Payer         FundingAccount
+	Receiver      FundingAccount
+	ResetIfExists bool
+}
+
+type FundingAccount struct {
+	Mode         string
+	Balance      string
+	BalanceCents int64
 }
 
 type SequentialRangeAmount struct {
@@ -95,14 +97,13 @@ type SequentialRangeAmount struct {
 	Maximum int64
 }
 
-type HappyPathExpectations struct {
+type ScenarioExpectations struct {
 	HTTPStatus        string
-	PayerConfirmation string
+	PayerNotification PayerNotificationExpectation
 }
 
-type InsufficientFundsExpectations struct {
-	HTTPStatus        string
-	PayerConfirmation string
+type PayerNotificationExpectation struct {
+	Count int
 }
 
 type Reporting struct {
@@ -110,11 +111,11 @@ type Reporting struct {
 }
 
 type fileConfig struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Connections   fileConnections   `json:"connections"`
-	Load          fileLoad          `json:"load"`
-	Scenarios     []json.RawMessage `json:"scenarios"`
-	Reporting     fileReporting     `json:"reporting"`
+	SchemaVersion int             `json:"schemaVersion"`
+	Connections   fileConnections `json:"connections"`
+	Load          fileLoad        `json:"load"`
+	Scenarios     []fileScenario  `json:"scenarios"`
+	Reporting     fileReporting   `json:"reporting"`
 }
 
 type fileConnections struct {
@@ -149,24 +150,24 @@ type fileHotColdPairDistribution struct {
 	HotTrafficShare float64 `json:"hotTrafficShare"`
 }
 
-type scenarioEnvelope struct {
-	Type string `json:"type"`
-}
-
-type fileHappyPathScenario struct {
-	Type         string                      `json:"type"`
+type fileScenario struct {
+	Name         string                      `json:"name"`
 	Share        float64                     `json:"share"`
 	Participants fileHotColdPairDistribution `json:"participants"`
 	Amount       fileSequentialRangeAmount   `json:"amount"`
-	Expectations fileHappyPathExpectations   `json:"expectations"`
+	Funding      fileScenarioFunding         `json:"funding"`
+	Expectations fileScenarioExpectations    `json:"expectations"`
 }
 
-type fileInsufficientFundsScenario struct {
-	Type         string                            `json:"type"`
-	Share        float64                           `json:"share"`
-	Participants fileHotColdPairDistribution       `json:"participants"`
-	Amount       fileSequentialRangeAmount         `json:"amount"`
-	Expectations fileInsufficientFundsExpectations `json:"expectations"`
+type fileScenarioFunding struct {
+	Payer         fileFundingAccount `json:"payer"`
+	Receiver      fileFundingAccount `json:"receiver"`
+	ResetIfExists *bool              `json:"resetIfExists"`
+}
+
+type fileFundingAccount struct {
+	Mode    string  `json:"mode"`
+	Balance *string `json:"balance,omitempty"`
 }
 
 type fileSequentialRangeAmount struct {
@@ -174,14 +175,13 @@ type fileSequentialRangeAmount struct {
 	Maximum int64 `json:"maximum"`
 }
 
-type fileHappyPathExpectations struct {
-	HTTPStatus        string `json:"httpStatus"`
-	PayerConfirmation string `json:"payerConfirmation"`
+type fileScenarioExpectations struct {
+	HTTPStatus        string                           `json:"httpStatus"`
+	PayerNotification filePayerNotificationExpectation `json:"payerNotification"`
 }
 
-type fileInsufficientFundsExpectations struct {
-	HTTPStatus        string `json:"httpStatus"`
-	PayerConfirmation string `json:"payerConfirmation"`
+type filePayerNotificationExpectation struct {
+	Count *int `json:"count"`
 }
 
 type fileReporting struct {
@@ -197,7 +197,7 @@ func LoadProfile(name string) (Runtime, error) {
 }
 
 func loadProfileFromDir(dir string, name string) (Runtime, error) {
-	if !profileNamePattern.MatchString(name) {
+	if !contractNamePattern.MatchString(name) {
 		return Runtime{}, fmt.Errorf("invalid profile name %q: use only lowercase letters, digits, and hyphens, beginning with a letter or digit", name)
 	}
 
@@ -256,35 +256,32 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if len(file.Scenarios) == 0 {
 		return Runtime{}, malformedProfile(name, "scenarios", errors.New("must contain at least one scenario"))
 	}
-	if len(file.Scenarios) > 2 {
-		return Runtime{}, malformedProfile(name, "scenarios", errors.New("supports at most happy-path and insufficient-funds"))
-	}
 	scenarios := make([]Scenario, 0, len(file.Scenarios))
-	seenTypes := make(map[string]struct{}, len(file.Scenarios))
+	seenNames := make(map[string]struct{}, len(file.Scenarios))
 	totalQuota := 0
 	nextPairNumber := 1
-	for index, rawScenario := range file.Scenarios {
-		scenario, err := decodeScenario(name, index, rawScenario)
+	for index, fileScenario := range file.Scenarios {
+		scenario, err := decodeScenario(name, index, fileScenario)
 		if err != nil {
 			return Runtime{}, err
 		}
-		if _, exists := seenTypes[scenario.Type]; exists {
-			return Runtime{}, malformedProfile(name, fmt.Sprintf("scenarios[%d].type", index), fmt.Errorf("duplicate scenario type %q", scenario.Type))
+		if _, exists := seenNames[scenario.Name]; exists {
+			return Runtime{}, malformedProfile(name, fmt.Sprintf("scenarios[%d].name", index), fmt.Errorf("duplicate scenario name %q", scenario.Name))
 		}
-		seenTypes[scenario.Type] = struct{}{}
+		seenNames[scenario.Name] = struct{}{}
 		quota := scenario.Share * ScenarioSelectionBlockSize
 		roundedQuota := math.Round(quota)
 		if scenario.Share <= 0 || math.Abs(quota-roundedQuota) > 1e-9 {
 			return Runtime{}, malformedProfile(name, fmt.Sprintf("scenarios[%d].share", index), fmt.Errorf("must be positive and select a whole number of entries in a %d-entry block", ScenarioSelectionBlockSize))
 		}
 		totalQuota += int(roundedQuota)
-		participants, _ := scenario.Participants()
+		participants := scenario.Participants
 		remainingPairs := maxPairSuffix - nextPairNumber + 1
 		if participants.HotPairCount > remainingPairs || participants.ColdPairCount > remainingPairs-participants.HotPairCount {
 			return Runtime{}, malformedProfile(name, "scenarios.participants", fmt.Errorf("allocated pair range exceeds the maximum pair number %d", maxPairSuffix))
 		}
 		pairCount := participants.HotPairCount + participants.ColdPairCount
-		scenario.setPairNumberStart(nextPairNumber)
+		scenario.Participants.PairNumberStart = nextPairNumber
 		nextPairNumber += pairCount
 		scenarios = append(scenarios, scenario)
 	}
@@ -322,25 +319,10 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	}, nil
 }
 
-func decodeScenario(profileName string, index int, data []byte) (Scenario, error) {
-	var envelope scenarioEnvelope
-	if err := json.Unmarshal(data, &envelope); err != nil {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d]", index), fmt.Errorf("invalid scenario: %w", err))
-	}
-	switch envelope.Type {
-	case ScenarioHappyPath:
-		return decodeHappyPathScenario(profileName, index, data)
-	case ScenarioInsufficientFunds:
-		return decodeInsufficientFundsScenario(profileName, index, data)
-	default:
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].type", index), fmt.Errorf("unsupported scenario type %q", envelope.Type))
-	}
-}
-
-func decodeHappyPathScenario(profileName string, index int, data []byte) (Scenario, error) {
-	var file fileHappyPathScenario
-	if err := decodeStrict(data, &file); err != nil {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d]", index), fmt.Errorf("invalid happy-path scenario: %w", err))
+func decodeScenario(profileName string, index int, file fileScenario) (Scenario, error) {
+	prefix := fmt.Sprintf("scenarios[%d]", index)
+	if !contractNamePattern.MatchString(file.Name) {
+		return Scenario{}, malformedProfile(profileName, prefix+".name", errors.New("scenario name must use only lowercase letters, digits, and hyphens, beginning with a letter or digit"))
 	}
 	if err := validateParticipants(profileName, index, file.Participants); err != nil {
 		return Scenario{}, err
@@ -348,52 +330,29 @@ func decodeHappyPathScenario(profileName string, index int, data []byte) (Scenar
 	if err := validateAmount(profileName, index, file.Amount); err != nil {
 		return Scenario{}, err
 	}
-	if file.Expectations.HTTPStatus != ExpectedHTTP2xx {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].expectations.httpStatus", index), fmt.Errorf("must be %q", ExpectedHTTP2xx))
-	}
-	if file.Expectations.PayerConfirmation != ConfirmationRequired {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].expectations.payerConfirmation", index), fmt.Errorf("must be %q", ConfirmationRequired))
-	}
-	return Scenario{
-		Type:  file.Type,
-		Share: file.Share,
-		HappyPath: &HappyPathScenario{
-			Participants: runtimeParticipants(file.Participants),
-			Amount:       runtimeAmount(file.Amount),
-			Expectations: HappyPathExpectations{
-				HTTPStatus:        file.Expectations.HTTPStatus,
-				PayerConfirmation: file.Expectations.PayerConfirmation,
-			},
-		},
-	}, nil
-}
-
-func decodeInsufficientFundsScenario(profileName string, index int, data []byte) (Scenario, error) {
-	var file fileInsufficientFundsScenario
-	if err := decodeStrict(data, &file); err != nil {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d]", index), fmt.Errorf("invalid insufficient-funds scenario: %w", err))
-	}
-	if err := validateParticipants(profileName, index, file.Participants); err != nil {
-		return Scenario{}, err
-	}
-	if err := validateAmount(profileName, index, file.Amount); err != nil {
+	funding, err := validateFunding(profileName, index, file.Funding)
+	if err != nil {
 		return Scenario{}, err
 	}
 	if file.Expectations.HTTPStatus != ExpectedHTTP2xx {
 		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].expectations.httpStatus", index), fmt.Errorf("must be %q", ExpectedHTTP2xx))
 	}
-	if file.Expectations.PayerConfirmation != ConfirmationForbidden {
-		return Scenario{}, malformedProfile(profileName, fmt.Sprintf("scenarios[%d].expectations.payerConfirmation", index), fmt.Errorf("must be %q", ConfirmationForbidden))
+	if file.Expectations.PayerNotification.Count == nil {
+		return Scenario{}, malformedProfile(profileName, prefix+".expectations.payerNotification.count", errors.New("must be specified"))
+	}
+	if *file.Expectations.PayerNotification.Count < 0 || *file.Expectations.PayerNotification.Count > 1 {
+		return Scenario{}, malformedProfile(profileName, prefix+".expectations.payerNotification.count", errors.New("must be 0 or 1"))
 	}
 	return Scenario{
-		Type:  file.Type,
-		Share: file.Share,
-		InsufficientFunds: &InsufficientFundsScenario{
-			Participants: runtimeParticipants(file.Participants),
-			Amount:       runtimeAmount(file.Amount),
-			Expectations: InsufficientFundsExpectations{
-				HTTPStatus:        file.Expectations.HTTPStatus,
-				PayerConfirmation: file.Expectations.PayerConfirmation,
+		Name:         file.Name,
+		Share:        file.Share,
+		Participants: runtimeParticipants(file.Participants),
+		Amount:       runtimeAmount(file.Amount),
+		Funding:      funding,
+		Expectations: ScenarioExpectations{
+			HTTPStatus: file.Expectations.HTTPStatus,
+			PayerNotification: PayerNotificationExpectation{
+				Count: *file.Expectations.PayerNotification.Count,
 			},
 		},
 	}, nil
@@ -424,6 +383,86 @@ func validateAmount(profileName string, index int, amount fileSequentialRangeAmo
 	return nil
 }
 
+func validateFunding(profileName string, index int, file fileScenarioFunding) (ScenarioFunding, error) {
+	prefix := fmt.Sprintf("scenarios[%d].funding", index)
+	payer, err := validateFundingAccount(profileName, prefix+".payer", file.Payer, true)
+	if err != nil {
+		return ScenarioFunding{}, err
+	}
+	receiver, err := validateFundingAccount(profileName, prefix+".receiver", file.Receiver, false)
+	if err != nil {
+		return ScenarioFunding{}, err
+	}
+	if file.ResetIfExists == nil {
+		return ScenarioFunding{}, malformedProfile(profileName, prefix+".resetIfExists", errors.New("must be specified"))
+	}
+	return ScenarioFunding{Payer: payer, Receiver: receiver, ResetIfExists: *file.ResetIfExists}, nil
+}
+
+func validateFundingAccount(profileName string, field string, file fileFundingAccount, allowCover bool) (FundingAccount, error) {
+	switch file.Mode {
+	case FundingFixed:
+		if file.Balance == nil {
+			return FundingAccount{}, malformedProfile(profileName, field+".balance", errors.New("must be specified for fixed funding"))
+		}
+		balance, cents, err := parseBalance(*file.Balance)
+		if err != nil {
+			return FundingAccount{}, malformedProfile(profileName, field+".balance", err)
+		}
+		return FundingAccount{Mode: FundingFixed, Balance: balance, BalanceCents: cents}, nil
+	case FundingCoverGeneratedDebits:
+		if !allowCover {
+			return FundingAccount{}, malformedProfile(profileName, field+".mode", fmt.Errorf("must be %q", FundingFixed))
+		}
+		if file.Balance != nil {
+			return FundingAccount{}, malformedProfile(profileName, field+".balance", fmt.Errorf("must be omitted for %q funding", FundingCoverGeneratedDebits))
+		}
+		return FundingAccount{Mode: FundingCoverGeneratedDebits}, nil
+	default:
+		return FundingAccount{}, malformedProfile(profileName, field+".mode", fmt.Errorf("must be %q or %q", FundingFixed, FundingCoverGeneratedDebits))
+	}
+}
+
+func parseBalance(value string) (string, int64, error) {
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || len(parts) == 0 || parts[0] == "" || !digitsOnly(parts[0]) {
+		return "", 0, errors.New("must be a non-negative decimal string")
+	}
+	fraction := ""
+	if len(parts) == 2 {
+		fraction = parts[1]
+		if fraction == "" || !digitsOnly(fraction) {
+			return "", 0, errors.New("must be a non-negative decimal string")
+		}
+		if len(fraction) > 2 {
+			return "", 0, errors.New("must have at most two fractional digits")
+		}
+	}
+	fraction += strings.Repeat("0", 2-len(fraction))
+	combined := strings.TrimLeft(parts[0]+fraction, "0")
+	if combined == "" {
+		combined = "0"
+	}
+	cents, err := strconv.ParseInt(combined, 10, 64)
+	if err != nil {
+		return "", 0, errors.New("overflows the supported balance range")
+	}
+	return FormatBalance(cents), cents, nil
+}
+
+func digitsOnly(value string) bool {
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return value != ""
+}
+
+func FormatBalance(cents int64) string {
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
+}
+
 func runtimeParticipants(file fileHotColdPairDistribution) HotColdPairDistribution {
 	return HotColdPairDistribution{
 		HotPairCount:    file.HotPairCount,
@@ -434,57 +473,6 @@ func runtimeParticipants(file fileHotColdPairDistribution) HotColdPairDistributi
 
 func runtimeAmount(file fileSequentialRangeAmount) SequentialRangeAmount {
 	return SequentialRangeAmount{Minimum: file.Minimum, Maximum: file.Maximum}
-}
-
-func (scenario Scenario) Participants() (HotColdPairDistribution, bool) {
-	switch scenario.Type {
-	case ScenarioHappyPath:
-		if scenario.HappyPath != nil {
-			return scenario.HappyPath.Participants, true
-		}
-	case ScenarioInsufficientFunds:
-		if scenario.InsufficientFunds != nil {
-			return scenario.InsufficientFunds.Participants, true
-		}
-	}
-	return HotColdPairDistribution{}, false
-}
-
-func (scenario *Scenario) setPairNumberStart(start int) {
-	switch scenario.Type {
-	case ScenarioHappyPath:
-		scenario.HappyPath.Participants.PairNumberStart = start
-	case ScenarioInsufficientFunds:
-		scenario.InsufficientFunds.Participants.PairNumberStart = start
-	}
-}
-
-func (scenario Scenario) Amount() (SequentialRangeAmount, bool) {
-	switch scenario.Type {
-	case ScenarioHappyPath:
-		if scenario.HappyPath != nil {
-			return scenario.HappyPath.Amount, true
-		}
-	case ScenarioInsufficientFunds:
-		if scenario.InsufficientFunds != nil {
-			return scenario.InsufficientFunds.Amount, true
-		}
-	}
-	return SequentialRangeAmount{}, false
-}
-
-func (scenario Scenario) Expectations() (string, string, bool) {
-	switch scenario.Type {
-	case ScenarioHappyPath:
-		if scenario.HappyPath != nil {
-			return scenario.HappyPath.Expectations.HTTPStatus, scenario.HappyPath.Expectations.PayerConfirmation, true
-		}
-	case ScenarioInsufficientFunds:
-		if scenario.InsufficientFunds != nil {
-			return scenario.InsufficientFunds.Expectations.HTTPStatus, scenario.InsufficientFunds.Expectations.PayerConfirmation, true
-		}
-	}
-	return "", "", false
 }
 
 func parseWholeSecondDuration(profileName string, field string, value string, allowZero bool) (time.Duration, error) {

@@ -2,7 +2,10 @@ package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.Reason;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
@@ -63,7 +66,7 @@ public class NotificationObligationService {
 
     public void storeStatusObligations(
             List<PaymentTransactionCommand> settledPayments,
-            List<PaymentTransactionCommand> rejectedPayments
+            List<PaymentRejection> rejectedPayments
     ) {
         if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
             return;
@@ -79,22 +82,26 @@ public class NotificationObligationService {
             obligations.add(statusObligation(
                     paymentTransaction,
                     receiverIspb,
-                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER
+                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER,
+                    null
             ));
             obligations.add(statusObligation(
                     paymentTransaction,
                     senderIspb,
-                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER
+                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER,
+                    null
             ));
         }
 
-        for (PaymentTransactionCommand paymentTransaction : rejectedPayments) {
+        for (PaymentRejection rejection : rejectedPayments) {
+            PaymentTransactionCommand paymentTransaction = rejection.payment();
             validatePaymentTransaction(paymentTransaction);
             String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
             obligations.add(statusObligation(
                     paymentTransaction,
                     senderIspb,
-                    PaymentStatus.REJECTED
+                    PaymentStatus.REJECTED,
+                    rejection.reason()
             ));
         }
 
@@ -109,11 +116,13 @@ public class NotificationObligationService {
     private NotificationPublication statusObligation(
             PaymentTransactionCommand paymentTransaction,
             String recipientIspb,
-            PaymentStatus paymentStatus
+            PaymentStatus paymentStatus,
+            PaymentRejectionReason rejectionReason
     ) {
         StatusReportCommand statusReport = StatusReportCommand.builder()
                 .originalPaymentId(paymentTransaction.getPaymentId())
                 .status(paymentStatus)
+                .reasons(notificationReasons(rejectionReason))
                 .build();
         byte[] payload = contentSerializer.serialize(
                 payloadFactory.statusNotification(List.of(statusReport))
@@ -125,6 +134,18 @@ public class NotificationObligationService {
                 paymentTransaction.getPaymentId(),
                 notificationStatus(paymentStatus)
         );
+    }
+
+    private List<Reason> notificationReasons(PaymentRejectionReason rejectionReason) {
+        if (rejectionReason == null) {
+            return null;
+        }
+        return switch (rejectionReason) {
+            case INSUFFICIENT_FUNDS -> List.of(Reason.builder()
+                    .code("AM04")
+                    .descriptions(List.of())
+                    .build());
+        };
     }
 
     private void validatePaymentTransaction(PaymentTransactionCommand paymentTransaction) {

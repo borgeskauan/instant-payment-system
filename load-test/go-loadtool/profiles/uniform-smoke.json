@@ -22,7 +22,7 @@
   },
   "scenarios": [
     {
-      "type": "happy-path",
+      "name": "happy-path",
       "share": 1.0,
       "participants": {
         "hotPairCount": 10,
@@ -33,9 +33,21 @@
         "minimum": 100,
         "maximum": 100098
       },
+      "funding": {
+        "payer": {
+          "mode": "cover-generated-debits"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
       "expectations": {
         "httpStatus": "2xx",
-        "payerConfirmation": "required"
+        "payerNotification": {
+          "count": 1
+        }
       }
     }
   ],

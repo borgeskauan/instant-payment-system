@@ -1,7 +1,9 @@
 package sim
 
 import (
+	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,38 +20,38 @@ func TestPlannerUsesExactDeterministicScenarioBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var firstTypes []string
-	var secondTypes []string
+	var firstNames []string
+	var secondNames []string
 	counts := map[string]int{}
 	for range 200 {
 		firstTransfer := first.Next()
 		secondTransfer := second.Next()
-		firstTypes = append(firstTypes, firstTransfer.ScenarioType)
-		secondTypes = append(secondTypes, secondTransfer.ScenarioType)
-		counts[firstTransfer.ScenarioType]++
+		firstNames = append(firstNames, firstTransfer.ScenarioName)
+		secondNames = append(secondNames, secondTransfer.ScenarioName)
+		counts[firstTransfer.ScenarioName]++
 	}
-	if !reflect.DeepEqual(firstTypes, secondTypes) {
+	if !reflect.DeepEqual(firstNames, secondNames) {
 		t.Fatal("repeated planners did not reproduce scenario order")
 	}
-	if counts[config.ScenarioHappyPath] != 160 || counts[config.ScenarioInsufficientFunds] != 40 {
+	if counts["happy-path"] != 160 || counts["insufficient-funds"] != 40 {
 		t.Fatalf("scenario counts = %#v, want exact 80/20 per block", counts)
 	}
 	for blockIndex := range 2 {
 		blockCounts := map[string]int{}
-		for _, scenarioType := range firstTypes[blockIndex*100 : (blockIndex+1)*100] {
-			blockCounts[scenarioType]++
+		for _, scenarioName := range firstNames[blockIndex*100 : (blockIndex+1)*100] {
+			blockCounts[scenarioName]++
 		}
-		if blockCounts[config.ScenarioHappyPath] != 80 || blockCounts[config.ScenarioInsufficientFunds] != 20 {
+		if blockCounts["happy-path"] != 80 || blockCounts["insufficient-funds"] != 20 {
 			t.Fatalf("block %d counts = %#v, want 80/20", blockIndex, blockCounts)
 		}
 	}
-	if reflect.DeepEqual(firstTypes[:100], firstTypes[100:]) {
+	if reflect.DeepEqual(firstNames[:100], firstNames[100:]) {
 		t.Fatal("successive blocks were not independently shuffled")
 	}
-	encodePrefix := func(types []string) string {
-		encoded := make([]byte, len(types))
-		for index, scenarioType := range types {
-			if scenarioType == config.ScenarioHappyPath {
+	encodePrefix := func(names []string) string {
+		encoded := make([]byte, len(names))
+		for index, scenarioName := range names {
+			if scenarioName == "happy-path" {
 				encoded[index] = 'H'
 			} else {
 				encoded[index] = 'I'
@@ -57,10 +59,10 @@ func TestPlannerUsesExactDeterministicScenarioBlocks(t *testing.T) {
 		}
 		return string(encoded)
 	}
-	if got := encodePrefix(firstTypes[:20]); got != "HHIIHHHIHHHHHHIHHHHH" {
+	if got := encodePrefix(firstNames[:20]); got != "HHIIHHHIHHHHHHIHHHHH" {
 		t.Fatalf("block 0 prefix = %q", got)
 	}
-	if got := encodePrefix(firstTypes[100:120]); got != "HIIHHHHHHHHIHHHIHHHI" {
+	if got := encodePrefix(firstNames[100:120]); got != "HIIHHHHHHHHIHHHIHHHI" {
 		t.Fatalf("block 1 prefix = %q", got)
 	}
 }
@@ -73,13 +75,13 @@ func TestPlannerKeepsScenarioLocalPairAndAmountSequences(t *testing.T) {
 	localCounts := map[string]int64{}
 	for range 100 {
 		transfer := planner.Next()
-		wantAmount := int64(100) + localCounts[transfer.ScenarioType]%3
+		wantAmount := int64(100) + localCounts[transfer.ScenarioName]%3
 		if transfer.Amount != wantAmount {
-			t.Fatalf("%s amount = %d, want %d", transfer.ScenarioType, transfer.Amount, wantAmount)
+			t.Fatalf("%s amount = %d, want %d", transfer.ScenarioName, transfer.Amount, wantAmount)
 		}
-		localCounts[transfer.ScenarioType]++
+		localCounts[transfer.ScenarioName]++
 	}
-	if localCounts[config.ScenarioHappyPath] != 80 || localCounts[config.ScenarioInsufficientFunds] != 20 {
+	if localCounts["happy-path"] != 80 || localCounts["insufficient-funds"] != 20 {
 		t.Fatalf("local counts = %#v", localCounts)
 	}
 }
@@ -94,7 +96,21 @@ func TestMaximumGeneratedTransfersIncludesFinalBoundaryTransfer(t *testing.T) {
 	}
 }
 
-func TestDerivedProvisioningFundsOnlyHappyPathPayers(t *testing.T) {
+func TestMaximumGeneratedTransfersRejectsCountMultiplicationOverflow(t *testing.T) {
+	_, err := maximumGeneratedTransfers(1<<60, 0, 16*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "too many transfers") {
+		t.Fatalf("maximumGeneratedTransfers error = %v, want too many transfers", err)
+	}
+}
+
+func TestMaximumGeneratedTransfersRejectsRateThatOverflowsQueueCapacity(t *testing.T) {
+	_, err := maximumGeneratedTransfers(math.MaxInt/4+1, 0, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
+		t.Fatalf("maximumGeneratedTransfers error = %v, want rate is too large", err)
+	}
+}
+
+func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	cfg := Config{
 		TargetTxRate: 100,
 		Warmup:       5 * time.Second,
@@ -115,10 +131,10 @@ func TestDerivedProvisioningFundsOnlyHappyPathPayers(t *testing.T) {
 	if len(plan) != 2 {
 		t.Fatalf("plan = %#v", plan)
 	}
-	if plan[0].Type != config.ScenarioHappyPath || plan[0].PayerBalance <= 0 || plan[0].ReceiverBalance != 0 || !plan[0].ResetIfExists {
+	if plan[0].Name != "happy-path" || plan[0].PayerBalance == "0.00" || plan[0].ReceiverBalance != "0.00" || !plan[0].ResetIfExists {
 		t.Fatalf("happy-path provisioning = %#v", plan[0])
 	}
-	if plan[1].Type != config.ScenarioInsufficientFunds || plan[1].PayerBalance != 0 || plan[1].ReceiverBalance != 0 || !plan[1].ResetIfExists {
+	if plan[1].Name != "insufficient-funds" || plan[1].PayerBalance != "0.00" || plan[1].ReceiverBalance != "0.00" || !plan[1].ResetIfExists {
 		t.Fatalf("insufficient-funds provisioning = %#v", plan[1])
 	}
 	planner, err := newWorkloadPlanner(cfg.Scenarios)
@@ -132,15 +148,36 @@ func TestDerivedProvisioningFundsOnlyHappyPathPayers(t *testing.T) {
 	debits := map[string]int64{}
 	for range transferCount {
 		transfer := planner.Next()
-		if transfer.ScenarioType == config.ScenarioHappyPath {
+		if transfer.ScenarioName == "happy-path" {
 			debits[transfer.Pair.Payer] += transfer.Amount
 		}
 	}
-	minimumBucketBalance := plan[0].PayerBalance * 100 / settlementBucketCount
+	minimumBucketBalance := plan[0].payerBalanceCents / settlementBucketCount
 	for payer, debit := range debits {
 		if minimumBucketBalance < debit {
 			t.Fatalf("payer %s can debit %d but smallest bucket has %d", payer, debit, minimumBucketBalance)
 		}
+	}
+}
+
+func TestDerivedProvisioningDoesNotDependOnScenarioName(t *testing.T) {
+	first := Config{TargetTxRate: 100, Warmup: 5 * time.Second, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
+	first.Scenarios[0].Share = 1
+	second := first
+	second.Scenarios = append([]config.Scenario(nil), first.Scenarios...)
+	second.Scenarios[0].Name = "renamed-workload"
+
+	firstPlan, err := DeriveProvisioning(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPlan, err := DeriveProvisioning(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPlan[0].Name = secondPlan[0].Name
+	if !reflect.DeepEqual(firstPlan, secondPlan) {
+		t.Fatalf("renaming changed provisioning: %#v / %#v", firstPlan, secondPlan)
 	}
 }
 
@@ -151,19 +188,25 @@ func mixedPlannerScenarios() []config.Scenario {
 	amount := config.SequentialRangeAmount{Minimum: 100, Maximum: 102}
 	return []config.Scenario{
 		{
-			Type:  config.ScenarioHappyPath,
-			Share: 0.8,
-			HappyPath: &config.HappyPathScenario{
-				Participants: participants(1, 8, 32),
-				Amount:       amount,
+			Name:         "happy-path",
+			Share:        0.8,
+			Participants: participants(1, 8, 32),
+			Amount:       amount,
+			Funding: config.ScenarioFunding{
+				Payer:         config.FundingAccount{Mode: config.FundingCoverGeneratedDebits},
+				Receiver:      config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+				ResetIfExists: true,
 			},
 		},
 		{
-			Type:  config.ScenarioInsufficientFunds,
-			Share: 0.2,
-			InsufficientFunds: &config.InsufficientFundsScenario{
-				Participants: participants(41, 2, 8),
-				Amount:       amount,
+			Name:         "insufficient-funds",
+			Share:        0.2,
+			Participants: participants(41, 2, 8),
+			Amount:       amount,
+			Funding: config.ScenarioFunding{
+				Payer:         config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+				Receiver:      config.FundingAccount{Mode: config.FundingFixed, Balance: "0.00"},
+				ResetIfExists: true,
 			},
 		},
 	}

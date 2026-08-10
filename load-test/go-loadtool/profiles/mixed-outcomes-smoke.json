@@ -22,7 +22,7 @@
   },
   "scenarios": [
     {
-      "type": "happy-path",
+      "name": "happy-path",
       "share": 0.8,
       "participants": {
         "hotPairCount": 8,
@@ -33,13 +33,25 @@
         "minimum": 100,
         "maximum": 100098
       },
+      "funding": {
+        "payer": {
+          "mode": "cover-generated-debits"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
       "expectations": {
         "httpStatus": "2xx",
-        "payerConfirmation": "required"
+        "payerNotification": {
+          "count": 1
+        }
       }
     },
     {
-      "type": "insufficient-funds",
+      "name": "insufficient-funds",
       "share": 0.2,
       "participants": {
         "hotPairCount": 2,
@@ -50,9 +62,22 @@
         "minimum": 100,
         "maximum": 100098
       },
+      "funding": {
+        "payer": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
       "expectations": {
         "httpStatus": "2xx",
-        "payerConfirmation": "forbidden"
+        "payerNotification": {
+          "count": 1
+        }
       }
     }
   ],

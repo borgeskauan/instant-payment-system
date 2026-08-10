@@ -1,6 +1,8 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.commons.Money;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +29,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.groups.Tuple.tuple;
 
 @SpringBootTest
 @Transactional
@@ -48,6 +53,57 @@ class JpaAdapterIntegrationTest {
         jdbcTemplate.update(
                 "DELETE FROM funds_bucket_entity WHERE bank_code IN ('11111111', '22222222', '33333333')"
         );
+    }
+
+    @Test
+    void databaseAllowsInsufficientFundsReasonOnlyOnRejectedPayments() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-REJECTION-REASON-VALID",
+                "11111111",
+                "22222222"
+        );
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+
+        jdbcTemplate.update(
+                "UPDATE payment_transaction_entity SET status = ?, rejection_reason = ? WHERE payment_id = ?",
+                PaymentStatus.REJECTED.name(),
+                "INSUFFICIENT_FUNDS",
+                payment.getPaymentId()
+        );
+
+        assertThat(rejectionReason(payment.getPaymentId())).isEqualTo("INSUFFICIENT_FUNDS");
+    }
+
+    @Test
+    void databaseRejectsAReasonOnANonRejectedPayment() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-REJECTION-REASON-INVALID-STATUS",
+                "11111111",
+                "22222222"
+        );
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE payment_transaction_entity SET rejection_reason = ? WHERE payment_id = ?",
+                "INSUFFICIENT_FUNDS",
+                payment.getPaymentId()
+        )).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void databaseRejectsAnUnknownPaymentRejectionReason() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-REJECTION-REASON-UNKNOWN",
+                "11111111",
+                "22222222"
+        );
+        insertPayment(payment, PaymentStatus.REJECTED, null, null);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE payment_transaction_entity SET rejection_reason = ? WHERE payment_id = ?",
+                "UNKNOWN_REASON",
+                payment.getPaymentId()
+        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -286,7 +342,7 @@ class JpaAdapterIntegrationTest {
     }
 
     @Test
-    void acceptedStatusReportMarksWaitingPaymentInProcessWhenSettlementCannotBeApplied() {
+    void acceptedStatusReportRejectsWaitingPaymentWhenProvisionedSenderHasNoFunds() {
         PaymentTransactionCommand payment = paymentTransaction(
                 "E2E-IDEMP-STATUS-ACCEPTED-NO-FUNDS",
                 "11111111",
@@ -300,14 +356,23 @@ class JpaAdapterIntegrationTest {
                 statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS));
 
         assertThat(result.settledPayments()).isEmpty();
-        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.rejectedPayments())
+                .extracting(
+                        rejection -> rejection.payment().getPaymentId(),
+                        PaymentRejection::reason
+                )
+                .containsExactly(tuple(payment.getPaymentId(), PaymentRejectionReason.INSUFFICIENT_FUNDS));
         assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
                 payment.getPaymentId(),
                 PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.ACCEPTED_IN_PROCESS
+                PaymentStatus.REJECTED,
+                PaymentRejectionReason.INSUFFICIENT_FUNDS
         ));
         assertThat(result.divergentStatusReports()).isEmpty();
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(rejectionReason(payment.getPaymentId())).isEqualTo(PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
+        assertThat(balance("11111111")).isEqualByComparingTo(decimal("0.00"));
+        assertThat(balance("22222222")).isEqualByComparingTo(decimal("50.00"));
     }
 
     @Test
@@ -335,7 +400,12 @@ class JpaAdapterIntegrationTest {
         assertThat(result.settledPayments())
                 .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly(first.getPaymentId());
-        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.rejectedPayments())
+                .extracting(
+                        rejection -> rejection.payment().getPaymentId(),
+                        PaymentRejection::reason
+                )
+                .containsExactly(tuple(second.getPaymentId(), PaymentRejectionReason.INSUFFICIENT_FUNDS));
         assertThat(result.appliedStatusTransitions()).containsExactlyInAnyOrder(
                 new PaymentStatusTransition(
                         first.getPaymentId(),
@@ -345,14 +415,91 @@ class JpaAdapterIntegrationTest {
                 new PaymentStatusTransition(
                         second.getPaymentId(),
                         PaymentStatus.WAITING_ACCEPTANCE,
-                        PaymentStatus.ACCEPTED_IN_PROCESS
+                        PaymentStatus.REJECTED,
+                        PaymentRejectionReason.INSUFFICIENT_FUNDS
                 )
         );
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(first.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
-        assertThat(status(second.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
+        assertThat(status(second.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(rejectionReason(second.getPaymentId()))
+                .isEqualTo(PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
         assertThat(balance("11111111")).isEqualByComparingTo(decimal("0.00"));
         assertThat(balance("22222222")).isEqualByComparingTo(decimal("10.00"));
+    }
+
+    @Test
+    void acceptedStatusReportStaysInProcessWhenPayerBucketIsMissing() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-STATUS-MISSING-PAYER-BUCKET",
+                "11111111",
+                "22222222"
+        );
+        insertFunds("22222222", "50.00");
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+
+        StatusReportPersistenceResult result = apply(
+                statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS));
+
+        assertThat(result.settledPayments()).isEmpty();
+        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
+                payment.getPaymentId(),
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_IN_PROCESS
+        ));
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
+        assertThat(rejectionReason(payment.getPaymentId())).isNull();
+        assertThat(balance("22222222")).isEqualByComparingTo(decimal("50.00"));
+    }
+
+    @Test
+    void acceptedStatusReportStaysInProcessWhenReceiverBucketIsMissing() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-STATUS-MISSING-RECEIVER-BUCKET",
+                "11111111",
+                "22222222"
+        );
+        insertFunds("11111111", "1000.00");
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+
+        StatusReportPersistenceResult result = apply(
+                statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS));
+
+        assertThat(result.settledPayments()).isEmpty();
+        assertThat(result.rejectedPayments()).isEmpty();
+        assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
+                payment.getPaymentId(),
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_IN_PROCESS
+        ));
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
+        assertThat(rejectionReason(payment.getPaymentId())).isNull();
+        assertThat(balance("11111111")).isEqualByComparingTo(decimal("1000.00"));
+    }
+
+    @Test
+    void acceptedStatusReportAfterInternalInsufficientFundsRejectionIsNoOp() {
+        PaymentTransactionCommand payment = paymentTransaction(
+                "E2E-IDEMP-STATUS-INSUFFICIENT-REPLAY",
+                "11111111",
+                "22222222"
+        );
+        insertFunds("11111111", "0.00");
+        insertFunds("22222222", "50.00");
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
+        StatusReportCommand accepted = statusReport(payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS);
+
+        apply(accepted);
+        StatusReportPersistenceResult replay = apply(accepted);
+
+        assertThat(replay.settledPayments()).isEmpty();
+        assertThat(replay.rejectedPayments()).isEmpty();
+        assertThat(replay.appliedStatusTransitions()).isEmpty();
+        assertThat(replay.divergentStatusReports()).isEmpty();
+        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(rejectionReason(payment.getPaymentId()))
+                .isEqualTo(PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
     }
 
     @Test
@@ -395,8 +542,11 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments())
-                .extracting(PaymentTransactionCommand::getPaymentId)
-                .containsExactly(payment.getPaymentId());
+                .extracting(
+                        rejection -> rejection.payment().getPaymentId(),
+                        PaymentRejection::reason
+                )
+                .containsExactly(tuple(payment.getPaymentId(), null));
         assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
                 payment.getPaymentId(),
                 PaymentStatus.WAITING_ACCEPTANCE,
@@ -404,6 +554,7 @@ class JpaAdapterIntegrationTest {
         ));
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(rejectionReason(payment.getPaymentId())).isNull();
     }
 
     @Test
@@ -615,6 +766,14 @@ class JpaAdapterIntegrationTest {
     private String status(String paymentId) {
         return jdbcTemplate.queryForObject(
                 "SELECT status FROM payment_transaction_entity WHERE payment_id = ?",
+                String.class,
+                paymentId
+        );
+    }
+
+    private String rejectionReason(String paymentId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT rejection_reason FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
                 paymentId
         );

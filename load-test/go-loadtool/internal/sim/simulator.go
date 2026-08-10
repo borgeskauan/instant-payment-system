@@ -48,7 +48,7 @@ type transferJob struct {
 	Pair         ids.Pair
 	Created      int64
 	Amount       int64
-	ScenarioType string
+	ScenarioName string
 }
 
 type statusJob struct {
@@ -96,6 +96,9 @@ type grpcReadyConn interface {
 func Run(cfg Config) error {
 	if cfg.TargetTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
+	}
+	if _, err := maximumGeneratedTransfers(cfg.TargetTxRate, cfg.Warmup, cfg.Duration); err != nil {
+		return err
 	}
 	planner, err := newWorkloadPlanner(cfg.Scenarios)
 	if err != nil {
@@ -275,10 +278,7 @@ func buildPairs(pairNumberStart int, count int) []ids.Pair {
 func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 	var pairs []ids.Pair
 	for _, scenario := range scenarios {
-		participants, ok := scenario.Participants()
-		if !ok {
-			continue
-		}
+		participants := scenario.Participants
 		pairs = append(pairs, buildPairs(participants.PairNumberStart, participants.HotPairCount+participants.ColdPairCount)...)
 	}
 	return pairs
@@ -313,7 +313,7 @@ func (s *simulator) transferJobForSequence(seq uint64, planned plannedTransfer) 
 		Pair:         planned.Pair,
 		Created:      time.Now().UnixNano(),
 		Amount:       planned.Amount,
-		ScenarioType: planned.ScenarioType,
+		ScenarioName: planned.ScenarioName,
 	}
 }
 
@@ -364,7 +364,7 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 		RequestStartedAtNS: startedAt,
 		RequestDoneAtNS:    doneAt,
 		HTTPStatus:         status,
-		ScenarioType:       job.ScenarioType,
+		ScenarioName:       job.ScenarioName,
 	})
 }
 

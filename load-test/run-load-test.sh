@@ -38,7 +38,7 @@ PROFILE_SCHEMA_VERSION=""
 PROFILE_WARMUP_SECONDS=""
 PROFILE_ACTIVE_SECONDS=""
 PROFILE_DRAIN_SECONDS=""
-PROFILE_SCENARIO_TYPES=()
+PROFILE_SCENARIO_NAMES=()
 PROFILE_SCENARIO_SHARES=()
 PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
 PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
@@ -356,7 +356,7 @@ for scenario in data["scenarios"]:
     provisioning = scenario["provisioning"]
     print("\t".join([
         "scenario",
-        scenario["type"],
+        scenario["name"],
         str(scenario["share"]),
         str(participants["pairNumberStart"]),
         str(participants["hotPairCount"]),
@@ -379,7 +379,7 @@ PY
         return 1
     fi
 
-    PROFILE_SCENARIO_TYPES=()
+    PROFILE_SCENARIO_NAMES=()
     PROFILE_SCENARIO_SHARES=()
     PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
     PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
@@ -388,15 +388,15 @@ PY
     PROFILE_SCENARIO_RECEIVER_BALANCES=()
     PROFILE_SCENARIO_RESET_BEHAVIORS=()
 
-    local scenario_type scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists
+    local scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists
     local record
     for record in "${records[@]:1}"; do
-        IFS=$'\t' read -r record_kind scenario_type scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists <<< "$record"
-        if [[ "$record_kind" != scenario || -z "$scenario_type" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" || -z "$payer_balance" || -z "$receiver_balance" || -z "$reset_if_exists" ]]; then
+        IFS=$'\t' read -r record_kind scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists <<< "$record"
+        if [[ "$record_kind" != scenario || -z "$scenario_name" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" || -z "$payer_balance" || -z "$receiver_balance" || -z "$reset_if_exists" ]]; then
             echo "Go loadtool returned invalid normalized scenario metadata for profile '${PROFILE_NAME}'." >&2
             return 1
         fi
-        PROFILE_SCENARIO_TYPES+=("$scenario_type")
+        PROFILE_SCENARIO_NAMES+=("$scenario_name")
         PROFILE_SCENARIO_SHARES+=("$scenario_share")
         PROFILE_SCENARIO_PAIR_NUMBER_STARTS+=("$pair_number_start")
         PROFILE_SCENARIO_HOT_PAIR_COUNTS+=("$hot_pair_count")
@@ -405,7 +405,7 @@ PY
         PROFILE_SCENARIO_RECEIVER_BALANCES+=("$receiver_balance")
         PROFILE_SCENARIO_RESET_BEHAVIORS+=("$reset_if_exists")
     done
-    log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION} scenarios=${#PROFILE_SCENARIO_TYPES[@]}"
+    log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION} scenarios=${#PROFILE_SCENARIO_NAMES[@]}"
 }
 
 consumer_group_topic_lag() {
@@ -660,9 +660,9 @@ log_selected_options() {
     log_phase "starting load test: tag=${RUN_TAG} profile=${PROFILE_NAME} output=${target_dir}"
     log_phase "using profile: ${PROFILE_NAME}"
     log_phase "execution window: warmup=${PROFILE_WARMUP_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
-    for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
+    for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
-        log_phase "scenario: type=${PROFILE_SCENARIO_TYPES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} pair_number_start=${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]} pairs=${pair_count}"
+        log_phase "scenario: name=${PROFILE_SCENARIO_NAMES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} pair_number_start=${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]} pairs=${pair_count}"
     done
     log_phase "load-tool notification mTLS enabled: server_name=${LOADTOOL_GATEWAY_SERVER_NAME}"
     log_phase "load-tool central transfer mTLS enabled: server_name=${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME}"
@@ -770,12 +770,12 @@ prepare_loadtool_certificates() {
     LOADTOOL_GATEWAY_CA_CERT="$(cd "$(dirname "$ca_cert")" && pwd)/$(basename "$ca_cert")"
     LOADTOOL_CENTRAL_TRANSFER_CA_CERT="$LOADTOOL_GATEWAY_CA_CERT"
 
-    for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
+    for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
         total_psps=$((total_psps + pair_count * 2))
     done
     log_phase "generating ephemeral load-tool PSP certificates: psps=${total_psps} root=${LOADTOOL_CERT_ROOT}"
-    for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
+    for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
         pair_number_start="${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]}"
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
         last_pair=$((pair_number_start + pair_count - 1))
@@ -797,7 +797,7 @@ provision_funds_if_enabled() {
     if [[ "$PROVISION_FUNDS" == true ]]; then
         log_phase "provisioning funds"
         : > "${target_dir}/provision-funds.log"
-        for scenario_index in "${!PROFILE_SCENARIO_TYPES[@]}"; do
+        for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
             for role in payer receiver; do
                 if [[ "$role" == payer ]]; then
                     balance="${PROFILE_SCENARIO_PAYER_BALANCES[scenario_index]}"

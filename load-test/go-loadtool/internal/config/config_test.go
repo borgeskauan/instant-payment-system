@@ -32,7 +32,7 @@ const testProfile = `{
   },
   "scenarios": [
     {
-      "type": "happy-path",
+      "name": "happy-path",
       "share": 1.0,
       "participants": {
         "hotPairCount": 7,
@@ -43,9 +43,21 @@ const testProfile = `{
         "minimum": 100,
         "maximum": 100098
       },
+      "funding": {
+        "payer": {
+          "mode": "cover-generated-debits"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
       "expectations": {
         "httpStatus": "2xx",
-        "payerConfirmation": "required"
+        "payerNotification": {
+          "count": 1
+        }
       }
     }
   ],
@@ -82,18 +94,21 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 		t.Fatalf("Scenarios = %#v", cfg.Scenarios)
 	}
 	scenario := cfg.Scenarios[0]
-	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath == nil {
+	if scenario.Name != "happy-path" || scenario.Share != 1 {
 		t.Fatalf("Scenario = %#v", scenario)
 	}
-	distribution := scenario.HappyPath.Participants
+	distribution := scenario.Participants
 	if distribution.PairNumberStart != 1 || distribution.HotPairCount != 7 || distribution.ColdPairCount != 13 || distribution.HotTrafficShare != 0.75 {
 		t.Fatalf("Participants = %#v", distribution)
 	}
-	if scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
-		t.Fatalf("Amount = %#v", scenario.HappyPath.Amount)
+	if scenario.Amount.Minimum != 100 || scenario.Amount.Maximum != 100098 {
+		t.Fatalf("Amount = %#v", scenario.Amount)
 	}
-	if scenario.HappyPath.Expectations.HTTPStatus != ExpectedHTTP2xx || scenario.HappyPath.Expectations.PayerConfirmation != ConfirmationRequired {
-		t.Fatalf("Expectations = %#v", scenario.HappyPath.Expectations)
+	if scenario.Funding.Payer.Mode != FundingCoverGeneratedDebits || scenario.Funding.Receiver.Mode != FundingFixed || scenario.Funding.Receiver.Balance != "0.00" || !scenario.Funding.ResetIfExists {
+		t.Fatalf("Funding = %#v", scenario.Funding)
+	}
+	if scenario.Expectations.HTTPStatus != ExpectedHTTP2xx || scenario.Expectations.PayerNotification.Count != 1 {
+		t.Fatalf("Expectations = %#v", scenario.Expectations)
 	}
 	if cfg.Reporting.SLAThresholdMs != 3200 {
 		t.Fatalf("Reporting = %#v", cfg.Reporting)
@@ -110,11 +125,11 @@ func TestUniformSmokePreservesCompatibilityWorkload(t *testing.T) {
 		t.Fatalf("uniform-smoke Load = %#v", cfg.Load)
 	}
 	scenario := cfg.Scenarios[0]
-	distribution := scenario.HappyPath.Participants
+	distribution := scenario.Participants
 	if distribution.PairNumberStart != 1 || distribution.HotPairCount != 10 || distribution.ColdPairCount != 40 || distribution.HotTrafficShare != 0.8 {
 		t.Fatalf("uniform-smoke Distribution = %#v", distribution)
 	}
-	if scenario.Type != ScenarioHappyPath || scenario.Share != 1 || scenario.HappyPath.Amount.Minimum != 100 || scenario.HappyPath.Amount.Maximum != 100098 {
+	if scenario.Name != "happy-path" || scenario.Share != 1 || scenario.Amount.Minimum != 100 || scenario.Amount.Maximum != 100098 {
 		t.Fatalf("uniform-smoke Scenario = %#v", scenario)
 	}
 	if cfg.Reporting.SLAThresholdMs != 1000 {
@@ -241,12 +256,12 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "schema version", old: `"schemaVersion": 1`, new: `"schemaVersion": 2`, wantMessage: "schemaVersion"},
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
-		{name: "scenario", old: `"type": "happy-path",`, new: `"type": "not-supported",`, wantMessage: `unsupported scenario type "not-supported"`},
+		{name: "scenario name", old: `"name": "happy-path",`, new: `"name": "Not-Supported",`, wantMessage: "scenario name"},
 		{name: "share", old: `"share": 1.0`, new: `"share": 0.5`, wantMessage: "shares must sum"},
 		{name: "pair range overflow", old: `"hotPairCount": 7`, new: `"hotPairCount": 1000000`, wantMessage: "maximum pair number 999999"},
 		{name: "amount range", old: `"maximum": 100098`, new: `"maximum": 99`, wantMessage: "amount.maximum"},
 		{name: "HTTP expectation", old: `"httpStatus": "2xx"`, new: `"httpStatus": "4xx"`, wantMessage: "expectations.httpStatus"},
-		{name: "confirmation expectation", old: `"payerConfirmation": "required"`, new: `"payerConfirmation": "forbidden"`, wantMessage: "expectations.payerConfirmation"},
+		{name: "notification expectation", old: `"count": 1`, new: `"count": 2`, wantMessage: "expectations.payerNotification.count"},
 		{name: "SLA", old: `"slaThresholdMs": 3200`, new: `"slaThresholdMs": 0`, wantMessage: "reporting.slaThresholdMs"},
 	}
 
@@ -267,23 +282,22 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 	}
 }
 
-func TestLoadProfileRejectsDuplicateScenarioTypes(t *testing.T) {
+func TestLoadProfileRejectsDuplicateScenarioNames(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "mixed-outcomes-smoke.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	content := strings.Replace(string(data), `"type": "insufficient-funds"`, `"type": "happy-path"`, 1)
-	content = strings.Replace(content, `"payerConfirmation": "forbidden"`, `"payerConfirmation": "required"`, 1)
+	content := strings.Replace(string(data), `"name": "insufficient-funds"`, `"name": "happy-path"`, 1)
 	writeProfile(t, dir, "duplicate-scenario", content)
 
 	_, err = loadProfileFromDir(dir, "duplicate-scenario")
-	if err == nil || !strings.Contains(err.Error(), "duplicate scenario type") {
+	if err == nil || !strings.Contains(err.Error(), "duplicate scenario name") {
 		t.Fatalf("error = %v, want duplicate scenario rejection", err)
 	}
 }
 
-func TestMixedOutcomesSmokeLoadsBothTypedScenarios(t *testing.T) {
+func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "profiles"), "mixed-outcomes-smoke")
 	if err != nil {
 		t.Fatal(err)
@@ -291,28 +305,20 @@ func TestMixedOutcomesSmokeLoadsBothTypedScenarios(t *testing.T) {
 	if cfg.Load.TargetTxRate != 100 || cfg.Load.Warmup != 5*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
 		t.Fatalf("mixed load = %#v", cfg.Load)
 	}
-	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].HappyPath == nil || cfg.Scenarios[1].InsufficientFunds == nil {
+	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "happy-path" || cfg.Scenarios[1].Name != "insufficient-funds" {
 		t.Fatalf("mixed scenarios = %#v", cfg.Scenarios)
 	}
 	if cfg.Scenarios[0].Share != 0.8 || cfg.Scenarios[1].Share != 0.2 {
 		t.Fatalf("mixed shares = %#v", cfg.Scenarios)
 	}
-	if cfg.Scenarios[1].InsufficientFunds.Expectations.PayerConfirmation != ConfirmationForbidden {
-		t.Fatalf("insufficient expectations = %#v", cfg.Scenarios[1].InsufficientFunds.Expectations)
+	if cfg.Scenarios[0].Expectations.PayerNotification.Count != 1 || cfg.Scenarios[1].Expectations.PayerNotification.Count != 1 {
+		t.Fatalf("mixed expectations = %#v", cfg.Scenarios)
 	}
-	if cfg.Scenarios[0].HappyPath.Participants.PairNumberStart != 1 || cfg.Scenarios[1].InsufficientFunds.Participants.PairNumberStart != 41 {
+	if cfg.Scenarios[0].Participants.PairNumberStart != 1 || cfg.Scenarios[1].Participants.PairNumberStart != 41 {
 		t.Fatalf("allocated ranges = %#v", cfg.Scenarios)
 	}
-}
-
-func TestLoadProfileRejectsRemovedFundingField(t *testing.T) {
-	dir := t.TempDir()
-	content := strings.Replace(testProfile, `      "amount": {`, `      "funding": {"balance": 1, "resetIfExists": true},
-      "amount": {`, 1)
-	writeProfile(t, dir, "removed-funding", content)
-	_, err := loadProfileFromDir(dir, "removed-funding")
-	if err == nil || !strings.Contains(err.Error(), `unknown field "funding"`) {
-		t.Fatalf("error = %v, want removed funding rejection", err)
+	if cfg.Scenarios[0].Funding.Payer.Mode != FundingCoverGeneratedDebits || cfg.Scenarios[1].Funding.Payer.Mode != FundingFixed || cfg.Scenarios[1].Funding.Payer.Balance != "0.00" {
+		t.Fatalf("mixed funding = %#v", cfg.Scenarios)
 	}
 }
 
@@ -327,10 +333,81 @@ func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _ := cfg.Scenarios[0].Participants()
-	second, _ := cfg.Scenarios[1].Participants()
+	first := cfg.Scenarios[0].Participants
+	second := cfg.Scenarios[1].Participants
 	if first.PairNumberStart != 1 || second.PairNumberStart != 41 {
 		t.Fatalf("allocated starts = %d/%d, want 1/41", first.PairNumberStart, second.PairNumberStart)
+	}
+}
+
+func TestLoadProfileRejectsRemovedScenarioAndConfirmationFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		field   string
+	}{
+		{name: "scenario type", content: strings.Replace(testProfile, `"name": "happy-path",`, `"name": "happy-path", "type": "happy-path",`, 1), field: `unknown field "type"`},
+		{name: "payer confirmation", content: strings.Replace(testProfile, `"payerNotification": {`, `"payerConfirmation": "required", "payerNotification": {`, 1), field: `unknown field "payerConfirmation"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeProfile(t, dir, "removed-contract", test.content)
+			_, err := loadProfileFromDir(dir, "removed-contract")
+			if err == nil || !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("error = %v, want %s rejection", err, test.field)
+			}
+		})
+	}
+}
+
+func TestLoadProfileValidatesExplicitFunding(t *testing.T) {
+	tests := []struct {
+		name        string
+		old         string
+		new         string
+		wantMessage string
+	}{
+		{name: "missing fixed balance", old: `"mode": "fixed",
+          "balance": "0.00"`, new: `"mode": "fixed"`, wantMessage: "funding.receiver.balance"},
+		{name: "cover with balance", old: `"mode": "cover-generated-debits"`, new: `"mode": "cover-generated-debits", "balance": "1.00"`, wantMessage: "must be omitted"},
+		{name: "receiver cover", old: `"mode": "fixed",
+          "balance": "0.00"`, new: `"mode": "cover-generated-debits"`, wantMessage: "funding.receiver.mode"},
+		{name: "unknown mode", old: `"mode": "cover-generated-debits"`, new: `"mode": "mystery"`, wantMessage: "funding.payer.mode"},
+		{name: "negative", old: `"balance": "0.00"`, new: `"balance": "-1.00"`, wantMessage: "non-negative decimal"},
+		{name: "exponent", old: `"balance": "0.00"`, new: `"balance": "1e3"`, wantMessage: "non-negative decimal"},
+		{name: "precision", old: `"balance": "0.00"`, new: `"balance": "0.001"`, wantMessage: "at most two fractional digits"},
+		{name: "overflow", old: `"balance": "0.00"`, new: `"balance": "92233720368547758.08"`, wantMessage: "overflows"},
+		{name: "missing reset", old: `,
+        "resetIfExists": true`, new: ``, wantMessage: "funding.resetIfExists"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			content := strings.Replace(testProfile, test.old, test.new, 1)
+			if content == testProfile {
+				t.Fatalf("test replacement %q was not applied", test.old)
+			}
+			writeProfile(t, dir, "invalid-funding", content)
+			_, err := loadProfileFromDir(dir, "invalid-funding")
+			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("error = %v, want message containing %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestLoadProfileNormalizesFixedFundingBalance(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `"balance": "0.00"`, `"balance": "12.3"`, 1)
+	writeProfile(t, dir, "normalized-balance", content)
+	cfg, err := loadProfileFromDir(dir, "normalized-balance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scenarios[0].Funding.Receiver.Balance != "12.30" || cfg.Scenarios[0].Funding.Receiver.BalanceCents != 1230 {
+		t.Fatalf("receiver funding = %#v", cfg.Scenarios[0].Funding.Receiver)
 	}
 }
 

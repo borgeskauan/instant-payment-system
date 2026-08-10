@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 )
 
@@ -17,7 +18,7 @@ type Start struct {
 	RequestStartedAtNS int64
 	RequestDoneAtNS    int64
 	HTTPStatus         int
-	ScenarioType       string
+	ScenarioName       string
 }
 
 type Notification struct {
@@ -33,6 +34,8 @@ const (
 	EventPacs002Sent     = "pacs002_sent"
 )
 
+var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name"}
+
 type StartWriter struct {
 	file   *os.File
 	buffer *bufio.Writer
@@ -46,7 +49,7 @@ func NewStartWriter(path string) (*StartWriter, error) {
 	}
 	buffer := bufio.NewWriterSize(file, 4*1024*1024)
 	writer := csv.NewWriter(buffer)
-	if err := writer.Write([]string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_type"}); err != nil {
+	if err := writer.Write(startHeader); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
@@ -62,7 +65,7 @@ func (w *StartWriter) Write(row Start) error {
 		strconv.FormatInt(row.RequestStartedAtNS, 10),
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
-		row.ScenarioType,
+		row.ScenarioName,
 	})
 }
 
@@ -129,8 +132,12 @@ func ReadStarts(path string) ([]Start, error) {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	if _, err := reader.Read(); err != nil {
+	header, err := reader.Read()
+	if err != nil {
 		return nil, err
+	}
+	if !slices.Equal(header, startHeader) {
+		return nil, fmt.Errorf("starts header is %v, want %v", header, startHeader)
 	}
 
 	var rows []Start
@@ -180,35 +187,24 @@ func ReadNotifications(path string) ([]Notification, error) {
 }
 
 func parseStart(record []string) (Start, error) {
-	if len(record) != 6 && len(record) != 7 && len(record) != 8 {
-		return Start{}, fmt.Errorf("start record has %d columns, want 6, 7, or 8", len(record))
+	if len(record) != len(startHeader) {
+		return Start{}, fmt.Errorf("start record has %d columns, want %d", len(record), len(startHeader))
 	}
 	createdAtNS, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
 		return Start{}, err
 	}
-	requestStartedAtNS := createdAtNS
-	requestDoneColumn := 4
-	statusColumn := 5
-	if len(record) >= 7 {
-		requestStartedAtNS, err = strconv.ParseInt(record[4], 10, 64)
-		if err != nil {
-			return Start{}, err
-		}
-		requestDoneColumn = 5
-		statusColumn = 6
-	}
-	requestDoneAtNS, err := strconv.ParseInt(record[requestDoneColumn], 10, 64)
+	requestStartedAtNS, err := strconv.ParseInt(record[4], 10, 64)
 	if err != nil {
 		return Start{}, err
 	}
-	status, err := strconv.Atoi(record[statusColumn])
+	requestDoneAtNS, err := strconv.ParseInt(record[5], 10, 64)
 	if err != nil {
 		return Start{}, err
 	}
-	scenarioType := ""
-	if len(record) == 8 {
-		scenarioType = record[7]
+	status, err := strconv.Atoi(record[6])
+	if err != nil {
+		return Start{}, err
 	}
 	return Start{
 		EndToEndID:         record[0],
@@ -218,7 +214,7 @@ func parseStart(record []string) (Start, error) {
 		RequestStartedAtNS: requestStartedAtNS,
 		RequestDoneAtNS:    requestDoneAtNS,
 		HTTPStatus:         status,
-		ScenarioType:       scenarioType,
+		ScenarioName:       record[7],
 	}, nil
 }
 
