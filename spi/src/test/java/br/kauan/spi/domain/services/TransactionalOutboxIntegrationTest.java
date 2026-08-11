@@ -147,6 +147,52 @@ class TransactionalOutboxIntegrationTest {
     }
 
     @Test
+    void repeatedAcceptedStatusCreatesOneLogicalSettlement() {
+        PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-SETTLED-REPEATED");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+
+        processor.processStatusReports(List.of(
+                authenticatedReport(0, payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS),
+                authenticatedReport(1, payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)
+        ));
+
+        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
+        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("510.00");
+        assertThat(auditRows(payment.getPaymentId())).containsExactlyInAnyOrder(
+                new AuditRow(
+                        "PAYMENT_STATUS_CHANGED",
+                        PaymentStatus.WAITING_ACCEPTANCE.name(),
+                        PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                ),
+                new AuditRow(
+                        "SETTLEMENT_APPLIED",
+                        null,
+                        null,
+                        1_000L,
+                        SENDER_ISPB,
+                        RECEIVER_ISPB,
+                        -1_000L,
+                        1_000L,
+                        null
+                )
+        );
+        assertThat(outboxRows(payment.getPaymentId()))
+                .containsExactlyInAnyOrder(
+                        new OutboxRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC", "PENDING"),
+                        new OutboxRow("SETTLED_NOTIFICATION", RECEIVER_ISPB, "ACCC", "PENDING")
+                );
+    }
+
+    @Test
     void insufficientFundsCommitRejectionAuditAndPayerObligationWithoutMovingFunds() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-NO-FUNDS");
         insertFunds(SENDER_ISPB, "0.00");
@@ -215,14 +261,18 @@ class TransactionalOutboxIntegrationTest {
     }
 
     private List<AuthenticatedStatusReport> authenticatedReports(String paymentId, PaymentStatus status) {
-        return List.of(new AuthenticatedStatusReport(
-                0,
+        return List.of(authenticatedReport(0, paymentId, status));
+    }
+
+    private AuthenticatedStatusReport authenticatedReport(int sourceOrdinal, String paymentId, PaymentStatus status) {
+        return new AuthenticatedStatusReport(
+                sourceOrdinal,
                 RECEIVER_ISPB,
                 StatusReportCommand.builder()
                         .originalPaymentId(paymentId)
                         .status(status)
                         .build()
-        ));
+        );
     }
 
     private List<OutboxRow> outboxRows(String paymentId) {

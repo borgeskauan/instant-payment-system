@@ -177,6 +177,26 @@ class PaymentAuditRepositoryIntegrationTest {
     }
 
     @Test
+    void rejectsDivergentSettlementEventsForTheSamePayment() {
+        String paymentId = "E2E-AUDIT-REPOSITORY-DIVERGENT-SETTLEMENT";
+        PaymentAuditEvent first = settlement(paymentId);
+        PaymentAuditEvent divergent = new PaymentAuditEvent(
+                paymentId,
+                PaymentAuditEventType.SETTLEMENT_APPLIED,
+                null,
+                null,
+                2_000L,
+                "11111111",
+                "22222222",
+                -2_000L,
+                2_000L
+        );
+
+        assertThatThrownBy(() -> repository.insertAll(List.of(first, divergent)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     void rejectsEventsThatDoNotMatchTheirRequiredShape() {
         PaymentAuditEvent invalidStatusChange = new PaymentAuditEvent(
                 "E2E-AUDIT-REPOSITORY-INVALID-SHAPE",

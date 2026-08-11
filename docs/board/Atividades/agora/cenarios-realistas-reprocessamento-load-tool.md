@@ -21,9 +21,9 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - happy-path espera HTTP `2xx` e notificação ao pagador `pacs.002 ACSC`; insufficient-funds espera HTTP `2xx` e notificação `pacs.002 RJCT` com reason `AM04`;
 - notificações ao pagador usam semântica `at-least-once`: uma ou mais entregas compatíveis são válidas, ausência ou outcome contraditório é violação;
 - `targetTxRate` controla somente pagamentos originais; replays são agendados como carga adicional;
-- `mixed-outcomes-smoke` seleciona deterministicamente `10%` dos originais para uma única retransmissão `pacs.008` idêntica, iniciada `10s` após o começo da tentativa original e independentemente de sua resposta HTTP;
-- para cada bloco completo de 100 `pacs.002` originais efetivamente iniciados, `mixed-outcomes-smoke` seleciona deterministicamente 10 para uma única repetição idêntica, iniciada `10s` após o começo do status original e independentemente de sua resposta HTTP;
-- as seleções de `pacs.008` e `pacs.002` usam populações e domínios determinísticos distintos; notificações `pacs.008` repetidas no PSP recebedor são deduplicadas e não criam novos status originais;
+- `mixed-outcomes-smoke` seleciona `10%` dos originais para uma única retransmissão `pacs.008` idêntica, iniciada `10s` após o começo da tentativa original e independentemente de sua resposta HTTP;
+- para cada bloco completo de 100 `pacs.002` originais efetivamente iniciados, `mixed-outcomes-smoke` seleciona 10 para uma única repetição idêntica, iniciada `10s` após o começo do status original e independentemente de sua resposta HTTP;
+- as seleções de `pacs.008` e `pacs.002` usam populações, configurações e contagens próprias; notificações `pacs.008` repetidas no PSP recebedor são deduplicadas e não criam novos status originais;
 - o replay `pacs.008` já passa pelo ingresso normal `/transfer`, com o mesmo pagador e mTLS, sem publicação direta no Kafka;
 - a repetição de `pacs.002` passa pelo ingresso normal `/transfer/status`, com o mesmo PSP recebedor, mTLS e body byte a byte idêntico;
 - `starts.csv` registra a seleção de `pacs.008`, `status-starts.csv` registra os status originais e a seleção de `pacs.002`, e `replays.csv` registra as tentativas repetidas dos dois tipos;
@@ -35,6 +35,9 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - o run de 2026-08-09 (`observable-pacs002-outcomes-smoke/20260809_233329`) terminou com 1.251 originais aceitos e notificados, zero violações, `ACSC` nos 1.001 happy-path e `RJCT`/`AM04` nos 250 insufficient-funds;
 - o run de 2026-08-11 (`pacs008-replay-functional-smoke/20260811_020918`) manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
 - o run de 2026-08-11 (`pacs002-replay-functional-smoke/20260811_040749`) iniciou exatamente 1.000 originais na janela ativa (100/s), aceitou 1.250 originais e 1.250 status, executou 126 replays `pacs.008` e 126 replays `pacs.002` e terminou com zero violações de geração, HTTP, replay ou outcome;
+- o run de caracterização de 2026-08-11 (`phase-2c1-characterization-smoke/20260811_050401`) confirmou 1.250 originais aceitos, 1.000 originais na janela ativa, 1.000 happy-path, 250 insufficient-funds, 1.250 status e 126 replays aceitos de cada tipo, com zero violações;
+- 126 replays de cada tipo caracterizam somente o resultado atual de `mixed-outcomes-smoke`; não são uma regra geral para qualquer população de 1.250 mensagens com `share=0.10`;
+- a suíte de caracterização protege as populações de originais e status, as contagens separadas dos dois tipos de replay e um único resultado lógico final por pagamento, sem congelar quais `EndToEndId` são selecionados;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
 
 ## Fatia 0 — Contrato e execução reproduzível (concluída)
@@ -88,7 +91,7 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 
 - [x] Adicionar ao contrato opcional `replay.pacs008.share` e `replay.pacs008.delay`, mantendo `uniform-smoke` sem replay.
 - [x] Exigir que `share × 100` produza uma quantidade inteira e selecionar exatamente essa quantidade em cada bloco completo de 100 originais.
-- [x] Tornar a seleção determinística pelo índice do bloco e independente da ordenação dos cenários de negócio.
+- [x] Aplicar a seleção à população de pagamentos originais sem alterar a ordenação dos cenários de negócio.
 - [x] Construir o payload uma vez, não modificá-lo e enviar bodies byte a byte iguais no original e no replay.
 - [x] Agendar o replay antes de conhecer a resposta original, para `requestStartedAt + delay`, inclusive quando o original ainda está em andamento ou termina com status `0`, `4xx` ou `5xx`.
 - [x] Usar um scheduler compartilhado e workers limitados, sem criar uma goroutine por pagamento agendado.
@@ -111,7 +114,7 @@ O perfil, o plano resolvido, `starts.csv`, `replays.csv` e `events.csv` reproduz
 O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica `10s` após o início da tentativa original. `share` e `delay` são próprios e configuráveis; os valores concretos de `mixed-outcomes-smoke` são `0.10` e `10s`.
 
 - [x] Aplicar `pacs002.share` à população de status originais efetivamente iniciados e selecionar exatamente `share × 100` em cada bloco completo de 100 status.
-- [x] Dar à sequência de `pacs.002` um domínio determinístico próprio, independente da seleção de `pacs.008` e sem alterar a distribuição happy-path/insufficient-funds.
+- [x] Aplicar a seleção à população própria de `pacs.002` originais, separada de `pacs.008` e sem alterar a distribuição happy-path/insufficient-funds.
 - [x] Deduplicar notificações repetidas de `pacs.008` no PSP recebedor antes de criar o status original.
 - [x] Estender o contrato somente com `replay.pacs002.share` e `replay.pacs002.delay`, sem criar cenário de negócio ou workload autônomo de duplicidade.
 - [x] Construir cada `pacs.002` selecionado uma vez e reenviar body byte a byte idêntico, com o mesmo identificador e PSP recebedor.
@@ -131,6 +134,24 @@ O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma
 ### Critério de saída
 
 O modelo de repetição está explícito no contrato e na documentação; `run-window.json`, `starts.csv`, `status-starts.csv`, `replays.csv` e `events.csv` reproduzem o relatório; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
+
+## Fatia 2C.1 — Caracterização semântica antes da simplificação estrutural (concluída)
+
+**Resultado:** o comportamento útil do workload e seus invariantes de negócio estão protegidos por testes sem transformar flags internas, CSVs, layout do run ou o formato exato do JSON em contrato público.
+
+- [x] Manter como interface pública somente `./run-load-test.sh [--profile NAME] <run-tag>`.
+- [x] Caracterizar `mixed-outcomes-smoke` com 1.250 originais no run, 1.000 na janela ativa, 1.000 happy-path, 250 insufficient-funds e 1.250 `pacs.002` originais iniciados.
+- [x] Proteger, para esse workload caracterizado, 126 seleções de replay `pacs.008` sobre originais e 126 seleções de replay `pacs.002` sobre status originais.
+- [x] Manter as populações, configurações e contagens dos dois tipos separadas e impedir que replay `pacs.008` crie outro `pacs.002` original.
+- [x] Não proteger ordinais, identidade dos pagamentos selecionados, coincidência entre conjuntos ou reprodutibilidade de `EndToEndId`.
+- [x] Tratar entregas `pacs.002` idênticas sob `at-least-once` como um único resultado lógico final e transformar ausência, status contraditório ou reason contraditório em violação do relatório.
+- [x] Provar na SPI que happy-path produz exatamente um `SETTLEMENT_APPLIED`, insufficient-funds produz zero e status aceito repetido não duplica settlement, fundos, auditoria ou outbox.
+- [x] Rejeitar na SPI tanto um segundo settlement idêntico quanto um segundo settlement divergente para o mesmo pagamento.
+- [x] Manter settlement como invariante interno da SPI: o relatório do load-tool não inventa observabilidade que o fluxo externo não oferece e não consulta PostgreSQL.
+
+### Critério de saída
+
+Os testes protegem populações, replay e outcomes lógicos externos no load-tool, enquanto os testes focados da SPI protegem settlement e invariantes financeiros. A próxima simplificação pode alterar mecanismos e artefatos internos sem perder essas garantias.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 

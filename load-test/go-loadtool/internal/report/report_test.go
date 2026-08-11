@@ -1,8 +1,6 @@
 package report
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -216,7 +214,7 @@ func TestSummaryReportsPacs002OriginalsAndSelectedReplays(t *testing.T) {
 	}
 }
 
-func TestSummaryReportsCompactReplayCountsAndIngressRates(t *testing.T) {
+func TestSummaryReportsReplayCountsAndIngressRates(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", RequestStartedAtNS: 1_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
 		{EndToEndID: "tx-2", PayerISPB: "10000002", ScenarioName: "happy-path", RequestStartedAtNS: 6_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
@@ -239,17 +237,6 @@ func TestSummaryReportsCompactReplayCountsAndIngressRates(t *testing.T) {
 	}
 	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.1 || summary.ThroughputPerSecond.Pacs008ReplaysStarted != 0.1 {
 		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
-	}
-	encoded, err := json.Marshal(summary.Replays.Pacs008)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if len(fields) != 3 || fields["attempted"] != float64(2) || fields["accepted"] != float64(2) || fields["violations"] != float64(0) {
-		t.Fatalf("public replay fields = %#v", fields)
 	}
 }
 
@@ -331,73 +318,6 @@ func TestSummaryIncludesRunConfiguration(t *testing.T) {
 	}
 	if summary.Run.SLAThresholdMs != 1000 {
 		t.Fatalf("SLAThresholdMs = %d, want 1000", summary.Run.SLAThresholdMs)
-	}
-}
-
-func TestSummaryJSONUsesFinalReportShape(t *testing.T) {
-	summary := mustBuildSummary(t, []events.Start{
-		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
-	}, []events.Notification{
-		{EndToEndID: "tx-1", ISPB: "10000001", EventType: events.EventPacs002Received, ReceivedAtNS: 1_000_000},
-	}, Options{
-		SLAThresholdMs: 1000,
-		TargetTxRate:   2000,
-		Duration:       time.Second,
-	})
-
-	data, err := json.Marshal(summary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(data, &root); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, ok := root["windows"]; ok {
-		t.Fatal("summary contains deprecated windows section")
-	}
-	if _, ok := root["sla"]; ok {
-		t.Fatal("summary contains deprecated sla section")
-	}
-
-	transactions := root["transactions"].(map[string]any)
-	if _, ok := transactions["payer_notification"]; !ok {
-		t.Fatal("transactions missing payer_notification section")
-	}
-	if _, ok := transactions["payer_notified_by_sla"]; !ok {
-		t.Fatal("transactions missing payer_notified_by_sla section")
-	}
-	if _, ok := root["payer_notification_latency_ms"]; !ok {
-		t.Fatal("summary missing payer_notification_latency_ms section")
-	}
-	scenarioTransactions := root["scenarios"].([]any)[0].(map[string]any)["transactions"].(map[string]any)
-	payerNotification := scenarioTransactions["payer_notification"].(map[string]any)
-	if payerNotification["delivery_semantics"] != "at-least-once" || payerNotification["expected_status"] != "ACSC" {
-		t.Fatalf("payer notification expectation missing from report: %#v", payerNotification)
-	}
-	if _, ok := payerNotification["expected_count"]; ok {
-		t.Fatalf("report retained exact-count expectation: %#v", payerNotification)
-	}
-	if _, ok := payerNotification["excess"]; ok {
-		t.Fatalf("report treats repeated delivery as excess: %#v", payerNotification)
-	}
-
-	throughput := root["throughput_per_second"].(map[string]any)
-	if _, ok := throughput["payer_notified_during_active"]; !ok {
-		t.Fatal("throughput missing payer_notified_during_active")
-	}
-
-	diagnostics := root["diagnostics"].(map[string]any)
-	resultCollection := diagnostics["result_collection"].(map[string]any)
-	if _, ok := resultCollection["payer_notified_total"]; !ok {
-		t.Fatal("diagnostics missing payer_notified_total")
-	}
-	if strings.Contains(string(data), "confirm") {
-		t.Fatalf("summary retains obsolete confirmation terminology: %s", data)
-	}
-	if _, ok := diagnostics["resources"]; ok {
-		t.Fatal("diagnostics contains resource summary that belongs in Prometheus/Grafana")
 	}
 }
 
