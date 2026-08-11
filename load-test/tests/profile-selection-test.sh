@@ -95,6 +95,11 @@ assert commands[0][0] == "simulate", commands
 assert commands[1][0] == "report", commands
 replays_index = commands[1].index("--replays")
 assert commands[1][replays_index + 1] == "../%s/replays.csv" % sys.argv[2], commands
+status_starts_index = commands[1].index("--status-starts")
+assert commands[1][status_starts_index + 1] == "../%s/status-starts.csv" % sys.argv[2], commands
+for command in commands:
+    run_window_index = command.index("--run-window")
+    assert command[run_window_index + 1].endswith("/run-window.json"), command
 for command in commands:
     assert "--seed" not in command, command
     profile_index = command.index("--profile")

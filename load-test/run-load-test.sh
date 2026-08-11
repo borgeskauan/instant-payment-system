@@ -39,6 +39,8 @@ PROFILE_ACTIVE_SECONDS=""
 PROFILE_DRAIN_SECONDS=""
 PROFILE_PACS008_REPLAY_SHARE="-"
 PROFILE_PACS008_REPLAY_DELAY_SECONDS="-"
+PROFILE_PACS002_REPLAY_SHARE="-"
+PROFILE_PACS002_REPLAY_DELAY_SECONDS="-"
 PROFILE_SCENARIO_NAMES=()
 PROFILE_SCENARIO_SHARES=()
 PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
@@ -78,7 +80,7 @@ log_phase() {
 }
 
 iso_now() {
-    date --iso-8601=seconds
+    date '+%Y-%m-%dT%H:%M:%S.%N%:z'
 }
 
 iso_after_seconds() {
@@ -124,88 +126,92 @@ log_grafana_status() {
 write_run_window_json() {
     local target_dir="$1"
     local run_started_at="$2"
-    local active_started_at="$3"
-    local active_finished_at="$4"
-    local drain_finished_at="$5"
-    local grafana_available_at_run_start="$6"
-    local full_run_url active_window_url
-
-    full_run_url="$(grafana_dashboard_url "$run_started_at" "$drain_finished_at")"
-    active_window_url="$(grafana_dashboard_url "$active_started_at" "$active_finished_at")"
+    local drain_finished_at="$3"
+    local grafana_available_at_run_start="$4"
 
     python3 - \
         "$RUN_TAG" \
         "$target_dir" \
         "$run_started_at" \
-        "$active_started_at" \
-        "$active_finished_at" \
         "$drain_finished_at" \
         "$grafana_available_at_run_start" \
         "$GRAFANA_BASE_URL" \
-        "$full_run_url" \
-        "$active_window_url" \
+        "$GRAFANA_DASHBOARD_PATH" \
         "$PROFILE_NAME" \
         "$PROFILE_SNAPSHOT_FILENAME" \
         "$EXECUTION_PLAN_FILENAME" <<'PY'
 import json
+import os
 import sys
+from urllib.parse import quote
 
 tag = sys.argv[1]
 target_dir = sys.argv[2]
 run_started_at = sys.argv[3]
-active_started_at = sys.argv[4]
-active_finished_at = sys.argv[5]
-drain_finished_at = sys.argv[6]
-grafana_available = sys.argv[7].lower() == "true"
-base_url = sys.argv[8]
-full_run_url = sys.argv[9]
-active_window_url = sys.argv[10]
-profile_name = sys.argv[11]
-profile_snapshot = sys.argv[12]
-execution_plan = sys.argv[13]
+drain_finished_at = sys.argv[4]
+grafana_available = sys.argv[5].lower() == "true"
+base_url = sys.argv[6]
+dashboard_path = sys.argv[7]
+profile_name = sys.argv[8]
+profile_snapshot = sys.argv[9]
+execution_plan = sys.argv[10]
+path = f"{target_dir}/run-window.json"
 
-payload = {
-    "tag": tag,
-    "result_dir": target_dir,
-    "profile": {
-        "name": profile_name,
-        "snapshot": profile_snapshot,
-        "execution_plan": execution_plan,
-    },
-    "artifacts": {
-        "starts": "go-loadtool/starts.csv",
-        "events": "go-loadtool/events.csv",
-        "replays": "go-loadtool/replays.csv",
-        "report": "sla-report.json",
-    },
-    "window": {
-        "run_started_at": run_started_at,
-        "active_started_at": active_started_at,
-        "active_finished_at": active_finished_at,
-        "drain_finished_at": drain_finished_at,
-    },
-    "grafana": {
-        "available_at_run_start": grafana_available,
-        "base_url": base_url,
-        "full_run_url": full_run_url,
-        "active_window_url": active_window_url,
-    },
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("schema_version") != 2:
+    raise SystemExit("simulator run-window.json must use schema_version 2")
+if payload.get("profile", {}).get("name") != profile_name:
+    raise SystemExit("simulator run-window.json profile does not match the selected profile")
+window = payload.get("window", {})
+for field in ("generation_started_at", "active_started_at", "generation_ended_at", "replay_deadline_at"):
+    if not isinstance(window.get(field), str) or not window[field]:
+        raise SystemExit(f"simulator run-window.json is missing window.{field}")
+
+def dashboard_url(start, end):
+    return f"{base_url}{dashboard_path}?from={quote(start, safe='')}&to={quote(end, safe='')}"
+
+payload["tag"] = tag
+payload["result_dir"] = target_dir
+payload["profile"].update({"snapshot": profile_snapshot, "execution_plan": execution_plan})
+payload["artifacts"] = {
+    "starts": "go-loadtool/starts.csv",
+    "events": "go-loadtool/events.csv",
+    "replays": "go-loadtool/replays.csv",
+    "status_starts": "go-loadtool/status-starts.csv",
+    "report": "sla-report.json",
+}
+window["run_started_at"] = run_started_at
+window["drain_finished_at"] = drain_finished_at
+payload["grafana"] = {
+    "available_at_run_start": grafana_available,
+    "base_url": base_url,
+    "full_run_url": dashboard_url(run_started_at, drain_finished_at),
+    "active_window_url": dashboard_url(window["active_started_at"], window["generation_ended_at"]),
 }
 
-with open(f"{target_dir}/run-window.json", "w", encoding="utf-8") as handle:
+temporary_path = path + ".tmp"
+with open(temporary_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
+os.replace(temporary_path, path)
 PY
 }
 
 print_grafana_links() {
-    local run_started_at="$1"
-    local active_started_at="$2"
-    local active_finished_at="$3"
-    local drain_finished_at="$4"
-
-    log_phase "Grafana full run: $(grafana_dashboard_url "$run_started_at" "$drain_finished_at")"
-    log_phase "Grafana active window: $(grafana_dashboard_url "$active_started_at" "$active_finished_at")"
+    local target_dir="$1"
+    local -a urls
+    mapfile -t urls < <(python3 - "${target_dir}/run-window.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    grafana = json.load(handle)["grafana"]
+print(grafana["full_run_url"])
+print(grafana["active_window_url"])
+PY
+)
+    log_phase "Grafana full run: ${urls[0]}"
+    log_phase "Grafana active window: ${urls[1]}"
 }
 
 cleanup() {
@@ -351,6 +357,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
 
 pacs008_replay = data.get("replay", {}).get("pacs008")
+pacs002_replay = data.get("replay", {}).get("pacs002")
 print("\t".join([
     "metadata",
     data["profile"],
@@ -360,6 +367,8 @@ print("\t".join([
     str(data["drainSeconds"]),
     str(pacs008_replay["share"]) if pacs008_replay else "-",
     str(pacs008_replay["delaySeconds"]) if pacs008_replay else "-",
+    str(pacs002_replay["share"]) if pacs002_replay else "-",
+    str(pacs002_replay["delaySeconds"]) if pacs002_replay else "-",
 ]))
 for scenario in data["scenarios"]:
     participants = scenario["participants"]
@@ -383,7 +392,7 @@ PY
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
-    IFS=$'\t' read -r record_kind returned_profile PROFILE_SCHEMA_VERSION PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS <<< "${records[0]}"
+    IFS=$'\t' read -r record_kind returned_profile PROFILE_SCHEMA_VERSION PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
     if [[ "$record_kind" != metadata || "$returned_profile" != "$PROFILE_NAME" ]]; then
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
@@ -643,6 +652,9 @@ log_selected_options() {
     if [[ "$PROFILE_PACS008_REPLAY_SHARE" != - ]]; then
         log_phase "pacs.008 replay: share=${PROFILE_PACS008_REPLAY_SHARE} delay=${PROFILE_PACS008_REPLAY_DELAY_SECONDS}s"
     fi
+    if [[ "$PROFILE_PACS002_REPLAY_SHARE" != - ]]; then
+        log_phase "pacs.002 replay: share=${PROFILE_PACS002_REPLAY_SHARE} delay=${PROFILE_PACS002_REPLAY_DELAY_SECONDS}s"
+    fi
     for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
         log_phase "scenario: name=${PROFILE_SCENARIO_NAMES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} pair_number_start=${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]} pairs=${pair_count}"
@@ -853,6 +865,7 @@ run_simulator() {
         "$LOADTOOL_BIN" simulate \
             --profile "$PROFILE_NAME" \
             --out "../${tool_out}" \
+            --run-window "../${target_dir}/run-window.json" \
             --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT" \
             --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT" \
             --central-transfer-server-name "$LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME" \
@@ -873,7 +886,9 @@ generate_sla_report() {
             --profile "$PROFILE_NAME" \
             --starts "../${tool_out}/starts.csv" \
             --events "../${tool_out}/events.csv" \
-            --replays "../${tool_out}/replays.csv"
+            --status-starts "../${tool_out}/status-starts.csv" \
+            --replays "../${tool_out}/replays.csv" \
+            --run-window "../${target_dir}/run-window.json"
     ) | tee "${target_dir}/sla-report.json"
     log_phase "SLA report generated"
 }
@@ -886,16 +901,12 @@ main() {
     build_loadtool "$LOADTOOL_BIN"
     validate_profile_with_loadtool
 
-    local timestamp target_dir tool_out warmup_seconds active_seconds
-    local run_started_at active_started_at active_finished_at drain_finished_at grafana_available_at_run_start
+    local timestamp target_dir tool_out
+    local run_started_at drain_finished_at grafana_available_at_run_start
     timestamp="$(date +%Y%m%d_%H%M%S)"
     target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
     tool_out="${target_dir}/go-loadtool"
-    warmup_seconds="$PROFILE_WARMUP_SECONDS"
-    active_seconds="$PROFILE_ACTIVE_SECONDS"
     run_started_at="$(iso_now)"
-    active_started_at="$(iso_after_seconds "$run_started_at" "$warmup_seconds")"
-    active_finished_at="$(iso_after_seconds "$active_started_at" "$active_seconds")"
 
     prepare_run_workspace "$tool_out"
     prepare_loadtool_certificates "$target_dir"
@@ -914,9 +925,9 @@ main() {
     run_simulator "$target_dir" "$tool_out"
     drain_finished_at="$(iso_now)"
     collect_optional_diagnostics "$target_dir"
+    write_run_window_json "$target_dir" "$run_started_at" "$drain_finished_at" "$grafana_available_at_run_start"
     generate_sla_report "$target_dir" "$tool_out"
-    write_run_window_json "$target_dir" "$run_started_at" "$active_started_at" "$active_finished_at" "$drain_finished_at" "$grafana_available_at_run_start"
-    print_grafana_links "$run_started_at" "$active_started_at" "$active_finished_at" "$drain_finished_at"
+    print_grafana_links "$target_dir"
     log_phase "results written to ${target_dir}"
 }
 

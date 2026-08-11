@@ -48,8 +48,8 @@ fi
 cat > "$tmp_dir/expected-flow.log" <<'EOF'
 simulator
 diagnostics
-report
 run-window
+report
 EOF
 
 if ! diff -u "$tmp_dir/expected-flow.log" "$FLOW_LOG"; then

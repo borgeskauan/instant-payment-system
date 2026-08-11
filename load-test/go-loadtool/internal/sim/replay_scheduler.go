@@ -10,9 +10,10 @@ import (
 
 type replayJob struct {
 	endToEndID   string
-	payerISPB    string
+	senderISPB   string
 	scenarioName string
 	messageType  string
+	endpoint     string
 	body         []byte
 	dueAt        time.Time
 }

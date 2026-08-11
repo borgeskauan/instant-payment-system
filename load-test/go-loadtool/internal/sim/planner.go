@@ -146,7 +146,7 @@ func maximumGeneratedTransfers(targetTxRate int, warmup time.Duration, duration 
 	if math.MaxUint64-warmupCount <= activeCount {
 		return 0, fmt.Errorf("load window generates too many transfers")
 	}
-	return warmupCount + activeCount + 1, nil
+	return warmupCount + activeCount, nil
 }
 
 func checkedUint64Product(left, right uint64) (uint64, bool) {

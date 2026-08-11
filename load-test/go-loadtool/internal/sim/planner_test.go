@@ -138,13 +138,49 @@ func TestPlannerKeepsScenarioLocalPairAndAmountSequences(t *testing.T) {
 	}
 }
 
-func TestMaximumGeneratedTransfersIncludesFinalBoundaryTransfer(t *testing.T) {
+func TestMaximumGeneratedTransfersExcludesFinalBoundaryTransfer(t *testing.T) {
 	got, err := maximumGeneratedTransfers(100, 5*time.Second, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 1251 {
-		t.Fatalf("maximumGeneratedTransfers = %d, want 1251", got)
+	if got != 1250 {
+		t.Fatalf("maximumGeneratedTransfers = %d, want 1250", got)
+	}
+}
+
+func TestPacs002ReplaySelectorAppliesExactQuotaToStatusSequence(t *testing.T) {
+	selector, err := newReplaySelectorWithDomain(0.10, pacs002ReplayShuffleDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := 0
+	for range 2_000 {
+		if selector.Next() {
+			selected++
+		}
+	}
+	if selected != 200 {
+		t.Fatalf("selected PACS.002 replays = %d, want 200 of 2,000 status originals", selected)
+	}
+}
+
+func TestPacs008AndPacs002ReplaySelectorsUseDistinctDomains(t *testing.T) {
+	pacs008, err := newReplaySelectorWithDomain(0.10, pacs008ReplayShuffleDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pacs002, err := newReplaySelectorWithDomain(0.10, pacs002ReplayShuffleDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := true
+	for range config.ScenarioSelectionBlockSize {
+		if pacs008.Next() != pacs002.Next() {
+			same = false
+		}
+	}
+	if same {
+		t.Fatal("PACS.008 and PACS.002 replay selections are identical")
 	}
 }
 

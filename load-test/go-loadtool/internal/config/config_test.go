@@ -34,6 +34,10 @@ const testProfile = `{
     "pacs008": {
       "share": 0.25,
       "delay": "7s"
+    },
+    "pacs002": {
+      "share": 0.20,
+      "delay": "11s"
     }
   },
   "scenarios": [
@@ -101,6 +105,9 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
 		t.Fatalf("Replay = %#v", cfg.Replay)
 	}
+	if cfg.Replay.Pacs002 == nil || cfg.Replay.Pacs002.Share != 0.20 || cfg.Replay.Pacs002.Delay != 11*time.Second {
+		t.Fatalf("Pacs002 replay = %#v", cfg.Replay)
+	}
 	if len(cfg.Scenarios) != 1 {
 		t.Fatalf("Scenarios = %#v", cfg.Scenarios)
 	}
@@ -161,6 +168,10 @@ func TestLoadProfileAcceptsOmittedReplay(t *testing.T) {
     "pacs008": {
       "share": 0.25,
       "delay": "7s"
+    },
+    "pacs002": {
+      "share": 0.20,
+      "delay": "11s"
     }
   },
 `, "", 1)
@@ -170,7 +181,7 @@ func TestLoadProfileAcceptsOmittedReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Replay.Pacs008 != nil {
+	if cfg.Replay.Pacs008 != nil || cfg.Replay.Pacs002 != nil {
 		t.Fatalf("Replay = %#v, want disabled", cfg.Replay)
 	}
 }
@@ -299,6 +310,9 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "replay share not integral per block", old: `"share": 0.25`, new: `"share": 0.015`, wantMessage: "whole number of entries"},
 		{name: "replay delay zero", old: `"delay": "7s"`, new: `"delay": "0s"`, wantMessage: "replay.pacs008.delay"},
 		{name: "replay delay fractional", old: `"delay": "7s"`, new: `"delay": "1500ms"`, wantMessage: "whole number of seconds"},
+		{name: "pacs002 replay share zero", old: `"share": 0.20`, new: `"share": 0`, wantMessage: "replay.pacs002.share"},
+		{name: "pacs002 replay share not integral per block", old: `"share": 0.20`, new: `"share": 0.015`, wantMessage: "replay.pacs002.share"},
+		{name: "pacs002 replay delay zero", old: `"delay": "11s"`, new: `"delay": "0s"`, wantMessage: "replay.pacs002.delay"},
 		{name: "scenario name", old: `"name": "happy-path",`, new: `"name": "Not-Supported",`, wantMessage: "scenario name"},
 		{name: "share", old: `"share": 1.0`, new: `"share": 0.5`, wantMessage: "shares must sum"},
 		{name: "pair range overflow", old: `"hotPairCount": 7`, new: `"hotPairCount": 1000000`, wantMessage: "maximum pair number 999999"},
@@ -371,6 +385,9 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	}
 	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.10 || cfg.Replay.Pacs008.Delay != 10*time.Second {
 		t.Fatalf("mixed replay = %#v", cfg.Replay)
+	}
+	if cfg.Replay.Pacs002 == nil || cfg.Replay.Pacs002.Share != 0.10 || cfg.Replay.Pacs002.Delay != 10*time.Second {
+		t.Fatalf("mixed PACS.002 replay = %#v", cfg.Replay)
 	}
 }
 

@@ -22,12 +22,19 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - notificações ao pagador usam semântica `at-least-once`: uma ou mais entregas compatíveis são válidas, ausência ou outcome contraditório é violação;
 - `targetTxRate` controla somente pagamentos originais; replays são agendados como carga adicional;
 - `mixed-outcomes-smoke` seleciona deterministicamente `10%` dos originais para uma única retransmissão `pacs.008` idêntica, iniciada `10s` após o começo da tentativa original e independentemente de sua resposta HTTP;
+- para cada bloco completo de 100 `pacs.002` originais efetivamente iniciados, `mixed-outcomes-smoke` seleciona deterministicamente 10 para uma única repetição idêntica, iniciada `10s` após o começo do status original e independentemente de sua resposta HTTP;
+- as seleções de `pacs.008` e `pacs.002` usam populações e domínios determinísticos distintos; notificações `pacs.008` repetidas no PSP recebedor são deduplicadas e não criam novos status originais;
 - o replay `pacs.008` já passa pelo ingresso normal `/transfer`, com o mesmo pagador e mTLS, sem publicação direta no Kafka;
-- `starts.csv` registra quais originais foram selecionados, `replays.csv` registra as tentativas repetidas e o relatório separa originais, replays e ingresso total;
+- a repetição de `pacs.002` passa pelo ingresso normal `/transfer/status`, com o mesmo PSP recebedor, mTLS e body byte a byte idêntico;
+- `starts.csv` registra a seleção de `pacs.008`, `status-starts.csv` registra os status originais e a seleção de `pacs.002`, e `replays.csv` registra as tentativas repetidas dos dois tipos;
+- o simulador calcula e persiste antes da geração `generation_started_at`, `active_started_at`, `generation_ended_at` e `replay_deadline_at`; o relatório consome esses instantes sem derivar a janela dos CSVs;
+- warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
+- o relatório expõe separadamente pagamentos originais, status `pacs.002`, replays `pacs.008` e replays `pacs.002`, além de tornar déficit ou excesso da geração ativa uma violação;
 - o relatório valida outcomes de negócio e replays no run inteiro; throughput, latência e SLA permanecem restritos à janela ativa;
-- repetição deliberada de `pacs.002` ainda não está configurável nem é gerada pelo load-tool; esse é o próximo trabalho, na Fatia 2B;
+- a implementação da repetição deliberada de `pacs.002` está concluída e validada funcionalmente no load-tool;
 - o run de 2026-08-09 (`observable-pacs002-outcomes-smoke/20260809_233329`) terminou com 1.251 originais aceitos e notificados, zero violações, `ACSC` nos 1.001 happy-path e `RJCT`/`AM04` nos 250 insufficient-funds;
 - o run de 2026-08-11 (`pacs008-replay-functional-smoke/20260811_020918`) manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
+- o run de 2026-08-11 (`pacs002-replay-functional-smoke/20260811_040749`) iniciou exatamente 1.000 originais na janela ativa (100/s), aceitou 1.250 originais e 1.250 status, executou 126 replays `pacs.008` e 126 replays `pacs.002` e terminou com zero violações de geração, HTTP, replay ou outcome;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
 
 ## Fatia 0 — Contrato e execução reproduzível (concluída)
@@ -87,7 +94,7 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 - [x] Usar um scheduler compartilhado e workers limitados, sem criar uma goroutine por pagamento agendado.
 - [x] Reenviar pelo `/transfer` normal com o mesmo pagador e as mesmas credenciais mTLS.
 - [x] Registrar a seleção em `starts.csv`, as tentativas em `replays.csv` e os caminhos dos artefatos em `run-window.json`.
-- [x] Manter `targetTxRate` como taxa de originais e expor separadamente `original_payments_started`, `pacs008_replays_started` e `total_ingress_started`.
+- [x] Manter `targetTxRate` como taxa de originais e expor separadamente `original_payments_started` e `pacs008_replays_started`.
 - [x] Validar no run inteiro replay ausente, excedente, não selecionado, desconhecido, metadados divergentes, HTTP não `2xx` e início anterior ao delay.
 - [x] Manter o JSON público de replay compacto: `attempted`, `accepted` e `violations`; a taxonomia detalhada permanece interna aos testes do load-tool.
 - [x] Garantir igualdade integral dos bodies nos testes do gerador, sem tentar inferi-la a partir do CSV ou de identidade de referência do `[]byte`.
@@ -97,25 +104,33 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 
 O perfil, o plano resolvido, `starts.csv`, `replays.csv` e `events.csv` reproduzem o relatório; testes provam seleção exata por bloco, agendamento independente da resposta e igualdade dos bodies; um run curto prova o fluxo externo com zero violações.
 
-## Fatia 2B — Repetição idêntica de pacs.002 (ativa)
+## Fatia 2B — Repetição idêntica de pacs.002 (concluída)
 
 **Resultado:** um workload normal acrescenta repetições idênticas de status pelo ingresso usado pelo PSP recebedor, sem reduzir a taxa de pagamentos originais nem produzir outcomes contraditórios para o pagador.
 
-- [ ] Refinar antes da implementação o modelo de repetição de `pacs.002`: mensagens elegíveis, proporção, referência temporal e atraso que representam a retransmissão do PSP recebedor.
-- [ ] Estender o contrato somente com os parâmetros necessários ao modelo aprovado, sem introduzir um cenário de negócio ou workload autônomo de duplicidade.
-- [ ] Selecionar repetições deterministicamente sem alterar a distribuição de happy-path e insufficient-funds.
-- [ ] Construir cada `pacs.002` selecionado uma vez e reenviar conteúdo idêntico, com o mesmo identificador e PSP recebedor.
-- [ ] Enviar original e repetição pelo ingresso normal `/transfer/status` com mTLS; não publicar diretamente no Kafka nem manipular offsets.
-- [ ] Manter `targetTxRate` como taxa de pagamentos originais e contabilizar `pacs.002` repetidos como carga adicional.
-- [ ] Registrar tentativas repetidas em artefato reproduzível e expor separadamente contagem, taxa, aceitação e violações de `pacs.002`.
-- [ ] Validar pelo fluxo externo que o pagador continua recebendo apenas outcomes compatíveis com seu cenário sob semântica `at-least-once`.
-- [ ] Cobrir nos testes focados da SPI que repetição idêntica não duplica settlement, débito, crédito, auditoria ou obrigação de notificação; não consultar o banco pelo load-tool.
-- [ ] Cobrir separadamente, em testes funcionais negativos focados, status divergente para o mesmo pagamento; não misturá-lo ao workload de performance.
-- [ ] Registrar um run funcional curto com repetição `pacs.002` habilitada e zero violações.
+O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica `10s` após o início da tentativa original. `share` e `delay` são próprios e configuráveis; os valores concretos de `mixed-outcomes-smoke` são `0.10` e `10s`.
+
+- [x] Aplicar `pacs002.share` à população de status originais efetivamente iniciados e selecionar exatamente `share × 100` em cada bloco completo de 100 status.
+- [x] Dar à sequência de `pacs.002` um domínio determinístico próprio, independente da seleção de `pacs.008` e sem alterar a distribuição happy-path/insufficient-funds.
+- [x] Deduplicar notificações repetidas de `pacs.008` no PSP recebedor antes de criar o status original.
+- [x] Estender o contrato somente com `replay.pacs002.share` e `replay.pacs002.delay`, sem criar cenário de negócio ou workload autônomo de duplicidade.
+- [x] Construir cada `pacs.002` selecionado uma vez e reenviar body byte a byte idêntico, com o mesmo identificador e PSP recebedor.
+- [x] Agendar a repetição para `statusRequestStartedAt + delay` antes de conhecer a resposta original; timeout, status `0`, `4xx` ou `5xx` não cancelam a obrigação.
+- [x] Enviar original e repetição pelo ingresso normal `/transfer/status` com mTLS; não publicar diretamente no Kafka nem manipular offsets.
+- [x] Persistir `status-starts.csv`, generalizar `replays.csv` para `pacs.008` e `pacs.002` e manter leitura do cabeçalho legado de replay.
+- [x] Calcular no simulador, antes da geração, a janela autoritativa e o deadline fixo `generationEnd + max(delay) + drain`; o relatório não deriva tempo do menor registro.
+- [x] Usar intervalos semiabertos e impedir originais em `generation_ended_at` ou depois, removendo o registro extra no limite.
+- [x] Tratar obrigação que não caiba até o deadline como violação, sem prolongar dinamicamente o experimento para acomodar backlog.
+- [x] Manter `targetTxRate` como taxa de pagamentos originais e expor separadamente originais, status, replay `pacs.008` e replay `pacs.002`; remover `total_ingress_started`.
+- [x] Validar HTTP do status original separadamente do replay, além de replay ausente, precoce, excedente, incompatível, não `2xx` ou iniciado no deadline/depois.
+- [x] Validar pelo fluxo externo que o pagador continua recebendo apenas outcomes compatíveis com seu cenário sob semântica `at-least-once`.
+- [x] Manter settlement, fundos, auditoria, outbox e idempotência cobertos pelos testes focados existentes da SPI, sem consultar o banco pelo load-tool.
+- [x] Manter status divergente nos testes funcionais negativos focados existentes, fora do workload de performance.
+- [x] Registrar um run funcional curto com repetição `pacs.002` habilitada e zero violações.
 
 ### Critério de saída
 
-O modelo de repetição está explícito no contrato e na documentação; simulador e relatório reproduzem e validam as tentativas pelos artefatos do run; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
+O modelo de repetição está explícito no contrato e na documentação; `run-window.json`, `starts.csv`, `status-starts.csv`, `replays.csv` e `events.csv` reproduzem o relatório; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 

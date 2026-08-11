@@ -49,6 +49,10 @@ cat <<'JSON'
     "pacs008": {
       "share": 0.1,
       "delaySeconds": 10
+    },
+    "pacs002": {
+      "share": 0.2,
+      "delaySeconds": 11
     }
   },
   "scenarios": [
@@ -133,6 +137,10 @@ if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PRO
 fi
 if [[ "$PROFILE_PACS008_REPLAY_SHARE" != 0.1 || "$PROFILE_PACS008_REPLAY_DELAY_SECONDS" != 10 ]]; then
     echo "runner did not consume normalized replay settings" >&2
+    exit 1
+fi
+if [[ "$PROFILE_PACS002_REPLAY_SHARE" != 0.2 || "$PROFILE_PACS002_REPLAY_DELAY_SECONDS" != 11 ]]; then
+    echo "runner did not consume normalized PACS.002 replay settings" >&2
     exit 1
 fi
 if [[ "${#PROFILE_SCENARIO_NAMES[@]}" != 2 || "${PROFILE_SCENARIO_NAMES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 0.8 || "${PROFILE_SCENARIO_NAMES[1]}" != insufficient-funds ]]; then

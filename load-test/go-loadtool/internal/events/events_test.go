@@ -153,6 +153,52 @@ func TestReplayEventsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStatusStartEventsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status-starts.csv")
+	writer, err := NewStatusStartWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(StatusStart{
+		EndToEndID:            "tx-1",
+		SenderISPB:            "20000001",
+		ScenarioName:          "insufficient-funds",
+		RequestStartedAtNS:    25,
+		RequestDoneAtNS:       30,
+		HTTPStatus:            202,
+		Pacs002ReplaySelected: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := ReadStatusStarts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].SenderISPB != "20000001" || rows[0].ScenarioName != "insufficient-funds" || rows[0].RequestStartedAtNS != 25 || rows[0].RequestDoneAtNS != 30 || rows[0].HTTPStatus != 202 || !rows[0].Pacs002ReplaySelected {
+		t.Fatalf("status start rows = %#v", rows)
+	}
+}
+
+func TestReadReplaysAcceptsLegacyPayerHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replays.csv")
+	data := "end_to_end_id,payer_ispb,scenario_name,message_type,request_started_at_ns,request_done_at_ns,http_status\n" +
+		"tx-1,10000001,happy-path,pacs.008,25,30,200\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadReplays(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SenderISPB != "10000001" {
+		t.Fatalf("legacy replay rows = %#v", rows)
+	}
+}
+
 func TestReadReplaysRejectsUnexpectedHeader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replays.csv")
 	data := "end_to_end_id,payer_ispb,http_status\n" +

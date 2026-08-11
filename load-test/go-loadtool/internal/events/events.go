@@ -24,13 +24,26 @@ type Start struct {
 }
 
 type Replay struct {
-	EndToEndID         string
+	EndToEndID string
+	SenderISPB string
+	// PayerISPB is retained for compatibility with in-memory callers that
+	// predate PACS.002 replay support.
 	PayerISPB          string
 	ScenarioName       string
 	MessageType        string
 	RequestStartedAtNS int64
 	RequestDoneAtNS    int64
 	HTTPStatus         int
+}
+
+type StatusStart struct {
+	EndToEndID            string
+	SenderISPB            string
+	ScenarioName          string
+	RequestStartedAtNS    int64
+	RequestDoneAtNS       int64
+	HTTPStatus            int
+	Pacs002ReplaySelected bool
 }
 
 type Notification struct {
@@ -47,12 +60,15 @@ const (
 	EventPacs002Received = "pacs002_received"
 	EventPacs002Sent     = "pacs002_sent"
 	MessagePacs008       = "pacs.008"
+	MessagePacs002       = "pacs.002"
 )
 
 var legacyStartHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name"}
 var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name", "pacs008_replay_selected"}
 var notificationHeader = []string{"end_to_end_id", "ispb", "event_type", "received_at_ns", "status_code", "reason_codes"}
-var replayHeader = []string{"end_to_end_id", "payer_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
+var legacyReplayHeader = []string{"end_to_end_id", "payer_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
+var replayHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
+var statusStartHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "request_started_at_ns", "request_done_at_ns", "http_status", "pacs002_replay_selected"}
 
 type StartWriter struct {
 	file   *os.File
@@ -128,15 +144,64 @@ func NewReplayWriter(path string) (*ReplayWriter, error) {
 }
 
 func (w *ReplayWriter) Write(row Replay) error {
+	senderISPB := row.SenderISPB
+	if senderISPB == "" {
+		senderISPB = row.PayerISPB
+	}
 	return w.csv.Write([]string{
 		row.EndToEndID,
-		row.PayerISPB,
+		senderISPB,
 		row.ScenarioName,
 		row.MessageType,
 		strconv.FormatInt(row.RequestStartedAtNS, 10),
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
 	})
+}
+
+type StatusStartWriter struct {
+	file   *os.File
+	buffer *bufio.Writer
+	csv    *csv.Writer
+}
+
+func NewStatusStartWriter(path string) (*StatusStartWriter, error) {
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	buffer := bufio.NewWriterSize(file, 4*1024*1024)
+	writer := csv.NewWriter(buffer)
+	if err := writer.Write(statusStartHeader); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return &StatusStartWriter{file: file, buffer: buffer, csv: writer}, nil
+}
+
+func (w *StatusStartWriter) Write(row StatusStart) error {
+	return w.csv.Write([]string{
+		row.EndToEndID,
+		row.SenderISPB,
+		row.ScenarioName,
+		strconv.FormatInt(row.RequestStartedAtNS, 10),
+		strconv.FormatInt(row.RequestDoneAtNS, 10),
+		strconv.Itoa(row.HTTPStatus),
+		strconv.FormatBool(row.Pacs002ReplaySelected),
+	})
+}
+
+func (w *StatusStartWriter) Close() error {
+	w.csv.Flush()
+	if err := w.csv.Error(); err != nil {
+		_ = w.file.Close()
+		return err
+	}
+	if err := w.buffer.Flush(); err != nil {
+		_ = w.file.Close()
+		return err
+	}
+	return w.file.Close()
 }
 
 func (w *ReplayWriter) Close() error {
@@ -244,7 +309,7 @@ func ReadReplays(path string) ([]Replay, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Equal(header, replayHeader) {
+	if !slices.Equal(header, replayHeader) && !slices.Equal(header, legacyReplayHeader) {
 		return nil, fmt.Errorf("replays header is %v, want %v", header, replayHeader)
 	}
 
@@ -258,6 +323,37 @@ func ReadReplays(path string) ([]Replay, error) {
 			return nil, err
 		}
 		row, err := parseReplay(record)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+}
+
+func ReadStatusStarts(path string) ([]StatusStart, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	header, err := reader.Read()
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(header, statusStartHeader) {
+		return nil, fmt.Errorf("status starts header is %v, want %v", header, statusStartHeader)
+	}
+	var rows []StatusStart
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			return rows, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		row, err := parseStatusStart(record)
 		if err != nil {
 			return nil, err
 		}
@@ -360,6 +456,7 @@ func parseReplay(record []string) (Replay, error) {
 	}
 	return Replay{
 		EndToEndID:         record[0],
+		SenderISPB:         record[1],
 		PayerISPB:          record[1],
 		ScenarioName:       record[2],
 		MessageType:        record[3],
@@ -367,6 +464,29 @@ func parseReplay(record []string) (Replay, error) {
 		RequestDoneAtNS:    requestDoneAtNS,
 		HTTPStatus:         status,
 	}, nil
+}
+
+func parseStatusStart(record []string) (StatusStart, error) {
+	if len(record) != len(statusStartHeader) {
+		return StatusStart{}, fmt.Errorf("status start record has %d columns, want %d", len(record), len(statusStartHeader))
+	}
+	startedAt, err := strconv.ParseInt(record[3], 10, 64)
+	if err != nil {
+		return StatusStart{}, err
+	}
+	doneAt, err := strconv.ParseInt(record[4], 10, 64)
+	if err != nil {
+		return StatusStart{}, err
+	}
+	status, err := strconv.Atoi(record[5])
+	if err != nil {
+		return StatusStart{}, err
+	}
+	selected, err := strconv.ParseBool(record[6])
+	if err != nil {
+		return StatusStart{}, err
+	}
+	return StatusStart{EndToEndID: record[0], SenderISPB: record[1], ScenarioName: record[2], RequestStartedAtNS: startedAt, RequestDoneAtNS: doneAt, HTTPStatus: status, Pacs002ReplaySelected: selected}, nil
 }
 
 func parseNotification(record []string) (Notification, error) {

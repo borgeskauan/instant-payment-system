@@ -8,6 +8,7 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 )
 
 func TestSummaryCountsSLA(t *testing.T) {
@@ -155,6 +156,66 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 	}
 }
 
+func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
+	options := Options{
+		TargetTxRate: 1,
+		Warmup:       10 * time.Second,
+		Duration:     5 * time.Second,
+		Window: runwindow.Window{
+			GenerationStartedAt: time.Unix(0, 0),
+			ActiveStartedAt:     time.Unix(10, 0),
+			GenerationEndedAt:   time.Unix(15, 0),
+			ReplayDeadlineAt:    time.Unix(20, 0),
+		},
+	}
+	starts := []events.Start{
+		{EndToEndID: "late-first", PayerISPB: "10000001", ScenarioName: "happy-path", RequestStartedAtNS: time.Unix(12, 0).UnixNano(), HTTPStatus: 200},
+		{EndToEndID: "at-end", PayerISPB: "10000002", ScenarioName: "happy-path", RequestStartedAtNS: time.Unix(15, 0).UnixNano(), HTTPStatus: 200},
+	}
+
+	summary := mustBuildSummary(t, starts, nil, options)
+	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.2 {
+		t.Fatalf("active original rate = %f, want 0.2", summary.ThroughputPerSecond.OriginalPaymentsStarted)
+	}
+	if summary.LoadGeneration.Expected != 5 || summary.LoadGeneration.Started != 1 || summary.LoadGeneration.Violations == 0 {
+		t.Fatalf("load generation = %#v", summary.LoadGeneration)
+	}
+}
+
+func TestSummaryReportsPacs002OriginalsAndSelectedReplays(t *testing.T) {
+	statuses := []events.StatusStart{
+		{EndToEndID: "tx-1", SenderISPB: "20000001", ScenarioName: "happy-path", RequestStartedAtNS: time.Unix(2, 0).UnixNano(), HTTPStatus: 200, Pacs002ReplaySelected: true},
+		{EndToEndID: "tx-2", SenderISPB: "20000002", ScenarioName: "happy-path", RequestStartedAtNS: time.Unix(3, 0).UnixNano(), HTTPStatus: 500},
+		{EndToEndID: "tx-3", SenderISPB: "20000003", ScenarioName: "happy-path", RequestStartedAtNS: time.Unix(30, 0).UnixNano(), HTTPStatus: 200},
+	}
+	replays := []events.Replay{
+		{EndToEndID: "tx-1", SenderISPB: "20000001", ScenarioName: "happy-path", MessageType: events.MessagePacs002, RequestStartedAtNS: time.Unix(12, 0).UnixNano(), HTTPStatus: 202},
+	}
+	options := Options{
+		Duration: 20 * time.Second,
+		Replay:   config.Replay{Pacs002: &config.Pacs002Replay{Share: 0.10, Delay: 10 * time.Second}},
+		Window: runwindow.Window{
+			GenerationStartedAt: time.Unix(0, 0),
+			ActiveStartedAt:     time.Unix(0, 0),
+			GenerationEndedAt:   time.Unix(20, 0),
+			ReplayDeadlineAt:    time.Unix(30, 0),
+		},
+	}
+	summary, err := BuildWithArtifacts(nil, nil, statuses, replays, withDefaultScenario(options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.StatusMessages.Pacs002.Attempted != 3 || summary.StatusMessages.Pacs002.Accepted != 2 || summary.StatusMessages.Pacs002.Violations != 2 {
+		t.Fatalf("PACS.002 originals = %#v", summary.StatusMessages.Pacs002)
+	}
+	if summary.Replays.Pacs002.Attempted != 1 || summary.Replays.Pacs002.Accepted != 1 || summary.Replays.Pacs002.Violations != 0 {
+		t.Fatalf("PACS.002 replays = %#v", summary.Replays.Pacs002)
+	}
+	if summary.ThroughputPerSecond.Pacs002StatusesStarted != 0.1 || summary.ThroughputPerSecond.Pacs002ReplaysStarted != 0.05 {
+		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
+	}
+}
+
 func TestSummaryReportsCompactReplayCountsAndIngressRates(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", RequestStartedAtNS: 1_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
@@ -176,7 +237,7 @@ func TestSummaryReportsCompactReplayCountsAndIngressRates(t *testing.T) {
 	if summary.Replays.Pacs008.Attempted != 2 || summary.Replays.Pacs008.Accepted != 2 || summary.Replays.Pacs008.Violations != 0 {
 		t.Fatalf("replay summary = %#v", summary.Replays.Pacs008)
 	}
-	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.1 || summary.ThroughputPerSecond.Pacs008ReplaysStarted != 0.1 || summary.ThroughputPerSecond.TotalIngressStarted != 0.2 {
+	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.1 || summary.ThroughputPerSecond.Pacs008ReplaysStarted != 0.1 {
 		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
 	}
 	encoded, err := json.Marshal(summary.Replays.Pacs008)
@@ -534,11 +595,36 @@ func mustBuildSummaryWithReplays(t *testing.T, starts []events.Start, notificati
 			}
 		}
 	}
-	summary, err := BuildWithReplayOptions(starts, notifications, replays, options)
+	options = withDefaultWindow(options)
+	summary, err := BuildWithArtifacts(starts, notifications, nil, replays, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return summary
+}
+
+func withDefaultScenario(options Options) Options {
+	if len(options.Scenarios) == 0 {
+		options.Scenarios = []config.Scenario{reportTestHappyPathScenario()}
+	}
+	return options
+}
+
+func withDefaultWindow(options Options) Options {
+	if options.Window.GenerationStartedAt.IsZero() {
+		started := time.Unix(0, 0)
+		generationEnded := started.Add(options.Warmup + options.Duration)
+		if options.Duration <= 0 {
+			generationEnded = started.Add(options.Warmup + 24*time.Hour)
+		}
+		options.Window = runwindow.Window{
+			GenerationStartedAt: started,
+			ActiveStartedAt:     started.Add(options.Warmup),
+			GenerationEndedAt:   generationEnded,
+			ReplayDeadlineAt:    generationEnded.Add(24 * time.Hour),
+		}
+	}
+	return options
 }
 
 func reportTestHappyPathScenario() config.Scenario {

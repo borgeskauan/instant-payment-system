@@ -24,6 +24,10 @@
     "pacs008": {
       "share": 0.10,
       "delay": "10s"
+    },
+    "pacs002": {
+      "share": 0.10,
+      "delay": "10s"
     }
   },
   "scenarios": [

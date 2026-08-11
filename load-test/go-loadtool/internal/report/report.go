@@ -9,20 +9,34 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 )
 
 type Summary struct {
-	Run                        RunSummary         `json:"run"`
-	Transactions               TransactionSummary `json:"transactions"`
-	Replays                    ReplaySummary      `json:"replays"`
-	ThroughputPerSecond        ThroughputSummary  `json:"throughput_per_second"`
-	PayerNotificationLatencyMs LatencySummary     `json:"payer_notification_latency_ms"`
-	Scenarios                  []ScenarioSummary  `json:"scenarios"`
-	Diagnostics                DiagnosticSummary  `json:"diagnostics"`
+	Run                        RunSummary            `json:"run"`
+	Transactions               TransactionSummary    `json:"transactions"`
+	Replays                    ReplaySummary         `json:"replays"`
+	StatusMessages             StatusMessageSummary  `json:"status_messages"`
+	LoadGeneration             LoadGenerationSummary `json:"load_generation"`
+	ThroughputPerSecond        ThroughputSummary     `json:"throughput_per_second"`
+	PayerNotificationLatencyMs LatencySummary        `json:"payer_notification_latency_ms"`
+	Scenarios                  []ScenarioSummary     `json:"scenarios"`
+	Diagnostics                DiagnosticSummary     `json:"diagnostics"`
 }
 
 type ReplaySummary struct {
 	Pacs008 ReplayTypeSummary `json:"pacs008"`
+	Pacs002 ReplayTypeSummary `json:"pacs002"`
+}
+
+type StatusMessageSummary struct {
+	Pacs002 ReplayTypeSummary `json:"pacs002"`
+}
+
+type LoadGenerationSummary struct {
+	Expected   int `json:"expected"`
+	Started    int `json:"started"`
+	Violations int `json:"violations"`
 }
 
 type ReplayTypeSummary struct {
@@ -93,8 +107,9 @@ type NotifiedBySLASummary struct {
 type ThroughputSummary struct {
 	Started                   float64 `json:"started"`
 	OriginalPaymentsStarted   float64 `json:"original_payments_started"`
+	Pacs002StatusesStarted    float64 `json:"pacs002_statuses_started"`
 	Pacs008ReplaysStarted     float64 `json:"pacs008_replays_started"`
-	TotalIngressStarted       float64 `json:"total_ingress_started"`
+	Pacs002ReplaysStarted     float64 `json:"pacs002_replays_started"`
 	PayerNotifiedDuringActive float64 `json:"payer_notified_during_active"`
 }
 
@@ -120,21 +135,30 @@ type Options struct {
 	TargetTxRate   int
 	Warmup         time.Duration
 	Duration       time.Duration
+	Drain          time.Duration
 	Replay         config.Replay
 	Scenarios      []config.Scenario
+	Window         runwindow.Window
 }
 
 func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) (Summary, error) {
-	return BuildWithReplayOptions(starts, notifications, nil, options)
+	return BuildWithArtifacts(starts, notifications, nil, nil, options)
 }
 
 func BuildWithReplayOptions(starts []events.Start, notifications []events.Notification, replays []events.Replay, options Options) (Summary, error) {
+	return BuildWithArtifacts(starts, notifications, nil, replays, options)
+}
+
+func BuildWithArtifacts(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {
 	var summary Summary
 	scenarios := options.Scenarios
 	if len(scenarios) == 0 {
 		return Summary{}, fmt.Errorf("report requires at least one configured scenario")
 	}
 	if err := validateStartScenarios(starts, scenarios); err != nil {
+		return Summary{}, err
+	}
+	if err := validateWindow(options.Window); err != nil {
 		return Summary{}, err
 	}
 	summary.Run.TargetTPS = options.TargetTxRate
@@ -169,18 +193,33 @@ func BuildWithReplayOptions(starts []events.Start, notifications []events.Notifi
 			},
 		}
 	}
-	measuredStarts := measuredWindowStarts(starts, options.Warmup, options.Duration)
-	measuredReplays := measuredWindowReplays(starts, replays, options.Warmup, options.Duration)
+	measuredStarts := measuredWindowStarts(starts, options.Window)
+	measuredPacs008Replays := measuredWindowReplays(replays, events.MessagePacs008, options.Window)
+	measuredPacs002Replays := measuredWindowReplays(replays, events.MessagePacs002, options.Window)
+	measuredStatuses := measuredWindowStatusStarts(statusStarts, options.Window)
 	summary.Transactions.Started = len(starts)
-	summary.Replays.Pacs008 = summarizePacs008Replays(starts, replays, options.Replay.Pacs008)
+	summary.StatusMessages.Pacs002 = summarizePacs002StatusStarts(statusStarts, options.Window)
+	summary.Replays.Pacs008 = summarizePacs008Replays(starts, replays, options.Replay.Pacs008, options.Window)
+	summary.Replays.Pacs002 = summarizePacs002Replays(statusStarts, replays, options.Replay.Pacs002, options.Window)
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
 		originalRate := float64(len(measuredStarts)) / durationSeconds
-		replayRate := float64(len(measuredReplays)) / durationSeconds
 		summary.ThroughputPerSecond.Started = originalRate
 		summary.ThroughputPerSecond.OriginalPaymentsStarted = originalRate
-		summary.ThroughputPerSecond.Pacs008ReplaysStarted = replayRate
-		summary.ThroughputPerSecond.TotalIngressStarted = originalRate + replayRate
+		summary.ThroughputPerSecond.Pacs002StatusesStarted = float64(len(measuredStatuses)) / durationSeconds
+		summary.ThroughputPerSecond.Pacs008ReplaysStarted = float64(len(measuredPacs008Replays)) / durationSeconds
+		summary.ThroughputPerSecond.Pacs002ReplaysStarted = float64(len(measuredPacs002Replays)) / durationSeconds
+		if options.TargetTxRate > 0 {
+			summary.LoadGeneration.Expected = int(float64(options.TargetTxRate) * durationSeconds)
+			summary.LoadGeneration.Started = len(measuredStarts)
+			summary.LoadGeneration.Violations = absoluteDifference(summary.LoadGeneration.Expected, summary.LoadGeneration.Started)
+		}
+	}
+	for _, start := range starts {
+		startedAt := requestStartedAt(start)
+		if startedAt < options.Window.GenerationStartedAt.UnixNano() || startedAt >= options.Window.GenerationEndedAt.UnixNano() {
+			summary.LoadGeneration.Violations++
+		}
 	}
 
 	payerNotifications := collectPayerNotifications(notifications)
@@ -229,7 +268,7 @@ func BuildWithReplayOptions(starts []events.Start, notifications []events.Notifi
 		}
 	}
 
-	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
+	activeWindowEndNS := options.Window.GenerationEndedAt.UnixNano()
 	payerNotifiedDuringActive := 0
 	matchedActivePayments := 0
 	var durations []float64
@@ -251,7 +290,7 @@ func BuildWithReplayOptions(starts []events.Start, notifications []events.Notifi
 		durations = append(durations, durationMs)
 		scenarioIndex := scenarioIndexes[scenario.Name]
 		scenarioDurations[scenarioIndex] = append(scenarioDurations[scenarioIndex], durationMs)
-		if activeWindowEndNS > 0 && match.earliestMatchingAt <= activeWindowEndNS {
+		if match.earliestMatchingAt < activeWindowEndNS {
 			payerNotifiedDuringActive++
 		}
 		scenarioSummary := &summary.Scenarios[scenarioIndex]
@@ -309,28 +348,15 @@ func scenarioForStart(start events.Start, scenarios []config.Scenario) (config.S
 	return config.Scenario{}, fmt.Errorf("start %q uses unknown scenario name %q", start.EndToEndID, start.ScenarioName)
 }
 
-func configuredActiveWindowEndNS(starts []events.Start, warmup time.Duration, duration time.Duration) int64 {
-	if len(starts) == 0 || duration <= 0 {
-		return 0
-	}
-	return firstStartedAt(starts) + warmup.Nanoseconds() + duration.Nanoseconds()
-}
-
-func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration time.Duration) []events.Start {
-	if len(starts) == 0 {
-		return nil
-	}
-	windowStart := firstStartedAt(starts) + warmup.Nanoseconds()
-	windowEnd := int64(0)
-	if duration > 0 {
-		windowEnd = windowStart + duration.Nanoseconds()
-	}
+func measuredWindowStarts(starts []events.Start, window runwindow.Window) []events.Start {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
 	measured := make([]events.Start, 0, len(starts))
 	for _, start := range starts {
 		if requestStartedAt(start) < windowStart {
 			continue
 		}
-		if windowEnd > 0 && requestStartedAt(start) >= windowEnd {
+		if requestStartedAt(start) >= windowEnd {
 			continue
 		}
 		measured = append(measured, start)
@@ -338,21 +364,18 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 	return measured
 }
 
-func measuredWindowReplays(starts []events.Start, replays []events.Replay, warmup time.Duration, duration time.Duration) []events.Replay {
-	if len(starts) == 0 {
-		return nil
-	}
-	windowStart := firstStartedAt(starts) + warmup.Nanoseconds()
-	windowEnd := int64(0)
-	if duration > 0 {
-		windowEnd = windowStart + duration.Nanoseconds()
-	}
+func measuredWindowReplays(replays []events.Replay, messageType string, window runwindow.Window) []events.Replay {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
 	measured := make([]events.Replay, 0, len(replays))
 	for _, replay := range replays {
+		if replay.MessageType != messageType {
+			continue
+		}
 		if replay.RequestStartedAtNS < windowStart {
 			continue
 		}
-		if windowEnd > 0 && replay.RequestStartedAtNS >= windowEnd {
+		if replay.RequestStartedAtNS >= windowEnd {
 			continue
 		}
 		measured = append(measured, replay)
@@ -360,14 +383,30 @@ func measuredWindowReplays(starts []events.Start, replays []events.Replay, warmu
 	return measured
 }
 
-func summarizePacs008Replays(starts []events.Start, replays []events.Replay, configured *config.Pacs008Replay) ReplayTypeSummary {
-	summary := ReplayTypeSummary{Attempted: len(replays)}
+func measuredWindowStatusStarts(statusStarts []events.StatusStart, window runwindow.Window) []events.StatusStart {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
+	measured := make([]events.StatusStart, 0, len(statusStarts))
+	for _, status := range statusStarts {
+		if status.RequestStartedAtNS >= windowStart && status.RequestStartedAtNS < windowEnd {
+			measured = append(measured, status)
+		}
+	}
+	return measured
+}
+
+func summarizePacs008Replays(starts []events.Start, replays []events.Replay, configured *config.Pacs008Replay, window runwindow.Window) ReplayTypeSummary {
+	var summary ReplayTypeSummary
 	startsByID := make(map[string]events.Start, len(starts))
 	for _, start := range starts {
 		startsByID[start.EndToEndID] = start
 	}
 	attemptsByID := make(map[string]int, len(replays))
 	for _, replay := range replays {
+		if replay.MessageType != events.MessagePacs008 {
+			continue
+		}
+		summary.Attempted++
 		if replay.HTTPStatus >= 200 && replay.HTTPStatus < 300 {
 			summary.Accepted++
 		} else {
@@ -382,7 +421,7 @@ func summarizePacs008Replays(starts []events.Start, replays []events.Replay, con
 		if !start.Pacs008ReplaySelected {
 			summary.Violations++
 		}
-		if replay.PayerISPB != start.PayerISPB || replay.ScenarioName != start.ScenarioName || replay.MessageType != events.MessagePacs008 {
+		if replaySenderISPB(replay) != start.PayerISPB || replay.ScenarioName != start.ScenarioName {
 			summary.Violations++
 		}
 		if configured == nil {
@@ -390,6 +429,9 @@ func summarizePacs008Replays(starts []events.Start, replays []events.Replay, con
 			continue
 		}
 		if replay.RequestStartedAtNS < requestStartedAt(start)+configured.Delay.Nanoseconds() {
+			summary.Violations++
+		}
+		if replay.RequestStartedAtNS >= window.ReplayDeadlineAt.UnixNano() {
 			summary.Violations++
 		}
 	}
@@ -408,15 +450,89 @@ func summarizePacs008Replays(starts []events.Start, replays []events.Replay, con
 	return summary
 }
 
-func firstStartedAt(starts []events.Start) int64 {
-	minStartedAt := requestStartedAt(starts[0])
-	for _, start := range starts[1:] {
-		startedAt := requestStartedAt(start)
-		if startedAt < minStartedAt {
-			minStartedAt = startedAt
+func summarizePacs002StatusStarts(statusStarts []events.StatusStart, window runwindow.Window) ReplayTypeSummary {
+	summary := ReplayTypeSummary{Attempted: len(statusStarts)}
+	for _, status := range statusStarts {
+		if status.HTTPStatus >= 200 && status.HTTPStatus < 300 {
+			summary.Accepted++
+		} else {
+			summary.Violations++
+		}
+		if status.RequestStartedAtNS >= window.ReplayDeadlineAt.UnixNano() {
+			summary.Violations++
 		}
 	}
-	return minStartedAt
+	return summary
+}
+
+func summarizePacs002Replays(statusStarts []events.StatusStart, replays []events.Replay, configured *config.Pacs002Replay, window runwindow.Window) ReplayTypeSummary {
+	var summary ReplayTypeSummary
+	statusesByID := make(map[string]events.StatusStart, len(statusStarts))
+	for _, status := range statusStarts {
+		statusesByID[status.EndToEndID] = status
+	}
+	attemptsByID := make(map[string]int)
+	for _, replay := range replays {
+		if replay.MessageType != events.MessagePacs002 {
+			continue
+		}
+		summary.Attempted++
+		if replay.HTTPStatus >= 200 && replay.HTTPStatus < 300 {
+			summary.Accepted++
+		} else {
+			summary.Violations++
+		}
+		status, exists := statusesByID[replay.EndToEndID]
+		if !exists {
+			summary.Violations++
+			continue
+		}
+		attemptsByID[replay.EndToEndID]++
+		if !status.Pacs002ReplaySelected || replaySenderISPB(replay) != status.SenderISPB || replay.ScenarioName != status.ScenarioName {
+			summary.Violations++
+		}
+		if configured == nil {
+			summary.Violations++
+			continue
+		}
+		if replay.RequestStartedAtNS < status.RequestStartedAtNS+configured.Delay.Nanoseconds() || replay.RequestStartedAtNS >= window.ReplayDeadlineAt.UnixNano() {
+			summary.Violations++
+		}
+	}
+	for _, status := range statusStarts {
+		if !status.Pacs002ReplaySelected {
+			continue
+		}
+		attempts := attemptsByID[status.EndToEndID]
+		if attempts == 0 {
+			summary.Violations++
+		}
+		if attempts > 1 {
+			summary.Violations += attempts - 1
+		}
+	}
+	return summary
+}
+
+func replaySenderISPB(replay events.Replay) string {
+	if replay.SenderISPB != "" {
+		return replay.SenderISPB
+	}
+	return replay.PayerISPB
+}
+
+func validateWindow(window runwindow.Window) error {
+	if window.GenerationStartedAt.IsZero() || window.ActiveStartedAt.Before(window.GenerationStartedAt) || window.GenerationEndedAt.Before(window.ActiveStartedAt) || window.ReplayDeadlineAt.Before(window.GenerationEndedAt) {
+		return fmt.Errorf("report requires a valid authoritative run window")
+	}
+	return nil
+}
+
+func absoluteDifference(left, right int) int {
+	if left > right {
+		return left - right
+	}
+	return right - left
 }
 
 func requestStartedAt(start events.Start) int64 {
@@ -505,7 +621,7 @@ func cloneStrings(values []string) []string {
 	return cloned
 }
 
-func Print(startsPath string, eventsPath string, replaysPath string, options Options, output io.Writer) error {
+func PrintWithArtifacts(startsPath string, eventsPath string, statusStartsPath string, replaysPath string, options Options, output io.Writer) error {
 	starts, err := events.ReadStarts(startsPath)
 	if err != nil {
 		return err
@@ -521,8 +637,15 @@ func Print(startsPath string, eventsPath string, replaysPath string, options Opt
 			return err
 		}
 	}
+	var statusStarts []events.StatusStart
+	if statusStartsPath != "" {
+		statusStarts, err = events.ReadStatusStarts(statusStartsPath)
+		if err != nil {
+			return err
+		}
+	}
 
-	summary, err := BuildWithReplayOptions(starts, notifications, replays, options)
+	summary, err := BuildWithArtifacts(starts, notifications, statusStarts, replays, options)
 	if err != nil {
 		return err
 	}

@@ -59,6 +59,20 @@ func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	}
 }
 
+func TestOriginalStartWindowIsSemiOpen(t *testing.T) {
+	start := time.Unix(100, 0)
+	end := start.Add(time.Second)
+	if !canStartOriginal(start, end) {
+		t.Fatal("generation start was excluded")
+	}
+	if !canStartOriginal(end.Add(-time.Nanosecond), end) {
+		t.Fatal("instant before generation end was excluded")
+	}
+	if canStartOriginal(end, end) || canStartOriginal(end.Add(time.Nanosecond), end) {
+		t.Fatal("generation end was not exclusive")
+	}
+}
+
 func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testing.T) {
 	s := &simulator{
 		cfg: Config{
@@ -122,7 +136,7 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	var active atomic.Int64
 	var maxActive atomic.Int64
 	s := &simulator{
-		sendPacs002Func: func(context.Context, string, string) {
+		sendPacs002Func: func(context.Context, statusJob) {
 			current := active.Add(1)
 			for {
 				previous := maxActive.Load()
@@ -150,6 +164,27 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	}
 	if got := maxActive.Load(); got > workerCount {
 		t.Fatalf("max concurrent status workers = %d, want <= %d", got, workerCount)
+	}
+}
+
+func TestRepeatedPacs008NotificationQueuesOneOriginalPacs002(t *testing.T) {
+	s := &simulator{
+		statusJobs:      make(chan statusJob, 2),
+		statusQueuedIDs: make(map[string]struct{}),
+		transferScenarios: map[string]string{
+			"tx-1": "happy-path",
+		},
+	}
+
+	s.enqueuePacs002(context.Background(), "20000001", "tx-1")
+	s.enqueuePacs002(context.Background(), "20000001", "tx-1")
+
+	if got := len(s.statusJobs); got != 1 {
+		t.Fatalf("queued PACS.002 originals = %d, want 1", got)
+	}
+	job := <-s.statusJobs
+	if job.scenarioName != "happy-path" {
+		t.Fatalf("scenario name = %q", job.scenarioName)
 	}
 }
 

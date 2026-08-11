@@ -69,9 +69,15 @@ type Load struct {
 
 type Replay struct {
 	Pacs008 *Pacs008Replay
+	Pacs002 *Pacs002Replay
 }
 
 type Pacs008Replay struct {
+	Share float64
+	Delay time.Duration
+}
+
+type Pacs002Replay struct {
 	Share float64
 	Delay time.Duration
 }
@@ -161,9 +167,15 @@ type fileLoad struct {
 
 type fileReplay struct {
 	Pacs008 *filePacs008Replay `json:"pacs008,omitempty"`
+	Pacs002 *filePacs002Replay `json:"pacs002,omitempty"`
 }
 
 type filePacs008Replay struct {
+	Share float64 `json:"share"`
+	Delay string  `json:"delay"`
+}
+
+type filePacs002Replay struct {
 	Share float64 `json:"share"`
 	Delay string  `json:"delay"`
 }
@@ -351,19 +363,35 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 }
 
 func decodeReplay(profileName string, file fileReplay) (Replay, error) {
-	if file.Pacs008 == nil {
-		return Replay{}, nil
+	var replay Replay
+	if file.Pacs008 != nil {
+		share, delay, err := decodeReplayRule(profileName, "replay.pacs008", file.Pacs008.Share, file.Pacs008.Delay)
+		if err != nil {
+			return Replay{}, err
+		}
+		replay.Pacs008 = &Pacs008Replay{Share: share, Delay: delay}
 	}
-	quota := file.Pacs008.Share * ScenarioSelectionBlockSize
+	if file.Pacs002 != nil {
+		share, delay, err := decodeReplayRule(profileName, "replay.pacs002", file.Pacs002.Share, file.Pacs002.Delay)
+		if err != nil {
+			return Replay{}, err
+		}
+		replay.Pacs002 = &Pacs002Replay{Share: share, Delay: delay}
+	}
+	return replay, nil
+}
+
+func decodeReplayRule(profileName string, field string, share float64, delayText string) (float64, time.Duration, error) {
+	quota := share * ScenarioSelectionBlockSize
 	roundedQuota := math.Round(quota)
-	if file.Pacs008.Share <= 0 || file.Pacs008.Share > 1 || math.Abs(quota-roundedQuota) > 1e-9 {
-		return Replay{}, malformedProfile(profileName, "replay.pacs008.share", fmt.Errorf("must be greater than 0, at most 1, and select a whole number of entries in a %d-entry block", ScenarioSelectionBlockSize))
+	if share <= 0 || share > 1 || math.Abs(quota-roundedQuota) > 1e-9 {
+		return 0, 0, malformedProfile(profileName, field+".share", fmt.Errorf("must be greater than 0, at most 1, and select a whole number of entries in a %d-entry block", ScenarioSelectionBlockSize))
 	}
-	delay, err := parseWholeSecondDuration(profileName, "replay.pacs008.delay", file.Pacs008.Delay, false)
+	delay, err := parseWholeSecondDuration(profileName, field+".delay", delayText, false)
 	if err != nil {
-		return Replay{}, err
+		return 0, 0, err
 	}
-	return Replay{Pacs008: &Pacs008Replay{Share: file.Pacs008.Share, Delay: delay}}, nil
+	return share, delay, nil
 }
 
 func decodeScenario(profileName string, index int, file fileScenario) (Scenario, error) {

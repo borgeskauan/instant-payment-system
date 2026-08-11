@@ -8,6 +8,7 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/report"
+	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
 
@@ -52,6 +53,7 @@ type profileLoader func(string) (config.Runtime, error)
 
 type simulateOverrides struct {
 	outputDir                     string
+	runWindowPath                 string
 	centralTransferCACert         string
 	centralTransferClientCertRoot string
 	centralTransferServerName     string
@@ -66,6 +68,7 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 	flags := flag.NewFlagSet("simulate", flag.ContinueOnError)
 	flags.StringVar(&profileName, "profile", profileName, "load-test profile name")
 	flags.StringVar(&overrides.outputDir, "out", "", "output directory")
+	flags.StringVar(&overrides.runWindowPath, "run-window", "", "authoritative run-window.json output path")
 	flags.StringVar(&overrides.centralTransferCACert, "central-transfer-ca-cert", "", "kafka-producer CA certificate path")
 	flags.StringVar(&overrides.centralTransferClientCertRoot, "central-transfer-client-cert-root", "", "root directory containing PSP client certificates for kafka-producer")
 	flags.StringVar(&overrides.centralTransferServerName, "central-transfer-server-name", "", "TLS server name for kafka-producer")
@@ -81,10 +84,13 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 		return sim.Config{}, err
 	}
 	cfg := simulatorConfig(runtimeCfg)
+	cfg.ProfileName = profileName
 	flags.Visit(func(parsedFlag *flag.Flag) {
 		switch parsedFlag.Name {
 		case "out":
 			cfg.OutputDir = overrides.outputDir
+		case "run-window":
+			cfg.RunWindowPath = overrides.runWindowPath
 		case "central-transfer-ca-cert":
 			cfg.CentralTransferCACert = overrides.centralTransferCACert
 		case "central-transfer-client-cert-root":
@@ -129,26 +135,45 @@ func runReport(args []string) error {
 		return err
 	}
 
-	return report.Print(command.startsPath, command.eventsPath, command.replaysPath, command.options, os.Stdout)
+	document, err := runwindow.Read(command.runWindowPath)
+	if err != nil {
+		return err
+	}
+	window, err := runwindow.Resolve(document, command.profileName, command.options.Warmup, command.options.Duration, command.options.Drain, command.options.Replay)
+	if err != nil {
+		return err
+	}
+	if err := validateReportArtifacts(command, document.SchemaVersion); err != nil {
+		return err
+	}
+	command.options.Window = window
+	return report.PrintWithArtifacts(command.startsPath, command.eventsPath, command.statusStartsPath, command.replaysPath, command.options, os.Stdout)
 }
 
 type reportConfig struct {
-	startsPath  string
-	eventsPath  string
-	replaysPath string
-	options     report.Options
+	startsPath       string
+	eventsPath       string
+	replaysPath      string
+	statusStartsPath string
+	runWindowPath    string
+	profileName      string
+	options          report.Options
 }
 
 func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, error) {
 	var startsPath string
 	var eventsPath string
 	var replaysPath string
+	var statusStartsPath string
+	var runWindowPath string
 	profileName := config.DefaultProfile
 	flags := flag.NewFlagSet("report", flag.ContinueOnError)
 	flags.StringVar(&profileName, "profile", profileName, "load-test profile name")
 	flags.StringVar(&startsPath, "starts", "", "starts.csv path")
 	flags.StringVar(&eventsPath, "events", "", "events.csv path")
 	flags.StringVar(&replaysPath, "replays", "", "replays.csv path")
+	flags.StringVar(&statusStartsPath, "status-starts", "", "status-starts.csv path")
+	flags.StringVar(&runWindowPath, "run-window", "", "authoritative run-window.json path")
 	if err := flags.Parse(args); err != nil {
 		return reportConfig{}, err
 	}
@@ -160,23 +185,37 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 	if startsPath == "" || eventsPath == "" {
 		return reportConfig{}, fmt.Errorf("--starts and --events are required")
 	}
-	if runtimeCfg.Replay.Pacs008 != nil && replaysPath == "" {
+	if runWindowPath == "" {
+		return reportConfig{}, fmt.Errorf("--run-window is required")
+	}
+	if (runtimeCfg.Replay.Pacs008 != nil || runtimeCfg.Replay.Pacs002 != nil) && replaysPath == "" {
 		return reportConfig{}, fmt.Errorf("--replays is required for profile %q", profileName)
 	}
 
 	return reportConfig{
-		startsPath:  startsPath,
-		eventsPath:  eventsPath,
-		replaysPath: replaysPath,
+		startsPath:       startsPath,
+		eventsPath:       eventsPath,
+		replaysPath:      replaysPath,
+		statusStartsPath: statusStartsPath,
+		runWindowPath:    runWindowPath,
+		profileName:      profileName,
 		options: report.Options{
 			SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
 			TargetTxRate:   runtimeCfg.Load.TargetTxRate,
 			Warmup:         runtimeCfg.Load.Warmup,
 			Duration:       runtimeCfg.Load.Duration,
+			Drain:          runtimeCfg.Load.Drain,
 			Replay:         runtimeCfg.Replay,
 			Scenarios:      runtimeCfg.Scenarios,
 		},
 	}, nil
+}
+
+func validateReportArtifacts(command reportConfig, windowSchemaVersion int) error {
+	if windowSchemaVersion == runwindow.SchemaVersion && command.options.Replay.Pacs002 != nil && command.statusStartsPath == "" {
+		return fmt.Errorf("--status-starts is required for profile %q", command.profileName)
+	}
+	return nil
 }
 
 type profileValidation struct {
@@ -191,9 +230,15 @@ type profileValidation struct {
 
 type profileValidationReplay struct {
 	Pacs008 *profileValidationPacs008Replay `json:"pacs008,omitempty"`
+	Pacs002 *profileValidationPacs002Replay `json:"pacs002,omitempty"`
 }
 
 type profileValidationPacs008Replay struct {
+	Share        float64 `json:"share"`
+	DelaySeconds int64   `json:"delaySeconds"`
+}
+
+type profileValidationPacs002Replay struct {
 	Share        float64 `json:"share"`
 	DelaySeconds int64   `json:"delaySeconds"`
 }
@@ -289,6 +334,12 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 		validation.Replay.Pacs008 = &profileValidationPacs008Replay{
 			Share:        runtimeCfg.Replay.Pacs008.Share,
 			DelaySeconds: int64(runtimeCfg.Replay.Pacs008.Delay.Seconds()),
+		}
+	}
+	if runtimeCfg.Replay.Pacs002 != nil {
+		validation.Replay.Pacs002 = &profileValidationPacs002Replay{
+			Share:        runtimeCfg.Replay.Pacs002.Share,
+			DelaySeconds: int64(runtimeCfg.Replay.Pacs002.Delay.Seconds()),
 		}
 	}
 	for index, scenario := range runtimeCfg.Scenarios {
