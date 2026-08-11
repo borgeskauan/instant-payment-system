@@ -9,6 +9,7 @@ import (
 )
 
 const testProfile = `{
+  "name": "PROFILE_NAME",
   "schemaVersion": 1,
   "connections": {
     "centralTransfer": {
@@ -89,6 +90,9 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 
 	if cfg.SchemaVersion != 1 {
 		t.Fatalf("SchemaVersion = %d", cfg.SchemaVersion)
+	}
+	if cfg.Name != "explicit-profile" {
+		t.Fatalf("Name = %q, want explicit-profile", cfg.Name)
 	}
 	if cfg.Connections.CentralTransfer.BaseURL != "https://127.0.0.1:8001" {
 		t.Fatalf("central transfer BaseURL = %q", cfg.Connections.CentralTransfer.BaseURL)
@@ -218,6 +222,40 @@ func TestLoadProfileRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
+func TestLoadProfileRejectsMissingEmbeddedName(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `  "name": "PROFILE_NAME",
+`, "", 1)
+	writeRawProfile(t, filepath.Join(dir, "missing-name.json"), content)
+
+	_, err := loadProfileFromDir(dir, "missing-name")
+	if err == nil || !strings.Contains(err.Error(), "invalid name") {
+		t.Fatalf("error = %v, want missing embedded name rejection", err)
+	}
+}
+
+func TestLoadProfileRejectsInvalidEmbeddedName(t *testing.T) {
+	dir := t.TempDir()
+	content := profileContent("Uppercase", testProfile)
+	writeRawProfile(t, filepath.Join(dir, "selected-profile.json"), content)
+
+	_, err := loadProfileFromDir(dir, "selected-profile")
+	if err == nil || !strings.Contains(err.Error(), "invalid name") {
+		t.Fatalf("error = %v, want invalid embedded name rejection", err)
+	}
+}
+
+func TestLoadProfileRejectsNameDifferentFromSelectedFile(t *testing.T) {
+	dir := t.TempDir()
+	content := profileContent("other-profile", testProfile)
+	writeRawProfile(t, filepath.Join(dir, "selected-profile.json"), content)
+
+	_, err := loadProfileFromDir(dir, "selected-profile")
+	if err == nil || !strings.Contains(err.Error(), `name "other-profile" does not match selected profile "selected-profile"`) {
+		t.Fatalf("error = %v, want embedded name mismatch rejection", err)
+	}
+}
+
 func TestLoadProfileRejectsMalformedJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "broken-profile", `{not JSON}`)
@@ -225,6 +263,38 @@ func TestLoadProfileRejectsMalformedJSON(t *testing.T) {
 	_, err := loadProfileFromDir(dir, "broken-profile")
 	if err == nil || !strings.Contains(err.Error(), `profile "broken-profile" is malformed`) {
 		t.Fatalf("error = %v, want clear malformed-profile error", err)
+	}
+}
+
+func TestLoadRunProfileReadsEmbeddedIdentityAndRuntimeSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.json")
+	writeRawProfile(t, path, profileContent("run-profile", testProfile))
+
+	cfg, err := LoadRunProfile(path)
+	if err != nil {
+		t.Fatalf("LoadRunProfile() error = %v", err)
+	}
+	if cfg.Name != "run-profile" || cfg.Load.TargetTxRate != 1234 || cfg.Reporting.SLAThresholdMs != 3200 {
+		t.Fatalf("LoadRunProfile() = %#v", cfg)
+	}
+}
+
+func TestLoadRunProfileRejectsMalformedContract(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.json")
+	writeRawProfile(t, path, `{"name":"run-profile","schemaVersion":1,"unexpected":true}`)
+
+	_, err := LoadRunProfile(path)
+	if err == nil || !strings.Contains(err.Error(), `run profile at`) || !strings.Contains(err.Error(), `unknown field "unexpected"`) {
+		t.Fatalf("error = %v, want strict run profile rejection", err)
+	}
+}
+
+func TestLoadRunProfileRejectsMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.json")
+
+	_, err := LoadRunProfile(path)
+	if err == nil || !strings.Contains(err.Error(), `run profile not found`) {
+		t.Fatalf("error = %v, want missing run profile rejection", err)
 	}
 }
 
@@ -545,7 +615,26 @@ func TestLoadProfileRejectsRemovedSeedAndPairStartFields(t *testing.T) {
 
 func writeProfile(t *testing.T, dir string, name string, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name+".json"), []byte(content), 0o644); err != nil {
+	writeRawProfile(t, filepath.Join(dir, name+".json"), profileContent(name, content))
+}
+
+func profileContent(name string, content string) string {
+	const prefix = `"name": "`
+	start := strings.Index(content, prefix)
+	if start < 0 {
+		return content
+	}
+	valueStart := start + len(prefix)
+	valueEnd := strings.Index(content[valueStart:], `"`)
+	if valueEnd < 0 {
+		return content
+	}
+	return content[:valueStart] + name + content[valueStart+valueEnd:]
+}
+
+func writeRawProfile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

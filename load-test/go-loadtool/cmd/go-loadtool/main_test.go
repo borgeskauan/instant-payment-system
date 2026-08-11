@@ -14,7 +14,7 @@ func TestSimulateUsesExplicitProfile(t *testing.T) {
 	var loadedProfile string
 	loader := func(name string) (config.Runtime, error) {
 		loadedProfile = name
-		return commandTestRuntime(), nil
+		return commandTestRuntimeFor(name), nil
 	}
 
 	cfg, err := parseSimulateConfig([]string{"--profile", "custom-smoke"}, loader)
@@ -40,7 +40,7 @@ func TestReportUsesExplicitProfile(t *testing.T) {
 	var loadedProfile string
 	loader := func(name string) (config.Runtime, error) {
 		loadedProfile = name
-		return commandTestRuntime(), nil
+		return commandTestRuntimeFor(name), nil
 	}
 
 	command, err := parseReportConfig([]string{
@@ -159,11 +159,48 @@ func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
 	}
 }
 
+func TestCommandsPropagateEmbeddedProfileIdentity(t *testing.T) {
+	runtimeCfg := commandTestRuntime()
+	runtimeCfg.Name = "embedded-profile"
+	loader := func(string) (config.Runtime, error) { return runtimeCfg, nil }
+
+	simulator, err := parseSimulateConfig([]string{"--profile", "selected-profile"}, loader)
+	if err != nil {
+		t.Fatalf("parseSimulateConfig() error = %v", err)
+	}
+	if simulator.ProfileName != "embedded-profile" {
+		t.Fatalf("simulator ProfileName = %q", simulator.ProfileName)
+	}
+
+	reportCommand, err := parseReportConfig([]string{
+		"--profile", "selected-profile",
+		"--starts", "starts.csv",
+		"--events", "events.csv",
+		"--status-starts", "status-starts.csv",
+		"--replays", "replays.csv",
+		"--run-window", "run-window.json",
+	}, loader)
+	if err != nil {
+		t.Fatalf("parseReportConfig() error = %v", err)
+	}
+	if reportCommand.profileName != "embedded-profile" {
+		t.Fatalf("report profileName = %q", reportCommand.profileName)
+	}
+
+	validation, err := parseValidateProfile([]string{"--profile", "selected-profile"}, loader)
+	if err != nil {
+		t.Fatalf("parseValidateProfile() error = %v", err)
+	}
+	if validation.Profile != "embedded-profile" {
+		t.Fatalf("validation Profile = %q", validation.Profile)
+	}
+}
+
 func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	var loadedProfile string
 	validation, err := parseValidateProfile([]string{"--profile", "custom-validation"}, func(name string) (config.Runtime, error) {
 		loadedProfile = name
-		return commandTestRuntime(), nil
+		return commandTestRuntimeFor(name), nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -329,6 +366,7 @@ func TestCommandsReturnSelectedProfileLoadError(t *testing.T) {
 
 func commandTestRuntime() config.Runtime {
 	return config.Runtime{
+		Name:          "test-profile",
 		SchemaVersion: 1,
 		Connections: config.Connections{
 			CentralTransfer: config.CentralTransferConnection{
@@ -379,4 +417,10 @@ func commandTestRuntime() config.Runtime {
 		}},
 		Reporting: config.Reporting{SLAThresholdMs: 987},
 	}
+}
+
+func commandTestRuntimeFor(name string) config.Runtime {
+	runtimeCfg := commandTestRuntime()
+	runtimeCfg.Name = name
+	return runtimeCfg
 }

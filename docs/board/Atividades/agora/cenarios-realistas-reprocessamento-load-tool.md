@@ -158,7 +158,7 @@ Os testes protegem populações, replay e outcomes lógicos externos no load-too
 **Resultado:** o layout de um run passou a ter uma representação interna única e testada, sem alterar a CLI, o runner ou o fluxo de execução existente.
 
 - [x] Criar um resolvedor tipado que normalize o diretório do run e derive caminhos fixos para snapshot, plano, janela, relatório e CSVs.
-- [x] Validar que `profile.json` e `execution-plan.json` foram preparados e que outputs de uma execução anterior ainda não existem.
+- [x] Validar que `profile.json` foi preparado e que outputs de uma execução anterior ainda não existem; `execution-plan.json` permanece um artefato conhecido, mas opcional para o bundle Go.
 - [x] Permitir conteúdo preparatório adicional, incluindo certificados, sem tornar seus caminhos parte do bundle nesta fatia.
 - [x] Reservar `go-loadtool/` sem sobrescrever uma tentativa existente.
 - [x] Disponibilizar escrita atômica de `sla-report.json`, sem sobrescrita ou relatório parcial visível.
@@ -166,22 +166,23 @@ Os testes protegem populações, replay e outcomes lógicos externos no load-too
 
 ### Critério de saída
 
-O pacote interno `runbundle` protege o layout, a preparação de uma execução nova e a publicação atômica do relatório. Ele ainda não participa do fluxo de produção; sua adoção ocorre nas duas fatias seguintes.
+O pacote interno `runbundle` protege o layout, a preparação de uma execução nova e a publicação atômica do relatório. O comando `run` o adota na 2C.3, enquanto a migração do runner público permanece na 2C.4.
 
-## Fatia 2C.3 — Comando único de execução
+## Fatia 2C.3 — Perfil autocontido e comando único de execução (concluída)
 
-**Resultado esperado:** `go-loadtool run --run-dir DIR` executa simulação e relatório em uma única passagem, usando o snapshot do bundle, enquanto os comandos atuais permanecem disponíveis para compatibilidade temporária.
+**Resultado:** cada perfil declara sua própria identidade e `go-loadtool run --run-dir DIR` executa simulação e relatório em uma única passagem usando apenas `profile.json` como configuração, enquanto os comandos atuais permanecem disponíveis para compatibilidade temporária.
 
-- [ ] Adicionar `run --run-dir` usando o resolvedor e as validações da 2C.2.
-- [ ] Ler a identidade da execução em `execution-plan.json` e usar `profile.json` como configuração autoritativa, sem reler o perfil editável.
-- [ ] Manter os overrides mTLS atuais no novo comando.
-- [ ] Executar o simulador, fechar os CSVs e somente então gerar atomicamente `sla-report.json`.
-- [ ] Não criar relatório quando a simulação falhar e não expor reconstrução posterior do report como objetivo do novo fluxo.
-- [ ] Manter temporariamente `simulate`, `report` e todas as flags atuais; o runner continua usando o fluxo antigo nesta fatia.
+- [x] Adicionar `name` ao contrato e exigir correspondência entre o nome selecionado e a identidade embutida nos perfis editáveis.
+- [x] Fazer o snapshot `profile.json` ser autocontido e carregar dele nome, conexões, workload, replay, cenários e reporting, sem consultar `execution-plan.json`.
+- [x] Adicionar `run --run-dir` usando o resolvedor e as validações da 2C.2, sem aceitar `--profile`, `--config` ou caminhos individuais de artefatos.
+- [x] Manter no novo comando os seis overrides mTLS atuais e sua precedência sobre os valores do perfil.
+- [x] Executar o simulador, fechar os CSVs e somente então gerar atomicamente `sla-report.json`.
+- [x] Não criar relatório quando a simulação ou o report falharem, mantendo artefatos parciais para diagnóstico e proibindo reutilização do diretório.
+- [x] Manter temporariamente `simulate`, `report` e todas as flags atuais; o runner continua usando o fluxo antigo nesta fatia.
 
 ### Critério de saída
 
-O comando `run` produz sozinho um bundle completo em testes, mas nenhuma interface antiga foi removida e o runner público ainda não foi migrado.
+O comando `run` produz sozinho um bundle completo em testes, inclusive usando o renderer real sobre artefatos mínimos. Nenhuma interface antiga foi removida, o runner público ainda não foi migrado e não há promessa de reexecutar historicamente um diretório antigo.
 
 ## Fatia 2C.4 — Migração do runner e remoção da compatibilidade interna
 

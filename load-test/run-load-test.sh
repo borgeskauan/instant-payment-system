@@ -301,6 +301,31 @@ parse_args() {
     fi
 }
 
+shallow_validate_profile() {
+    local path="$1"
+    local name="$2"
+
+    python3 - "$path" "$name" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+name = sys.argv[2]
+
+try:
+    with open(path, encoding="utf-8") as handle:
+        profile = json.load(handle)
+    if not isinstance(profile, dict):
+        raise ValueError("root must be a JSON object")
+    if profile.get("name") != name:
+        raise ValueError(f"name must be '{name}'")
+    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 1:
+        raise ValueError("schemaVersion must be 1")
+except (OSError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"Profile '{name}' failed shallow validation: {error}")
+PY
+}
+
 resolve_profile() {
     if [[ ! "$PROFILE_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
         echo "Invalid profile name '${PROFILE_NAME}': use only lowercase letters, digits, and hyphens, beginning with a letter or digit." >&2
@@ -314,24 +339,7 @@ resolve_profile() {
     fi
 
     local validation_error
-    if ! validation_error="$(python3 - "$candidate" "$PROFILE_NAME" 2>&1 <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-name = sys.argv[2]
-
-try:
-    with open(path, encoding="utf-8") as handle:
-        profile = json.load(handle)
-    if not isinstance(profile, dict):
-        raise ValueError("root must be a JSON object")
-    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 1:
-        raise ValueError("schemaVersion must be 1")
-except (OSError, json.JSONDecodeError, ValueError) as error:
-    raise SystemExit(f"Profile '{name}' failed shallow validation: {error}")
-PY
-)"; then
+    if ! validation_error="$(shallow_validate_profile "$candidate" "$PROFILE_NAME" 2>&1)"; then
         echo "$validation_error" >&2
         return 2
     fi

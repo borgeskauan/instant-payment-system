@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
@@ -14,7 +15,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: go-loadtool <validate-profile|simulate|report>")
+		fmt.Fprintln(os.Stderr, "usage: go-loadtool <validate-profile|simulate|report|run>")
 		os.Exit(2)
 	}
 
@@ -32,6 +33,11 @@ func main() {
 	case "report":
 		if err := runReport(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "report failed: %v\n", err)
+			os.Exit(1)
+		}
+	case "run":
+		if err := runRun(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 			os.Exit(1)
 		}
 	default:
@@ -69,12 +75,7 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 	flags.StringVar(&profileName, "profile", profileName, "load-test profile name")
 	flags.StringVar(&overrides.outputDir, "out", "", "output directory")
 	flags.StringVar(&overrides.runWindowPath, "run-window", "", "authoritative run-window.json output path")
-	flags.StringVar(&overrides.centralTransferCACert, "central-transfer-ca-cert", "", "kafka-producer CA certificate path")
-	flags.StringVar(&overrides.centralTransferClientCertRoot, "central-transfer-client-cert-root", "", "root directory containing PSP client certificates for kafka-producer")
-	flags.StringVar(&overrides.centralTransferServerName, "central-transfer-server-name", "", "TLS server name for kafka-producer")
-	flags.StringVar(&overrides.gatewayCACert, "gateway-ca-cert", "", "notification gateway CA certificate path")
-	flags.StringVar(&overrides.gatewayClientCertRoot, "gateway-client-cert-root", "", "root directory containing psp-<ISPB>/client certs")
-	flags.StringVar(&overrides.gatewayServerName, "gateway-server-name", "", "TLS server name for notification gateway")
+	registerMTLSOverrides(flags, &overrides)
 	if err := flags.Parse(args); err != nil {
 		return sim.Config{}, err
 	}
@@ -84,27 +85,16 @@ func parseSimulateConfig(args []string, loadProfile profileLoader) (sim.Config, 
 		return sim.Config{}, err
 	}
 	cfg := simulatorConfig(runtimeCfg)
-	cfg.ProfileName = profileName
+	cfg.ProfileName = runtimeCfg.Name
 	flags.Visit(func(parsedFlag *flag.Flag) {
 		switch parsedFlag.Name {
 		case "out":
 			cfg.OutputDir = overrides.outputDir
 		case "run-window":
 			cfg.RunWindowPath = overrides.runWindowPath
-		case "central-transfer-ca-cert":
-			cfg.CentralTransferCACert = overrides.centralTransferCACert
-		case "central-transfer-client-cert-root":
-			cfg.CentralTransferClientCertRoot = overrides.centralTransferClientCertRoot
-		case "central-transfer-server-name":
-			cfg.CentralTransferServerName = overrides.centralTransferServerName
-		case "gateway-ca-cert":
-			cfg.GatewayCACert = overrides.gatewayCACert
-		case "gateway-client-cert-root":
-			cfg.GatewayClientCertRoot = overrides.gatewayClientCertRoot
-		case "gateway-server-name":
-			cfg.GatewayServerName = overrides.gatewayServerName
 		}
 	})
+	applyMTLSOverrides(flags, &cfg, overrides)
 
 	return cfg, nil
 }
@@ -134,7 +124,10 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
+	return renderReport(command, os.Stdout)
+}
 
+func renderReport(command reportConfig, output io.Writer) error {
 	document, err := runwindow.Read(command.runWindowPath)
 	if err != nil {
 		return err
@@ -147,7 +140,7 @@ func runReport(args []string) error {
 		return err
 	}
 	command.options.Window = window
-	return report.PrintWithArtifacts(command.startsPath, command.eventsPath, command.statusStartsPath, command.replaysPath, command.options, os.Stdout)
+	return report.PrintWithArtifacts(command.startsPath, command.eventsPath, command.statusStartsPath, command.replaysPath, command.options, output)
 }
 
 type reportConfig struct {
@@ -189,7 +182,7 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 		return reportConfig{}, fmt.Errorf("--run-window is required")
 	}
 	if (runtimeCfg.Replay.Pacs008 != nil || runtimeCfg.Replay.Pacs002 != nil) && replaysPath == "" {
-		return reportConfig{}, fmt.Errorf("--replays is required for profile %q", profileName)
+		return reportConfig{}, fmt.Errorf("--replays is required for profile %q", runtimeCfg.Name)
 	}
 
 	return reportConfig{
@@ -198,16 +191,8 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 		replaysPath:      replaysPath,
 		statusStartsPath: statusStartsPath,
 		runWindowPath:    runWindowPath,
-		profileName:      profileName,
-		options: report.Options{
-			SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
-			TargetTxRate:   runtimeCfg.Load.TargetTxRate,
-			Warmup:         runtimeCfg.Load.Warmup,
-			Duration:       runtimeCfg.Load.Duration,
-			Drain:          runtimeCfg.Load.Drain,
-			Replay:         runtimeCfg.Replay,
-			Scenarios:      runtimeCfg.Scenarios,
-		},
+		profileName:      runtimeCfg.Name,
+		options:          reportOptions(runtimeCfg),
 	}, nil
 }
 
@@ -320,10 +305,10 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 	}
 	provisioning, err := sim.DeriveProvisioning(simulatorConfig(runtimeCfg))
 	if err != nil {
-		return profileValidation{}, fmt.Errorf("derive provisioning for profile %q: %w", profileName, err)
+		return profileValidation{}, fmt.Errorf("derive provisioning for profile %q: %w", runtimeCfg.Name, err)
 	}
 	validation := profileValidation{
-		Profile:       profileName,
+		Profile:       runtimeCfg.Name,
 		SchemaVersion: runtimeCfg.SchemaVersion,
 		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
 		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),

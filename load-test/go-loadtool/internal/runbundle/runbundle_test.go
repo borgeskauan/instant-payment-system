@@ -66,6 +66,17 @@ func TestValidatePreparedAcceptsRequiredInputsAndAdditionalPreparation(t *testin
 	}
 }
 
+func TestValidatePreparedAcceptsMissingExecutionPlan(t *testing.T) {
+	layout := newPreparedLayout(t)
+	if err := os.Remove(layout.ExecutionPlan); err != nil {
+		t.Fatalf("Remove(ExecutionPlan) error = %v", err)
+	}
+
+	if err := layout.ValidatePrepared(); err != nil {
+		t.Fatalf("ValidatePrepared() error = %v", err)
+	}
+}
+
 func TestValidatePreparedRejectsMissingOrInvalidRoot(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		layout, err := Resolve(filepath.Join(t.TempDir(), "missing"))
@@ -86,35 +97,25 @@ func TestValidatePreparedRejectsMissingOrInvalidRoot(t *testing.T) {
 	})
 }
 
-func TestValidatePreparedRejectsMissingOrNonRegularInputs(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     func(Layout) string
-		artifact string
-	}{
-		{name: "profile", path: func(layout Layout) string { return layout.Profile }, artifact: "profile.json"},
-		{name: "execution plan", path: func(layout Layout) string { return layout.ExecutionPlan }, artifact: "execution-plan.json"},
-	}
-	for _, test := range tests {
-		t.Run(test.name+" missing", func(t *testing.T) {
-			layout := newPreparedLayout(t)
-			if err := os.Remove(test.path(layout)); err != nil {
-				t.Fatalf("Remove() error = %v", err)
-			}
-			assertErrorContains(t, layout.ValidatePrepared(), test.artifact)
-		})
+func TestValidatePreparedRejectsMissingOrNonRegularProfile(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		layout := newPreparedLayout(t)
+		if err := os.Remove(layout.Profile); err != nil {
+			t.Fatalf("Remove() error = %v", err)
+		}
+		assertErrorContains(t, layout.ValidatePrepared(), "profile.json")
+	})
 
-		t.Run(test.name+" not regular", func(t *testing.T) {
-			layout := newPreparedLayout(t)
-			if err := os.Remove(test.path(layout)); err != nil {
-				t.Fatalf("Remove() error = %v", err)
-			}
-			if err := os.Mkdir(test.path(layout), 0o755); err != nil {
-				t.Fatalf("Mkdir() error = %v", err)
-			}
-			assertErrorContains(t, layout.ValidatePrepared(), test.artifact)
-		})
-	}
+	t.Run("not regular", func(t *testing.T) {
+		layout := newPreparedLayout(t)
+		if err := os.Remove(layout.Profile); err != nil {
+			t.Fatalf("Remove() error = %v", err)
+		}
+		if err := os.Mkdir(layout.Profile, 0o755); err != nil {
+			t.Fatalf("Mkdir() error = %v", err)
+		}
+		assertErrorContains(t, layout.ValidatePrepared(), "profile.json")
+	})
 }
 
 func TestValidatePreparedRejectsEachGeneratedOutput(t *testing.T) {

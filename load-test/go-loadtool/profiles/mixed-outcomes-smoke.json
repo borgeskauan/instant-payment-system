@@ -1,4 +1,5 @@
 {
+  "name": "mixed-outcomes-smoke",
   "schemaVersion": 1,
   "connections": {
     "centralTransfer": {

@@ -58,9 +58,6 @@ func (layout Layout) ValidatePrepared() error {
 	if err := requireRegularFile(layout.Profile, "profile.json"); err != nil {
 		return err
 	}
-	if err := requireRegularFile(layout.ExecutionPlan, "execution-plan.json"); err != nil {
-		return err
-	}
 
 	for _, output := range []struct {
 		name string

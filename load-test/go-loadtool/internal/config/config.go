@@ -33,6 +33,7 @@ var contractNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var pacsCodePattern = regexp.MustCompile(`^[A-Z0-9]{4}$`)
 
 type Runtime struct {
+	Name          string
 	SchemaVersion int
 	Connections   Connections
 	Load          Load
@@ -131,6 +132,7 @@ type Reporting struct {
 }
 
 type fileConfig struct {
+	Name          string          `json:"name"`
 	SchemaVersion int             `json:"schemaVersion"`
 	Connections   fileConnections `json:"connections"`
 	Load          fileLoad        `json:"load"`
@@ -234,6 +236,26 @@ func LoadProfile(name string) (Runtime, error) {
 	return loadProfileFromDir(profilesDir, name)
 }
 
+func LoadRunProfile(path string) (Runtime, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Runtime{}, fmt.Errorf("run profile not found at %q", path)
+		}
+		return Runtime{}, fmt.Errorf("read run profile at %q: %w", path, err)
+	}
+
+	var file fileConfig
+	if err := decodeStrict(data, &file); err != nil {
+		return Runtime{}, fmt.Errorf("run profile at %q is malformed: invalid JSON contract: %w", path, err)
+	}
+	runtimeCfg, err := buildRuntime(file.Name, file)
+	if err != nil {
+		return Runtime{}, fmt.Errorf("run profile at %q: %w", path, err)
+	}
+	return runtimeCfg, nil
+}
+
 func loadProfileFromDir(dir string, name string) (Runtime, error) {
 	if !contractNamePattern.MatchString(name) {
 		return Runtime{}, fmt.Errorf("invalid profile name %q: use only lowercase letters, digits, and hyphens, beginning with a letter or digit", name)
@@ -256,6 +278,12 @@ func loadProfileFromDir(dir string, name string) (Runtime, error) {
 }
 
 func buildRuntime(name string, file fileConfig) (Runtime, error) {
+	if !contractNamePattern.MatchString(file.Name) {
+		return Runtime{}, malformedProfile(name, "name", errors.New("must use only lowercase letters, digits, and hyphens, beginning with a letter or digit"))
+	}
+	if file.Name != name {
+		return Runtime{}, malformedProfile(name, "name", fmt.Errorf("name %q does not match selected profile %q", file.Name, name))
+	}
 	if file.SchemaVersion != SchemaVersion {
 		return Runtime{}, malformedProfile(name, "schemaVersion", fmt.Errorf("must be %d", SchemaVersion))
 	}
@@ -335,6 +363,7 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	}
 
 	return Runtime{
+		Name:          file.Name,
 		SchemaVersion: file.SchemaVersion,
 		Connections: Connections{
 			CentralTransfer: CentralTransferConnection{
