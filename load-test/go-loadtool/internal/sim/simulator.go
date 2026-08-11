@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,16 +40,18 @@ type Config struct {
 	Warmup                        time.Duration
 	Duration                      time.Duration
 	Drain                         time.Duration
+	Replay                        config.Replay
 	Scenarios                     []config.Scenario
 	OutputDir                     string
 }
 
 type transferJob struct {
-	ID           string
-	Pair         ids.Pair
-	Created      int64
-	Amount       int64
-	ScenarioName string
+	ID             string
+	Pair           ids.Pair
+	Created        int64
+	Amount         int64
+	ScenarioName   string
+	ReplaySelected bool
 }
 
 type statusJob struct {
@@ -62,8 +65,14 @@ type simulator struct {
 	httpClients                map[string]*http.Client
 	startWriter                *events.StartWriter
 	eventWriter                *events.NotificationWriter
+	replayWriter               *events.ReplayWriter
+	replayScheduler            *replayScheduler
 	startMu                    sync.Mutex
 	eventMu                    sync.Mutex
+	replayMu                   sync.Mutex
+	runErrorMu                 sync.Mutex
+	runError                   error
+	buildPacs008Func           func(string, string, string, int64) []byte
 	sendPacs002Func            func(context.Context, string, string)
 	openNotificationStreamFunc func(context.Context, string) (notificationStreamClient, func() error, error)
 	statusJobs                 chan statusJob
@@ -72,6 +81,9 @@ type simulator struct {
 	pacs002Sent                atomic.Uint64
 	notifications              atomic.Uint64
 	statusJobsQueued           atomic.Uint64
+	replaysScheduled           atomic.Uint64
+	replaysSent                atomic.Uint64
+	replaysAccepted            atomic.Uint64
 }
 
 type notificationStreamClient interface {
@@ -104,6 +116,13 @@ func Run(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	var selector *replaySelector
+	if cfg.Replay.Pacs008 != nil {
+		selector, err = newReplaySelector(cfg.Replay.Pacs008.Share)
+		if err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 		return err
 	}
@@ -120,6 +139,12 @@ func Run(cfg Config) error {
 	}
 	defer eventWriter.Close()
 
+	replayWriter, err := events.NewReplayWriter(filepath.Join(cfg.OutputDir, "replays.csv"))
+	if err != nil {
+		return err
+	}
+	defer replayWriter.Close()
+
 	pairs := pairsForScenarios(cfg.Scenarios)
 	httpClients, err := newHTTPClients(cfg, pairs)
 	if err != nil {
@@ -128,17 +153,27 @@ func Run(cfg Config) error {
 	defer closeHTTPClients(httpClients)
 
 	s := &simulator{
-		cfg:         cfg,
-		runID:       fmt.Sprintf("go-%d", time.Now().UnixNano()),
-		httpClients: httpClients,
-		startWriter: startWriter,
-		eventWriter: eventWriter,
-		statusJobs:  make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
+		cfg:          cfg,
+		runID:        fmt.Sprintf("go-%d", time.Now().UnixNano()),
+		httpClients:  httpClients,
+		startWriter:  startWriter,
+		eventWriter:  eventWriter,
+		replayWriter: replayWriter,
+		statusJobs:   make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
 	}
 	s.sendPacs002Func = s.sendPacs002
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var replayWorkers sync.WaitGroup
+	if cfg.Replay.Pacs008 != nil {
+		replayRate := int(math.Ceil(float64(cfg.TargetTxRate) * cfg.Replay.Pacs008.Share))
+		replayWorkerCount := workerCountForTargetRate(max(1, replayRate))
+		s.replayScheduler = newReplayScheduler(ctx, replayWorkerCount)
+		s.startReplayWorkers(ctx, &replayWorkers, s.replayScheduler.Ready(), replayWorkerCount)
+		logPhase("pacs.008 replay enabled: share=%.2f delay=%s workers=%d", cfg.Replay.Pacs008.Share, cfg.Replay.Pacs008.Delay, replayWorkerCount)
+	}
 
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
 	notificationCtx, stopNotifications := context.WithCancel(ctx)
@@ -175,10 +210,17 @@ func Run(cfg Config) error {
 		go s.transferWorker(ctx, &workers, jobs)
 	}
 
-	s.generate(ctx, jobs, planner)
+	s.generate(ctx, jobs, planner, selector)
 	close(jobs)
 	logPhase("load generation finished; waiting for in-flight HTTP requests")
 	workers.Wait()
+	if s.replayScheduler != nil {
+		logPhase("original HTTP workers finished; waiting for scheduled pacs.008 replays")
+		s.replayScheduler.Close()
+		s.replayScheduler.Wait()
+		replayWorkers.Wait()
+		logPhase("pacs.008 replay workers finished")
+	}
 
 	logPhase("HTTP workers finished; entering drain: drain=%s", cfg.Drain)
 	time.Sleep(cfg.Drain)
@@ -192,15 +234,18 @@ func Run(cfg Config) error {
 	statusWorkers.Wait()
 	logPhase("status workers finished")
 
-	fmt.Printf("started=%d accepted=%d notifications=%d pacs002_queued=%d pacs002_sent=%d output=%s\n",
+	fmt.Printf("started=%d accepted=%d replays_scheduled=%d replays_sent=%d replays_accepted=%d notifications=%d pacs002_queued=%d pacs002_sent=%d output=%s\n",
 		s.started.Load(),
 		s.accepted.Load(),
+		s.replaysScheduled.Load(),
+		s.replaysSent.Load(),
+		s.replaysAccepted.Load(),
 		s.notifications.Load(),
 		s.statusJobsQueued.Load(),
 		s.pacs002Sent.Load(),
 		cfg.OutputDir,
 	)
-	return nil
+	return s.currentRunError()
 }
 
 func logPhase(format string, args ...any) {
@@ -284,7 +329,7 @@ func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 	return pairs
 }
 
-func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, planner *workloadPlanner) {
+func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, planner *workloadPlanner, selector *replaySelector) {
 	start := time.Now()
 	next := start
 	endAfter := s.cfg.Warmup + s.cfg.Duration
@@ -298,6 +343,9 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, plann
 		next = next.Add(time.Second / time.Duration(rate))
 
 		job := s.transferJobForSequence(seq, planner.Next())
+		if selector != nil {
+			job.ReplaySelected = selector.Next()
+		}
 
 		select {
 		case jobs <- job:
@@ -348,8 +396,32 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 }
 
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
-	body := payload.Pacs008(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
-	startedAt := time.Now().UnixNano()
+	buildPayload := payload.Pacs008
+	if s.buildPacs008Func != nil {
+		buildPayload = s.buildPacs008Func
+	}
+	body := buildPayload(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
+	startedAtTime := time.Now()
+	startedAt := startedAtTime.UnixNano()
+	if job.ReplaySelected {
+		if s.replayScheduler == nil || s.cfg.Replay.Pacs008 == nil {
+			s.recordRunError(fmt.Errorf("selected pacs.008 replay %q has no configured scheduler", job.ID))
+		} else {
+			err := s.replayScheduler.Schedule(replayJob{
+				endToEndID:   job.ID,
+				payerISPB:    job.Pair.Payer,
+				scenarioName: job.ScenarioName,
+				messageType:  events.MessagePacs008,
+				body:         body,
+				dueAt:        startedAtTime.Add(s.cfg.Replay.Pacs008.Delay),
+			})
+			if err != nil {
+				s.recordRunError(fmt.Errorf("schedule pacs.008 replay %q: %w", job.ID, err))
+			} else {
+				s.replaysScheduled.Add(1)
+			}
+		}
+	}
 	status := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body)
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
@@ -357,15 +429,47 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 		s.accepted.Add(1)
 	}
 	s.writeStart(events.Start{
-		EndToEndID:         job.ID,
-		PayerISPB:          job.Pair.Payer,
-		ReceiverISPB:       job.Pair.Receiver,
-		CreatedAtNS:        job.Created,
+		EndToEndID:            job.ID,
+		PayerISPB:             job.Pair.Payer,
+		ReceiverISPB:          job.Pair.Receiver,
+		CreatedAtNS:           job.Created,
+		RequestStartedAtNS:    startedAt,
+		RequestDoneAtNS:       doneAt,
+		HTTPStatus:            status,
+		ScenarioName:          job.ScenarioName,
+		Pacs008ReplaySelected: job.ReplaySelected,
+	})
+}
+
+func (s *simulator) sendPacs008Replay(ctx context.Context, job replayJob) {
+	startedAt := time.Now().UnixNano()
+	status := s.post(ctx, job.payerISPB, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), job.body)
+	doneAt := time.Now().UnixNano()
+	s.replaysSent.Add(1)
+	if status >= 200 && status < 300 {
+		s.replaysAccepted.Add(1)
+	}
+	s.writeReplay(events.Replay{
+		EndToEndID:         job.endToEndID,
+		PayerISPB:          job.payerISPB,
+		ScenarioName:       job.scenarioName,
+		MessageType:        job.messageType,
 		RequestStartedAtNS: startedAt,
 		RequestDoneAtNS:    doneAt,
 		HTTPStatus:         status,
-		ScenarioName:       job.ScenarioName,
 	})
+}
+
+func (s *simulator) startReplayWorkers(ctx context.Context, workers *sync.WaitGroup, jobs <-chan replayJob, workerCount int) {
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				s.sendPacs008Replay(ctx, job)
+			}
+		}()
+	}
 }
 
 func (s *simulator) sendPacs002(ctx context.Context, receiverISPB string, endToEndID string) {
@@ -637,7 +741,7 @@ func (s *simulator) writeStart(row events.Start) {
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
 	if err := s.startWriter.Write(row); err != nil {
-		fmt.Fprintf(os.Stderr, "write start failed: %v\n", err)
+		s.recordRunError(fmt.Errorf("write start: %w", err))
 	}
 }
 
@@ -645,8 +749,33 @@ func (s *simulator) writeNotification(row events.Notification) {
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
 	if err := s.eventWriter.Write(row); err != nil {
-		fmt.Fprintf(os.Stderr, "write notification failed: %v\n", err)
+		s.recordRunError(fmt.Errorf("write notification: %w", err))
 	}
+}
+
+func (s *simulator) writeReplay(row events.Replay) {
+	s.replayMu.Lock()
+	defer s.replayMu.Unlock()
+	if err := s.replayWriter.Write(row); err != nil {
+		s.recordRunError(fmt.Errorf("write replay: %w", err))
+	}
+}
+
+func (s *simulator) recordRunError(err error) {
+	if err == nil {
+		return
+	}
+	s.runErrorMu.Lock()
+	defer s.runErrorMu.Unlock()
+	if s.runError == nil {
+		s.runError = err
+	}
+}
+
+func (s *simulator) currentRunError() error {
+	s.runErrorMu.Lock()
+	defer s.runErrorMu.Unlock()
+	return s.runError
 }
 
 func min(a int, b int) int {

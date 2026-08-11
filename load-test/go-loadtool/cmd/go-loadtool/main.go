@@ -117,6 +117,7 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		Warmup:                        runtimeCfg.Load.Warmup,
 		Duration:                      runtimeCfg.Load.Duration,
 		Drain:                         runtimeCfg.Load.Drain,
+		Replay:                        runtimeCfg.Replay,
 		Scenarios:                     runtimeCfg.Scenarios,
 		OutputDir:                     config.DefaultOutputDir,
 	}
@@ -128,23 +129,26 @@ func runReport(args []string) error {
 		return err
 	}
 
-	return report.Print(command.startsPath, command.eventsPath, command.options, os.Stdout)
+	return report.Print(command.startsPath, command.eventsPath, command.replaysPath, command.options, os.Stdout)
 }
 
 type reportConfig struct {
-	startsPath string
-	eventsPath string
-	options    report.Options
+	startsPath  string
+	eventsPath  string
+	replaysPath string
+	options     report.Options
 }
 
 func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, error) {
 	var startsPath string
 	var eventsPath string
+	var replaysPath string
 	profileName := config.DefaultProfile
 	flags := flag.NewFlagSet("report", flag.ContinueOnError)
 	flags.StringVar(&profileName, "profile", profileName, "load-test profile name")
 	flags.StringVar(&startsPath, "starts", "", "starts.csv path")
 	flags.StringVar(&eventsPath, "events", "", "events.csv path")
+	flags.StringVar(&replaysPath, "replays", "", "replays.csv path")
 	if err := flags.Parse(args); err != nil {
 		return reportConfig{}, err
 	}
@@ -156,15 +160,20 @@ func parseReportConfig(args []string, loadProfile profileLoader) (reportConfig, 
 	if startsPath == "" || eventsPath == "" {
 		return reportConfig{}, fmt.Errorf("--starts and --events are required")
 	}
+	if runtimeCfg.Replay.Pacs008 != nil && replaysPath == "" {
+		return reportConfig{}, fmt.Errorf("--replays is required for profile %q", profileName)
+	}
 
 	return reportConfig{
-		startsPath: startsPath,
-		eventsPath: eventsPath,
+		startsPath:  startsPath,
+		eventsPath:  eventsPath,
+		replaysPath: replaysPath,
 		options: report.Options{
 			SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
 			TargetTxRate:   runtimeCfg.Load.TargetTxRate,
 			Warmup:         runtimeCfg.Load.Warmup,
 			Duration:       runtimeCfg.Load.Duration,
+			Replay:         runtimeCfg.Replay,
 			Scenarios:      runtimeCfg.Scenarios,
 		},
 	}, nil
@@ -176,7 +185,17 @@ type profileValidation struct {
 	WarmupSeconds int64                       `json:"warmupSeconds"`
 	ActiveSeconds int64                       `json:"activeSeconds"`
 	DrainSeconds  int64                       `json:"drainSeconds"`
+	Replay        profileValidationReplay     `json:"replay"`
 	Scenarios     []profileValidationScenario `json:"scenarios"`
+}
+
+type profileValidationReplay struct {
+	Pacs008 *profileValidationPacs008Replay `json:"pacs008,omitempty"`
+}
+
+type profileValidationPacs008Replay struct {
+	Share        float64 `json:"share"`
+	DelaySeconds int64   `json:"delaySeconds"`
 }
 
 type profileValidationScenario struct {
@@ -265,6 +284,12 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
 		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),
 		Scenarios:     make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
+	}
+	if runtimeCfg.Replay.Pacs008 != nil {
+		validation.Replay.Pacs008 = &profileValidationPacs008Replay{
+			Share:        runtimeCfg.Replay.Pacs008.Share,
+			DelaySeconds: int64(runtimeCfg.Replay.Pacs008.Delay.Seconds()),
+		}
 	}
 	for index, scenario := range runtimeCfg.Scenarios {
 		validation.Scenarios[index] = profileValidationScenario{

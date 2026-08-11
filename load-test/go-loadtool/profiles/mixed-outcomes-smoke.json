@@ -20,6 +20,12 @@
     "duration": "10s",
     "drain": "10s"
   },
+  "replay": {
+    "pacs008": {
+      "share": 0.10,
+      "delay": "10s"
+    }
+  },
   "scenarios": [
     {
       "name": "happy-path",

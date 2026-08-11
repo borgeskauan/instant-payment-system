@@ -45,6 +45,12 @@ cat <<'JSON'
   "warmupSeconds": 60,
   "activeSeconds": 60,
   "drainSeconds": 30,
+  "replay": {
+    "pacs008": {
+      "share": 0.1,
+      "delaySeconds": 10
+    }
+  },
   "scenarios": [
     {
       "name": "happy-path",
@@ -123,6 +129,10 @@ validate_profile_with_loadtool
 
 if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
     echo "runner did not consume the normalized execution window" >&2
+    exit 1
+fi
+if [[ "$PROFILE_PACS008_REPLAY_SHARE" != 0.1 || "$PROFILE_PACS008_REPLAY_DELAY_SECONDS" != 10 ]]; then
+    echo "runner did not consume normalized replay settings" >&2
     exit 1
 fi
 if [[ "${#PROFILE_SCENARIO_NAMES[@]}" != 2 || "${PROFILE_SCENARIO_NAMES[0]}" != happy-path || "${PROFILE_SCENARIO_SHARES[0]}" != 0.8 || "${PROFILE_SCENARIO_NAMES[1]}" != insufficient-funds ]]; then

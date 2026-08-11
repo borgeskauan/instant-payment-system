@@ -28,6 +28,9 @@ func TestSimulateUsesExplicitProfile(t *testing.T) {
 	if cfg.TargetTxRate != 321 || cfg.Warmup != 12*time.Second || cfg.Duration != 34*time.Second {
 		t.Fatalf("simulate settings were not loaded from selected profile: %#v", cfg)
 	}
+	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
+		t.Fatalf("simulate replay settings were not loaded from selected profile: %#v", cfg.Replay)
+	}
 }
 
 func TestReportUsesExplicitProfile(t *testing.T) {
@@ -41,6 +44,7 @@ func TestReportUsesExplicitProfile(t *testing.T) {
 		"--profile", "custom-report",
 		"--starts", "starts.csv",
 		"--events", "events.csv",
+		"--replays", "replays.csv",
 	}, loader)
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +58,28 @@ func TestReportUsesExplicitProfile(t *testing.T) {
 	}
 	if len(command.options.Scenarios) != 1 || command.options.Scenarios[0].Name != "happy-path" {
 		t.Fatalf("report scenarios = %#v", command.options.Scenarios)
+	}
+	if command.replaysPath != "replays.csv" || command.options.Replay.Pacs008 == nil || command.options.Replay.Pacs008.Delay != 7*time.Second {
+		t.Fatalf("report replay settings = %#v / %q", command.options.Replay, command.replaysPath)
+	}
+}
+
+func TestReportRequiresReplayArtifactOnlyForReplayProfiles(t *testing.T) {
+	loader := func(string) (config.Runtime, error) { return commandTestRuntime(), nil }
+	if _, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv"}, loader); err == nil || !strings.Contains(err.Error(), "--replays is required") {
+		t.Fatalf("replay-enabled report error = %v", err)
+	}
+
+	withoutReplay := commandTestRuntime()
+	withoutReplay.Replay = config.Replay{}
+	command, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv"}, func(string) (config.Runtime, error) {
+		return withoutReplay, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.replaysPath != "" {
+		t.Fatalf("replaysPath = %q, want empty", command.replaysPath)
 	}
 }
 
@@ -79,7 +105,7 @@ func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
 		{
 			name: "report",
 			run: func(loader profileLoader) error {
-				_, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv"}, loader)
+				_, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv", "--replays", "replays.csv"}, loader)
 				return err
 			},
 		},
@@ -115,6 +141,9 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	}
 	if validation.SchemaVersion != 1 || validation.WarmupSeconds != 12 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
 		t.Fatalf("validation window = %#v", validation)
+	}
+	if validation.Replay.Pacs008 == nil || validation.Replay.Pacs008.Share != 0.25 || validation.Replay.Pacs008.DelaySeconds != 7 {
+		t.Fatalf("validation replay = %#v", validation.Replay)
 	}
 	if len(validation.Scenarios) != 1 {
 		t.Fatalf("validation scenarios = %#v", validation.Scenarios)
@@ -281,6 +310,7 @@ func commandTestRuntime() config.Runtime {
 			Duration:     34 * time.Second,
 			Drain:        9 * time.Second,
 		},
+		Replay: config.Replay{Pacs008: &config.Pacs008Replay{Share: 0.25, Delay: 7 * time.Second}},
 		Scenarios: []config.Scenario{{
 			Name:  "happy-path",
 			Share: 1,

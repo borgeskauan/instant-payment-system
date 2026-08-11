@@ -83,7 +83,7 @@ mkdir -p "$tmp_dir/result"
 run_simulator "$tmp_dir/result" "$tmp_dir/tool-output"
 generate_sla_report "$tmp_dir/result" "$tmp_dir/tool-output"
 
-python3 - "$LOADTOOL_COMMAND_LOG" <<'PY'
+python3 - "$LOADTOOL_COMMAND_LOG" "$tmp_dir/tool-output" <<'PY'
 import shlex
 import sys
 
@@ -93,6 +93,8 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 assert len(commands) == 2, commands
 assert commands[0][0] == "simulate", commands
 assert commands[1][0] == "report", commands
+replays_index = commands[1].index("--replays")
+assert commands[1][replays_index + 1] == "../%s/replays.csv" % sys.argv[2], commands
 for command in commands:
     assert "--seed" not in command, command
     profile_index = command.index("--profile")

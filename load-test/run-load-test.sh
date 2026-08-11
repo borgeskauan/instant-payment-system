@@ -37,6 +37,8 @@ PROFILE_SCHEMA_VERSION=""
 PROFILE_WARMUP_SECONDS=""
 PROFILE_ACTIVE_SECONDS=""
 PROFILE_DRAIN_SECONDS=""
+PROFILE_PACS008_REPLAY_SHARE="-"
+PROFILE_PACS008_REPLAY_DELAY_SECONDS="-"
 PROFILE_SCENARIO_NAMES=()
 PROFILE_SCENARIO_SHARES=()
 PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
@@ -169,6 +171,12 @@ payload = {
         "name": profile_name,
         "snapshot": profile_snapshot,
         "execution_plan": execution_plan,
+    },
+    "artifacts": {
+        "starts": "go-loadtool/starts.csv",
+        "events": "go-loadtool/events.csv",
+        "replays": "go-loadtool/replays.csv",
+        "report": "sla-report.json",
     },
     "window": {
         "run_started_at": run_started_at,
@@ -342,6 +350,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     data = json.load(handle)
 
+pacs008_replay = data.get("replay", {}).get("pacs008")
 print("\t".join([
     "metadata",
     data["profile"],
@@ -349,6 +358,8 @@ print("\t".join([
     str(data["warmupSeconds"]),
     str(data["activeSeconds"]),
     str(data["drainSeconds"]),
+    str(pacs008_replay["share"]) if pacs008_replay else "-",
+    str(pacs008_replay["delaySeconds"]) if pacs008_replay else "-",
 ]))
 for scenario in data["scenarios"]:
     participants = scenario["participants"]
@@ -372,7 +383,7 @@ PY
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
-    IFS=$'\t' read -r record_kind returned_profile PROFILE_SCHEMA_VERSION PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS <<< "${records[0]}"
+    IFS=$'\t' read -r record_kind returned_profile PROFILE_SCHEMA_VERSION PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS <<< "${records[0]}"
     if [[ "$record_kind" != metadata || "$returned_profile" != "$PROFILE_NAME" ]]; then
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
@@ -629,6 +640,9 @@ log_selected_options() {
     log_phase "starting load test: tag=${RUN_TAG} profile=${PROFILE_NAME} output=${target_dir}"
     log_phase "using profile: ${PROFILE_NAME}"
     log_phase "execution window: warmup=${PROFILE_WARMUP_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
+    if [[ "$PROFILE_PACS008_REPLAY_SHARE" != - ]]; then
+        log_phase "pacs.008 replay: share=${PROFILE_PACS008_REPLAY_SHARE} delay=${PROFILE_PACS008_REPLAY_DELAY_SECONDS}s"
+    fi
     for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
         pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
         log_phase "scenario: name=${PROFILE_SCENARIO_NAMES[scenario_index]} share=${PROFILE_SCENARIO_SHARES[scenario_index]} pair_number_start=${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]} pairs=${pair_count}"
@@ -858,7 +872,8 @@ generate_sla_report() {
         "$LOADTOOL_BIN" report \
             --profile "$PROFILE_NAME" \
             --starts "../${tool_out}/starts.csv" \
-            --events "../${tool_out}/events.csv"
+            --events "../${tool_out}/events.csv" \
+            --replays "../${tool_out}/replays.csv"
     ) | tee "${target_dir}/sla-report.json"
     log_phase "SLA report generated"
 }

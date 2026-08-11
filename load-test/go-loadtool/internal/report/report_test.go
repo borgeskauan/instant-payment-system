@@ -155,6 +155,84 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 	}
 }
 
+func TestSummaryReportsCompactReplayCountsAndIngressRates(t *testing.T) {
+	starts := []events.Start{
+		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", RequestStartedAtNS: 1_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
+		{EndToEndID: "tx-2", PayerISPB: "10000002", ScenarioName: "happy-path", RequestStartedAtNS: 6_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
+	}
+	replays := []events.Replay{
+		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 11_000_000_000, HTTPStatus: 200},
+		{EndToEndID: "tx-2", PayerISPB: "10000002", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 16_000_000_000, HTTPStatus: 202},
+	}
+	options := Options{
+		Duration: 20 * time.Second,
+		Replay: config.Replay{Pacs008: &config.Pacs008Replay{
+			Share: 0.10,
+			Delay: 10 * time.Second,
+		}},
+	}
+	summary := mustBuildSummaryWithReplays(t, starts, nil, replays, options)
+
+	if summary.Replays.Pacs008.Attempted != 2 || summary.Replays.Pacs008.Accepted != 2 || summary.Replays.Pacs008.Violations != 0 {
+		t.Fatalf("replay summary = %#v", summary.Replays.Pacs008)
+	}
+	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.1 || summary.ThroughputPerSecond.Pacs008ReplaysStarted != 0.1 || summary.ThroughputPerSecond.TotalIngressStarted != 0.2 {
+		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
+	}
+	encoded, err := json.Marshal(summary.Replays.Pacs008)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 3 || fields["attempted"] != float64(2) || fields["accepted"] != float64(2) || fields["violations"] != float64(0) {
+		t.Fatalf("public replay fields = %#v", fields)
+	}
+}
+
+func TestSummaryAggregatesReplayGeneratorDefectsWithoutPublicTaxonomy(t *testing.T) {
+	validStart := events.Start{
+		EndToEndID:            "tx-1",
+		PayerISPB:             "10000001",
+		ScenarioName:          "happy-path",
+		RequestStartedAtNS:    1_000_000_000,
+		HTTPStatus:            200,
+		Pacs008ReplaySelected: true,
+	}
+	validReplay := events.Replay{
+		EndToEndID:         "tx-1",
+		PayerISPB:          "10000001",
+		ScenarioName:       "happy-path",
+		MessageType:        events.MessagePacs008,
+		RequestStartedAtNS: 11_000_000_000,
+		HTTPStatus:         200,
+	}
+	options := Options{Replay: config.Replay{Pacs008: &config.Pacs008Replay{Share: 0.10, Delay: 10 * time.Second}}}
+	tests := []struct {
+		name    string
+		starts  []events.Start
+		replays []events.Replay
+	}{
+		{name: "missing", starts: []events.Start{validStart}},
+		{name: "not selected", starts: []events.Start{func() events.Start { value := validStart; value.Pacs008ReplaySelected = false; return value }()}, replays: []events.Replay{validReplay}},
+		{name: "excess", starts: []events.Start{validStart}, replays: []events.Replay{validReplay, validReplay}},
+		{name: "unknown", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.EndToEndID = "unknown"; return value }()}},
+		{name: "metadata", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.PayerISPB = "10000002"; return value }()}},
+		{name: "http", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.HTTPStatus = 500; return value }()}},
+		{name: "early", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.RequestStartedAtNS--; return value }()}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			summary := mustBuildSummaryWithReplays(t, test.starts, nil, test.replays, options)
+			if summary.Replays.Pacs008.Violations == 0 {
+				t.Fatalf("replay summary = %#v, want aggregate violation", summary.Replays.Pacs008)
+			}
+		})
+	}
+}
+
 func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
@@ -421,6 +499,10 @@ func TestSummaryRejectsUntaggedStartForSingleScenario(t *testing.T) {
 }
 
 func mustBuildSummary(t *testing.T, starts []events.Start, notifications []events.Notification, options Options) Summary {
+	return mustBuildSummaryWithReplays(t, starts, notifications, nil, options)
+}
+
+func mustBuildSummaryWithReplays(t *testing.T, starts []events.Start, notifications []events.Notification, replays []events.Replay, options Options) Summary {
 	t.Helper()
 	if len(options.Scenarios) == 0 {
 		options.Scenarios = []config.Scenario{reportTestHappyPathScenario()}
@@ -452,7 +534,7 @@ func mustBuildSummary(t *testing.T, starts []events.Start, notifications []event
 			}
 		}
 	}
-	summary, err := BuildWithOptions(starts, notifications, options)
+	summary, err := BuildWithReplayOptions(starts, notifications, replays, options)
 	if err != nil {
 		t.Fatal(err)
 	}

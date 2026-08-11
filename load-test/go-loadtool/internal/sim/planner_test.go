@@ -67,6 +67,58 @@ func TestPlannerUsesExactDeterministicScenarioBlocks(t *testing.T) {
 	}
 }
 
+func TestReplaySelectorUsesConfiguredExactDeterministicBlocks(t *testing.T) {
+	for _, share := range []float64{0.10, 0.25} {
+		first, err := newReplaySelector(share)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := newReplaySelector(share)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantPerBlock := int(share * config.ScenarioSelectionBlockSize)
+		for blockIndex := range 2 {
+			selected := 0
+			for range config.ScenarioSelectionBlockSize {
+				firstSelected := first.Next()
+				if firstSelected != second.Next() {
+					t.Fatalf("share %.2f block %d was not deterministic", share, blockIndex)
+				}
+				if firstSelected {
+					selected++
+				}
+			}
+			if selected != wantPerBlock {
+				t.Fatalf("share %.2f block %d selected %d, want %d", share, blockIndex, selected, wantPerBlock)
+			}
+		}
+	}
+}
+
+func TestReplaySelectionDoesNotChangeScenarioOrdering(t *testing.T) {
+	withReplay, err := newWorkloadPlanner(mixedPlannerScenarios())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutReplay, err := newWorkloadPlanner(mixedPlannerScenarios())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := newReplaySelector(0.10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for sequence := range 300 {
+		_ = replay.Next()
+		got := withReplay.Next()
+		want := withoutReplay.Next()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("sequence %d differs with replay selection: %#v / %#v", sequence, got, want)
+		}
+	}
+}
+
 func TestPlannerKeepsScenarioLocalPairAndAmountSequences(t *testing.T) {
 	planner, err := newWorkloadPlanner(mixedPlannerScenarios())
 	if err != nil {

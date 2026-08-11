@@ -36,6 +36,7 @@ type Runtime struct {
 	SchemaVersion int
 	Connections   Connections
 	Load          Load
+	Replay        Replay
 	Scenarios     []Scenario
 	Reporting     Reporting
 }
@@ -64,6 +65,15 @@ type Load struct {
 	Warmup       time.Duration
 	Duration     time.Duration
 	Drain        time.Duration
+}
+
+type Replay struct {
+	Pacs008 *Pacs008Replay
+}
+
+type Pacs008Replay struct {
+	Share float64
+	Delay time.Duration
 }
 
 type HotColdPairDistribution struct {
@@ -118,6 +128,7 @@ type fileConfig struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Connections   fileConnections `json:"connections"`
 	Load          fileLoad        `json:"load"`
+	Replay        fileReplay      `json:"replay"`
 	Scenarios     []fileScenario  `json:"scenarios"`
 	Reporting     fileReporting   `json:"reporting"`
 }
@@ -146,6 +157,15 @@ type fileLoad struct {
 	Warmup       string `json:"warmup"`
 	Duration     string `json:"duration"`
 	Drain        string `json:"drain"`
+}
+
+type fileReplay struct {
+	Pacs008 *filePacs008Replay `json:"pacs008,omitempty"`
+}
+
+type filePacs008Replay struct {
+	Share float64 `json:"share"`
+	Delay string  `json:"delay"`
 }
 
 type fileHotColdPairDistribution struct {
@@ -258,6 +278,10 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if file.Load.TargetTxRate <= 0 {
 		return Runtime{}, malformedProfile(name, "load.targetTxRate", errors.New("must be positive"))
 	}
+	replay, err := decodeReplay(name, file.Replay)
+	if err != nil {
+		return Runtime{}, err
+	}
 
 	if len(file.Scenarios) == 0 {
 		return Runtime{}, malformedProfile(name, "scenarios", errors.New("must contain at least one scenario"))
@@ -320,9 +344,26 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			Duration:     duration,
 			Drain:        drain,
 		},
+		Replay:    replay,
 		Scenarios: scenarios,
 		Reporting: Reporting{SLAThresholdMs: file.Reporting.SLAThresholdMs},
 	}, nil
+}
+
+func decodeReplay(profileName string, file fileReplay) (Replay, error) {
+	if file.Pacs008 == nil {
+		return Replay{}, nil
+	}
+	quota := file.Pacs008.Share * ScenarioSelectionBlockSize
+	roundedQuota := math.Round(quota)
+	if file.Pacs008.Share <= 0 || file.Pacs008.Share > 1 || math.Abs(quota-roundedQuota) > 1e-9 {
+		return Replay{}, malformedProfile(profileName, "replay.pacs008.share", fmt.Errorf("must be greater than 0, at most 1, and select a whole number of entries in a %d-entry block", ScenarioSelectionBlockSize))
+	}
+	delay, err := parseWholeSecondDuration(profileName, "replay.pacs008.delay", file.Pacs008.Delay, false)
+	if err != nil {
+		return Replay{}, err
+	}
+	return Replay{Pacs008: &Pacs008Replay{Share: file.Pacs008.Share, Delay: delay}}, nil
 }
 
 func decodeScenario(profileName string, index int, file fileScenario) (Scenario, error) {
