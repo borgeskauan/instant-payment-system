@@ -153,6 +153,51 @@ O modelo de repetição está explícito no contrato e na documentação; `run-w
 
 Os testes protegem populações, replay e outcomes lógicos externos no load-tool, enquanto os testes focados da SPI protegem settlement e invariantes financeiros. A próxima simplificação pode alterar mecanismos e artefatos internos sem perder essas garantias.
 
+## Fatia 2C.2 — Bundle interno tipado (concluída)
+
+**Resultado:** o layout de um run passou a ter uma representação interna única e testada, sem alterar a CLI, o runner ou o fluxo de execução existente.
+
+- [x] Criar um resolvedor tipado que normalize o diretório do run e derive caminhos fixos para snapshot, plano, janela, relatório e CSVs.
+- [x] Validar que `profile.json` e `execution-plan.json` foram preparados e que outputs de uma execução anterior ainda não existem.
+- [x] Permitir conteúdo preparatório adicional, incluindo certificados, sem tornar seus caminhos parte do bundle nesta fatia.
+- [x] Reservar `go-loadtool/` sem sobrescrever uma tentativa existente.
+- [x] Disponibilizar escrita atômica de `sla-report.json`, sem sobrescrita ou relatório parcial visível.
+- [x] Manter `validate-profile`, `simulate`, `report`, suas flags e `run-load-test.sh` inalterados.
+
+### Critério de saída
+
+O pacote interno `runbundle` protege o layout, a preparação de uma execução nova e a publicação atômica do relatório. Ele ainda não participa do fluxo de produção; sua adoção ocorre nas duas fatias seguintes.
+
+## Fatia 2C.3 — Comando único de execução
+
+**Resultado esperado:** `go-loadtool run --run-dir DIR` executa simulação e relatório em uma única passagem, usando o snapshot do bundle, enquanto os comandos atuais permanecem disponíveis para compatibilidade temporária.
+
+- [ ] Adicionar `run --run-dir` usando o resolvedor e as validações da 2C.2.
+- [ ] Ler a identidade da execução em `execution-plan.json` e usar `profile.json` como configuração autoritativa, sem reler o perfil editável.
+- [ ] Manter os overrides mTLS atuais no novo comando.
+- [ ] Executar o simulador, fechar os CSVs e somente então gerar atomicamente `sla-report.json`.
+- [ ] Não criar relatório quando a simulação falhar e não expor reconstrução posterior do report como objetivo do novo fluxo.
+- [ ] Manter temporariamente `simulate`, `report` e todas as flags atuais; o runner continua usando o fluxo antigo nesta fatia.
+
+### Critério de saída
+
+O comando `run` produz sozinho um bundle completo em testes, mas nenhuma interface antiga foi removida e o runner público ainda não foi migrado.
+
+## Fatia 2C.4 — Migração do runner e remoção da compatibilidade interna
+
+**Resultado esperado:** o runner público usa uma única chamada Go por execução e os comandos e flags internos antigos só são removidos após validação funcional do novo caminho.
+
+- [ ] Migrar `run-load-test.sh` para chamar `go-loadtool run --run-dir` depois da validação, preparação e provisionamento existentes.
+- [ ] Remover do runner a propagação individual dos caminhos dos CSVs e a chamada separada de relatório.
+- [ ] Preservar o enriquecimento posterior de `run-window.json`, os diagnósticos e o layout externo baseado em tag e timestamp.
+- [ ] Executar a suíte automatizada e um smoke funcional curto de `mixed-outcomes-smoke` pelo novo fluxo.
+- [ ] Confirmar no smoke as caracterizações semânticas da 2C.1 e a produção de um único `sla-report.json`.
+- [ ] Somente após o smoke, remover `simulate`, `report` e as flags internas de caminhos que deixaram de ter consumidores.
+
+### Critério de saída
+
+O comando público permanece `./run-load-test.sh [--profile NAME] <run-tag>`, agora apoiado por uma única execução Go; o caminho interno anterior é removido apenas depois da evidência funcional.
+
 ## Fatia 3 — Matriz final e handoff para estabilização
 
 **Resultado:** a task de estabilização recebe uma matriz funcional validada e sabe quais perfis ou workloads usar em cada experimento de performance.
