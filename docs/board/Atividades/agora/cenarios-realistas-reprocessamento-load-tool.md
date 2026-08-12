@@ -44,7 +44,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - 126 replays de cada tipo caracterizam somente o resultado atual de `mixed-outcomes-smoke`; não são uma regra geral para qualquer população de 1.250 mensagens com `share=0.10`;
 - a suíte de caracterização protege as populações de originais e status, as contagens separadas dos dois tipos de replay e um único resultado lógico final por pagamento, sem congelar quais `EndToEndId` são selecionados;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
-- o runner não trunca mais estado persistente antes dos runs: o preflight usa somente o lag atual dos três consumer groups Kafka como heurística best-effort, sem alegar quiescência forte ou detectar trabalho residual em outbox/delivery.
+- o runner não trunca mais estado persistente antes dos runs: a preparação automática e obrigatória do ambiente consome `execution-plan.json`, usa o lag atual dos três consumer groups Kafka como heurística best-effort e somente então provisiona os fundos declarados; `run-load-test.sh` apenas orquestra essa unidade interna, sem alegar quiescência forte ou detectar trabalho residual em outbox/delivery.
 
 ## Fatia 0 — Contrato e execução reproduzível (concluída)
 

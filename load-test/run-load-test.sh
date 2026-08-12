@@ -8,24 +8,16 @@ readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/profiles"
 readonly PROFILE_SNAPSHOT_FILENAME="profile.json"
 readonly EXECUTION_PLAN_FILENAME="execution-plan.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
-readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/provision-funds.sh}"
+readonly PREPARE_ENVIRONMENT_SCRIPT="${PREPARE_ENVIRONMENT_SCRIPT:-${SCRIPTS_DIR}/prepare-environment.sh}"
 readonly LOADTOOL_CERT_SCRIPT="${LOADTOOL_CERT_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/infra/certs/generate-local-mtls-certs.sh}"
 readonly LOADTOOL_CA_CERT="${LOADTOOL_CA_CERT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/infra/certs/local/ca/ca.crt}"
 readonly SPI_CONTAINER="spi"
 readonly KAFKA_PRODUCER_CONTAINER="kafka-producer"
 readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
-readonly KAFKA_CONTAINER="kafka"
-readonly SPI_PAYMENT_REQUEST_CONSUMER_GROUP="spi-payment-request-consumer-group"
-readonly SPI_STATUS_REPORT_CONSUMER_GROUP="spi-status-report-consumer-group"
-readonly NOTIFICATION_GATEWAY_CONSUMER_GROUP="notification-gateway-group"
-readonly SPI_PAYMENT_REQUEST_TOPIC="spi-payment-requests"
-readonly SPI_STATUS_REPORT_TOPIC="spi-payment-status-reports"
-readonly PSP_NOTIFICATIONS_TOPIC="psp-notifications"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
 readonly GRAFANA_DASHBOARD_PATH="/d/load-test/load-test"
-readonly KAFKA_CLI_TIMEOUT_SECONDS="${KAFKA_CLI_TIMEOUT_SECONDS:-15}"
 
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
@@ -43,10 +35,6 @@ PROFILE_SCENARIO_SHARES=()
 PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
 PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
 PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
-PROFILE_SCENARIO_PAYER_BALANCES=()
-PROFILE_SCENARIO_RECEIVER_BALANCES=()
-PROFILE_SCENARIO_RESET_BEHAVIORS=()
-PROVISION_FUNDS=true
 ENABLE_JFR=false
 ENABLE_SPI_TRACE=false
 ENABLE_POSTGRES_STATEMENTS=false
@@ -65,7 +53,7 @@ LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
 LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--profile NAME] [--jfr] [--spi-trace] [--postgres-statements] [--provision-funds|--no-provision-funds] <run-tag>"
+    echo "Usage: $(basename "$0") [--profile NAME] [--jfr] [--spi-trace] [--postgres-statements] <run-tag>"
     echo "Examples:"
     echo "  $(basename "$0") --profile uniform-smoke smoke-run"
     echo "  $(basename "$0") smoke-run  # defaults to uniform-smoke"
@@ -233,14 +221,6 @@ cleanup() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --provision-funds)
-                PROVISION_FUNDS=true
-                shift
-                ;;
-            --no-provision-funds)
-                PROVISION_FUNDS=false
-                shift
-                ;;
             --jfr)
                 ENABLE_JFR=true
                 shift
@@ -369,7 +349,6 @@ print("\t".join([
 ]))
 for scenario in data["scenarios"]:
     participants = scenario["participants"]
-    provisioning = scenario["provisioning"]
     print("\t".join([
         "scenario",
         scenario["name"],
@@ -377,9 +356,6 @@ for scenario in data["scenarios"]:
         str(participants["pairNumberStart"]),
         str(participants["hotPairCount"]),
         str(participants["coldPairCount"]),
-        str(provisioning["payerBalance"]),
-        str(provisioning["receiverBalance"]),
-        str(provisioning["resetIfExists"]).lower(),
     ]))
 PY
 )
@@ -400,15 +376,12 @@ PY
     PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
     PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
     PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
-    PROFILE_SCENARIO_PAYER_BALANCES=()
-    PROFILE_SCENARIO_RECEIVER_BALANCES=()
-    PROFILE_SCENARIO_RESET_BEHAVIORS=()
 
-    local scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists
+    local scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count
     local record
     for record in "${records[@]:1}"; do
-        IFS=$'\t' read -r record_kind scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count payer_balance receiver_balance reset_if_exists <<< "$record"
-        if [[ "$record_kind" != scenario || -z "$scenario_name" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" || -z "$payer_balance" || -z "$receiver_balance" || -z "$reset_if_exists" ]]; then
+        IFS=$'\t' read -r record_kind scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count <<< "$record"
+        if [[ "$record_kind" != scenario || -z "$scenario_name" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" ]]; then
             echo "Go loadtool returned invalid normalized scenario metadata for profile '${PROFILE_NAME}'." >&2
             return 1
         fi
@@ -417,102 +390,8 @@ PY
         PROFILE_SCENARIO_PAIR_NUMBER_STARTS+=("$pair_number_start")
         PROFILE_SCENARIO_HOT_PAIR_COUNTS+=("$hot_pair_count")
         PROFILE_SCENARIO_COLD_PAIR_COUNTS+=("$cold_pair_count")
-        PROFILE_SCENARIO_PAYER_BALANCES+=("$payer_balance")
-        PROFILE_SCENARIO_RECEIVER_BALANCES+=("$receiver_balance")
-        PROFILE_SCENARIO_RESET_BEHAVIORS+=("$reset_if_exists")
     done
     log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION} scenarios=${#PROFILE_SCENARIO_NAMES[@]}"
-}
-
-consumer_group_topic_lag() {
-    local consumer_group="$1"
-    local topic="$2"
-    local group_output lag
-
-    if ! group_output="$(timeout "$KAFKA_CLI_TIMEOUT_SECONDS" docker exec "$KAFKA_CONTAINER" kafka-consumer-groups \
-            --bootstrap-server kafka:9092 \
-            --describe \
-            --group "$consumer_group" 2>&1)"; then
-        echo "Failed to read Kafka consumer group lag for ${consumer_group} within ${KAFKA_CLI_TIMEOUT_SECONDS}s." >&2
-        echo "$group_output" >&2
-        return 1
-    fi
-
-    lag="$(echo "$group_output" |
-        awk -v topic="$topic" '
-            $2 == topic && $6 ~ /^[0-9]+$/ {
-                found = 1
-                lag += $6
-            }
-            END {
-                if (found) {
-                    print lag + 0
-                } else {
-                    print "NO_OFFSETS"
-                }
-            }
-        ')"
-
-    if [[ "$lag" == "NO_OFFSETS" ]]; then
-        topic_end_offset "$topic"
-        return
-    fi
-
-    echo "$lag"
-}
-
-topic_end_offset() {
-    local topic="$1"
-    local offset_output
-
-    if ! offset_output="$(timeout "$KAFKA_CLI_TIMEOUT_SECONDS" docker exec "$KAFKA_CONTAINER" kafka-get-offsets \
-        --bootstrap-server kafka:9092 \
-        --topic "$topic" \
-        --time -1 2>&1)"; then
-        echo "Failed to read Kafka end offsets for ${topic} within ${KAFKA_CLI_TIMEOUT_SECONDS}s." >&2
-        echo "$offset_output" >&2
-        return 1
-    fi
-
-    echo "$offset_output" |
-        awk -F: '
-            $3 ~ /^[0-9]+$/ { offset += $3 }
-            END { print offset + 0 }
-        '
-}
-
-current_spi_input_lag() {
-    local payment_lag status_lag
-
-    payment_lag="$(consumer_group_topic_lag "$SPI_PAYMENT_REQUEST_CONSUMER_GROUP" "$SPI_PAYMENT_REQUEST_TOPIC")"
-    status_lag="$(consumer_group_topic_lag "$SPI_STATUS_REPORT_CONSUMER_GROUP" "$SPI_STATUS_REPORT_TOPIC")"
-
-    echo $(( payment_lag + status_lag ))
-}
-
-current_notification_gateway_lag() {
-    consumer_group_topic_lag "$NOTIFICATION_GATEWAY_CONSUMER_GROUP" "$PSP_NOTIFICATIONS_TOPIC"
-}
-
-assert_no_initial_kafka_lag() {
-    local lag
-    lag="$(current_spi_input_lag)"
-
-    if (( lag > 0 )); then
-        echo "Refusing to start load test: SPI input consumer groups have ${lag} messages of lag." >&2
-        echo "Checked ${SPI_PAYMENT_REQUEST_CONSUMER_GROUP}/${SPI_PAYMENT_REQUEST_TOPIC} and ${SPI_STATUS_REPORT_CONSUMER_GROUP}/${SPI_STATUS_REPORT_TOPIC}." >&2
-        echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
-        exit 1
-    fi
-
-    lag="$(current_notification_gateway_lag)"
-
-    if (( lag > 0 )); then
-        echo "Refusing to start load test: notification-gateway has ${lag} messages of lag on ${PSP_NOTIFICATIONS_TOPIC}." >&2
-        echo "Old PSP notifications would be delivered during the new run and contaminate SLA results." >&2
-        echo "Wait for the backlog to drain or reset the Kafka/Postgres test environment before starting a new measured run." >&2
-        exit 1
-    fi
 }
 
 start_spi_trace() {
@@ -689,12 +568,25 @@ copy_profile_snapshot() {
 }
 
 run_preflight_checks() {
-    log_phase "checking initial Kafka lag"
-    assert_no_initial_kafka_lag
-    log_phase "initial Kafka lag is zero"
-
     log_phase "ensuring SPI trace is stopped"
     stop_spi_trace ""
+}
+
+prepare_environment() {
+    local target_dir="$1"
+    local absolute_target_dir log_file status
+
+    absolute_target_dir="$(cd "$target_dir" && pwd)"
+    log_file="${target_dir}/prepare-environment.log"
+    log_phase "preparing load-test environment"
+    if "$PREPARE_ENVIRONMENT_SCRIPT" --run-dir "$absolute_target_dir" > "$log_file" 2>&1; then
+        log_phase "load-test environment prepared"
+        return 0
+    else
+        status=$?
+    fi
+    cat "$log_file" >&2
+    return "$status"
 }
 
 prepare_loadtool_certificates() {
@@ -737,48 +629,6 @@ prepare_loadtool_certificates() {
         done
     done
     log_phase "ephemeral load-tool PSP certificates generated"
-}
-
-provision_funds_if_enabled() {
-    local target_dir="$1"
-    local scenario_index pair_number_start pair_count last_pair pair_number suffix
-    local role balance
-    local -a funding_args
-
-    if [[ "$PROVISION_FUNDS" == true ]]; then
-        log_phase "provisioning funds"
-        : > "${target_dir}/provision-funds.log"
-        for scenario_index in "${!PROFILE_SCENARIO_NAMES[@]}"; do
-            for role in payer receiver; do
-                if [[ "$role" == payer ]]; then
-                    balance="${PROFILE_SCENARIO_PAYER_BALANCES[scenario_index]}"
-                else
-                    balance="${PROFILE_SCENARIO_RECEIVER_BALANCES[scenario_index]}"
-                fi
-                funding_args=(--balance "$balance")
-                if [[ "${PROFILE_SCENARIO_RESET_BEHAVIORS[scenario_index]}" == true ]]; then
-                    funding_args+=(--reset-if-exists)
-                else
-                    funding_args+=(--preserve-if-exists)
-                fi
-                pair_number_start="${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[scenario_index]}"
-                pair_count=$((PROFILE_SCENARIO_HOT_PAIR_COUNTS[scenario_index] + PROFILE_SCENARIO_COLD_PAIR_COUNTS[scenario_index]))
-                last_pair=$((pair_number_start + pair_count - 1))
-                for pair_number in $(seq "$pair_number_start" "$last_pair"); do
-                    suffix="$(printf "%06d" "$pair_number")"
-                    if [[ "$role" == payer ]]; then
-                        funding_args+=(--ispb "10${suffix}")
-                    else
-                        funding_args+=(--ispb "20${suffix}")
-                    fi
-                done
-                "$PROVISION_FUNDS_SCRIPT" "${funding_args[@]}" >> "${target_dir}/provision-funds.log" 2>&1
-            done
-        done
-        log_phase "funds provisioned"
-    else
-        log_phase "skipping funds provisioning"
-    fi
 }
 
 start_optional_diagnostics() {
@@ -905,7 +755,7 @@ main() {
     log_selected_options "$target_dir"
     log_grafana_status "$grafana_available_at_run_start"
     run_preflight_checks
-    provision_funds_if_enabled "$target_dir"
+    prepare_environment "$target_dir"
     start_optional_diagnostics "$target_dir"
     if run_loadtool "$target_dir"; then
         loadtool_status=0

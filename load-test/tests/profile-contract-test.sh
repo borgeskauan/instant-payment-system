@@ -8,12 +8,14 @@ cd "$ROOT_DIR"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-cat > "$tmp_dir/fake-provision-funds" <<'SH'
+cat > "$tmp_dir/fake-prepare-environment" <<'SH'
 #!/bin/bash
 set -euo pipefail
-printf '%s\n' "$*" >> "$FUNDING_COMMAND_LOG"
+printf '%s\n' "$*" >> "$PREPARE_ENVIRONMENT_COMMAND_LOG"
+printf '%s\n' "prepared $*"
+exit "${PREPARE_ENVIRONMENT_FAKE_EXIT_CODE:-0}"
 SH
-chmod +x "$tmp_dir/fake-provision-funds"
+chmod +x "$tmp_dir/fake-prepare-environment"
 
 cat > "$tmp_dir/fake-cert-generator" <<'SH'
 #!/bin/bash
@@ -23,9 +25,9 @@ SH
 chmod +x "$tmp_dir/fake-cert-generator"
 touch "$tmp_dir/ca.crt"
 
-export FUNDING_COMMAND_LOG="$tmp_dir/funding-commands.log"
 export CERT_COMMAND_LOG="$tmp_dir/cert-commands.log"
-export PROVISION_FUNDS_SCRIPT="$tmp_dir/fake-provision-funds"
+export PREPARE_ENVIRONMENT_COMMAND_LOG="$tmp_dir/prepare-environment-commands.log"
+export PREPARE_ENVIRONMENT_SCRIPT="$tmp_dir/fake-prepare-environment"
 export LOADTOOL_CERT_SCRIPT="$tmp_dir/fake-cert-generator"
 export LOADTOOL_CA_CERT="$tmp_dir/ca.crt"
 source "$ROOT_DIR/run-load-test.sh"
@@ -151,10 +153,6 @@ if [[ "${PROFILE_SCENARIO_PAIR_NUMBER_STARTS[0]}" != 1 || "${PROFILE_SCENARIO_PA
     echo "runner did not consume normalized participant range" >&2
     exit 1
 fi
-if [[ "${PROFILE_SCENARIO_PAYER_BALANCES[0]}" != 123.45 || "${PROFILE_SCENARIO_RECEIVER_BALANCES[0]}" != 0.00 || "${PROFILE_SCENARIO_PAYER_BALANCES[1]}" != 0.00 || "${PROFILE_SCENARIO_RESET_BEHAVIORS[0]}" != true ]]; then
-    echo "runner did not consume normalized provisioning settings" >&2
-    exit 1
-fi
 if ! python3 - "$LOADTOOL_VALIDATION_FILE" <<'PY'
 import json
 import sys
@@ -193,27 +191,31 @@ if [[ -e "$tmp_dir/workspace/go-loadtool" ]]; then
     exit 1
 fi
 
-mkdir -p "$tmp_dir/result"
-prepare_loadtool_certificates "$tmp_dir/result"
-PROVISION_FUNDS=true
-provision_funds_if_enabled "$tmp_dir/result"
-PROFILE_SCENARIO_RESET_BEHAVIORS[0]=false
-provision_funds_if_enabled "$tmp_dir/result"
-
-cat > "$tmp_dir/expected-funding-commands.log" <<'EOF'
---balance 123.45 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
---balance 0.00 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
---balance 0.00 --reset-if-exists --ispb 10000004 --ispb 10000005
---balance 0.00 --reset-if-exists --ispb 20000004 --ispb 20000005
---balance 123.45 --preserve-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
---balance 0.00 --preserve-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
---balance 0.00 --reset-if-exists --ispb 10000004 --ispb 10000005
---balance 0.00 --reset-if-exists --ispb 20000004 --ispb 20000005
-EOF
-if ! diff -u "$tmp_dir/expected-funding-commands.log" "$FUNDING_COMMAND_LOG"; then
-    echo "runner did not pass normalized funding settings to provision-funds" >&2
+prepare_environment "$tmp_dir/workspace"
+if [[ "$(cat "$PREPARE_ENVIRONMENT_COMMAND_LOG")" != "--run-dir $tmp_dir/workspace" ]]; then
+    echo "runner did not pass the fixed run directory to environment preparation" >&2
     exit 1
 fi
+if ! grep -q "prepared --run-dir $tmp_dir/workspace" "$tmp_dir/workspace/prepare-environment.log"; then
+    echo "runner did not capture environment preparation output" >&2
+    exit 1
+fi
+
+export PREPARE_ENVIRONMENT_FAKE_EXIT_CODE=29
+if prepare_environment "$tmp_dir/workspace" >/dev/null 2>&1; then
+    echo "runner accepted an environment preparation failure" >&2
+    exit 1
+else
+    preparation_status=$?
+fi
+unset PREPARE_ENVIRONMENT_FAKE_EXIT_CODE
+if [[ "$preparation_status" -ne 29 ]]; then
+    echo "runner returned $preparation_status, want environment preparation exit code 29" >&2
+    exit 1
+fi
+
+mkdir -p "$tmp_dir/result"
+prepare_loadtool_certificates "$tmp_dir/result"
 
 cat > "$tmp_dir/expected-cert-commands.log" <<EOF
 --psp-root $tmp_dir/result/certs psp 10000001

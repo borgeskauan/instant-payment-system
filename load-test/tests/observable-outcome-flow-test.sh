@@ -25,7 +25,7 @@ grafana_available() { return 1; }
 log_selected_options() { :; }
 log_grafana_status() { :; }
 run_preflight_checks() { :; }
-provision_funds_if_enabled() { :; }
+prepare_environment() { echo prepare-environment >> "$FLOW_LOG"; }
 start_optional_diagnostics() { :; }
 run_loadtool() { echo run >> "$FLOW_LOG"; }
 capture_and_assert_outbox_drained() {
@@ -45,6 +45,7 @@ if grep -q outbox-validation "$FLOW_LOG"; then
 fi
 
 cat > "$tmp_dir/expected-flow.log" <<'EOF'
+prepare-environment
 run
 diagnostics
 run-window

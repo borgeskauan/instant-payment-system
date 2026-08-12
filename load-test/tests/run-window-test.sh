@@ -97,9 +97,9 @@ if (RUN_TAG=""; parse_args --process-stats baseline) >/dev/null 2>&1; then
     exit 1
 fi
 
-for removed_flag in --reset-state --no-reset-state; do
+for removed_flag in --reset-state --no-reset-state --provision-funds --no-provision-funds; do
     if (RUN_TAG=""; parse_args "$removed_flag" baseline) >/dev/null 2>&1; then
-        echo "$removed_flag should not be accepted after PostgreSQL state cleanup removal" >&2
+        echo "$removed_flag should not be accepted by the public runner" >&2
         exit 1
     fi
 done

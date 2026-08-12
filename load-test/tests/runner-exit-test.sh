@@ -49,7 +49,12 @@ grafana_available() { return 1; }
 log_selected_options() { :; }
 log_grafana_status() { :; }
 run_preflight_checks() { :; }
-provision_funds_if_enabled() { :; }
+prepare_environment() {
+    printf '%s\n' prepare-environment >> "$RUNNER_FLOW_LOG"
+    if [[ "$RUNNER_TEST_MODE" == preparation-failure ]]; then
+        return 17
+    fi
+}
 start_optional_diagnostics() { :; }
 print_grafana_links() { :; }
 iso_now() { printf '%s\n' '2026-08-11T12:00:00.000000000-03:00'; }
@@ -94,6 +99,7 @@ run_driver() {
 
 run_driver valid
 cat > "$tmp_dir/valid.expected" <<'EOF'
+prepare-environment
 run
 diagnostics
 enriched
@@ -118,7 +124,21 @@ if [[ "$go_failure_status" -ne 23 ]]; then
     exit 1
 fi
 cat > "$tmp_dir/go-failure.expected" <<'EOF'
+prepare-environment
 run
 diagnostics
 EOF
 diff -u "$tmp_dir/go-failure.expected" "$tmp_dir/go-failure.flow"
+
+set +e
+run_driver preparation-failure >"$tmp_dir/preparation-failure.log" 2>&1
+preparation_failure_status=$?
+set -e
+if [[ "$preparation_failure_status" -ne 17 ]]; then
+    echo "runner returned $preparation_failure_status, want environment-preparation exit code 17" >&2
+    exit 1
+fi
+cat > "$tmp_dir/preparation-failure.expected" <<'EOF'
+prepare-environment
+EOF
+diff -u "$tmp_dir/preparation-failure.expected" "$tmp_dir/preparation-failure.flow"
