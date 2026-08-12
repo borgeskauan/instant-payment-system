@@ -80,7 +80,7 @@ fi
 snapshot_dir="$tmp_dir/snapshot"
 mkdir -p "$snapshot_dir"
 copy_profile_snapshot "$snapshot_dir"
-if ! cmp -s "$PROFILE_PATH" "$snapshot_dir/profile.json"; then
+if ! cmp -s "$PROFILE_PATH" "$snapshot_dir/inputs/profile.json"; then
     echo "profile snapshot is not byte-identical to the selected profile" >&2
     exit 1
 fi
@@ -89,6 +89,8 @@ cat > "$tmp_dir/fake-go-loadtool" <<'SH'
 #!/bin/bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$LOADTOOL_COMMAND_LOG"
+echo "loadtool stdout"
+echo "loadtool stderr" >&2
 exit "${LOADTOOL_FAKE_EXIT_CODE:-0}"
 SH
 chmod +x "$tmp_dir/fake-go-loadtool"
@@ -99,9 +101,14 @@ PROFILE_NAME="mixed-outcomes-smoke"
 LOADTOOL_CENTRAL_TRANSFER_CA_CERT="central-ca.crt"
 LOADTOOL_CERT_ROOT="$tmp_dir/client-certs"
 LOADTOOL_GATEWAY_CA_CERT="gateway-ca.crt"
-mkdir -p "$tmp_dir/result"
+mkdir -p "$tmp_dir/result/logs"
 
 run_loadtool "$tmp_dir/result"
+
+if [[ "$(cat "$tmp_dir/result/logs/loadtool.log")" != $'loadtool stdout\nloadtool stderr' ]]; then
+    echo "loadtool.log did not capture both stdout and stderr" >&2
+    exit 1
+fi
 
 python3 - "$LOADTOOL_COMMAND_LOG" "$tmp_dir/result" <<'PY'
 import shlex

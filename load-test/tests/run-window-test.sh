@@ -50,13 +50,13 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 assert data["tag"] == "baseline-2000"
 assert data["result_dir"] == os.environ["EXPECTED_RESULT_DIR"]
 assert data["profile"]["name"] == "uniform-smoke"
-assert data["profile"]["snapshot"] == "profile.json"
-assert data["profile"]["execution_plan"] == "execution-plan.json"
+assert data["profile"]["snapshot"] == "inputs/profile.json"
+assert data["profile"]["execution_plan"] == "inputs/execution-plan.json"
 assert data["artifacts"] == {
-    "starts": "go-loadtool/starts.csv",
-    "events": "go-loadtool/events.csv",
-    "replays": "go-loadtool/replays.csv",
-    "status_starts": "go-loadtool/status-starts.csv",
+    "pacs008_starts": "events/pacs008-starts.csv",
+    "pacs002_starts": "events/pacs002-starts.csv",
+    "notifications": "events/notifications.csv",
+    "replays": "events/replays.csv",
     "report": "sla-report.json",
 }
 assert data["window"]["run_started_at"] == "2026-06-20T20:05:46-03:00"

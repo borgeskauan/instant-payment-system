@@ -33,14 +33,14 @@ func TestParseRunConfigUsesRunProfileAndFixedBundlePaths(t *testing.T) {
 		t.Fatalf("parseRunConfig() error = %v", err)
 	}
 
-	profilePath := filepath.Join(runDir, "profile.json")
+	profilePath := filepath.Join(runDir, "inputs", "profile.json")
 	if loadedPath != profilePath {
 		t.Fatalf("loaded profile path = %q, want %q", loadedPath, profilePath)
 	}
 	if command.simulator.ProfileName != "run-profile" {
 		t.Fatalf("simulator ProfileName = %q", command.simulator.ProfileName)
 	}
-	if command.simulator.OutputDir != filepath.Join(runDir, "go-loadtool") || command.simulator.RunWindowPath != filepath.Join(runDir, "run-window.json") {
+	if command.simulator.OutputDir != filepath.Join(runDir, "events") || command.simulator.RunWindowPath != filepath.Join(runDir, "run-window.json") {
 		t.Fatalf("simulator paths = %q / %q", command.simulator.OutputDir, command.simulator.RunWindowPath)
 	}
 	if command.runtime.Name != "run-profile" || command.runtime.Load.TargetTxRate != 321 {
@@ -172,7 +172,7 @@ func TestExecuteRunDoesNotReportAfterSimulationFailure(t *testing.T) {
 	if renderCalled {
 		t.Fatal("report renderer was called after simulation failure")
 	}
-	if _, err := os.Stat(filepath.Join(runDir, "go-loadtool")); err != nil {
+	if _, err := os.Stat(filepath.Join(runDir, "events")); err != nil {
 		t.Fatalf("partial output directory was not retained: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, "sla-report.json")); !os.IsNotExist(err) {
@@ -248,7 +248,7 @@ func TestRunCommandLoadsRunProfileBeforeCreatingOutputs(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid name") {
 		t.Fatalf("runRun() error = %v, want invalid run profile error", err)
 	}
-	if _, err := os.Stat(filepath.Join(runDir, "go-loadtool")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(runDir, "events")); !os.IsNotExist(err) {
 		t.Fatalf("output directory exists or cannot be inspected after profile failure: %v", err)
 	}
 }
@@ -258,21 +258,21 @@ func writeMinimalRunArtifacts(cfg sim.Config) error {
 	if err := runwindow.Write(cfg.RunWindowPath, document); err != nil {
 		return err
 	}
-	startWriter, err := events.NewStartWriter(filepath.Join(cfg.OutputDir, "starts.csv"))
+	startWriter, err := events.NewStartWriter(filepath.Join(cfg.OutputDir, "pacs008-starts.csv"))
 	if err != nil {
 		return err
 	}
 	if err := startWriter.Close(); err != nil {
 		return err
 	}
-	eventWriter, err := events.NewNotificationWriter(filepath.Join(cfg.OutputDir, "events.csv"))
+	eventWriter, err := events.NewNotificationWriter(filepath.Join(cfg.OutputDir, "notifications.csv"))
 	if err != nil {
 		return err
 	}
 	if err := eventWriter.Close(); err != nil {
 		return err
 	}
-	statusWriter, err := events.NewStatusStartWriter(filepath.Join(cfg.OutputDir, "status-starts.csv"))
+	statusWriter, err := events.NewStatusStartWriter(filepath.Join(cfg.OutputDir, "pacs002-starts.csv"))
 	if err != nil {
 		return err
 	}
@@ -289,8 +289,15 @@ func writeMinimalRunArtifacts(cfg sim.Config) error {
 func preparedRunDirectory(t *testing.T) string {
 	t.Helper()
 	runDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(runDir, "profile.json"), []byte("{}\n"), 0o644); err != nil {
+	inputsDir := filepath.Join(runDir, "inputs")
+	if err := os.Mkdir(inputsDir, 0o755); err != nil {
+		t.Fatalf("create inputs directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputsDir, "profile.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatalf("write profile.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inputsDir, "execution-plan.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write execution-plan.json: %v", err)
 	}
 	return runDir
 }

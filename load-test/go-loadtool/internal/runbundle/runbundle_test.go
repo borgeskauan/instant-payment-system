@@ -16,16 +16,19 @@ func TestResolveReturnsFixedAbsoluteLayout(t *testing.T) {
 	}
 
 	want := Layout{
-		Root:          root,
-		Profile:       filepath.Join(root, "profile.json"),
-		ExecutionPlan: filepath.Join(root, "execution-plan.json"),
-		RunWindow:     filepath.Join(root, "run-window.json"),
-		Report:        filepath.Join(root, "sla-report.json"),
-		ToolOutputDir: filepath.Join(root, "go-loadtool"),
-		Starts:        filepath.Join(root, "go-loadtool", "starts.csv"),
-		Events:        filepath.Join(root, "go-loadtool", "events.csv"),
-		StatusStarts:  filepath.Join(root, "go-loadtool", "status-starts.csv"),
-		Replays:       filepath.Join(root, "go-loadtool", "replays.csv"),
+		Root:           root,
+		InputsDir:      filepath.Join(root, "inputs"),
+		Profile:        filepath.Join(root, "inputs", "profile.json"),
+		ExecutionPlan:  filepath.Join(root, "inputs", "execution-plan.json"),
+		EventsDir:      filepath.Join(root, "events"),
+		Pacs008Starts:  filepath.Join(root, "events", "pacs008-starts.csv"),
+		Pacs002Starts:  filepath.Join(root, "events", "pacs002-starts.csv"),
+		Notifications:  filepath.Join(root, "events", "notifications.csv"),
+		Replays:        filepath.Join(root, "events", "replays.csv"),
+		LogsDir:        filepath.Join(root, "logs"),
+		DiagnosticsDir: filepath.Join(root, "diagnostics"),
+		RunWindow:      filepath.Join(root, "run-window.json"),
+		Report:         filepath.Join(root, "sla-report.json"),
 	}
 	if layout != want {
 		t.Fatalf("Resolve() = %#v, want %#v", layout, want)
@@ -66,15 +69,13 @@ func TestValidatePreparedAcceptsRequiredInputsAndAdditionalPreparation(t *testin
 	}
 }
 
-func TestValidatePreparedAcceptsMissingExecutionPlan(t *testing.T) {
+func TestValidatePreparedRejectsMissingExecutionPlan(t *testing.T) {
 	layout := newPreparedLayout(t)
 	if err := os.Remove(layout.ExecutionPlan); err != nil {
 		t.Fatalf("Remove(ExecutionPlan) error = %v", err)
 	}
 
-	if err := layout.ValidatePrepared(); err != nil {
-		t.Fatalf("ValidatePrepared() error = %v", err)
-	}
+	assertErrorContains(t, layout.ValidatePrepared(), "execution-plan.json")
 }
 
 func TestValidatePreparedRejectsMissingOrInvalidRoot(t *testing.T) {
@@ -125,7 +126,7 @@ func TestValidatePreparedRejectsEachGeneratedOutput(t *testing.T) {
 	}{
 		{name: "run-window.json", path: func(layout Layout) string { return layout.RunWindow }},
 		{name: "sla-report.json", path: func(layout Layout) string { return layout.Report }},
-		{name: "go-loadtool", path: func(layout Layout) string { return layout.ToolOutputDir }},
+		{name: "events", path: func(layout Layout) string { return layout.EventsDir }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -136,21 +137,21 @@ func TestValidatePreparedRejectsEachGeneratedOutput(t *testing.T) {
 	}
 }
 
-func TestPrepareOutputsCreatesOnlyToolOutputDirectory(t *testing.T) {
+func TestPrepareOutputsCreatesOnlyEventsDirectory(t *testing.T) {
 	layout := newPreparedLayout(t)
 
 	if err := layout.PrepareOutputs(); err != nil {
 		t.Fatalf("PrepareOutputs() error = %v", err)
 	}
 
-	info, err := os.Stat(layout.ToolOutputDir)
+	info, err := os.Stat(layout.EventsDir)
 	if err != nil {
-		t.Fatalf("Stat(ToolOutputDir) error = %v", err)
+		t.Fatalf("Stat(EventsDir) error = %v", err)
 	}
 	if !info.IsDir() {
-		t.Fatalf("ToolOutputDir mode = %v, want directory", info.Mode())
+		t.Fatalf("EventsDir mode = %v, want directory", info.Mode())
 	}
-	for _, path := range []string{layout.RunWindow, layout.Report, layout.Starts, layout.Events, layout.StatusStarts, layout.Replays} {
+	for _, path := range []string{layout.RunWindow, layout.Report, layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, layout.DiagnosticsDir} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("generated path %q exists or cannot be inspected: %v", path, err)
 		}
@@ -163,7 +164,7 @@ func TestPrepareOutputsRejectsSecondPreparation(t *testing.T) {
 		t.Fatalf("first PrepareOutputs() error = %v", err)
 	}
 
-	assertErrorContains(t, layout.PrepareOutputs(), "go-loadtool")
+	assertErrorContains(t, layout.PrepareOutputs(), "events")
 }
 
 func TestPrepareOutputsDoesNotCreateDirectoryWhenValidationFails(t *testing.T) {
@@ -171,8 +172,8 @@ func TestPrepareOutputsDoesNotCreateDirectoryWhenValidationFails(t *testing.T) {
 	writeFile(t, layout.RunWindow, []byte("already executed"))
 
 	assertErrorContains(t, layout.PrepareOutputs(), "run-window.json")
-	if _, err := os.Lstat(layout.ToolOutputDir); !os.IsNotExist(err) {
-		t.Fatalf("ToolOutputDir exists or cannot be inspected after failure: %v", err)
+	if _, err := os.Lstat(layout.EventsDir); !os.IsNotExist(err) {
+		t.Fatalf("EventsDir exists or cannot be inspected after failure: %v", err)
 	}
 }
 
@@ -229,6 +230,9 @@ func newPreparedLayout(t *testing.T) Layout {
 	layout, err := Resolve(t.TempDir())
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
+	}
+	if err := os.Mkdir(layout.InputsDir, 0o755); err != nil {
+		t.Fatalf("Mkdir(inputs) error = %v", err)
 	}
 	writeFile(t, layout.Profile, []byte("{}\n"))
 	writeFile(t, layout.ExecutionPlan, []byte("{}\n"))

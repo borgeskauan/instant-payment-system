@@ -5,8 +5,8 @@ set -euo pipefail
 readonly RESULTS_DIR="results"
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/profiles"
-readonly PROFILE_SNAPSHOT_FILENAME="profile.json"
-readonly EXECUTION_PLAN_FILENAME="execution-plan.json"
+readonly PROFILE_SNAPSHOT_RELATIVE_PATH="inputs/profile.json"
+readonly EXECUTION_PLAN_RELATIVE_PATH="inputs/execution-plan.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
 readonly PREPARE_ENVIRONMENT_SCRIPT="${PREPARE_ENVIRONMENT_SCRIPT:-${SCRIPTS_DIR}/prepare-environment.sh}"
 readonly LOADTOOL_CERT_SCRIPT="${LOADTOOL_CERT_SCRIPT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/infra/certs/generate-local-mtls-certs.sh}"
@@ -122,8 +122,8 @@ write_run_window_json() {
         "$GRAFANA_BASE_URL" \
         "$GRAFANA_DASHBOARD_PATH" \
         "$PROFILE_NAME" \
-        "$PROFILE_SNAPSHOT_FILENAME" \
-        "$EXECUTION_PLAN_FILENAME" <<'PY'
+        "$PROFILE_SNAPSHOT_RELATIVE_PATH" \
+        "$EXECUTION_PLAN_RELATIVE_PATH" <<'PY'
 import json
 import os
 import sys
@@ -159,10 +159,10 @@ payload["tag"] = tag
 payload["result_dir"] = target_dir
 payload["profile"].update({"snapshot": profile_snapshot, "execution_plan": execution_plan})
 payload["artifacts"] = {
-    "starts": "go-loadtool/starts.csv",
-    "events": "go-loadtool/events.csv",
-    "replays": "go-loadtool/replays.csv",
-    "status_starts": "go-loadtool/status-starts.csv",
+    "pacs008_starts": "events/pacs008-starts.csv",
+    "pacs002_starts": "events/pacs002-starts.csv",
+    "notifications": "events/notifications.csv",
+    "replays": "events/replays.csv",
     "report": "sla-report.json",
 }
 window["run_started_at"] = run_started_at
@@ -406,7 +406,7 @@ stop_spi_trace() {
     local target_dir="$1"
     local log_file="/dev/null"
     if [[ -n "$target_dir" ]]; then
-        log_file="$target_dir/spi-trace.log"
+        log_file="$target_dir/logs/spi-trace.log"
     fi
 
     log_phase "stopping SPI trace collection"
@@ -416,15 +416,16 @@ stop_spi_trace() {
 
 copy_spi_trace() {
     local target_dir="$1"
-    local log_file="$target_dir/spi-trace.log"
+    local log_file="$target_dir/logs/spi-trace.log"
 
     log_phase "copying SPI trace"
-    "${SCRIPTS_DIR}/spi-trace.sh" copy "$target_dir" >> "$log_file" 2>&1
+    mkdir -p "$target_dir/diagnostics"
+    "${SCRIPTS_DIR}/spi-trace.sh" copy "$target_dir/diagnostics" >> "$log_file" 2>&1
 }
 
 enable_postgres_statement_stats() {
     local target_dir="$1"
-    local log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+    local log_file="${target_dir}/logs/${POSTGRES_STATEMENTS_LOG}"
 
     log_phase "enabling Postgres statement stats"
     {
@@ -437,10 +438,11 @@ enable_postgres_statement_stats() {
 
 capture_postgres_statement_stats() {
     local target_dir="$1"
-    local output_file="${target_dir}/${POSTGRES_STATEMENTS_FILE}"
-    local log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+    local output_file="${target_dir}/diagnostics/${POSTGRES_STATEMENTS_FILE}"
+    local log_file="${target_dir}/logs/${POSTGRES_STATEMENTS_LOG}"
 
     log_phase "capturing Postgres statement stats"
+    mkdir -p "$target_dir/diagnostics"
     {
         echo "Capturing Postgres statement stats at $(date --iso-8601=seconds)"
         "${SCRIPTS_DIR}/postgres-statements.sh" snapshot "$output_file"
@@ -452,7 +454,7 @@ disable_postgres_statement_stats() {
     local target_dir="$1"
     local log_file="/dev/null"
     if [[ -n "$target_dir" ]]; then
-        log_file="${target_dir}/${POSTGRES_STATEMENTS_LOG}"
+        log_file="${target_dir}/logs/${POSTGRES_STATEMENTS_LOG}"
     fi
 
     log_phase "disabling Postgres statement stats"
@@ -487,21 +489,22 @@ stop_container_jfr() {
 start_jfr_recordings() {
     local target_dir="$1"
 
+    mkdir -p "$target_dir/logs/jfr" "$target_dir/diagnostics/jfr"
     JFR_TARGET_DIR="$target_dir"
     JFR_ACTIVE=true
 
-    start_container_jfr "$KAFKA_PRODUCER_CONTAINER" "kafka-producer-load-test" "/tmp/kafka-producer-load-test.jfr" "${target_dir}/kafka-producer-jfr.log"
-    start_container_jfr "$SPI_CONTAINER" "spi-load-test" "/tmp/spi-load-test.jfr" "${target_dir}/spi-jfr.log"
-    start_container_jfr "$NOTIFICATION_GATEWAY_CONTAINER" "notification-gateway-load-test" "/tmp/notification-gateway-load-test.jfr" "${target_dir}/notification-gateway-jfr.log"
+    start_container_jfr "$KAFKA_PRODUCER_CONTAINER" "kafka-producer-load-test" "/tmp/kafka-producer-load-test.jfr" "${target_dir}/logs/jfr/kafka-producer.log"
+    start_container_jfr "$SPI_CONTAINER" "spi-load-test" "/tmp/spi-load-test.jfr" "${target_dir}/logs/jfr/spi.log"
+    start_container_jfr "$NOTIFICATION_GATEWAY_CONTAINER" "notification-gateway-load-test" "/tmp/notification-gateway-load-test.jfr" "${target_dir}/logs/jfr/notification-gateway.log"
 }
 
 stop_jfr_recordings() {
     local target_dir="$1"
     local failed=0
 
-    stop_container_jfr "$KAFKA_PRODUCER_CONTAINER" "kafka-producer-load-test" "/tmp/kafka-producer-load-test.jfr" "${target_dir}/kafka-producer-load-test.jfr" "${target_dir}/kafka-producer-jfr.log" || failed=1
-    stop_container_jfr "$SPI_CONTAINER" "spi-load-test" "/tmp/spi-load-test.jfr" "${target_dir}/spi-load-test.jfr" "${target_dir}/spi-jfr.log" || failed=1
-    stop_container_jfr "$NOTIFICATION_GATEWAY_CONTAINER" "notification-gateway-load-test" "/tmp/notification-gateway-load-test.jfr" "${target_dir}/notification-gateway-load-test.jfr" "${target_dir}/notification-gateway-jfr.log" || failed=1
+    stop_container_jfr "$KAFKA_PRODUCER_CONTAINER" "kafka-producer-load-test" "/tmp/kafka-producer-load-test.jfr" "${target_dir}/diagnostics/jfr/kafka-producer.jfr" "${target_dir}/logs/jfr/kafka-producer.log" || failed=1
+    stop_container_jfr "$SPI_CONTAINER" "spi-load-test" "/tmp/spi-load-test.jfr" "${target_dir}/diagnostics/jfr/spi.jfr" "${target_dir}/logs/jfr/spi.log" || failed=1
+    stop_container_jfr "$NOTIFICATION_GATEWAY_CONTAINER" "notification-gateway-load-test" "/tmp/notification-gateway-load-test.jfr" "${target_dir}/diagnostics/jfr/notification-gateway.jfr" "${target_dir}/logs/jfr/notification-gateway.log" || failed=1
 
     JFR_ACTIVE=false
     return "$failed"
@@ -556,15 +559,16 @@ prepare_loadtool_binary() {
 prepare_run_workspace() {
     local target_dir="$1"
 
-    mkdir -p "$target_dir"
+    mkdir -p "$target_dir/inputs" "$target_dir/logs"
     copy_profile_snapshot "$target_dir"
-    cp "$LOADTOOL_VALIDATION_FILE" "${target_dir}/${EXECUTION_PLAN_FILENAME}"
+    cp "$LOADTOOL_VALIDATION_FILE" "${target_dir}/${EXECUTION_PLAN_RELATIVE_PATH}"
 }
 
 copy_profile_snapshot() {
     local target_dir="$1"
 
-    cp "$PROFILE_PATH" "${target_dir}/${PROFILE_SNAPSHOT_FILENAME}"
+    mkdir -p "$target_dir/inputs"
+    cp "$PROFILE_PATH" "${target_dir}/${PROFILE_SNAPSHOT_RELATIVE_PATH}"
 }
 
 run_preflight_checks() {
@@ -577,7 +581,7 @@ prepare_environment() {
     local absolute_target_dir log_file status
 
     absolute_target_dir="$(cd "$target_dir" && pwd)"
-    log_file="${target_dir}/prepare-environment.log"
+    log_file="${target_dir}/logs/prepare-environment.log"
     log_phase "preparing load-test environment"
     if "$PREPARE_ENVIRONMENT_SCRIPT" --run-dir "$absolute_target_dir" > "$log_file" 2>&1; then
         log_phase "load-test environment prepared"
@@ -641,7 +645,7 @@ start_optional_diagnostics() {
         start_jfr_recordings "$target_dir"
     fi
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
-        start_spi_trace "${target_dir}/spi-trace.log"
+        start_spi_trace "${target_dir}/logs/spi-trace.log"
     fi
 }
 
@@ -679,7 +683,7 @@ run_loadtool() {
             --gateway-ca-cert "$LOADTOOL_GATEWAY_CA_CERT" \
             --gateway-client-cert-root "$LOADTOOL_CERT_ROOT" \
             --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
-    ) | tee "${target_dir}/go-loadtool-output.txt"
+    ) 2>&1 | tee "${target_dir}/logs/loadtool.log"
     pipeline_status=("${PIPESTATUS[@]}")
     if ((pipeline_status[0] != 0)); then
         return "${pipeline_status[0]}"

@@ -7,7 +7,7 @@ PREPARE_ENVIRONMENT="${ROOT_DIR}/scripts/prepare-environment.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-mkdir -p "$tmp_dir/fake-bin" "$tmp_dir/run"
+mkdir -p "$tmp_dir/fake-bin" "$tmp_dir/run/inputs"
 export DOCKER_CALLS="$tmp_dir/docker-calls.log"
 export FUNDING_CALLS="$tmp_dir/funding-calls.log"
 
@@ -66,7 +66,7 @@ export PATH="$tmp_dir/fake-bin:$PATH"
 export PROVISION_FUNDS_SCRIPT="$tmp_dir/fake-provision-funds"
 
 write_valid_plan() {
-    cat > "$tmp_dir/run/execution-plan.json" <<'JSON'
+    cat > "$tmp_dir/run/inputs/execution-plan.json" <<'JSON'
 {
   "profile": "mixed-outcomes-smoke",
   "schemaVersion": 1,
@@ -124,8 +124,8 @@ if "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/missing" >/dev/null 2>&1; then
 fi
 assert_no_external_calls
 
-mkdir -p "$tmp_dir/malformed"
-printf '%s\n' '{' > "$tmp_dir/malformed/execution-plan.json"
+mkdir -p "$tmp_dir/malformed/inputs"
+printf '%s\n' '{' > "$tmp_dir/malformed/inputs/execution-plan.json"
 clear_calls
 if "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/malformed" >/dev/null 2>&1; then
     echo "environment preparation accepted malformed execution-plan.json" >&2
@@ -133,8 +133,8 @@ if "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/malformed" >/dev/null 2>&1; then
 fi
 assert_no_external_calls
 
-mkdir -p "$tmp_dir/unusable"
-cat > "$tmp_dir/unusable/execution-plan.json" <<'JSON'
+mkdir -p "$tmp_dir/unusable/inputs"
+cat > "$tmp_dir/unusable/inputs/execution-plan.json" <<'JSON'
 {
   "scenarios": [
     {

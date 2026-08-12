@@ -37,7 +37,7 @@ resolve_execution_plan() {
         return 1
     fi
     RUN_DIR="$(cd "$RUN_DIR" && pwd)"
-    EXECUTION_PLAN="${RUN_DIR}/execution-plan.json"
+    EXECUTION_PLAN="${RUN_DIR}/inputs/execution-plan.json"
     if [[ ! -f "$EXECUTION_PLAN" ]]; then
         echo "Execution plan does not exist or is not a regular file: $EXECUTION_PLAN" >&2
         return 1

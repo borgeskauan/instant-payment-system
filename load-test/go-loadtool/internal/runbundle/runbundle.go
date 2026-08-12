@@ -8,16 +8,19 @@ import (
 )
 
 type Layout struct {
-	Root          string
-	Profile       string
-	ExecutionPlan string
-	RunWindow     string
-	Report        string
-	ToolOutputDir string
-	Starts        string
-	Events        string
-	StatusStarts  string
-	Replays       string
+	Root           string
+	InputsDir      string
+	Profile        string
+	ExecutionPlan  string
+	EventsDir      string
+	Pacs008Starts  string
+	Pacs002Starts  string
+	Notifications  string
+	Replays        string
+	LogsDir        string
+	DiagnosticsDir string
+	RunWindow      string
+	Report         string
 }
 
 func Resolve(root string) (Layout, error) {
@@ -28,18 +31,22 @@ func Resolve(root string) (Layout, error) {
 	if err != nil {
 		return Layout{}, fmt.Errorf("resolve run directory: %w", err)
 	}
-	toolOutputDir := filepath.Join(absoluteRoot, "go-loadtool")
+	inputsDir := filepath.Join(absoluteRoot, "inputs")
+	eventsDir := filepath.Join(absoluteRoot, "events")
 	return Layout{
-		Root:          absoluteRoot,
-		Profile:       filepath.Join(absoluteRoot, "profile.json"),
-		ExecutionPlan: filepath.Join(absoluteRoot, "execution-plan.json"),
-		RunWindow:     filepath.Join(absoluteRoot, "run-window.json"),
-		Report:        filepath.Join(absoluteRoot, "sla-report.json"),
-		ToolOutputDir: toolOutputDir,
-		Starts:        filepath.Join(toolOutputDir, "starts.csv"),
-		Events:        filepath.Join(toolOutputDir, "events.csv"),
-		StatusStarts:  filepath.Join(toolOutputDir, "status-starts.csv"),
-		Replays:       filepath.Join(toolOutputDir, "replays.csv"),
+		Root:           absoluteRoot,
+		InputsDir:      inputsDir,
+		Profile:        filepath.Join(inputsDir, "profile.json"),
+		ExecutionPlan:  filepath.Join(inputsDir, "execution-plan.json"),
+		EventsDir:      eventsDir,
+		Pacs008Starts:  filepath.Join(eventsDir, "pacs008-starts.csv"),
+		Pacs002Starts:  filepath.Join(eventsDir, "pacs002-starts.csv"),
+		Notifications:  filepath.Join(eventsDir, "notifications.csv"),
+		Replays:        filepath.Join(eventsDir, "replays.csv"),
+		LogsDir:        filepath.Join(absoluteRoot, "logs"),
+		DiagnosticsDir: filepath.Join(absoluteRoot, "diagnostics"),
+		RunWindow:      filepath.Join(absoluteRoot, "run-window.json"),
+		Report:         filepath.Join(absoluteRoot, "sla-report.json"),
 	}, nil
 }
 
@@ -58,6 +65,9 @@ func (layout Layout) ValidatePrepared() error {
 	if err := requireRegularFile(layout.Profile, "profile.json"); err != nil {
 		return err
 	}
+	if err := requireRegularFile(layout.ExecutionPlan, "execution-plan.json"); err != nil {
+		return err
+	}
 
 	for _, output := range []struct {
 		name string
@@ -65,7 +75,7 @@ func (layout Layout) ValidatePrepared() error {
 	}{
 		{name: "run-window.json", path: layout.RunWindow},
 		{name: "sla-report.json", path: layout.Report},
-		{name: "go-loadtool", path: layout.ToolOutputDir},
+		{name: "events", path: layout.EventsDir},
 	} {
 		if err := requireAbsent(output.path, output.name); err != nil {
 			return err
@@ -78,8 +88,8 @@ func (layout Layout) PrepareOutputs() error {
 	if err := layout.ValidatePrepared(); err != nil {
 		return err
 	}
-	if err := os.Mkdir(layout.ToolOutputDir, 0o755); err != nil {
-		return fmt.Errorf("create generated output directory go-loadtool at %q: %w", layout.ToolOutputDir, err)
+	if err := os.Mkdir(layout.EventsDir, 0o755); err != nil {
+		return fmt.Errorf("create generated output directory events at %q: %w", layout.EventsDir, err)
 	}
 	return nil
 }

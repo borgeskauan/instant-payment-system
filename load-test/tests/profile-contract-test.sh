@@ -178,16 +178,16 @@ fi
 
 PROFILE_PATH="$ROOT_DIR/profiles/mixed-outcomes-smoke.json"
 prepare_run_workspace "$tmp_dir/workspace"
-if ! cmp -s "$LOADTOOL_VALIDATION_FILE" "$tmp_dir/workspace/execution-plan.json"; then
+if ! cmp -s "$LOADTOOL_VALIDATION_FILE" "$tmp_dir/workspace/inputs/execution-plan.json"; then
     echo "execution-plan.json is not byte-identical to validate-profile output" >&2
     exit 1
 fi
-if ! cmp -s "$PROFILE_PATH" "$tmp_dir/workspace/profile.json"; then
+if ! cmp -s "$PROFILE_PATH" "$tmp_dir/workspace/inputs/profile.json"; then
     echo "profile.json is not byte-identical to the selected profile" >&2
     exit 1
 fi
-if [[ -e "$tmp_dir/workspace/go-loadtool" ]]; then
-    echo "runner prepared generated go-loadtool output before the Go run" >&2
+if [[ -e "$tmp_dir/workspace/events" ]]; then
+    echo "runner prepared generated event output before the Go run" >&2
     exit 1
 fi
 
@@ -196,7 +196,7 @@ if [[ "$(cat "$PREPARE_ENVIRONMENT_COMMAND_LOG")" != "--run-dir $tmp_dir/workspa
     echo "runner did not pass the fixed run directory to environment preparation" >&2
     exit 1
 fi
-if ! grep -q "prepared --run-dir $tmp_dir/workspace" "$tmp_dir/workspace/prepare-environment.log"; then
+if ! grep -q "prepared --run-dir $tmp_dir/workspace" "$tmp_dir/workspace/logs/prepare-environment.log"; then
     echo "runner did not capture environment preparation output" >&2
     exit 1
 fi

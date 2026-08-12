@@ -142,13 +142,13 @@ func Run(cfg Config) error {
 		return err
 	}
 
-	startWriter, err := events.NewStartWriter(filepath.Join(cfg.OutputDir, "starts.csv"))
+	startWriter, err := events.NewStartWriter(filepath.Join(cfg.OutputDir, "pacs008-starts.csv"))
 	if err != nil {
 		return err
 	}
 	defer startWriter.Close()
 
-	eventWriter, err := events.NewNotificationWriter(filepath.Join(cfg.OutputDir, "events.csv"))
+	eventWriter, err := events.NewNotificationWriter(filepath.Join(cfg.OutputDir, "notifications.csv"))
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func Run(cfg Config) error {
 	}
 	defer replayWriter.Close()
 
-	statusStartWriter, err := events.NewStatusStartWriter(filepath.Join(cfg.OutputDir, "status-starts.csv"))
+	statusStartWriter, err := events.NewStatusStartWriter(filepath.Join(cfg.OutputDir, "pacs002-starts.csv"))
 	if err != nil {
 		return err
 	}

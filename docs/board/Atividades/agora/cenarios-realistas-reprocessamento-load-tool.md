@@ -27,7 +27,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - as seleções de `pacs.008` e `pacs.002` usam populações, configurações e contagens próprias; notificações `pacs.008` repetidas no PSP recebedor são deduplicadas e não criam novos status originais;
 - o replay `pacs.008` já passa pelo ingresso normal `/transfer`, com o mesmo pagador e mTLS, sem publicação direta no Kafka;
 - a repetição de `pacs.002` passa pelo ingresso normal `/transfer/status`, com o mesmo PSP recebedor, mTLS e body byte a byte idêntico;
-- `starts.csv` registra a seleção de `pacs.008`, `status-starts.csv` registra os status originais e a seleção de `pacs.002`, e `replays.csv` registra as tentativas repetidas dos dois tipos;
+- `events/pacs008-starts.csv` registra a seleção de `pacs.008`, `events/pacs002-starts.csv` registra os status originais e a seleção de `pacs.002`, `events/notifications.csv` registra os outcomes observados e `events/replays.csv` registra as tentativas repetidas dos dois tipos;
 - o simulador calcula e persiste antes da geração `generation_started_at`, `active_started_at`, `generation_ended_at` e `replay_deadline_at`; o relatório consome esses instantes sem derivar a janela dos CSVs;
 - warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
 - o relatório expõe separadamente pagamentos originais, status `pacs.002`, replays `pacs.008` e replays `pacs.002`, além de tornar déficit ou excesso da geração ativa uma violação;
@@ -41,10 +41,12 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - o run de 2026-08-11 (`pacs002-replay-functional-smoke/20260811_040749`) iniciou exatamente 1.000 originais na janela ativa (100/s), aceitou 1.250 originais e 1.250 status, executou 126 replays `pacs.008` e 126 replays `pacs.002` e terminou com zero violações de geração, HTTP, replay ou outcome;
 - o run de caracterização de 2026-08-11 (`phase-2c1-characterization-smoke/20260811_050401`) confirmou 1.250 originais aceitos, 1.000 originais na janela ativa, 1.000 happy-path, 250 insufficient-funds, 1.250 status e 126 replays aceitos de cada tipo, com zero violações;
 - o run de migração de 2026-08-11 (`phase-2c4-single-run-smoke/20260811_142951`) validou o caminho único final com as mesmas contagens caracterizadas, exatamente um `sla-report.json`, 126 replays aceitos de cada tipo e todos os dez campos `violations` em zero;
+- o run de 2026-08-12 (`run-bundle-layout-smoke/20260812_000828`) validou o bundle final com 1.250 originais e 1.250 status aceitos, 126 replays aceitos de cada tipo, quatro CSVs em `events/`, snapshots em `inputs/`, logs operacionais em `logs/`, zero violações e nenhum certificado retido;
 - 126 replays de cada tipo caracterizam somente o resultado atual de `mixed-outcomes-smoke`; não são uma regra geral para qualquer população de 1.250 mensagens com `share=0.10`;
 - a suíte de caracterização protege as populações de originais e status, as contagens separadas dos dois tipos de replay e um único resultado lógico final por pagamento, sem congelar quais `EndToEndId` são selecionados;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
-- o runner não trunca mais estado persistente antes dos runs: a preparação automática e obrigatória do ambiente consome `execution-plan.json`, usa o lag atual dos três consumer groups Kafka como heurística best-effort e somente então provisiona os fundos declarados; `run-load-test.sh` apenas orquestra essa unidade interna, sem alegar quiescência forte ou detectar trabalho residual em outbox/delivery.
+- o runner não trunca mais estado persistente antes dos runs: a preparação automática e obrigatória do ambiente consome `inputs/execution-plan.json`, usa o lag atual dos três consumer groups Kafka como heurística best-effort e somente então provisiona os fundos declarados; `run-load-test.sh` apenas orquestra essa unidade interna, sem alegar quiescência forte ou detectar trabalho residual em outbox/delivery;
+- cada resultado usa um bundle fixo: inputs em `inputs/`, registros temporais auditáveis em `events/`, saída textual em `logs/`, diagnósticos opt-in em `diagnostics/`, e somente `run-window.json` e `sla-report.json` na raiz.
 
 ## Fatia 0 — Contrato e execução reproduzível (concluída)
 
@@ -54,7 +56,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - [x] Resolver nomes internamente para `profiles/<name>.json` e rejeitar nomes inválidos, perfis ausentes ou JSON malformado antes de efeitos colaterais do runner.
 - [x] Manter a validação semântica autoritativa do contrato em Go e fazer o runner consumir somente os valores normalizados necessários.
 - [x] Fazer simulação e relatório usarem explicitamente o mesmo perfil selecionado.
-- [x] Copiar `profile.json` e gerar `execution-plan.json` no diretório de cada run.
+- [x] Copiar `inputs/profile.json` e gerar `inputs/execution-plan.json` no diretório de cada run.
 - [x] Fazer cada cenário declarar share, participantes hot/cold, valores, provisionamento e outcome observável esperado.
 - [x] Usar nomes de cenário apenas para identidade e agrupamento, sem comportamento escondido por `type` no Go.
 - [x] Alocar automaticamente faixas consecutivas de participantes, sem `firstPair` no perfil.
@@ -79,7 +81,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 
 - [x] Declarar por cenário `deliverySemantics: at-least-once`, status `pacs.002` e reason codes esperados.
 - [x] Capturar `TxSts` e `StsRsnInf[].Rsn.Cd` das notificações entregues ao pagador.
-- [x] Preservar status e reasons em `events.csv` para reprodução offline do relatório.
+- [x] Preservar status e reasons em `events/notifications.csv` para reprodução offline do relatório.
 - [x] Aceitar uma ou mais entregas compatíveis e usar a primeira para latência.
 - [x] Tratar ausência, status divergente ou reasons divergentes como violação por cenário.
 - [x] Validar correção para todos os originais do run, incluindo warmup, mantendo métricas de performance somente na janela ativa.
@@ -87,7 +89,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 
 ### Critério de saída
 
-`profile.json`, `execution-plan.json`, `starts.csv` e `events.csv` reproduzem o relatório sem acesso ao banco, e o run curto detecta ausência ou outcome divergente sem penalizar entregas repetidas compatíveis.
+`inputs/profile.json`, `inputs/execution-plan.json`, `events/pacs008-starts.csv` e `events/notifications.csv` reproduzem o relatório sem acesso ao banco, e o run curto detecta ausência ou outcome divergente sem penalizar entregas repetidas compatíveis.
 
 ## Fatia 2A — Replay idêntico de pacs.008 (concluída)
 
@@ -102,7 +104,7 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 - [x] Agendar o replay antes de conhecer a resposta original, para `requestStartedAt + delay`, inclusive quando o original ainda está em andamento ou termina com status `0`, `4xx` ou `5xx`.
 - [x] Usar um scheduler compartilhado e workers limitados, sem criar uma goroutine por pagamento agendado.
 - [x] Reenviar pelo `/transfer` normal com o mesmo pagador e as mesmas credenciais mTLS.
-- [x] Registrar a seleção em `starts.csv`, as tentativas em `replays.csv` e os caminhos dos artefatos em `run-window.json`.
+- [x] Registrar a seleção em `events/pacs008-starts.csv`, as tentativas em `events/replays.csv` e os caminhos dos artefatos em `run-window.json`.
 - [x] Manter `targetTxRate` como taxa de originais e expor separadamente `original_payments_started` e `pacs008_replays_started`.
 - [x] Validar no run inteiro replay ausente, excedente, não selecionado, desconhecido, metadados divergentes, HTTP não `2xx` e início anterior ao delay.
 - [x] Manter o JSON público de replay compacto: `attempted`, `accepted` e `violations`; a taxonomia detalhada permanece interna aos testes do load-tool.
@@ -111,7 +113,7 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 
 ### Critério de saída
 
-O perfil, o plano resolvido, `starts.csv`, `replays.csv` e `events.csv` reproduzem o relatório; testes provam seleção exata por bloco, agendamento independente da resposta e igualdade dos bodies; um run curto prova o fluxo externo com zero violações.
+O perfil, o plano resolvido, `events/pacs008-starts.csv`, `events/replays.csv` e `events/notifications.csv` reproduzem o relatório; testes provam seleção exata por bloco, agendamento independente da resposta e igualdade dos bodies; um run curto prova o fluxo externo com zero violações.
 
 ## Fatia 2B — Repetição idêntica de pacs.002 (concluída)
 
@@ -126,7 +128,7 @@ O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma
 - [x] Construir cada `pacs.002` selecionado uma vez e reenviar body byte a byte idêntico, com o mesmo identificador e PSP recebedor.
 - [x] Agendar a repetição para `statusRequestStartedAt + delay` antes de conhecer a resposta original; timeout, status `0`, `4xx` ou `5xx` não cancelam a obrigação.
 - [x] Enviar original e repetição pelo ingresso normal `/transfer/status` com mTLS; não publicar diretamente no Kafka nem manipular offsets.
-- [x] Persistir `status-starts.csv`, generalizar `replays.csv` para `pacs.008` e `pacs.002` e manter leitura do cabeçalho legado de replay.
+- [x] Persistir `events/pacs002-starts.csv`, generalizar `events/replays.csv` para `pacs.008` e `pacs.002` e manter leitura do cabeçalho legado de replay.
 - [x] Calcular no simulador, antes da geração, a janela autoritativa e o deadline fixo `generationEnd + max(delay) + drain`; o relatório não deriva tempo do menor registro.
 - [x] Usar intervalos semiabertos e impedir originais em `generation_ended_at` ou depois, removendo o registro extra no limite.
 - [x] Tratar obrigação que não caiba até o deadline como violação, sem prolongar dinamicamente o experimento para acomodar backlog.
@@ -139,7 +141,7 @@ O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma
 
 ### Critério de saída
 
-O modelo de repetição está explícito no contrato e na documentação; `run-window.json`, `starts.csv`, `status-starts.csv`, `replays.csv` e `events.csv` reproduzem o relatório; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
+O modelo de repetição está explícito no contrato e na documentação; `run-window.json` e os quatro CSVs em `events/` reproduzem o relatório; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
 
 ## Fatia 2C.1 — Caracterização semântica antes da simplificação estrutural (concluída)
 
@@ -164,9 +166,9 @@ Os testes protegem populações, replay e outcomes lógicos externos no load-too
 **Resultado:** o layout de um run passou a ter uma representação interna única e testada, sem alterar a CLI, o runner ou o fluxo de execução existente.
 
 - [x] Criar um resolvedor tipado que normalize o diretório do run e derive caminhos fixos para snapshot, plano, janela, relatório e CSVs.
-- [x] Validar que `profile.json` foi preparado e que outputs de uma execução anterior ainda não existem; `execution-plan.json` permanece um artefato conhecido, mas opcional para o bundle Go.
+- [x] Validar que `inputs/profile.json` e `inputs/execution-plan.json` foram preparados e que outputs de uma execução anterior ainda não existem.
 - [x] Permitir conteúdo preparatório adicional, incluindo certificados, sem tornar seus caminhos parte do bundle nesta fatia.
-- [x] Reservar `go-loadtool/` sem sobrescrever uma tentativa existente.
+- [x] Reservar `events/` sem sobrescrever uma tentativa existente.
 - [x] Disponibilizar escrita atômica de `sla-report.json`, sem sobrescrita ou relatório parcial visível.
 - [x] Manter `validate-profile`, `simulate`, `report`, suas flags e `run-load-test.sh` inalterados.
 
@@ -176,10 +178,10 @@ O pacote interno `runbundle` protege o layout, a preparação de uma execução 
 
 ## Fatia 2C.3 — Perfil autocontido e comando único de execução (concluída)
 
-**Resultado:** cada perfil declara sua própria identidade e `go-loadtool run --run-dir DIR` executa simulação e relatório em uma única passagem usando apenas `profile.json` como configuração, enquanto os comandos atuais permanecem disponíveis para compatibilidade temporária.
+**Resultado:** cada perfil declara sua própria identidade e `go-loadtool run --run-dir DIR` executa simulação e relatório em uma única passagem usando `inputs/profile.json` como configuração da carga, enquanto o plano resolvido permanece disponível para a preparação do ambiente.
 
 - [x] Adicionar `name` ao contrato e exigir correspondência entre o nome selecionado e a identidade embutida nos perfis editáveis.
-- [x] Fazer o snapshot `profile.json` ser autocontido e carregar dele nome, conexões, workload, replay, cenários e reporting, sem consultar `execution-plan.json`.
+- [x] Fazer o snapshot `inputs/profile.json` ser autocontido e carregar dele nome, conexões, workload, replay, cenários e reporting, sem consultar o plano durante simulação e relatório.
 - [x] Adicionar `run --run-dir` usando o resolvedor e as validações da 2C.2, sem aceitar `--profile`, `--config` ou caminhos individuais de artefatos.
 - [x] Manter no novo comando os seis overrides mTLS atuais e sua precedência sobre os valores do perfil.
 - [x] Executar o simulador, fechar os CSVs e somente então gerar atomicamente `sla-report.json`.
@@ -207,6 +209,23 @@ O comando `run` produz sozinho um bundle completo em testes, inclusive usando o 
 ### Critério de saída
 
 O comando público permanece `./run-load-test.sh [--profile NAME] <run-tag>`, agora apoiado por uma única execução Go com falha pública para qualquer violação; o caminho interno anterior foi removido depois da evidência funcional.
+
+## Fatia 2C.5 — Bundle de resultados organizado (concluída)
+
+**Resultado:** cada run preserva a mesma evidência funcional em fronteiras legíveis, sem caminhos legados nem política de retenção diferente entre sucesso e falha.
+
+- [x] Fixar `inputs/` para o snapshot byte a byte do perfil e o plano normalizado obrigatório.
+- [x] Fixar `events/` para `pacs008-starts.csv`, `pacs002-starts.csv`, `notifications.csv` e `replays.csv`, sem alterar seus schemas.
+- [x] Manter somente `run-window.json` e `sla-report.json` na raiz para leitura imediata do manifesto e do resultado agregado.
+- [x] Capturar stdout e stderr da chamada Go em `logs/loadtool.log` e a preparação em `logs/prepare-environment.log`, preservando os mesmos arquivos produzidos em sucesso ou falha.
+- [x] Separar logs operacionais opt-in em `logs/` dos CSVs e JFRs analisáveis em `diagnostics/`.
+- [x] Manter certificados apenas durante a execução e removê-los no cleanup.
+- [x] Atualizar testes Go e shell sem adicionar leitura alternativa dos caminhos antigos.
+- [x] Apagar os resultados locais no layout antigo e registrar o smoke funcional curto `run-bundle-layout-smoke/20260812_000828` pelo runner público no layout final.
+
+### Critério de saída
+
+Um run curto produz o bundle final e o relatório pode ser reproduzido pelos dois inputs e pelos quatro CSVs de `events/`; sucesso e falha preservam tudo que chegou a ser produzido, sem placeholders para fases não iniciadas.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 

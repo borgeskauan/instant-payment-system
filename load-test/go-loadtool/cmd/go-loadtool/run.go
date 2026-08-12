@@ -93,7 +93,7 @@ func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, err
 
 	simulator := simulatorConfig(runtimeCfg)
 	simulator.ProfileName = runtimeCfg.Name
-	simulator.OutputDir = layout.ToolOutputDir
+	simulator.OutputDir = layout.EventsDir
 	simulator.RunWindowPath = layout.RunWindow
 	applyMTLSOverrides(flags, &simulator, overrides)
 
@@ -115,7 +115,7 @@ func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output 
 		return err
 	}
 	options.Window = window
-	return report.PrintWithArtifacts(layout.Starts, layout.Events, layout.StatusStarts, layout.Replays, options, output)
+	return report.PrintWithArtifacts(layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, options, output)
 }
 
 func registerMTLSOverrides(flags *flag.FlagSet, overrides *mTLSOverrides) {

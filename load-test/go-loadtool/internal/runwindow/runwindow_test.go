@@ -60,8 +60,8 @@ func TestReadAcceptsRunnerEnrichmentWithoutChangingAuthoritativeWindow(t *testin
   "schema_version": 2,
   "tag": "functional-smoke",
   "result_dir": "results/functional-smoke/20260811_120000",
-  "profile": {"name": "mixed-outcomes-smoke", "snapshot": "profile.json", "execution_plan": "execution-plan.json"},
-  "artifacts": {"starts": "go-loadtool/starts.csv", "status_starts": "go-loadtool/status-starts.csv"},
+  "profile": {"name": "mixed-outcomes-smoke", "snapshot": "inputs/profile.json", "execution_plan": "inputs/execution-plan.json"},
+  "artifacts": {"pacs008_starts": "events/pacs008-starts.csv", "pacs002_starts": "events/pacs002-starts.csv"},
   "window": {
     "generation_started_at": "2026-08-11T12:00:00.123456789Z",
     "active_started_at": "2026-08-11T12:00:05.123456789Z",
@@ -95,8 +95,8 @@ func TestResolveUsesStoredLegacyWindowWithoutInspectingEventTimes(t *testing.T) 
 	data := `{
   "tag": "pacs008-replay-functional-smoke",
   "result_dir": "results/pacs008-replay-functional-smoke/20260811_020918",
-  "profile": {"name": "mixed-outcomes-smoke", "snapshot": "profile.json", "execution_plan": "execution-plan.json"},
-  "artifacts": {"starts": "go-loadtool/starts.csv", "events": "go-loadtool/events.csv", "replays": "go-loadtool/replays.csv", "report": "sla-report.json"},
+  "profile": {"name": "mixed-outcomes-smoke", "snapshot": "inputs/profile.json", "execution_plan": "inputs/execution-plan.json"},
+  "artifacts": {"pacs008_starts": "events/pacs008-starts.csv", "notifications": "events/notifications.csv", "replays": "events/replays.csv", "report": "sla-report.json"},
   "window": {
     "run_started_at": "2026-08-11T02:09:18-03:00",
     "active_started_at": "2026-08-11T02:09:23-03:00",
