@@ -8,7 +8,7 @@ Para reduzir pressão no PostgreSQL, o SPI mantém `payment_transaction_entity` 
 
 Os timestamps operacionais `created_at`, `updated_at` e `status_changed_at` continuam sendo uma necessidade separada. Eles descrevem o estado atual e não substituem esta auditoria.
 
-A auditoria de entradas rejeitadas também possui origens e garantias diferentes e permanece separada em [`auditoria-rejeicoes-entrada.md`](../agora/auditoria-rejeicoes-entrada.md).
+A auditoria de entradas rejeitadas também possui origens e garantias diferentes e permanece separada em [`auditoria-rejeicoes-entrada.md`](../Backlog/operacao-testes/auditoria-rejeicoes-entrada.md).
 
 ## Solução implementada
 

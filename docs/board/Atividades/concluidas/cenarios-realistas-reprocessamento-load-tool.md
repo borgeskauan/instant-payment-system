@@ -4,7 +4,7 @@
 
 ## Objetivo
 
-Preparar e validar funcionalmente os workloads que serão usados depois pela task **Estabilizar teste de carga dentro do budget de CPU**, em [`operacao-testes.md`](../../Backlog/operacao-testes.md).
+Preparar e validar funcionalmente os workloads que serão usados depois pela task **Estabilizar teste de carga dentro do budget de CPU**, em [`estabilizar-teste-carga-budget-cpu.md`](../Backlog/operacao-testes/estabilizar-teste-carga-budget-cpu.md).
 
 A matriz cobre caminho feliz, resultados de negócio mistos, tráfego hot-pair e repetições idênticas de `pacs.008` e `pacs.002` aplicadas dentro dos workloads normais. Repetição é uma dimensão do workload, não um cenário de negócio nem um workload independente.
 
@@ -280,7 +280,7 @@ O perfil longo exercita simultaneamente throughput contratual de pagamentos orig
 - [x] Registrar para cada perfil ou workload: comando, objetivo, distribuição, taxa de originais, carga adicional, outcomes esperados e evidência do run funcional curto.
 - [x] Identificar `mixed-outcomes-2k-15m` como o único perfil longo que a estabilização deve exercitar; os dois smokes permanecem controles funcionais.
 - [x] Entregar a meta de `2.000` pagamentos originais/s, com mensagens repetidas como carga adicional mensurada separadamente.
-- [x] Entregar a matriz à task [`operacao-testes.md`](../../Backlog/operacao-testes.md), sem concluir capacidade a partir dos runs funcionais curtos.
+- [x] Entregar a matriz à task [`estabilizar-teste-carga-budget-cpu.md`](../Backlog/operacao-testes/estabilizar-teste-carga-budget-cpu.md), sem concluir capacidade a partir dos runs funcionais curtos.
 
 ## Critérios de conclusão da task guarda-chuva
 
@@ -307,5 +307,5 @@ O perfil longo exercita simultaneamente throughput contratual de pagamentos orig
 - classificar múltiplos frames por `communication_id`, obrigação lógica ou redelivery operacional;
 - adicionar hot sender/fan-out, hot receiver/fan-in ou hot partition Kafka; hot-pair é suficiente para o MVP, e topologias direcionais só serão adicionadas se a estabilização revelar necessidade concreta;
 - publicar records diretamente em tópicos Kafka, manipular offsets ou provocar redelivery no broker;
-- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/engenharia-caos-resiliencia-operacional.md);
+- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/operacao-testes/engenharia-caos-resiliencia-operacional.md);
 - implementar retentativa automática de pagamentos em `ACCEPTED_IN_PROCESS`.
