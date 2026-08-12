@@ -15,13 +15,15 @@ func TestStartEventsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = writer.Write(Start{
-		EndToEndID:         "tx-1",
-		PayerISPB:          "10000001",
-		ReceiverISPB:       "20000001",
-		CreatedAtNS:        10,
-		RequestStartedAtNS: 15,
-		RequestDoneAtNS:    20,
-		HTTPStatus:         200,
+		EndToEndID:            "tx-1",
+		PayerISPB:             "10000001",
+		ReceiverISPB:          "20000001",
+		CreatedAtNS:           10,
+		RequestStartedAtNS:    15,
+		RequestDoneAtNS:       20,
+		HTTPStatus:            200,
+		ScenarioName:          "happy-path",
+		Pacs008ReplaySelected: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -49,26 +51,11 @@ func TestStartEventsRoundTrip(t *testing.T) {
 	if rows[0].RequestDoneAtNS != 20 {
 		t.Fatalf("RequestDoneAtNS = %d, want 20", rows[0].RequestDoneAtNS)
 	}
-}
-
-func TestReadStartsAcceptsLegacyStartEvents(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "starts.csv")
-	data := "end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_done_at_ns,http_status\n" +
-		"tx-1,10000001,20000001,10,20,200\n"
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
+	if rows[0].ScenarioName != "happy-path" {
+		t.Fatalf("ScenarioName = %q, want happy-path", rows[0].ScenarioName)
 	}
-
-	rows, err := ReadStarts(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("len(rows) = %d, want 1", len(rows))
-	}
-	if rows[0].RequestStartedAtNS != rows[0].CreatedAtNS {
-		t.Fatalf("RequestStartedAtNS = %d, want CreatedAtNS %d", rows[0].RequestStartedAtNS, rows[0].CreatedAtNS)
+	if !rows[0].Pacs008ReplaySelected {
+		t.Fatal("Pacs008ReplaySelected = false, want true")
 	}
 }
 
@@ -85,6 +72,8 @@ func TestNotificationEventsRoundTrip(t *testing.T) {
 		ISPB:         "10000001",
 		EventType:    EventPacs002Received,
 		ReceivedAtNS: 30,
+		StatusCode:   "RJCT",
+		ReasonCodes:  []string{"AM04", "AB03"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +86,100 @@ func TestNotificationEventsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EventType != EventPacs002Received {
+	if len(rows) != 1 || rows[0].EventType != EventPacs002Received || rows[0].StatusCode != "RJCT" || len(rows[0].ReasonCodes) != 2 || rows[0].ReasonCodes[0] != "AM04" || rows[0].ReasonCodes[1] != "AB03" {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestReplayEventsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replays.csv")
+	writer, err := NewReplayWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(Replay{
+		EndToEndID:         "tx-1",
+		SenderISPB:         "10000001",
+		ScenarioName:       "happy-path",
+		MessageType:        MessagePacs008,
+		RequestStartedAtNS: 25,
+		RequestDoneAtNS:    30,
+		HTTPStatus:         202,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := ReadReplays(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].SenderISPB != "10000001" || rows[0].ScenarioName != "happy-path" || rows[0].MessageType != MessagePacs008 || rows[0].RequestStartedAtNS != 25 || rows[0].RequestDoneAtNS != 30 || rows[0].HTTPStatus != 202 {
+		t.Fatalf("replay rows = %#v", rows)
+	}
+}
+
+func TestStatusStartEventsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status-starts.csv")
+	writer, err := NewStatusStartWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(StatusStart{
+		EndToEndID:            "tx-1",
+		SenderISPB:            "20000001",
+		ScenarioName:          "insufficient-funds",
+		RequestStartedAtNS:    25,
+		RequestDoneAtNS:       30,
+		HTTPStatus:            202,
+		Pacs002ReplaySelected: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := ReadStatusStarts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].SenderISPB != "20000001" || rows[0].ScenarioName != "insufficient-funds" || rows[0].RequestStartedAtNS != 25 || rows[0].RequestDoneAtNS != 30 || rows[0].HTTPStatus != 202 || !rows[0].Pacs002ReplaySelected {
+		t.Fatalf("status start rows = %#v", rows)
+	}
+}
+
+func TestReadReplaysRejectsUnexpectedHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replays.csv")
+	data := "end_to_end_id,unexpected,http_status\n" +
+		"tx-1,10000001,200\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadReplays(path); err == nil {
+		t.Fatal("ReadReplays accepted an unexpected header")
+	}
+}
+
+func TestNotificationEventsUseEmptyOutcomeForNonPacs002(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := NewNotificationWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Write(Notification{EndToEndID: "tx-1", ISPB: "20000001", EventType: EventPacs008Received, ReceivedAtNS: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadNotifications(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].StatusCode != "" || len(rows[0].ReasonCodes) != 0 {
 		t.Fatalf("rows = %#v", rows)
 	}
 }

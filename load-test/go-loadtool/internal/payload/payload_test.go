@@ -56,17 +56,6 @@ func TestPacs002ContainsOriginalEndToEndID(t *testing.T) {
 	}
 }
 
-func TestExtractPacs008EndToEndID(t *testing.T) {
-	body := Pacs008("tx-1", "10000001", "20000001", 12345)
-	got, kind, err := ExtractNotification(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "tx-1" || kind != KindPacs008 {
-		t.Fatalf("got id=%s kind=%s", got, kind)
-	}
-}
-
 func TestExtractPacs008ReturnsAllEndToEndIDs(t *testing.T) {
 	body := []byte(`{
 		"CdtTrfTxInf": [
@@ -92,20 +81,23 @@ func TestExtractPacs008ReturnsAllEndToEndIDs(t *testing.T) {
 
 func TestExtractPacs002OriginalEndToEndID(t *testing.T) {
 	body := Pacs002("tx-1")
-	got, kind, err := ExtractNotification(body)
+	got, err := ExtractNotifications(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "tx-1" || kind != KindPacs002 {
-		t.Fatalf("got id=%s kind=%s", got, kind)
+	if len(got) != 1 || got[0].EndToEndID != "tx-1" || got[0].Kind != KindPacs002 || got[0].StatusCode != "ACSP" || len(got[0].ReasonCodes) != 0 {
+		t.Fatalf("got = %#v", got)
 	}
 }
 
-func TestExtractPacs002ReturnsAllOriginalEndToEndIDs(t *testing.T) {
+func TestExtractPacs002ReturnsAllOutcomes(t *testing.T) {
 	body := []byte(`{
 		"TxInfAndSts": [
-			{"OrgnlEndToEndId": "tx-1"},
-			{"OrgnlEndToEndId": "tx-2"}
+			{"OrgnlEndToEndId": "tx-1", "TxSts": "ACSC", "StsRsnInf": []},
+			{"OrgnlEndToEndID": "tx-2", "TxSts": "RJCT", "StsRsnInf": [
+				{"Rsn": {"Cd": "AM04"}},
+				{"Rsn": {"Cd": "AB03"}}
+			]}
 		]
 	}`)
 
@@ -116,10 +108,20 @@ func TestExtractPacs002ReturnsAllOriginalEndToEndIDs(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
-	if got[0].EndToEndID != "tx-1" || got[0].Kind != KindPacs002 {
+	if got[0].EndToEndID != "tx-1" || got[0].Kind != KindPacs002 || got[0].StatusCode != "ACSC" || len(got[0].ReasonCodes) != 0 {
 		t.Fatalf("first = %#v", got[0])
 	}
-	if got[1].EndToEndID != "tx-2" || got[1].Kind != KindPacs002 {
+	if got[1].EndToEndID != "tx-2" || got[1].Kind != KindPacs002 || got[1].StatusCode != "RJCT" || len(got[1].ReasonCodes) != 2 || got[1].ReasonCodes[0] != "AM04" || got[1].ReasonCodes[1] != "AB03" {
 		t.Fatalf("second = %#v", got[1])
+	}
+}
+
+func TestExtractPacs002PreservesMissingObservableCodes(t *testing.T) {
+	got, err := ExtractNotifications([]byte(`{"TxInfAndSts":[{"OrgnlEndToEndId":"tx-1","StsRsnInf":[{"Rsn":{}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].StatusCode != "" || len(got[0].ReasonCodes) != 1 || got[0].ReasonCodes[0] != "" {
+		t.Fatalf("got = %#v", got)
 	}
 }

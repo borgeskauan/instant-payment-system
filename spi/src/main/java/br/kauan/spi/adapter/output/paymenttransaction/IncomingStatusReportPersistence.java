@@ -1,6 +1,8 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
@@ -59,7 +61,8 @@ class IncomingStatusReportPersistence {
                     i.payment_id,
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+                    NULL::text AS receiver_bank_code,
+                    NULL::text AS rejection_reason
                 FROM existing_lookup i
                 WHERE i.existing_payment_id IS NULL
             ),
@@ -70,7 +73,8 @@ class IncomingStatusReportPersistence {
                     i.payment_id,
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+                    NULL::text AS receiver_bank_code,
+                    NULL::text AS rejection_reason
                 FROM existing_lookup i
                 WHERE i.existing_payment_id IS NOT NULL
                   AND i.authenticated_ispb IS DISTINCT FROM i.existing_receiver_bank_code
@@ -95,7 +99,8 @@ class IncomingStatusReportPersistence {
                     i.payment_id,
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+                    NULL::text AS receiver_bank_code,
+                    NULL::text AS rejection_reason
                 FROM authorized_existing_input i
                 JOIN authorized_group_stats stats USING (payment_id)
                 WHERE stats.divergent
@@ -113,6 +118,7 @@ class IncomingStatusReportPersistence {
                     i.payment_id,
                     i.requested_status,
                     p.status AS existing_status,
+                    p.rejection_reason AS existing_rejection_reason,
                     p.amount_cents,
                     p.sender_bank_code,
                     p.receiver_bank_code,
@@ -124,7 +130,8 @@ class IncomingStatusReportPersistence {
             ),
             rejected_updates AS (
                 UPDATE payment_transaction_entity p
-                SET status = ?
+                SET status = ?,
+                    rejection_reason = NULL
                 FROM locked_existing le
                 WHERE p.payment_id = le.payment_id
                   AND le.requested_status = ?
@@ -135,7 +142,8 @@ class IncomingStatusReportPersistence {
                     p.payment_id,
                     p.amount_cents,
                     p.sender_bank_code,
-                    p.receiver_bank_code
+                    p.receiver_bank_code,
+                    p.rejection_reason
             ),
             divergent_existing_actions AS (
                 SELECT
@@ -144,12 +152,19 @@ class IncomingStatusReportPersistence {
                     le.payment_id,
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+                    NULL::text AS receiver_bank_code,
+                    NULL::text AS rejection_reason
                 FROM locked_existing le
                 WHERE le.requested_status NOT IN (?, ?)
                    OR (
                        le.requested_status = ?
-                       AND le.existing_status NOT IN (?, ?, ?)
+                       AND NOT (
+                           le.existing_status IN (?, ?, ?)
+                           OR (
+                               le.existing_status = ?
+                               AND le.existing_rejection_reason = ?
+                           )
+                       )
                    )
                    OR (
                        le.requested_status = ?
@@ -178,27 +193,33 @@ class IncomingStatusReportPersistence {
                 ORDER BY f.bank_code, f.bucket_id
                 FOR UPDATE OF f
             ),
-            ranked AS (
-                SELECT aw.*,
-                       SUM(aw.amount_cents) OVER (
-                           PARTITION BY aw.sender_bank_code, aw.bucket_id
-                           ORDER BY aw.ordinal
-                       ) AS cumulative_debit_cents
+            provisioned_waiting AS (
+                SELECT aw.*, sender_bucket.balance_cents AS sender_balance_cents
                 FROM accepted_waiting aw
+                JOIN locked_buckets sender_bucket
+                  ON sender_bucket.bank_code = aw.sender_bank_code
+                 AND sender_bucket.bucket_id = aw.bucket_id
+                JOIN locked_buckets receiver_bucket
+                  ON receiver_bucket.bank_code = aw.receiver_bank_code
+                 AND receiver_bucket.bucket_id = aw.bucket_id
+            ),
+            ranked AS (
+                SELECT pw.*,
+                       SUM(pw.amount_cents) OVER (
+                           PARTITION BY pw.sender_bank_code, pw.bucket_id
+                           ORDER BY pw.ordinal
+                       ) AS cumulative_debit_cents
+                FROM provisioned_waiting pw
             ),
             settleable AS (
                 SELECT r.*
                 FROM ranked r
-                JOIN locked_buckets sender_bucket
-                  ON sender_bucket.bank_code = r.sender_bank_code
-                 AND sender_bucket.bucket_id = r.bucket_id
-                WHERE sender_bucket.balance_cents >= r.cumulative_debit_cents
-                  AND EXISTS (
-                      SELECT 1
-                      FROM locked_buckets receiver_bucket
-                      WHERE receiver_bucket.bank_code = r.receiver_bank_code
-                        AND receiver_bucket.bucket_id = r.bucket_id
-                  )
+                WHERE r.sender_balance_cents >= r.cumulative_debit_cents
+            ),
+            insufficient_funds AS (
+                SELECT r.*
+                FROM ranked r
+                WHERE r.sender_balance_cents < r.cumulative_debit_cents
             ),
             deltas AS (
                 SELECT sender_bank_code AS bank_code,
@@ -232,7 +253,8 @@ class IncomingStatusReportPersistence {
             ),
             settled_updates AS (
                 UPDATE payment_transaction_entity p
-                SET status = ?
+                SET status = ?,
+                    rejection_reason = NULL
                 FROM settleable s, funds_applied fa
                 WHERE p.payment_id = s.payment_id
                   AND p.status = ?
@@ -241,15 +263,32 @@ class IncomingStatusReportPersistence {
                     p.payment_id,
                     p.amount_cents,
                     p.sender_bank_code,
-                    p.receiver_bank_code
+                    p.receiver_bank_code,
+                    p.rejection_reason
+            ),
+            insufficient_funds_updates AS (
+                UPDATE payment_transaction_entity p
+                SET status = ?,
+                    rejection_reason = ?
+                FROM insufficient_funds insufficient
+                WHERE p.payment_id = insufficient.payment_id
+                  AND p.status = ?
+                RETURNING
+                    insufficient.ordinal,
+                    p.payment_id,
+                    p.amount_cents,
+                    p.sender_bank_code,
+                    p.receiver_bank_code,
+                    p.rejection_reason
             ),
             accepted_in_process_updates AS (
                 UPDATE payment_transaction_entity p
-                SET status = ?
+                SET status = ?,
+                    rejection_reason = NULL
                 FROM accepted_waiting aw
-                LEFT JOIN settleable s ON s.payment_id = aw.payment_id
+                LEFT JOIN provisioned_waiting provisioned ON provisioned.payment_id = aw.payment_id
                 WHERE p.payment_id = aw.payment_id
-                  AND s.payment_id IS NULL
+                  AND provisioned.payment_id IS NULL
                   AND p.status = ?
                 RETURNING aw.ordinal, p.payment_id
             ),
@@ -260,7 +299,8 @@ class IncomingStatusReportPersistence {
                     payment_id,
                     amount_cents,
                     sender_bank_code,
-                    receiver_bank_code
+                    receiver_bank_code,
+                    rejection_reason
                 FROM settled_updates
             ),
             rejected_notification_actions AS (
@@ -270,8 +310,19 @@ class IncomingStatusReportPersistence {
                     payment_id,
                     amount_cents,
                     sender_bank_code,
-                    receiver_bank_code
+                    receiver_bank_code,
+                    rejection_reason
                 FROM rejected_updates
+                UNION ALL
+                SELECT
+                    ordinal,
+                    'REJECTED_NOTIFICATION'::text AS action,
+                    payment_id,
+                    amount_cents,
+                    sender_bank_code,
+                    receiver_bank_code,
+                    rejection_reason
+                FROM insufficient_funds_updates
             ),
             accepted_in_process_actions AS (
                 SELECT
@@ -280,28 +331,29 @@ class IncomingStatusReportPersistence {
                     payment_id,
                     NULL::bigint AS amount_cents,
                     NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code
+                    NULL::text AS receiver_bank_code,
+                    NULL::text AS rejection_reason
                 FROM accepted_in_process_updates
             )
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM unknown_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM unauthorized_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM same_batch_divergent_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM divergent_existing_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM settled_payment_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM rejected_notification_actions
             UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code
+            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
             FROM accepted_in_process_actions
             ORDER BY ordinal
             """;
@@ -326,7 +378,7 @@ class IncomingStatusReportPersistence {
                 classifyStatusReportsWithinBatch(statusReports);
         Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
         List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
-        List<PaymentTransactionCommand> rejectedPayments = new ArrayList<>();
+        List<PaymentRejection> rejectedPayments = new ArrayList<>();
         List<PaymentStatusTransition> appliedStatusTransitions = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
@@ -346,8 +398,9 @@ class IncomingStatusReportPersistence {
                     ));
                 }
                 case REJECTED_NOTIFICATION -> {
-                    rejectedPayments.add(toPaymentTransaction(actionRow));
-                    appliedStatusTransitions.add(transition(actionRow, PaymentStatus.REJECTED));
+                    PaymentRejectionReason reason = rejectionReason(actionRow.rejectionReason());
+                    rejectedPayments.add(new PaymentRejection(toPaymentTransaction(actionRow), reason));
+                    appliedStatusTransitions.add(transition(actionRow, PaymentStatus.REJECTED, reason));
                 }
                 case ACCEPTED_IN_PROCESS_TRANSITION -> appliedStatusTransitions.add(transition(
                         actionRow,
@@ -380,11 +433,24 @@ class IncomingStatusReportPersistence {
             StatusReportActionRow actionRow,
             PaymentStatus resultingStatus
     ) {
+        return transition(actionRow, resultingStatus, null);
+    }
+
+    private PaymentStatusTransition transition(
+            StatusReportActionRow actionRow,
+            PaymentStatus resultingStatus,
+            PaymentRejectionReason rejectionReason
+    ) {
         return new PaymentStatusTransition(
                 actionRow.paymentId(),
                 PaymentStatus.WAITING_ACCEPTANCE,
-                resultingStatus
+                resultingStatus,
+                rejectionReason
         );
+    }
+
+    private PaymentRejectionReason rejectionReason(String rejectionReason) {
+        return rejectionReason == null ? null : PaymentRejectionReason.valueOf(rejectionReason);
     }
 
     private Map<Integer, AuthenticatedStatusReport> reportsByOrdinal(
@@ -514,6 +580,8 @@ class IncomingStatusReportPersistence {
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_AND_SETTLED.name());
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
+                    statement.setString(parameterIndex++, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
+                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
                     statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
                     statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
 
@@ -522,6 +590,11 @@ class IncomingStatusReportPersistence {
 
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_AND_SETTLED.name());
                     statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
+
+                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
+                    statement.setString(parameterIndex++, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
+                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
+
                     statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
                     statement.setString(parameterIndex, PaymentStatus.WAITING_ACCEPTANCE.name());
 
@@ -535,7 +608,8 @@ class IncomingStatusReportPersistence {
                                     resultSet.getString(3),
                                     amountCents,
                                     resultSet.getString(5),
-                                    resultSet.getString(6)
+                                    resultSet.getString(6),
+                                    resultSet.getString(7)
                             ));
                         }
                         return actionRows;
@@ -613,7 +687,8 @@ class IncomingStatusReportPersistence {
             String paymentId,
             Long amountCents,
             String senderBankCode,
-            String receiverBankCode
+            String receiverBankCode,
+            String rejectionReason
     ) {
     }
 

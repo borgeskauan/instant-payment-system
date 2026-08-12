@@ -1,0 +1,102 @@
+{
+  "name": "mixed-outcomes-smoke",
+  "schemaVersion": 1,
+  "connections": {
+    "centralTransfer": {
+      "baseUrl": "https://localhost:8001",
+      "caCert": "../../infra/certs/local/ca/ca.crt",
+      "clientCertRoot": "../../infra/certs/local",
+      "serverName": "localhost"
+    },
+    "notificationGateway": {
+      "address": "localhost:9090",
+      "caCert": "../../infra/certs/local/ca/ca.crt",
+      "clientCertRoot": "../../infra/certs/local",
+      "serverName": "localhost"
+    }
+  },
+  "load": {
+    "targetTxRate": 100,
+    "warmup": "5s",
+    "duration": "10s",
+    "drain": "10s"
+  },
+  "replay": {
+    "pacs008": {
+      "share": 0.05,
+      "delay": "10s"
+    },
+    "pacs002": {
+      "share": 0.05,
+      "delay": "10s"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 0.8,
+      "participants": {
+        "hotPairCount": 8,
+        "coldPairCount": 32,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "funding": {
+        "payer": {
+          "mode": "cover-generated-debits"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
+        }
+      }
+    },
+    {
+      "name": "insufficient-funds",
+      "share": 0.2,
+      "participants": {
+        "hotPairCount": 2,
+        "coldPairCount": 8,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "funding": {
+        "payer": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "RJCT",
+          "reasonCodes": ["AM04"]
+        }
+      }
+    }
+  ],
+  "reporting": {
+    "slaThresholdMs": 1000
+  }
+}

@@ -20,20 +20,20 @@ type notificationEnvelope struct {
 	TxInfAndSts []struct {
 		OrgnlEndToEndId string
 		OrgnlEndToEndID string
+		TxSts           string
+		StsRsnInf       []struct {
+			Rsn struct {
+				Cd string
+			}
+		}
 	}
 }
 
 type Notification struct {
-	EndToEndID string
-	Kind       string
-}
-
-func ExtractNotification(body []byte) (endToEndID string, kind string, err error) {
-	notifications, err := ExtractNotifications(body)
-	if err != nil {
-		return "", "", err
-	}
-	return notifications[0].EndToEndID, notifications[0].Kind, nil
+	EndToEndID  string
+	Kind        string
+	StatusCode  string
+	ReasonCodes []string
 }
 
 func ExtractNotifications(body []byte) ([]Notification, error) {
@@ -69,9 +69,15 @@ func ExtractNotifications(body []byte) ([]Notification, error) {
 				id = tx.OrgnlEndToEndID
 			}
 			if id != "" {
+				reasonCodes := make([]string, len(tx.StsRsnInf))
+				for index, reason := range tx.StsRsnInf {
+					reasonCodes[index] = reason.Rsn.Cd
+				}
 				notifications = append(notifications, Notification{
-					EndToEndID: id,
-					Kind:       KindPacs002,
+					EndToEndID:  id,
+					Kind:        KindPacs002,
+					StatusCode:  tx.TxSts,
+					ReasonCodes: reasonCodes,
 				})
 			}
 		}

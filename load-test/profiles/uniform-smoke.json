@@ -1,0 +1,60 @@
+{
+  "name": "uniform-smoke",
+  "schemaVersion": 1,
+  "connections": {
+    "centralTransfer": {
+      "baseUrl": "https://localhost:8001",
+      "caCert": "../../infra/certs/local/ca/ca.crt",
+      "clientCertRoot": "../../infra/certs/local",
+      "serverName": "localhost"
+    },
+    "notificationGateway": {
+      "address": "localhost:9090",
+      "caCert": "../../infra/certs/local/ca/ca.crt",
+      "clientCertRoot": "../../infra/certs/local",
+      "serverName": "localhost"
+    }
+  },
+  "load": {
+    "targetTxRate": 2000,
+    "warmup": "1m",
+    "duration": "1m",
+    "drain": "30s"
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 1.0,
+      "participants": {
+        "hotPairCount": 10,
+        "coldPairCount": 40,
+        "hotTrafficShare": 0.8
+      },
+      "amount": {
+        "minimum": 100,
+        "maximum": 100098
+      },
+      "funding": {
+        "payer": {
+          "mode": "cover-generated-debits"
+        },
+        "receiver": {
+          "mode": "fixed",
+          "balance": "0.00"
+        },
+        "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
+        }
+      }
+    }
+  ],
+  "reporting": {
+    "slaThresholdMs": 1000
+  }
+}

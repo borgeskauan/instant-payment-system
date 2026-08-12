@@ -1,5 +1,6 @@
 package br.kauan.spi.domain.services;
 
+import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
@@ -165,6 +166,10 @@ class PaymentTransactionProcessorServiceTest {
                 .build();
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2");
+        List<PaymentRejection> rejections = List.of(
+                new PaymentRejection(firstPayment, null),
+                new PaymentRejection(secondPayment, null)
+        );
         List<PaymentStatusTransition> transitions = List.of(
                 transition("E2E-1", PaymentStatus.REJECTED),
                 transition("E2E-2", PaymentStatus.REJECTED)
@@ -174,7 +179,7 @@ class PaymentTransactionProcessorServiceTest {
         ))
                 .thenReturn(new StatusReportPersistenceResult(
                         List.of(),
-                        List.of(firstPayment, secondPayment),
+                        rejections,
                         transitions,
                         List.of(),
                         List.of()
@@ -185,7 +190,7 @@ class PaymentTransactionProcessorServiceTest {
         verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(
                 authenticatedReports(firstReport, secondReport)
         );
-        verify(notificationService).storeStatusObligations(List.of(), List.of(firstPayment, secondPayment));
+        verify(notificationService).storeStatusObligations(List.of(), rejections);
         verify(auditService).storeStatusEvents(transitions, List.of());
     }
 

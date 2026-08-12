@@ -2,6 +2,7 @@ package br.kauan.spi.domain.services.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -64,7 +65,8 @@ class PaymentAuditServiceTest {
         PaymentStatusTransition rejectedTransition = new PaymentStatusTransition(
                 "E2E-AUDIT-REJECTED",
                 PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.REJECTED
+                PaymentStatus.REJECTED,
+                PaymentRejectionReason.INSUFFICIENT_FUNDS
         );
 
         service.storeStatusEvents(
@@ -93,7 +95,8 @@ class PaymentAuditServiceTest {
                         null,
                         null,
                         null,
-                        null
+                        null,
+                        PaymentRejectionReason.INSUFFICIENT_FUNDS
                 ),
                 new PaymentAuditEvent(
                         settledPayment.getPaymentId(),

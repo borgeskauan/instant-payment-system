@@ -16,6 +16,7 @@ public class Entity {
     private String description;
 
     private String status;
+    private String rejectionReason;
 
     // Sender fields
     private String senderName;

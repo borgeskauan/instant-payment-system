@@ -23,7 +23,8 @@ public class PaymentAuditRepository {
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
-                receiver_delta_cents
+                receiver_delta_cents,
+                reason
             )
             SELECT
                 payment_id,
@@ -34,7 +35,8 @@ public class PaymentAuditRepository {
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
-                receiver_delta_cents
+                receiver_delta_cents,
+                reason
             FROM unnest(
                 ?::text[],
                 ?::text[],
@@ -44,7 +46,8 @@ public class PaymentAuditRepository {
                 ?::text[],
                 ?::text[],
                 ?::bigint[],
-                ?::bigint[]
+                ?::bigint[],
+                ?::text[]
             ) AS event(
                 payment_id,
                 event_type,
@@ -54,7 +57,8 @@ public class PaymentAuditRepository {
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
-                receiver_delta_cents
+                receiver_delta_cents,
+                reason
             )
             """;
 
@@ -80,6 +84,7 @@ public class PaymentAuditRepository {
             Array receiverIspbs = null;
             Array senderDeltas = null;
             Array receiverDeltas = null;
+            Array reasons = null;
             try {
                 paymentIds = connection.createArrayOf("text", values.paymentIds());
                 eventTypes = connection.createArrayOf("text", values.eventTypes());
@@ -90,6 +95,7 @@ public class PaymentAuditRepository {
                 receiverIspbs = connection.createArrayOf("text", values.receiverIspbs());
                 senderDeltas = connection.createArrayOf("int8", values.senderDeltas());
                 receiverDeltas = connection.createArrayOf("int8", values.receiverDeltas());
+                reasons = connection.createArrayOf("text", values.reasons());
 
                 try (var statement = connection.prepareStatement(INSERT_SQL)) {
                     statement.setArray(1, paymentIds);
@@ -101,6 +107,7 @@ public class PaymentAuditRepository {
                     statement.setArray(7, receiverIspbs);
                     statement.setArray(8, senderDeltas);
                     statement.setArray(9, receiverDeltas);
+                    statement.setArray(10, reasons);
                     return statement.executeUpdate();
                 }
             } finally {
@@ -113,7 +120,8 @@ public class PaymentAuditRepository {
                         senderIspbs,
                         receiverIspbs,
                         senderDeltas,
-                        receiverDeltas
+                        receiverDeltas,
+                        reasons
                 );
             }
         });
@@ -136,7 +144,8 @@ public class PaymentAuditRepository {
             String[] senderIspbs,
             String[] receiverIspbs,
             Long[] senderDeltas,
-            Long[] receiverDeltas
+            Long[] receiverDeltas,
+            String[] reasons
     ) {
         private static PaymentAuditArrays from(List<PaymentAuditEvent> events) {
             int size = events.size();
@@ -149,6 +158,7 @@ public class PaymentAuditRepository {
             String[] receiverIspbs = new String[size];
             Long[] senderDeltas = new Long[size];
             Long[] receiverDeltas = new Long[size];
+            String[] reasons = new String[size];
 
             for (int index = 0; index < size; index++) {
                 PaymentAuditEvent event = events.get(index);
@@ -161,6 +171,7 @@ public class PaymentAuditRepository {
                 receiverIspbs[index] = event.receiverIspb();
                 senderDeltas[index] = event.senderDeltaCents();
                 receiverDeltas[index] = event.receiverDeltaCents();
+                reasons[index] = event.reason() == null ? null : event.reason().name();
             }
 
             return new PaymentAuditArrays(
@@ -172,7 +183,8 @@ public class PaymentAuditRepository {
                     senderIspbs,
                     receiverIspbs,
                     senderDeltas,
-                    receiverDeltas
+                    receiverDeltas,
+                    reasons
             );
         }
 

@@ -2,48 +2,94 @@ package report
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"math"
 	"sort"
 	"time"
 
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 )
 
 type Summary struct {
-	Run                 RunSummary         `json:"run"`
-	Transactions        TransactionSummary `json:"transactions"`
-	ThroughputPerSecond ThroughputSummary  `json:"throughput_per_second"`
-	LatencyMs           LatencySummary     `json:"latency_ms"`
-	Diagnostics         DiagnosticSummary  `json:"diagnostics"`
+	Valid       bool               `json:"valid"`
+	Generation  GenerationSummary  `json:"generation"`
+	Scenarios   []ScenarioSummary  `json:"scenarios"`
+	Replays     ReplaySummary      `json:"replays"`
+	Performance PerformanceSummary `json:"performance"`
 }
 
-type RunSummary struct {
-	TargetTPS      int     `json:"target_tps"`
-	WarmupSeconds  float64 `json:"warmup_seconds"`
-	ActiveSeconds  float64 `json:"active_seconds"`
-	SLAThresholdMs int64   `json:"sla_threshold_ms"`
+type ReplaySummary struct {
+	Pacs008 ReplayTypeSummary `json:"pacs008"`
+	Pacs002 ReplayTypeSummary `json:"pacs002"`
 }
 
-type TransactionSummary struct {
-	Started        int                   `json:"started"`
-	Accepted       int                   `json:"accepted"`
-	Confirmation   ConfirmationSummary   `json:"confirmation"`
-	ConfirmedBySLA ConfirmedBySLASummary `json:"confirmed_by_sla"`
+type GenerationSummary struct {
+	TargetTPS  int     `json:"target_tps"`
+	Expected   int     `json:"expected"`
+	Started    int     `json:"started"`
+	ActualTPS  float64 `json:"actual_tps"`
+	Violations int     `json:"violations"`
 }
 
-type ConfirmationSummary struct {
-	Confirmed    int `json:"confirmed"`
-	NotConfirmed int `json:"not_confirmed"`
+type ReplayTypeSummary struct {
+	Started    int `json:"started"`
+	Accepted   int `json:"accepted"`
+	Violations int `json:"violations"`
 }
 
-type ConfirmedBySLASummary struct {
-	WithinSLA int `json:"within_sla"`
-	AfterSLA  int `json:"after_sla"`
+type ScenarioSummary struct {
+	Name        string                     `json:"name"`
+	Share       float64                    `json:"share"`
+	Traffic     ScenarioTrafficSummary     `json:"traffic"`
+	Outcome     ScenarioOutcomeSummary     `json:"outcome"`
+	Performance ScenarioPerformanceSummary `json:"performance"`
+	Violations  int                        `json:"violations"`
 }
 
-type ThroughputSummary struct {
-	Started               float64 `json:"started"`
-	ConfirmedDuringActive float64 `json:"confirmed_during_active"`
+type ScenarioTrafficSummary struct {
+	Payments CountSummary `json:"payments"`
+	Pacs002  CountSummary `json:"pacs002"`
+}
+
+type CountSummary struct {
+	Started  int `json:"started"`
+	Accepted int `json:"accepted"`
+}
+
+type ScenarioOutcomeSummary struct {
+	Expected      ExpectedOutcomeSummary `json:"expected"`
+	Matched       int                    `json:"matched"`
+	Missing       int                    `json:"missing"`
+	Contradictory int                    `json:"contradictory"`
+}
+
+type ExpectedOutcomeSummary struct {
+	Status      string   `json:"status"`
+	ReasonCodes []string `json:"reason_codes"`
+}
+
+type ScenarioPerformanceSummary struct {
+	WithinThreshold int            `json:"within_threshold"`
+	AfterThreshold  int            `json:"after_threshold"`
+	LatencyMs       LatencySummary `json:"latency_ms"`
+}
+
+type PerformanceSummary struct {
+	ThresholdMs                   int64            `json:"threshold_ms"`
+	ActiveTPS                     ActiveTPSSummary `json:"active_tps"`
+	PayerNotificationsAfterActive int              `json:"payer_notifications_after_active"`
+	LatencyMs                     LatencySummary   `json:"latency_ms"`
+}
+
+type ActiveTPSSummary struct {
+	Payments           float64 `json:"payments"`
+	Pacs002            float64 `json:"pacs002"`
+	Pacs008Replays     float64 `json:"pacs008_replays"`
+	Pacs002Replays     float64 `json:"pacs002_replays"`
+	PayerNotifications float64 `json:"payer_notifications"`
 }
 
 type LatencySummary struct {
@@ -53,108 +99,233 @@ type LatencySummary struct {
 	Max float64 `json:"max"`
 }
 
-type DiagnosticSummary struct {
-	ResultCollection ResultCollectionSummary `json:"result_collection"`
-}
-
-type ResultCollectionSummary struct {
-	ConfirmedAfterActive int     `json:"confirmed_after_active"`
-	ConfirmedTotal       int     `json:"confirmed_total"`
-	ConfirmedTotalRate   float64 `json:"confirmed_total_per_second"`
-}
-
 type Options struct {
 	SLAThresholdMs int64
 	TargetTxRate   int
-	Warmup         time.Duration
 	Duration       time.Duration
+	Replay         config.Replay
+	Scenarios      []config.Scenario
+	Window         runwindow.Window
 }
 
-func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) Summary {
+func Build(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {
 	var summary Summary
-	summary.Run.TargetTPS = options.TargetTxRate
-	summary.Run.SLAThresholdMs = options.SLAThresholdMs
-	if options.Warmup > 0 {
-		summary.Run.WarmupSeconds = options.Warmup.Seconds()
+	scenarios := options.Scenarios
+	if len(scenarios) == 0 {
+		return Summary{}, fmt.Errorf("report requires at least one configured scenario")
 	}
-	if options.Duration > 0 {
-		summary.Run.ActiveSeconds = options.Duration.Seconds()
+	if err := validateStartScenarios(starts, scenarios); err != nil {
+		return Summary{}, err
 	}
-	measuredStarts := measuredWindowStarts(starts, options.Warmup, options.Duration)
-	summary.Transactions.Started = len(measuredStarts)
+	if err := validateStatusStartScenarios(statusStarts, scenarios); err != nil {
+		return Summary{}, err
+	}
+	if err := validateWindow(options.Window); err != nil {
+		return Summary{}, err
+	}
+	summary.Generation.TargetTPS = options.TargetTxRate
+	summary.Performance.ThresholdMs = options.SLAThresholdMs
+	summary.Scenarios = make([]ScenarioSummary, len(scenarios))
+	scenarioIndexes := make(map[string]int, len(scenarios))
+	scenarioDurations := make([][]float64, len(scenarios))
+	for index, scenario := range scenarios {
+		if scenario.Expectations.HTTPStatus != config.ExpectedHTTP2xx {
+			return Summary{}, fmt.Errorf("unsupported HTTP expectation %q for scenario %q", scenario.Expectations.HTTPStatus, scenario.Name)
+		}
+		if scenario.Expectations.PayerNotification.DeliverySemantics != config.DeliveryAtLeastOnce {
+			return Summary{}, fmt.Errorf("unsupported payer notification delivery semantics %q for scenario %q", scenario.Expectations.PayerNotification.DeliverySemantics, scenario.Name)
+		}
+		scenarioIndexes[scenario.Name] = index
+		summary.Scenarios[index] = ScenarioSummary{
+			Name:  scenario.Name,
+			Share: scenario.Share,
+			Outcome: ScenarioOutcomeSummary{
+				Expected: ExpectedOutcomeSummary{
+					Status:      scenario.Expectations.PayerNotification.Status,
+					ReasonCodes: cloneStrings(scenario.Expectations.PayerNotification.ReasonCodes),
+				},
+			},
+		}
+	}
+	measuredStarts := measuredWindowStarts(starts, options.Window)
+	measuredPacs008Replays := measuredWindowReplays(replays, events.MessagePacs008, options.Window)
+	measuredPacs002Replays := measuredWindowReplays(replays, events.MessagePacs002, options.Window)
+	measuredStatuses := measuredWindowStatusStarts(statusStarts, options.Window)
+	summary.Replays.Pacs008 = summarizePacs008Replays(starts, replays, options.Replay.Pacs008, options.Window)
+	summary.Replays.Pacs002 = summarizePacs002Replays(statusStarts, replays, options.Replay.Pacs002, options.Window)
+	summary.Generation.Started = len(measuredStarts)
 	if options.Duration > 0 {
-		summary.ThroughputPerSecond.Started = float64(summary.Transactions.Started) / options.Duration.Seconds()
+		durationSeconds := options.Duration.Seconds()
+		summary.Generation.ActualTPS = roundMetric(float64(len(measuredStarts)) / durationSeconds)
+		summary.Performance.ActiveTPS.Payments = summary.Generation.ActualTPS
+		summary.Performance.ActiveTPS.Pacs002 = roundMetric(float64(len(measuredStatuses)) / durationSeconds)
+		summary.Performance.ActiveTPS.Pacs008Replays = roundMetric(float64(len(measuredPacs008Replays)) / durationSeconds)
+		summary.Performance.ActiveTPS.Pacs002Replays = roundMetric(float64(len(measuredPacs002Replays)) / durationSeconds)
+		if options.TargetTxRate > 0 {
+			summary.Generation.Expected = int(float64(options.TargetTxRate) * durationSeconds)
+			summary.Generation.Violations = absoluteDifference(summary.Generation.Expected, summary.Generation.Started)
+		}
+	}
+	for _, start := range starts {
+		startedAt := requestStartedAt(start)
+		if startedAt < options.Window.GenerationStartedAt.UnixNano() || startedAt >= options.Window.GenerationEndedAt.UnixNano() {
+			summary.Generation.Violations++
+		}
 	}
 
-	confirmations := payerConfirmations(notifications)
-	activeWindowEndNS := configuredActiveWindowEndNS(starts, options.Warmup, options.Duration)
-	confirmedDuringActive := 0
+	payerNotifications := collectPayerNotifications(notifications)
+	for _, start := range starts {
+		scenario, err := scenarioForStart(start, scenarios)
+		if err != nil {
+			return Summary{}, err
+		}
+		scenarioSummary := &summary.Scenarios[scenarioIndexes[scenario.Name]]
+		scenarioSummary.Traffic.Payments.Started++
+		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
+			scenarioSummary.Violations++
+			continue
+		}
+		scenarioSummary.Traffic.Payments.Accepted++
+		observation := payerNotifications[notificationKey{
+			endToEndID: start.EndToEndID,
+			ispb:       start.PayerISPB,
+		}]
+		if len(observation.deliveries) == 0 {
+			scenarioSummary.Outcome.Missing++
+			scenarioSummary.Violations++
+			continue
+		}
+		match := matchPayerNotification(observation, scenario.Expectations.PayerNotification)
+		if match.matched {
+			scenarioSummary.Outcome.Matched++
+		}
+		if match.statusMismatch || match.reasonCodesMismatch {
+			scenarioSummary.Outcome.Contradictory++
+			scenarioSummary.Violations++
+		}
+	}
+
+	for _, status := range statusStarts {
+		scenarioIndex, err := scenarioIndexForName(status.ScenarioName, scenarios)
+		if err != nil {
+			return Summary{}, fmt.Errorf("status start %q: %w", status.EndToEndID, err)
+		}
+		scenarioSummary := &summary.Scenarios[scenarioIndex]
+		scenarioSummary.Traffic.Pacs002.Started++
+		if status.HTTPStatus >= 200 && status.HTTPStatus < 300 {
+			scenarioSummary.Traffic.Pacs002.Accepted++
+		} else {
+			scenarioSummary.Violations++
+		}
+		if status.RequestStartedAtNS >= options.Window.ReplayDeadlineAt.UnixNano() {
+			scenarioSummary.Violations++
+		}
+	}
+
+	activeWindowEndNS := options.Window.GenerationEndedAt.UnixNano()
+	payerNotifiedDuringActive := 0
+	matchedActivePayments := 0
 	var durations []float64
 	for _, start := range measuredStarts {
 		if start.HTTPStatus < 200 || start.HTTPStatus >= 300 {
 			continue
 		}
-		summary.Transactions.Accepted++
-		receivedAt, ok := confirmations[confirmationKey{
-			endToEndID: start.EndToEndID,
-			ispb:       start.PayerISPB,
-		}]
-		if !ok {
-			summary.Transactions.Confirmation.NotConfirmed++
+		scenario, err := scenarioForStart(start, scenarios)
+		if err != nil {
+			return Summary{}, err
+		}
+		observation := payerNotifications[notificationKey{endToEndID: start.EndToEndID, ispb: start.PayerISPB}]
+		match := matchPayerNotification(observation, scenario.Expectations.PayerNotification)
+		if !match.matched {
 			continue
 		}
-		durationMs := float64(receivedAt-requestStartedAt(start)) / 1_000_000
+		matchedActivePayments++
+		durationMs := float64(match.earliestMatchingAt-requestStartedAt(start)) / 1_000_000
 		durations = append(durations, durationMs)
-		summary.Transactions.Confirmation.Confirmed++
-		if activeWindowEndNS > 0 && receivedAt <= activeWindowEndNS {
-			confirmedDuringActive++
+		scenarioIndex := scenarioIndexes[scenario.Name]
+		scenarioDurations[scenarioIndex] = append(scenarioDurations[scenarioIndex], durationMs)
+		if match.earliestMatchingAt < activeWindowEndNS {
+			payerNotifiedDuringActive++
 		}
+		scenarioSummary := &summary.Scenarios[scenarioIndex]
 		if durationMs > float64(options.SLAThresholdMs) {
-			summary.Transactions.ConfirmedBySLA.AfterSLA++
+			scenarioSummary.Performance.AfterThreshold++
 		} else {
-			summary.Transactions.ConfirmedBySLA.WithinSLA++
+			scenarioSummary.Performance.WithinThreshold++
 		}
 	}
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
-		summary.ThroughputPerSecond.ConfirmedDuringActive = float64(confirmedDuringActive) / durationSeconds
-		summary.Diagnostics.ResultCollection.ConfirmedTotalRate = float64(summary.Transactions.Confirmation.Confirmed) / durationSeconds
+		summary.Performance.ActiveTPS.PayerNotifications = roundMetric(float64(payerNotifiedDuringActive) / durationSeconds)
 	}
-	summary.Diagnostics.ResultCollection.ConfirmedAfterActive = summary.Transactions.Confirmation.Confirmed - confirmedDuringActive
-	summary.Diagnostics.ResultCollection.ConfirmedTotal = summary.Transactions.Confirmation.Confirmed
+	summary.Performance.PayerNotificationsAfterActive = matchedActivePayments - payerNotifiedDuringActive
 
 	sort.Float64s(durations)
-	summary.LatencyMs.P50 = percentile(durations, 0.50)
-	summary.LatencyMs.P95 = percentile(durations, 0.95)
-	summary.LatencyMs.P99 = percentile(durations, 0.99)
-	if len(durations) > 0 {
-		summary.LatencyMs.Max = durations[len(durations)-1]
+	summary.Performance.LatencyMs = summarizeLatency(durations)
+	for index := range summary.Scenarios {
+		sort.Float64s(scenarioDurations[index])
+		summary.Scenarios[index].Performance.LatencyMs = summarizeLatency(scenarioDurations[index])
 	}
-	return summary
+	summary.Valid = summary.Generation.Violations == 0 &&
+		summary.Replays.Pacs008.Violations == 0 &&
+		summary.Replays.Pacs002.Violations == 0 &&
+		scenariosAreValid(summary.Scenarios)
+	return summary, nil
 }
 
-func configuredActiveWindowEndNS(starts []events.Start, warmup time.Duration, duration time.Duration) int64 {
-	if len(starts) == 0 || duration <= 0 {
-		return 0
+func validateStartScenarios(starts []events.Start, scenarios []config.Scenario) error {
+	for _, start := range starts {
+		if _, err := scenarioForStart(start, scenarios); err != nil {
+			return err
+		}
 	}
-	return firstStartedAt(starts) + warmup.Nanoseconds() + duration.Nanoseconds()
+	return nil
 }
 
-func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration time.Duration) []events.Start {
-	if len(starts) == 0 {
-		return nil
+func validateStatusStartScenarios(statusStarts []events.StatusStart, scenarios []config.Scenario) error {
+	for _, status := range statusStarts {
+		if _, err := scenarioIndexForName(status.ScenarioName, scenarios); err != nil {
+			return fmt.Errorf("status start %q uses unknown scenario name %q", status.EndToEndID, status.ScenarioName)
+		}
 	}
-	windowStart := firstStartedAt(starts) + warmup.Nanoseconds()
-	windowEnd := int64(0)
-	if duration > 0 {
-		windowEnd = windowStart + duration.Nanoseconds()
+	return nil
+}
+
+func scenarioForStart(start events.Start, scenarios []config.Scenario) (config.Scenario, error) {
+	index, err := scenarioIndexForName(start.ScenarioName, scenarios)
+	if err == nil {
+		return scenarios[index], nil
 	}
+	return config.Scenario{}, fmt.Errorf("start %q uses unknown scenario name %q", start.EndToEndID, start.ScenarioName)
+}
+
+func scenarioIndexForName(name string, scenarios []config.Scenario) (int, error) {
+	for index, scenario := range scenarios {
+		if scenario.Name == name {
+			return index, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown scenario name %q", name)
+}
+
+func scenariosAreValid(scenarios []ScenarioSummary) bool {
+	for _, scenario := range scenarios {
+		if scenario.Violations != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func measuredWindowStarts(starts []events.Start, window runwindow.Window) []events.Start {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
 	measured := make([]events.Start, 0, len(starts))
 	for _, start := range starts {
 		if requestStartedAt(start) < windowStart {
 			continue
 		}
-		if windowEnd > 0 && requestStartedAt(start) >= windowEnd {
+		if requestStartedAt(start) >= windowEnd {
 			continue
 		}
 		measured = append(measured, start)
@@ -162,15 +333,153 @@ func measuredWindowStarts(starts []events.Start, warmup time.Duration, duration 
 	return measured
 }
 
-func firstStartedAt(starts []events.Start) int64 {
-	minStartedAt := requestStartedAt(starts[0])
-	for _, start := range starts[1:] {
-		startedAt := requestStartedAt(start)
-		if startedAt < minStartedAt {
-			minStartedAt = startedAt
+func measuredWindowReplays(replays []events.Replay, messageType string, window runwindow.Window) []events.Replay {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
+	measured := make([]events.Replay, 0, len(replays))
+	for _, replay := range replays {
+		if replay.MessageType != messageType {
+			continue
+		}
+		if replay.RequestStartedAtNS < windowStart {
+			continue
+		}
+		if replay.RequestStartedAtNS >= windowEnd {
+			continue
+		}
+		measured = append(measured, replay)
+	}
+	return measured
+}
+
+func measuredWindowStatusStarts(statusStarts []events.StatusStart, window runwindow.Window) []events.StatusStart {
+	windowStart := window.ActiveStartedAt.UnixNano()
+	windowEnd := window.GenerationEndedAt.UnixNano()
+	measured := make([]events.StatusStart, 0, len(statusStarts))
+	for _, status := range statusStarts {
+		if status.RequestStartedAtNS >= windowStart && status.RequestStartedAtNS < windowEnd {
+			measured = append(measured, status)
 		}
 	}
-	return minStartedAt
+	return measured
+}
+
+func summarizePacs008Replays(starts []events.Start, replays []events.Replay, configured *config.Pacs008Replay, window runwindow.Window) ReplayTypeSummary {
+	var summary ReplayTypeSummary
+	startsByID := make(map[string]events.Start, len(starts))
+	for _, start := range starts {
+		startsByID[start.EndToEndID] = start
+	}
+	attemptsByID := make(map[string]int, len(replays))
+	for _, replay := range replays {
+		if replay.MessageType != events.MessagePacs008 {
+			continue
+		}
+		summary.Started++
+		if replay.HTTPStatus >= 200 && replay.HTTPStatus < 300 {
+			summary.Accepted++
+		} else {
+			summary.Violations++
+		}
+		start, exists := startsByID[replay.EndToEndID]
+		if !exists {
+			summary.Violations++
+			continue
+		}
+		attemptsByID[start.EndToEndID]++
+		if !start.Pacs008ReplaySelected {
+			summary.Violations++
+		}
+		if replay.SenderISPB != start.PayerISPB || replay.ScenarioName != start.ScenarioName {
+			summary.Violations++
+		}
+		if configured == nil {
+			summary.Violations++
+			continue
+		}
+		if replay.RequestStartedAtNS < requestStartedAt(start)+configured.Delay.Nanoseconds() {
+			summary.Violations++
+		}
+		if replay.RequestStartedAtNS >= window.ReplayDeadlineAt.UnixNano() {
+			summary.Violations++
+		}
+	}
+	for _, start := range starts {
+		if !start.Pacs008ReplaySelected {
+			continue
+		}
+		attempts := attemptsByID[start.EndToEndID]
+		if attempts == 0 {
+			summary.Violations++
+		}
+		if attempts > 1 {
+			summary.Violations += attempts - 1
+		}
+	}
+	return summary
+}
+
+func summarizePacs002Replays(statusStarts []events.StatusStart, replays []events.Replay, configured *config.Pacs002Replay, window runwindow.Window) ReplayTypeSummary {
+	var summary ReplayTypeSummary
+	statusesByID := make(map[string]events.StatusStart, len(statusStarts))
+	for _, status := range statusStarts {
+		statusesByID[status.EndToEndID] = status
+	}
+	attemptsByID := make(map[string]int)
+	for _, replay := range replays {
+		if replay.MessageType != events.MessagePacs002 {
+			continue
+		}
+		summary.Started++
+		if replay.HTTPStatus >= 200 && replay.HTTPStatus < 300 {
+			summary.Accepted++
+		} else {
+			summary.Violations++
+		}
+		status, exists := statusesByID[replay.EndToEndID]
+		if !exists {
+			summary.Violations++
+			continue
+		}
+		attemptsByID[replay.EndToEndID]++
+		if !status.Pacs002ReplaySelected || replay.SenderISPB != status.SenderISPB || replay.ScenarioName != status.ScenarioName {
+			summary.Violations++
+		}
+		if configured == nil {
+			summary.Violations++
+			continue
+		}
+		if replay.RequestStartedAtNS < status.RequestStartedAtNS+configured.Delay.Nanoseconds() || replay.RequestStartedAtNS >= window.ReplayDeadlineAt.UnixNano() {
+			summary.Violations++
+		}
+	}
+	for _, status := range statusStarts {
+		if !status.Pacs002ReplaySelected {
+			continue
+		}
+		attempts := attemptsByID[status.EndToEndID]
+		if attempts == 0 {
+			summary.Violations++
+		}
+		if attempts > 1 {
+			summary.Violations += attempts - 1
+		}
+	}
+	return summary
+}
+
+func validateWindow(window runwindow.Window) error {
+	if window.GenerationStartedAt.IsZero() || window.ActiveStartedAt.Before(window.GenerationStartedAt) || window.GenerationEndedAt.Before(window.ActiveStartedAt) || window.ReplayDeadlineAt.Before(window.GenerationEndedAt) {
+		return fmt.Errorf("report requires a valid authoritative run window")
+	}
+	return nil
+}
+
+func absoluteDifference(left, right int) int {
+	if left > right {
+		return left - right
+	}
+	return right - left
 }
 
 func requestStartedAt(start events.Start) int64 {
@@ -180,29 +489,86 @@ func requestStartedAt(start events.Start) int64 {
 	return start.CreatedAtNS
 }
 
-type confirmationKey struct {
+type notificationKey struct {
 	endToEndID string
 	ispb       string
 }
 
-func payerConfirmations(notifications []events.Notification) map[confirmationKey]int64 {
-	confirmations := make(map[confirmationKey]int64)
+type notificationObservation struct {
+	deliveries []events.Notification
+}
+
+func collectPayerNotifications(notifications []events.Notification) map[notificationKey]notificationObservation {
+	observations := make(map[notificationKey]notificationObservation)
 	for _, notification := range notifications {
 		if notification.EventType != events.EventPacs002Received {
 			continue
 		}
-		key := confirmationKey{
+		key := notificationKey{
 			endToEndID: notification.EndToEndID,
 			ispb:       notification.ISPB,
 		}
-		if receivedAt, ok := confirmations[key]; !ok || notification.ReceivedAtNS < receivedAt {
-			confirmations[key] = notification.ReceivedAtNS
-		}
+		observation := observations[key]
+		observation.deliveries = append(observation.deliveries, notification)
+		observations[key] = observation
 	}
-	return confirmations
+	return observations
 }
 
-func Print(startsPath string, eventsPath string, options Options, output io.Writer) error {
+type payerNotificationMatch struct {
+	matched             bool
+	statusMismatch      bool
+	reasonCodesMismatch bool
+	earliestMatchingAt  int64
+}
+
+func matchPayerNotification(observation notificationObservation, expectation config.PayerNotificationExpectation) payerNotificationMatch {
+	if len(observation.deliveries) == 0 {
+		return payerNotificationMatch{}
+	}
+	result := payerNotificationMatch{}
+	for _, delivery := range observation.deliveries {
+		statusMatches := delivery.StatusCode == expectation.Status
+		reasonsMatch := equalReasonCodes(delivery.ReasonCodes, expectation.ReasonCodes)
+		if !statusMatches {
+			result.statusMismatch = true
+		}
+		if !reasonsMatch {
+			result.reasonCodesMismatch = true
+		}
+		if statusMatches && reasonsMatch {
+			if !result.matched || delivery.ReceivedAtNS < result.earliestMatchingAt {
+				result.earliestMatchingAt = delivery.ReceivedAtNS
+			}
+			result.matched = true
+		}
+	}
+	return result
+}
+
+func equalReasonCodes(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := cloneStrings(left)
+	rightCopy := cloneStrings(right)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneStrings(values []string) []string {
+	cloned := make([]string, len(values))
+	copy(cloned, values)
+	return cloned
+}
+
+func Print(startsPath string, eventsPath string, statusStartsPath string, replaysPath string, options Options, output io.Writer) error {
 	starts, err := events.ReadStarts(startsPath)
 	if err != nil {
 		return err
@@ -211,11 +577,38 @@ func Print(startsPath string, eventsPath string, options Options, output io.Writ
 	if err != nil {
 		return err
 	}
+	replays, err := events.ReadReplays(replaysPath)
+	if err != nil {
+		return err
+	}
+	statusStarts, err := events.ReadStatusStarts(statusStartsPath)
+	if err != nil {
+		return err
+	}
 
-	summary := BuildWithOptions(starts, notifications, options)
+	summary, err := Build(starts, notifications, statusStarts, replays, options)
+	if err != nil {
+		return err
+	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(summary)
+}
+
+func summarizeLatency(durations []float64) LatencySummary {
+	summary := LatencySummary{
+		P50: roundMetric(percentile(durations, 0.50)),
+		P95: roundMetric(percentile(durations, 0.95)),
+		P99: roundMetric(percentile(durations, 0.99)),
+	}
+	if len(durations) > 0 {
+		summary.Max = roundMetric(durations[len(durations)-1])
+	}
+	return summary
+}
+
+func roundMetric(value float64) float64 {
+	return math.Round(value*1000) / 1000
 }
 
 func percentile(values []float64, quantile float64) float64 {

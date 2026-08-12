@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/connectivity"
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
 	"instant-payment-system/load-test/go-loadtool/internal/ids"
@@ -40,6 +43,91 @@ func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
 	}
 }
 
+func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "run")
+	err := Run(Config{
+		TargetTxRate: math.MaxInt/4 + 1,
+		Duration:     time.Second,
+		Scenarios:    mixedPlannerScenarios(),
+		OutputDir:    outputDir,
+	})
+	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
+		t.Fatalf("Run error = %v, want rate is too large", err)
+	}
+	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("output directory was created before rate validation: %v", statErr)
+	}
+}
+
+func TestOriginalStartWindowIsSemiOpen(t *testing.T) {
+	start := time.Unix(100, 0)
+	end := start.Add(time.Second)
+	if !canStartOriginal(start, end) {
+		t.Fatal("generation start was excluded")
+	}
+	if !canStartOriginal(end.Add(-time.Nanosecond), end) {
+		t.Fatal("instant before generation end was excluded")
+	}
+	if canStartOriginal(end, end) || canStartOriginal(end.Add(time.Nanosecond), end) {
+		t.Fatal("generation end was not exclusive")
+	}
+}
+
+func TestTransferJobUsesConfiguredScenarioAmountAndHotColdDistribution(t *testing.T) {
+	s := &simulator{
+		cfg: Config{
+			Scenarios: []config.Scenario{{
+				Name:  "renamed-workload",
+				Share: 1,
+				Participants: config.HotColdPairDistribution{
+					PairNumberStart: 101,
+					HotPairCount:    10,
+					ColdPairCount:   40,
+					HotTrafficShare: 0.8,
+				},
+				Amount: config.SequentialRangeAmount{
+					Minimum: 100,
+					Maximum: 102,
+				},
+			}},
+		},
+		runID: "test-run",
+	}
+	planner, err := newWorkloadPlanner(s.cfg.Scenarios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairs := buildPairs(101, 50)
+	if pairs[0] != ids.PSPPair(101) || pairs[len(pairs)-1] != ids.PSPPair(150) {
+		t.Fatalf("pair range = %#v...%#v, want 101...150", pairs[0], pairs[len(pairs)-1])
+	}
+	hotPairs := make(map[string]bool)
+	for _, pair := range pairs[:10] {
+		hotPairs[pair.Payer] = true
+	}
+
+	hotCount := 0
+	coldCount := 0
+	for seq := uint64(0); seq < 100; seq++ {
+		job := s.transferJobForSequence(seq, planner.Next())
+		if job.ScenarioName != "renamed-workload" {
+			t.Fatalf("sequence %d ScenarioName = %q", seq, job.ScenarioName)
+		}
+		wantAmount := int64(100 + seq%3)
+		if job.Amount != wantAmount {
+			t.Fatalf("sequence %d Amount = %d, want %d", seq, job.Amount, wantAmount)
+		}
+		if hotPairs[job.Pair.Payer] {
+			hotCount++
+		} else {
+			coldCount++
+		}
+	}
+	if hotCount != 80 || coldCount != 20 {
+		t.Fatalf("hot/cold jobs = %d/%d, want 80/20", hotCount, coldCount)
+	}
+}
+
 func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	const workerCount = 4
 	const jobCount = 50
@@ -48,7 +136,7 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	var active atomic.Int64
 	var maxActive atomic.Int64
 	s := &simulator{
-		sendPacs002Func: func(context.Context, string, string) {
+		sendPacs002Func: func(context.Context, statusJob) {
 			current := active.Add(1)
 			for {
 				previous := maxActive.Load()
@@ -76,6 +164,27 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 	}
 	if got := maxActive.Load(); got > workerCount {
 		t.Fatalf("max concurrent status workers = %d, want <= %d", got, workerCount)
+	}
+}
+
+func TestRepeatedPacs008NotificationQueuesOneOriginalPacs002(t *testing.T) {
+	s := &simulator{
+		statusJobs:      make(chan statusJob, 2),
+		statusQueuedIDs: make(map[string]struct{}),
+		transferScenarios: map[string]string{
+			"tx-1": "happy-path",
+		},
+	}
+
+	s.enqueuePacs002(context.Background(), "20000001", "tx-1")
+	s.enqueuePacs002(context.Background(), "20000001", "tx-1")
+
+	if got := len(s.statusJobs); got != 1 {
+		t.Fatalf("queued PACS.002 originals = %d, want 1", got)
+	}
+	job := <-s.statusJobs
+	if job.scenarioName != "happy-path" {
+		t.Fatalf("scenario name = %q", job.scenarioName)
 	}
 }
 
@@ -143,11 +252,11 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	writer, err := events.NewNotificationWriter(filepath.Join(t.TempDir(), "events.csv"))
+	eventsPath := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := events.NewNotificationWriter(eventsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writer.Close()
 
 	stream := newFakeNotificationStream()
 	s := &simulator{eventWriter: writer}
@@ -185,6 +294,16 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 	cancel()
 	close(stream.received)
 	wg.Wait()
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := events.ReadNotifications(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].StatusCode != "ACSP" || len(rows[0].ReasonCodes) != 0 {
+		t.Fatalf("notification rows = %#v", rows)
+	}
 }
 
 func TestOpenNotificationStreamsClosesAlreadyOpenedSessionsOnFailure(t *testing.T) {
