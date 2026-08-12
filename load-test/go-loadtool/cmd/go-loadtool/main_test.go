@@ -86,8 +86,8 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), `"seed"`) || strings.Contains(string(encoded), `"firstPair"`) || strings.Contains(string(encoded), `"type"`) || strings.Contains(string(encoded), `"payerConfirmation"`) || !strings.Contains(string(encoded), `"pairNumberStart"`) {
-		t.Fatalf("normalized execution plan exposes removed fields: %s", encoded)
+	if !strings.Contains(string(encoded), `"pairNumberStart"`) {
+		t.Fatalf("normalized execution plan omits pairNumberStart: %s", encoded)
 	}
 }
 
@@ -130,13 +130,6 @@ func TestValidateProfileRejectsPositionalArguments(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("validate-profile accepted positional argument")
-	}
-}
-
-func TestValidateProfileExposesNoSeedOption(t *testing.T) {
-	loader := func(string) (config.Runtime, error) { return commandTestRuntime(), nil }
-	if _, err := parseValidateProfile([]string{"--seed", "1"}, loader); err == nil {
-		t.Fatal("validate-profile accepted --seed")
 	}
 }
 

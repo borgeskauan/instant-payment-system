@@ -12,35 +12,20 @@ import (
 const SchemaVersion = 2
 
 type Document struct {
-	SchemaVersion int               `json:"schema_version"`
-	Tag           string            `json:"tag,omitempty"`
-	ResultDir     string            `json:"result_dir,omitempty"`
-	Profile       Profile           `json:"profile"`
-	Artifacts     map[string]string `json:"artifacts,omitempty"`
-	Window        Window            `json:"window"`
-	Grafana       *Grafana          `json:"grafana,omitempty"`
+	SchemaVersion int     `json:"schema_version"`
+	Profile       Profile `json:"profile"`
+	Window        Window  `json:"window"`
 }
 
 type Profile struct {
-	Name          string `json:"name"`
-	Snapshot      string `json:"snapshot,omitempty"`
-	ExecutionPlan string `json:"execution_plan,omitempty"`
+	Name string `json:"name"`
 }
 
 type Window struct {
-	GenerationStartedAt time.Time  `json:"generation_started_at"`
-	ActiveStartedAt     time.Time  `json:"active_started_at"`
-	GenerationEndedAt   time.Time  `json:"generation_ended_at"`
-	ReplayDeadlineAt    time.Time  `json:"replay_deadline_at"`
-	RunStartedAt        *time.Time `json:"run_started_at,omitempty"`
-	LoadtoolFinishedAt  *time.Time `json:"loadtool_finished_at,omitempty"`
-}
-
-type Grafana struct {
-	AvailableAtRunStart bool   `json:"available_at_run_start"`
-	BaseURL             string `json:"base_url"`
-	FullRunURL          string `json:"full_run_url,omitempty"`
-	ActiveWindowURL     string `json:"active_window_url,omitempty"`
+	GenerationStartedAt time.Time `json:"generation_started_at"`
+	ActiveStartedAt     time.Time `json:"active_started_at"`
+	GenerationEndedAt   time.Time `json:"generation_ended_at"`
+	ReplayDeadlineAt    time.Time `json:"replay_deadline_at"`
 }
 
 func New(profileName string, started time.Time, warmup, duration, drain time.Duration, replay config.Replay) Document {

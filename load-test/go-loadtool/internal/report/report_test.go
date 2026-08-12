@@ -143,8 +143,8 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, nil, Options{
 		SLAThresholdMs: 4600,
-		Warmup:         10 * time.Second,
 		Duration:       5 * time.Second,
+		Window:         reportTestWindow(10*time.Second, 5*time.Second),
 	})
 
 	if summary.Scenarios[0].Traffic.Payments.Started != 3 {
@@ -158,7 +158,6 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
 	options := Options{
 		TargetTxRate: 1,
-		Warmup:       10 * time.Second,
 		Duration:     5 * time.Second,
 		Window: runwindow.Window{
 			GenerationStartedAt: time.Unix(0, 0),
@@ -304,7 +303,6 @@ func TestSummaryIncludesOnlyReportRelevantConfiguration(t *testing.T) {
 	summary := mustBuildSummary(t, nil, nil, Options{
 		SLAThresholdMs: 1000,
 		TargetTxRate:   2000,
-		Warmup:         30 * time.Second,
 		Duration:       180 * time.Second,
 	})
 
@@ -358,8 +356,8 @@ func TestSummaryValidatesFullRunButMeasuresOnlyActiveWindow(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, notifications, Options{
 		SLAThresholdMs: 4600,
-		Warmup:         10 * time.Second,
 		Duration:       5 * time.Second,
+		Window:         reportTestWindow(10*time.Second, 5*time.Second),
 	})
 
 	if summary.Scenarios[0].Traffic.Payments.Started != 4 {
@@ -515,19 +513,23 @@ func withDefaultScenario(options Options) Options {
 
 func withDefaultWindow(options Options) Options {
 	if options.Window.GenerationStartedAt.IsZero() {
-		started := time.Unix(0, 0)
-		generationEnded := started.Add(options.Warmup + options.Duration)
-		if options.Duration <= 0 {
-			generationEnded = started.Add(options.Warmup + 24*time.Hour)
-		}
-		options.Window = runwindow.Window{
-			GenerationStartedAt: started,
-			ActiveStartedAt:     started.Add(options.Warmup),
-			GenerationEndedAt:   generationEnded,
-			ReplayDeadlineAt:    generationEnded.Add(24 * time.Hour),
-		}
+		options.Window = reportTestWindow(0, options.Duration)
 	}
 	return options
+}
+
+func reportTestWindow(warmup, duration time.Duration) runwindow.Window {
+	started := time.Unix(0, 0)
+	generationEnded := started.Add(warmup + duration)
+	if duration <= 0 {
+		generationEnded = started.Add(warmup + 24*time.Hour)
+	}
+	return runwindow.Window{
+		GenerationStartedAt: started,
+		ActiveStartedAt:     started.Add(warmup),
+		GenerationEndedAt:   generationEnded,
+		ReplayDeadlineAt:    generationEnded.Add(24 * time.Hour),
+	}
 }
 
 func reportTestHappyPathScenario() config.Scenario {

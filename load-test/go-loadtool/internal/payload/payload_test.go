@@ -56,17 +56,6 @@ func TestPacs002ContainsOriginalEndToEndID(t *testing.T) {
 	}
 }
 
-func TestExtractPacs008EndToEndID(t *testing.T) {
-	body := Pacs008("tx-1", "10000001", "20000001", 12345)
-	got, kind, err := ExtractNotification(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "tx-1" || kind != KindPacs008 {
-		t.Fatalf("got id=%s kind=%s", got, kind)
-	}
-}
-
 func TestExtractPacs008ReturnsAllEndToEndIDs(t *testing.T) {
 	body := []byte(`{
 		"CdtTrfTxInf": [

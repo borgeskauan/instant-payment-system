@@ -110,7 +110,14 @@ func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output 
 		return err
 	}
 	options := reportOptions(runtimeCfg)
-	window, err := runwindow.Resolve(document, runtimeCfg.Name, options.Warmup, options.Duration, options.Drain, options.Replay)
+	window, err := runwindow.Resolve(
+		document,
+		runtimeCfg.Name,
+		runtimeCfg.Load.Warmup,
+		runtimeCfg.Load.Duration,
+		runtimeCfg.Load.Drain,
+		runtimeCfg.Replay,
+	)
 	if err != nil {
 		return err
 	}
@@ -150,9 +157,7 @@ func reportOptions(runtimeCfg config.Runtime) report.Options {
 	return report.Options{
 		SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
 		TargetTxRate:   runtimeCfg.Load.TargetTxRate,
-		Warmup:         runtimeCfg.Load.Warmup,
 		Duration:       runtimeCfg.Load.Duration,
-		Drain:          runtimeCfg.Load.Drain,
 		Replay:         runtimeCfg.Replay,
 		Scenarios:      runtimeCfg.Scenarios,
 	}

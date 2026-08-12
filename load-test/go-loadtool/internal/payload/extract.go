@@ -36,14 +36,6 @@ type Notification struct {
 	ReasonCodes []string
 }
 
-func ExtractNotification(body []byte) (endToEndID string, kind string, err error) {
-	notifications, err := ExtractNotifications(body)
-	if err != nil {
-		return "", "", err
-	}
-	return notifications[0].EndToEndID, notifications[0].Kind, nil
-}
-
 func ExtractNotifications(body []byte) ([]Notification, error) {
 	var env notificationEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {

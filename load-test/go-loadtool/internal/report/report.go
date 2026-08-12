@@ -102,9 +102,7 @@ type LatencySummary struct {
 type Options struct {
 	SLAThresholdMs int64
 	TargetTxRate   int
-	Warmup         time.Duration
 	Duration       time.Duration
-	Drain          time.Duration
 	Replay         config.Replay
 	Scenarios      []config.Scenario
 	Window         runwindow.Window

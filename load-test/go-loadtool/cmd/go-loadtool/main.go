@@ -60,7 +60,6 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		Drain:                         runtimeCfg.Load.Drain,
 		Replay:                        runtimeCfg.Replay,
 		Scenarios:                     runtimeCfg.Scenarios,
-		OutputDir:                     config.DefaultOutputDir,
 	}
 }
 

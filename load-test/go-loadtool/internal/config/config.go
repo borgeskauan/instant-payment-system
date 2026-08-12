@@ -25,7 +25,6 @@ const (
 	FundingCoverGeneratedDebits = "cover-generated-debits"
 	ScenarioSelectionBlockSize  = 100
 	profilesDir                 = "../profiles"
-	DefaultOutputDir            = "results/go-loadtool/manual"
 	maxPairSuffix               = 999999
 )
 
@@ -226,10 +225,6 @@ type filePayerNotificationExpectation struct {
 
 type fileReporting struct {
 	SLAThresholdMs int64 `json:"slaThresholdMs"`
-}
-
-func LoadDefault() (Runtime, error) {
-	return LoadProfile(DefaultProfile)
 }
 
 func LoadProfile(name string) (Runtime, error) {

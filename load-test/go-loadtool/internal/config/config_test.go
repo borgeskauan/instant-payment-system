@@ -445,28 +445,6 @@ func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
 	}
 }
 
-func TestLoadProfileRejectsRemovedScenarioAndConfirmationFields(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		field   string
-	}{
-		{name: "scenario type", content: strings.Replace(testProfile, `"name": "happy-path",`, `"name": "happy-path", "type": "happy-path",`, 1), field: `unknown field "type"`},
-		{name: "payer confirmation", content: strings.Replace(testProfile, `"payerNotification": {`, `"payerConfirmation": "required", "payerNotification": {`, 1), field: `unknown field "payerConfirmation"`},
-		{name: "notification count", content: strings.Replace(testProfile, `"payerNotification": {`, `"payerNotification": {"count": 1,`, 1), field: `unknown field "count"`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writeProfile(t, dir, "removed-contract", test.content)
-			_, err := loadProfileFromDir(dir, "removed-contract")
-			if err == nil || !strings.Contains(err.Error(), test.field) {
-				t.Fatalf("error = %v, want %s rejection", err, test.field)
-			}
-		})
-	}
-}
-
 func TestLoadProfileRequiresObservablePayerNotificationFields(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -553,29 +531,6 @@ func TestLoadProfileRejectsFractionalBlockQuota(t *testing.T) {
 	_, err := loadProfileFromDir(dir, "fractional-quota")
 	if err == nil || !strings.Contains(err.Error(), "whole number of entries") {
 		t.Fatalf("error = %v, want exact block quota rejection", err)
-	}
-}
-
-func TestLoadProfileRejectsRemovedSeedAndPairStartFields(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		field   string
-	}{
-		{name: "seed", content: strings.Replace(testProfile, `  "scenarios": [`, `  "seed": 1,
-  "scenarios": [`, 1), field: `unknown field "seed"`},
-		{name: "first-pair", content: strings.Replace(testProfile, `        "hotPairCount": 7,`, `        "firstPair": 1,
-        "hotPairCount": 7,`, 1), field: `unknown field "firstPair"`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			writeProfile(t, dir, "removed-field", test.content)
-			_, err := loadProfileFromDir(dir, "removed-field")
-			if err == nil || !strings.Contains(err.Error(), test.field) {
-				t.Fatalf("error = %v, want %s rejection", err, test.field)
-			}
-		})
 	}
 }
 

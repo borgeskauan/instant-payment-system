@@ -1,7 +1,6 @@
 package runwindow
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -51,38 +50,5 @@ func TestValidateRejectsWindowThatDriftsFromProfile(t *testing.T) {
 	document.Window.ActiveStartedAt = document.Window.ActiveStartedAt.Add(time.Second)
 	if err := Validate(document, "mixed-outcomes-smoke", time.Second, 2*time.Second, 3*time.Second, config.Replay{}); err == nil {
 		t.Fatal("Validate accepted a shifted active window")
-	}
-}
-
-func TestReadAcceptsRunnerEnrichmentWithoutChangingAuthoritativeWindow(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run-window.json")
-	data := `{
-  "schema_version": 2,
-  "tag": "functional-smoke",
-  "result_dir": "results/functional-smoke/20260811_120000",
-  "profile": {"name": "mixed-outcomes-smoke", "snapshot": "inputs/profile.json", "execution_plan": "inputs/execution-plan.json"},
-  "artifacts": {"pacs008_starts": "events/pacs008-starts.csv", "pacs002_starts": "events/pacs002-starts.csv"},
-  "window": {
-    "generation_started_at": "2026-08-11T12:00:00.123456789Z",
-    "active_started_at": "2026-08-11T12:00:05.123456789Z",
-    "generation_ended_at": "2026-08-11T12:00:15.123456789Z",
-    "replay_deadline_at": "2026-08-11T12:00:35.123456789Z",
-    "run_started_at": "2026-08-11T11:59:00Z",
-    "loadtool_finished_at": "2026-08-11T12:00:35.223456789Z"
-  },
-  "grafana": {"available_at_run_start": true, "base_url": "http://localhost:3000"}
-}`
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	document, err := Read(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := document.Window.GenerationStartedAt.Nanosecond(); got != 123456789 {
-		t.Fatalf("generation-start nanoseconds = %d", got)
-	}
-	if document.Window.LoadtoolFinishedAt == nil || document.Window.LoadtoolFinishedAt.Nanosecond() != 223456789 {
-		t.Fatalf("loadtool-finished timestamp = %#v", document.Window.LoadtoolFinishedAt)
 	}
 }

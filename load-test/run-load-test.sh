@@ -67,32 +67,6 @@ iso_now() {
     date '+%Y-%m-%dT%H:%M:%S.%N%:z'
 }
 
-iso_after_seconds() {
-    local base_time="$1"
-    local seconds="$2"
-
-    date --iso-8601=seconds --date="${base_time} + ${seconds} seconds"
-}
-
-url_encode() {
-    python3 -c '
-import sys
-from urllib.parse import quote
-
-print(quote(sys.argv[1], safe=""))
-' "$1"
-}
-
-grafana_dashboard_url() {
-    local from="$1"
-    local to="$2"
-    local encoded_from encoded_to
-
-    encoded_from="$(url_encode "$from")"
-    encoded_to="$(url_encode "$to")"
-    printf "%s%s?from=%s&to=%s\n" "$GRAFANA_BASE_URL" "$GRAFANA_DASHBOARD_PATH" "$encoded_from" "$encoded_to"
-}
-
 grafana_available() {
     curl -fsS --max-time 2 "${GRAFANA_BASE_URL}/api/health" >/dev/null 2>&1
 }
@@ -166,7 +140,6 @@ payload["artifacts"] = {
     "report": "sla-report.json",
 }
 window["run_started_at"] = run_started_at
-window.pop("drain_finished_at", None)
 window["loadtool_finished_at"] = loadtool_finished_at
 payload["grafana"] = {
     "available_at_run_start": grafana_available,

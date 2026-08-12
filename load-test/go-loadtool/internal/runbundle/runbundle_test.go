@@ -16,19 +16,16 @@ func TestResolveReturnsFixedAbsoluteLayout(t *testing.T) {
 	}
 
 	want := Layout{
-		Root:           root,
-		InputsDir:      filepath.Join(root, "inputs"),
-		Profile:        filepath.Join(root, "inputs", "profile.json"),
-		ExecutionPlan:  filepath.Join(root, "inputs", "execution-plan.json"),
-		EventsDir:      filepath.Join(root, "events"),
-		Pacs008Starts:  filepath.Join(root, "events", "pacs008-starts.csv"),
-		Pacs002Starts:  filepath.Join(root, "events", "pacs002-starts.csv"),
-		Notifications:  filepath.Join(root, "events", "notifications.csv"),
-		Replays:        filepath.Join(root, "events", "replays.csv"),
-		LogsDir:        filepath.Join(root, "logs"),
-		DiagnosticsDir: filepath.Join(root, "diagnostics"),
-		RunWindow:      filepath.Join(root, "run-window.json"),
-		Report:         filepath.Join(root, "sla-report.json"),
+		Root:          root,
+		Profile:       filepath.Join(root, "inputs", "profile.json"),
+		ExecutionPlan: filepath.Join(root, "inputs", "execution-plan.json"),
+		EventsDir:     filepath.Join(root, "events"),
+		Pacs008Starts: filepath.Join(root, "events", "pacs008-starts.csv"),
+		Pacs002Starts: filepath.Join(root, "events", "pacs002-starts.csv"),
+		Notifications: filepath.Join(root, "events", "notifications.csv"),
+		Replays:       filepath.Join(root, "events", "replays.csv"),
+		RunWindow:     filepath.Join(root, "run-window.json"),
+		Report:        filepath.Join(root, "sla-report.json"),
 	}
 	if layout != want {
 		t.Fatalf("Resolve() = %#v, want %#v", layout, want)
@@ -151,7 +148,7 @@ func TestPrepareOutputsCreatesOnlyEventsDirectory(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("EventsDir mode = %v, want directory", info.Mode())
 	}
-	for _, path := range []string{layout.RunWindow, layout.Report, layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, layout.DiagnosticsDir} {
+	for _, path := range []string{layout.RunWindow, layout.Report, layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, filepath.Join(layout.Root, "diagnostics")} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("generated path %q exists or cannot be inspected: %v", path, err)
 		}
@@ -182,7 +179,7 @@ func TestWriteReportAtomicallyPublishesExactContent(t *testing.T) {
 	if err := layout.PrepareOutputs(); err != nil {
 		t.Fatalf("PrepareOutputs() error = %v", err)
 	}
-	want := []byte("{\n  \"violations\": 0\n}\n")
+	want := []byte("{\n  \"valid\": true\n}\n")
 
 	if err := layout.WriteReportAtomically(want); err != nil {
 		t.Fatalf("WriteReportAtomically() error = %v", err)
@@ -231,7 +228,7 @@ func newPreparedLayout(t *testing.T) Layout {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if err := os.Mkdir(layout.InputsDir, 0o755); err != nil {
+	if err := os.Mkdir(filepath.Dir(layout.Profile), 0o755); err != nil {
 		t.Fatalf("Mkdir(inputs) error = %v", err)
 	}
 	writeFile(t, layout.Profile, []byte("{}\n"))
