@@ -89,6 +89,7 @@ cat > "$tmp_dir/fake-go-loadtool" <<'SH'
 #!/bin/bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$LOADTOOL_COMMAND_LOG"
+exit "${LOADTOOL_FAKE_EXIT_CODE:-0}"
 SH
 chmod +x "$tmp_dir/fake-go-loadtool"
 
@@ -100,28 +101,51 @@ LOADTOOL_CERT_ROOT="$tmp_dir/client-certs"
 LOADTOOL_GATEWAY_CA_CERT="gateway-ca.crt"
 mkdir -p "$tmp_dir/result"
 
-run_simulator "$tmp_dir/result" "$tmp_dir/tool-output"
-generate_sla_report "$tmp_dir/result" "$tmp_dir/tool-output"
+run_loadtool "$tmp_dir/result"
 
-python3 - "$LOADTOOL_COMMAND_LOG" "$tmp_dir/tool-output" <<'PY'
+python3 - "$LOADTOOL_COMMAND_LOG" "$tmp_dir/result" <<'PY'
 import shlex
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     commands = [shlex.split(line) for line in handle if line.strip()]
 
-assert len(commands) == 2, commands
-assert commands[0][0] == "simulate", commands
-assert commands[1][0] == "report", commands
-replays_index = commands[1].index("--replays")
-assert commands[1][replays_index + 1] == "../%s/replays.csv" % sys.argv[2], commands
-status_starts_index = commands[1].index("--status-starts")
-assert commands[1][status_starts_index + 1] == "../%s/status-starts.csv" % sys.argv[2], commands
-for command in commands:
-    run_window_index = command.index("--run-window")
-    assert command[run_window_index + 1].endswith("/run-window.json"), command
-for command in commands:
-    assert "--seed" not in command, command
-    profile_index = command.index("--profile")
-    assert command[profile_index + 1] == "mixed-outcomes-smoke", command
+assert len(commands) == 1, commands
+command = commands[0]
+assert command[0] == "run", commands
+run_dir_index = command.index("--run-dir")
+assert command[run_dir_index + 1] == sys.argv[2], command
+for removed in (
+    "--profile",
+    "--config",
+    "--out",
+    "--run-window",
+    "--starts",
+    "--events",
+    "--status-starts",
+    "--replays",
+    "--seed",
+):
+    assert removed not in command, command
+for required in (
+    "--central-transfer-ca-cert",
+    "--central-transfer-client-cert-root",
+    "--central-transfer-server-name",
+    "--gateway-ca-cert",
+    "--gateway-client-cert-root",
+    "--gateway-server-name",
+):
+    assert required in command, command
 PY
+
+export LOADTOOL_FAKE_EXIT_CODE=23
+if run_loadtool "$tmp_dir/result"; then
+    echo "run_loadtool should preserve the Go command failure" >&2
+    exit 1
+else
+    loadtool_status=$?
+fi
+if [[ "$loadtool_status" -ne 23 ]]; then
+    echo "run_loadtool returned $loadtool_status, want Go exit code 23" >&2
+    exit 1
+fi

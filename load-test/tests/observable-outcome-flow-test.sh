@@ -28,14 +28,14 @@ run_preflight_checks() { :; }
 reset_persistent_test_state_if_enabled() { :; }
 provision_funds_if_enabled() { :; }
 start_optional_diagnostics() { :; }
-run_simulator() { echo simulator >> "$FLOW_LOG"; }
+run_loadtool() { echo run >> "$FLOW_LOG"; }
 capture_and_assert_outbox_drained() {
     echo outbox-validation >> "$FLOW_LOG"
     return 1
 }
 collect_optional_diagnostics() { echo diagnostics >> "$FLOW_LOG"; }
-generate_sla_report() { echo report >> "$FLOW_LOG"; }
 write_run_window_json() { echo run-window >> "$FLOW_LOG"; }
+validate_sla_report() { echo validate-report >> "$FLOW_LOG"; }
 print_grafana_links() { :; }
 
 main observable-flow
@@ -46,13 +46,13 @@ if grep -q outbox-validation "$FLOW_LOG"; then
 fi
 
 cat > "$tmp_dir/expected-flow.log" <<'EOF'
-simulator
+run
 diagnostics
 run-window
-report
+validate-report
 EOF
 
 if ! diff -u "$tmp_dir/expected-flow.log" "$FLOW_LOG"; then
-    echo "runner did not report directly after observable-flow collection" >&2
+    echo "runner did not preserve the single-run observable flow" >&2
     exit 1
 fi

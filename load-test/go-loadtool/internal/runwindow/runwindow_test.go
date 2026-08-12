@@ -68,7 +68,7 @@ func TestReadAcceptsRunnerEnrichmentWithoutChangingAuthoritativeWindow(t *testin
     "generation_ended_at": "2026-08-11T12:00:15.123456789Z",
     "replay_deadline_at": "2026-08-11T12:00:35.123456789Z",
     "run_started_at": "2026-08-11T11:59:00Z",
-    "drain_finished_at": "2026-08-11T12:00:35.223456789Z"
+    "loadtool_finished_at": "2026-08-11T12:00:35.223456789Z"
   },
   "grafana": {"available_at_run_start": true, "base_url": "http://localhost:3000"}
 }`
@@ -81,6 +81,12 @@ func TestReadAcceptsRunnerEnrichmentWithoutChangingAuthoritativeWindow(t *testin
 	}
 	if got := document.Window.GenerationStartedAt.Nanosecond(); got != 123456789 {
 		t.Fatalf("generation-start nanoseconds = %d", got)
+	}
+	if document.Window.LoadtoolFinishedAt == nil || document.Window.LoadtoolFinishedAt.Nanosecond() != 223456789 {
+		t.Fatalf("loadtool-finished timestamp = %#v", document.Window.LoadtoolFinishedAt)
+	}
+	if document.Window.DrainFinishedAt != nil {
+		t.Fatalf("new runner enrichment populated legacy drain timestamp: %#v", document.Window.DrainFinishedAt)
 	}
 }
 

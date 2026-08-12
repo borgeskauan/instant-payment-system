@@ -33,6 +33,8 @@ type Window struct {
 	GenerationEndedAt   time.Time  `json:"generation_ended_at"`
 	ReplayDeadlineAt    time.Time  `json:"replay_deadline_at"`
 	RunStartedAt        *time.Time `json:"run_started_at,omitempty"`
+	LoadtoolFinishedAt  *time.Time `json:"loadtool_finished_at,omitempty"`
+	// DrainFinishedAt is retained only to decode the legacy run-window schema.
 	DrainFinishedAt     *time.Time `json:"drain_finished_at,omitempty"`
 	LegacyActiveEndedAt *time.Time `json:"active_finished_at,omitempty"`
 }

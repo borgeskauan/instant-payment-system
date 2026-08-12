@@ -10,182 +10,24 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 )
 
-func TestSimulateUsesExplicitProfile(t *testing.T) {
+func TestValidateProfileDefaultsToUniformSmoke(t *testing.T) {
 	var loadedProfile string
-	loader := func(name string) (config.Runtime, error) {
+	_, err := parseValidateProfile(nil, func(name string) (config.Runtime, error) {
 		loadedProfile = name
-		return commandTestRuntimeFor(name), nil
-	}
-
-	cfg, err := parseSimulateConfig([]string{"--profile", "custom-smoke"}, loader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if loadedProfile != "custom-smoke" {
-		t.Fatalf("loaded profile = %q, want custom-smoke", loadedProfile)
-	}
-	if cfg.TargetTxRate != 321 || cfg.Warmup != 12*time.Second || cfg.Duration != 34*time.Second {
-		t.Fatalf("simulate settings were not loaded from selected profile: %#v", cfg)
-	}
-	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
-		t.Fatalf("simulate replay settings were not loaded from selected profile: %#v", cfg.Replay)
-	}
-	if cfg.ProfileName != "custom-smoke" || cfg.Replay.Pacs002 == nil || cfg.Replay.Pacs002.Share != 0.20 || cfg.Replay.Pacs002.Delay != 11*time.Second {
-		t.Fatalf("simulate PACS.002 settings = %#v", cfg)
-	}
-}
-
-func TestReportUsesExplicitProfile(t *testing.T) {
-	var loadedProfile string
-	loader := func(name string) (config.Runtime, error) {
-		loadedProfile = name
-		return commandTestRuntimeFor(name), nil
-	}
-
-	command, err := parseReportConfig([]string{
-		"--profile", "custom-report",
-		"--starts", "starts.csv",
-		"--events", "events.csv",
-		"--status-starts", "status-starts.csv",
-		"--replays", "replays.csv",
-		"--run-window", "run-window.json",
-	}, loader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if loadedProfile != "custom-report" {
-		t.Fatalf("loaded profile = %q, want custom-report", loadedProfile)
-	}
-	if command.options.TargetTxRate != 321 || command.options.Warmup != 12*time.Second || command.options.Duration != 34*time.Second || command.options.SLAThresholdMs != 987 {
-		t.Fatalf("report settings were not loaded from selected profile: %#v", command.options)
-	}
-	if len(command.options.Scenarios) != 1 || command.options.Scenarios[0].Name != "happy-path" {
-		t.Fatalf("report scenarios = %#v", command.options.Scenarios)
-	}
-	if command.replaysPath != "replays.csv" || command.statusStartsPath != "status-starts.csv" || command.runWindowPath != "run-window.json" || command.options.Replay.Pacs008 == nil || command.options.Replay.Pacs008.Delay != 7*time.Second || command.options.Replay.Pacs002 == nil || command.options.Replay.Pacs002.Delay != 11*time.Second {
-		t.Fatalf("report replay settings = %#v / %q", command.options.Replay, command.replaysPath)
-	}
-}
-
-func TestReportRequiresReplayArtifactOnlyForReplayProfiles(t *testing.T) {
-	loader := func(string) (config.Runtime, error) { return commandTestRuntime(), nil }
-	if _, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv", "--status-starts", "status-starts.csv", "--run-window", "run-window.json"}, loader); err == nil || !strings.Contains(err.Error(), "--replays is required") {
-		t.Fatalf("replay-enabled report error = %v", err)
-	}
-
-	withoutReplay := commandTestRuntime()
-	withoutReplay.Replay = config.Replay{}
-	command, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv", "--run-window", "run-window.json"}, func(string) (config.Runtime, error) {
-		return withoutReplay, nil
+		return commandTestRuntime(), nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.replaysPath != "" {
-		t.Fatalf("replaysPath = %q, want empty", command.replaysPath)
+	if loadedProfile != config.DefaultProfile {
+		t.Fatalf("loaded profile = %q, want %q", loadedProfile, config.DefaultProfile)
 	}
 }
 
-func TestReportRequiresStatusStartsForPacs002Replay(t *testing.T) {
-	command, err := parseReportConfig([]string{
-		"--starts", "starts.csv",
-		"--events", "events.csv",
-		"--replays", "replays.csv",
-		"--run-window", "run-window.json",
-	}, func(string) (config.Runtime, error) { return commandTestRuntime(), nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = validateReportArtifacts(command, 2)
-	if err == nil || !strings.Contains(err.Error(), "--status-starts is required") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestReportRequiresAuthoritativeRunWindow(t *testing.T) {
-	_, err := parseReportConfig([]string{
-		"--starts", "starts.csv",
-		"--events", "events.csv",
-		"--status-starts", "status-starts.csv",
-		"--replays", "replays.csv",
-	}, func(string) (config.Runtime, error) { return commandTestRuntime(), nil })
-	if err == nil || !strings.Contains(err.Error(), "--run-window is required") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestCommandsDefaultToUniformSmokeProfile(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		run  func(profileLoader) error
-	}{
-		{
-			name: "validate-profile",
-			run: func(loader profileLoader) error {
-				_, err := parseValidateProfile(nil, loader)
-				return err
-			},
-		},
-		{
-			name: "simulate",
-			run: func(loader profileLoader) error {
-				_, err := parseSimulateConfig(nil, loader)
-				return err
-			},
-		},
-		{
-			name: "report",
-			run: func(loader profileLoader) error {
-				_, err := parseReportConfig([]string{"--starts", "starts.csv", "--events", "events.csv", "--status-starts", "status-starts.csv", "--replays", "replays.csv", "--run-window", "run-window.json"}, loader)
-				return err
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var loadedProfile string
-			loader := func(name string) (config.Runtime, error) {
-				loadedProfile = name
-				return commandTestRuntime(), nil
-			}
-			if err := test.run(loader); err != nil {
-				t.Fatal(err)
-			}
-			if loadedProfile != config.DefaultProfile {
-				t.Fatalf("loaded profile = %q, want %q", loadedProfile, config.DefaultProfile)
-			}
-		})
-	}
-}
-
-func TestCommandsPropagateEmbeddedProfileIdentity(t *testing.T) {
+func TestValidateProfilePropagatesEmbeddedProfileIdentity(t *testing.T) {
 	runtimeCfg := commandTestRuntime()
 	runtimeCfg.Name = "embedded-profile"
 	loader := func(string) (config.Runtime, error) { return runtimeCfg, nil }
-
-	simulator, err := parseSimulateConfig([]string{"--profile", "selected-profile"}, loader)
-	if err != nil {
-		t.Fatalf("parseSimulateConfig() error = %v", err)
-	}
-	if simulator.ProfileName != "embedded-profile" {
-		t.Fatalf("simulator ProfileName = %q", simulator.ProfileName)
-	}
-
-	reportCommand, err := parseReportConfig([]string{
-		"--profile", "selected-profile",
-		"--starts", "starts.csv",
-		"--events", "events.csv",
-		"--status-starts", "status-starts.csv",
-		"--replays", "replays.csv",
-		"--run-window", "run-window.json",
-	}, loader)
-	if err != nil {
-		t.Fatalf("parseReportConfig() error = %v", err)
-	}
-	if reportCommand.profileName != "embedded-profile" {
-		t.Fatalf("report profileName = %q", reportCommand.profileName)
-	}
 
 	validation, err := parseValidateProfile([]string{"--profile", "selected-profile"}, loader)
 	if err != nil {
@@ -291,76 +133,20 @@ func TestValidateProfileRejectsPositionalArguments(t *testing.T) {
 	}
 }
 
-func TestCommandsExposeNoSeedOption(t *testing.T) {
+func TestValidateProfileExposesNoSeedOption(t *testing.T) {
 	loader := func(string) (config.Runtime, error) { return commandTestRuntime(), nil }
 	if _, err := parseValidateProfile([]string{"--seed", "1"}, loader); err == nil {
 		t.Fatal("validate-profile accepted --seed")
 	}
-	if _, err := parseSimulateConfig([]string{"--seed", "1"}, loader); err == nil {
-		t.Fatal("simulate accepted --seed")
-	}
-	if _, err := parseReportConfig([]string{"--seed", "1", "--starts", "starts.csv", "--events", "events.csv"}, loader); err == nil {
-		t.Fatal("report accepted --seed")
-	}
 }
 
-func TestSimulateCommandLineOverridesTakePrecedenceOverProfile(t *testing.T) {
-	cfg, err := parseSimulateConfig([]string{
-		"--profile", "custom-smoke",
-		"--out", "/override/output",
-		"--run-window", "/override/run-window.json",
-		"--central-transfer-ca-cert", "/override/central-ca.crt",
-		"--central-transfer-client-cert-root", "/override/central-clients",
-		"--central-transfer-server-name", "override-central",
-		"--gateway-ca-cert", "/override/gateway-ca.crt",
-		"--gateway-client-cert-root", "/override/gateway-clients",
-		"--gateway-server-name", "override-gateway",
-	}, func(string) (config.Runtime, error) {
-		return commandTestRuntime(), nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if cfg.OutputDir != "/override/output" {
-		t.Fatalf("OutputDir = %q", cfg.OutputDir)
-	}
-	if cfg.RunWindowPath != "/override/run-window.json" {
-		t.Fatalf("RunWindowPath = %q", cfg.RunWindowPath)
-	}
-	if cfg.CentralTransferCACert != "/override/central-ca.crt" {
-		t.Fatalf("CentralTransferCACert = %q", cfg.CentralTransferCACert)
-	}
-	if cfg.CentralTransferClientCertRoot != "/override/central-clients" {
-		t.Fatalf("CentralTransferClientCertRoot = %q", cfg.CentralTransferClientCertRoot)
-	}
-	if cfg.CentralTransferServerName != "override-central" {
-		t.Fatalf("CentralTransferServerName = %q", cfg.CentralTransferServerName)
-	}
-	if cfg.GatewayCACert != "/override/gateway-ca.crt" {
-		t.Fatalf("GatewayCACert = %q", cfg.GatewayCACert)
-	}
-	if cfg.GatewayClientCertRoot != "/override/gateway-clients" {
-		t.Fatalf("GatewayClientCertRoot = %q", cfg.GatewayClientCertRoot)
-	}
-	if cfg.GatewayServerName != "override-gateway" {
-		t.Fatalf("GatewayServerName = %q", cfg.GatewayServerName)
-	}
-	if cfg.TargetTxRate != 321 {
-		t.Fatalf("non-overridden TargetTxRate = %d, want profile value", cfg.TargetTxRate)
-	}
-}
-
-func TestCommandsReturnSelectedProfileLoadError(t *testing.T) {
+func TestValidateProfileReturnsSelectedProfileLoadError(t *testing.T) {
 	loader := func(name string) (config.Runtime, error) {
 		return config.Runtime{}, fmt.Errorf("profile %q not found", name)
 	}
 
-	if _, err := parseSimulateConfig([]string{"--profile", "missing"}, loader); err == nil {
-		t.Fatal("simulate accepted missing profile")
-	}
-	if _, err := parseReportConfig([]string{"--profile", "missing", "--starts", "starts.csv", "--events", "events.csv"}, loader); err == nil {
-		t.Fatal("report accepted missing profile")
+	if _, err := parseValidateProfile([]string{"--profile", "missing"}, loader); err == nil {
+		t.Fatal("validate-profile accepted missing profile")
 	}
 }
 

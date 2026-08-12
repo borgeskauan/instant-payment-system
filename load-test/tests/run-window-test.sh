@@ -64,7 +64,8 @@ assert data["window"]["generation_started_at"] == "2026-06-20T20:06:15.123456789
 assert data["window"]["active_started_at"] == "2026-06-20T20:06:16.123456789-03:00"
 assert data["window"]["generation_ended_at"] == "2026-06-20T20:21:16.123456789-03:00"
 assert data["window"]["replay_deadline_at"] == "2026-06-20T20:21:46.123456789-03:00"
-assert data["window"]["drain_finished_at"] == "2026-06-20T20:21:46.223456789-03:00"
+assert data["window"]["loadtool_finished_at"] == "2026-06-20T20:21:46.223456789-03:00"
+assert "drain_finished_at" not in data["window"]
 assert data["grafana"]["available_at_run_start"] is True
 assert data["grafana"]["base_url"] == "http://localhost:3000"
 

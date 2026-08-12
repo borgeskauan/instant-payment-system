@@ -13,6 +13,7 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/runbundle"
 	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
@@ -42,15 +43,8 @@ func TestParseRunConfigUsesRunProfileAndFixedBundlePaths(t *testing.T) {
 	if command.simulator.OutputDir != filepath.Join(runDir, "go-loadtool") || command.simulator.RunWindowPath != filepath.Join(runDir, "run-window.json") {
 		t.Fatalf("simulator paths = %q / %q", command.simulator.OutputDir, command.simulator.RunWindowPath)
 	}
-	if command.report.startsPath != filepath.Join(runDir, "go-loadtool", "starts.csv") ||
-		command.report.eventsPath != filepath.Join(runDir, "go-loadtool", "events.csv") ||
-		command.report.statusStartsPath != filepath.Join(runDir, "go-loadtool", "status-starts.csv") ||
-		command.report.replaysPath != filepath.Join(runDir, "go-loadtool", "replays.csv") ||
-		command.report.runWindowPath != filepath.Join(runDir, "run-window.json") {
-		t.Fatalf("report paths = %#v", command.report)
-	}
-	if command.report.profileName != "run-profile" || command.report.options.TargetTxRate != 321 {
-		t.Fatalf("report profile/options = %q / %#v", command.report.profileName, command.report.options)
+	if command.runtime.Name != "run-profile" || command.runtime.Load.TargetTxRate != 321 {
+		t.Fatalf("runtime profile/options = %#v", command.runtime)
 	}
 }
 
@@ -126,7 +120,10 @@ func TestExecuteRunPreparesSimulatesReportsAndPublishesInOrder(t *testing.T) {
 			order = append(order, "simulate")
 			return nil
 		},
-		renderReport: func(command reportConfig, output io.Writer) error {
+		renderReport: func(layout runbundle.Layout, runtimeCfg config.Runtime, output io.Writer) error {
+			if layout.Root != runDir || runtimeCfg.Name != "run-profile" {
+				t.Fatalf("report input = %#v / %#v", layout, runtimeCfg)
+			}
 			order = append(order, "report")
 			_, err := output.Write([]byte("{\n  \"result\": \"ok\"\n}\n"))
 			return err
@@ -163,7 +160,7 @@ func TestExecuteRunDoesNotReportAfterSimulationFailure(t *testing.T) {
 	err := executeRun([]string{"--run-dir", runDir}, runDependencies{
 		loadProfile: func(string) (config.Runtime, error) { return runtimeCfg, nil },
 		simulate:    func(sim.Config) error { return wantErr },
-		renderReport: func(reportConfig, io.Writer) error {
+		renderReport: func(runbundle.Layout, config.Runtime, io.Writer) error {
 			renderCalled = true
 			return nil
 		},
@@ -193,7 +190,7 @@ func TestExecuteRunDoesNotPublishAfterReportFailure(t *testing.T) {
 	err := executeRun([]string{"--run-dir", runDir}, runDependencies{
 		loadProfile: func(string) (config.Runtime, error) { return runtimeCfg, nil },
 		simulate:    func(sim.Config) error { return nil },
-		renderReport: func(reportConfig, io.Writer) error {
+		renderReport: func(runbundle.Layout, config.Runtime, io.Writer) error {
 			return wantErr
 		},
 		stdout: &stdout,
@@ -217,7 +214,7 @@ func TestExecuteRunUsesRealReportRendererWithCompletedArtifacts(t *testing.T) {
 	err := executeRun([]string{"--run-dir", runDir}, runDependencies{
 		loadProfile:  func(string) (config.Runtime, error) { return runtimeCfg, nil },
 		simulate:     writeMinimalRunArtifacts,
-		renderReport: renderReport,
+		renderReport: renderRunReport,
 		stdout:       io.Discard,
 	})
 	if err != nil {

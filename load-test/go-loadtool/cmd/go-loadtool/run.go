@@ -10,6 +10,7 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/report"
 	"instant-payment-system/load-test/go-loadtool/internal/runbundle"
+	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
 
@@ -17,14 +18,14 @@ type runProfileLoader func(string) (config.Runtime, error)
 
 type runConfig struct {
 	layout    runbundle.Layout
+	runtime   config.Runtime
 	simulator sim.Config
-	report    reportConfig
 }
 
 type runDependencies struct {
 	loadProfile  runProfileLoader
 	simulate     func(sim.Config) error
-	renderReport func(reportConfig, io.Writer) error
+	renderReport func(runbundle.Layout, config.Runtime, io.Writer) error
 	stdout       io.Writer
 }
 
@@ -32,7 +33,7 @@ func runRun(args []string) error {
 	return executeRun(args, runDependencies{
 		loadProfile:  config.LoadRunProfile,
 		simulate:     sim.Run,
-		renderReport: renderReport,
+		renderReport: renderRunReport,
 		stdout:       os.Stdout,
 	})
 }
@@ -50,7 +51,7 @@ func executeRun(args []string, dependencies runDependencies) error {
 	}
 
 	var output bytes.Buffer
-	if err := dependencies.renderReport(command.report, &output); err != nil {
+	if err := dependencies.renderReport(command.layout, command.runtime, &output); err != nil {
 		return fmt.Errorf("render run report: %w", err)
 	}
 	if err := command.layout.WriteReportAtomically(output.Bytes()); err != nil {
@@ -64,7 +65,7 @@ func executeRun(args []string, dependencies runDependencies) error {
 
 func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, error) {
 	var runDir string
-	var overrides simulateOverrides
+	var overrides mTLSOverrides
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.StringVar(&runDir, "run-dir", "", "prepared run directory")
 	registerMTLSOverrides(flags, &overrides)
@@ -98,20 +99,26 @@ func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, err
 
 	return runConfig{
 		layout:    layout,
+		runtime:   runtimeCfg,
 		simulator: simulator,
-		report: reportConfig{
-			startsPath:       layout.Starts,
-			eventsPath:       layout.Events,
-			replaysPath:      layout.Replays,
-			statusStartsPath: layout.StatusStarts,
-			runWindowPath:    layout.RunWindow,
-			profileName:      runtimeCfg.Name,
-			options:          reportOptions(runtimeCfg),
-		},
 	}, nil
 }
 
-func registerMTLSOverrides(flags *flag.FlagSet, overrides *simulateOverrides) {
+func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output io.Writer) error {
+	document, err := runwindow.Read(layout.RunWindow)
+	if err != nil {
+		return err
+	}
+	options := reportOptions(runtimeCfg)
+	window, err := runwindow.Resolve(document, runtimeCfg.Name, options.Warmup, options.Duration, options.Drain, options.Replay)
+	if err != nil {
+		return err
+	}
+	options.Window = window
+	return report.PrintWithArtifacts(layout.Starts, layout.Events, layout.StatusStarts, layout.Replays, options, output)
+}
+
+func registerMTLSOverrides(flags *flag.FlagSet, overrides *mTLSOverrides) {
 	flags.StringVar(&overrides.centralTransferCACert, "central-transfer-ca-cert", "", "kafka-producer CA certificate path")
 	flags.StringVar(&overrides.centralTransferClientCertRoot, "central-transfer-client-cert-root", "", "root directory containing PSP client certificates for kafka-producer")
 	flags.StringVar(&overrides.centralTransferServerName, "central-transfer-server-name", "", "TLS server name for kafka-producer")
@@ -120,7 +127,7 @@ func registerMTLSOverrides(flags *flag.FlagSet, overrides *simulateOverrides) {
 	flags.StringVar(&overrides.gatewayServerName, "gateway-server-name", "", "TLS server name for notification gateway")
 }
 
-func applyMTLSOverrides(flags *flag.FlagSet, cfg *sim.Config, overrides simulateOverrides) {
+func applyMTLSOverrides(flags *flag.FlagSet, cfg *sim.Config, overrides mTLSOverrides) {
 	flags.Visit(func(parsedFlag *flag.Flag) {
 		switch parsedFlag.Name {
 		case "central-transfer-ca-cert":

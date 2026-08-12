@@ -126,14 +126,14 @@ log_grafana_status() {
 write_run_window_json() {
     local target_dir="$1"
     local run_started_at="$2"
-    local drain_finished_at="$3"
+    local loadtool_finished_at="$3"
     local grafana_available_at_run_start="$4"
 
     python3 - \
         "$RUN_TAG" \
         "$target_dir" \
         "$run_started_at" \
-        "$drain_finished_at" \
+        "$loadtool_finished_at" \
         "$grafana_available_at_run_start" \
         "$GRAFANA_BASE_URL" \
         "$GRAFANA_DASHBOARD_PATH" \
@@ -148,7 +148,7 @@ from urllib.parse import quote
 tag = sys.argv[1]
 target_dir = sys.argv[2]
 run_started_at = sys.argv[3]
-drain_finished_at = sys.argv[4]
+loadtool_finished_at = sys.argv[4]
 grafana_available = sys.argv[5].lower() == "true"
 base_url = sys.argv[6]
 dashboard_path = sys.argv[7]
@@ -182,11 +182,12 @@ payload["artifacts"] = {
     "report": "sla-report.json",
 }
 window["run_started_at"] = run_started_at
-window["drain_finished_at"] = drain_finished_at
+window.pop("drain_finished_at", None)
+window["loadtool_finished_at"] = loadtool_finished_at
 payload["grafana"] = {
     "available_at_run_start": grafana_available,
     "base_url": base_url,
-    "full_run_url": dashboard_url(run_started_at, drain_finished_at),
+    "full_run_url": dashboard_url(run_started_at, loadtool_finished_at),
     "active_window_url": dashboard_url(window["active_started_at"], window["generation_ended_at"]),
 }
 
@@ -691,11 +692,11 @@ prepare_loadtool_binary() {
 }
 
 prepare_run_workspace() {
-    local tool_out="$1"
+    local target_dir="$1"
 
-    mkdir -p "$tool_out"
-    copy_profile_snapshot "$(dirname "$tool_out")"
-    cp "$LOADTOOL_VALIDATION_FILE" "$(dirname "$tool_out")/${EXECUTION_PLAN_FILENAME}"
+    mkdir -p "$target_dir"
+    copy_profile_snapshot "$target_dir"
+    cp "$LOADTOOL_VALIDATION_FILE" "${target_dir}/${EXECUTION_PLAN_FILENAME}"
 }
 
 copy_profile_snapshot() {
@@ -863,17 +864,18 @@ collect_optional_diagnostics() {
     fi
 }
 
-run_simulator() {
+run_loadtool() {
     local target_dir="$1"
-    local tool_out="$2"
+    local absolute_target_dir
+    local -a pipeline_status
 
-    log_phase "starting simulator"
+    absolute_target_dir="$(cd "$target_dir" && pwd)"
+
+    log_phase "starting load-tool run"
     (
         cd go-loadtool
-        "$LOADTOOL_BIN" simulate \
-            --profile "$PROFILE_NAME" \
-            --out "../${tool_out}" \
-            --run-window "../${target_dir}/run-window.json" \
+        "$LOADTOOL_BIN" run \
+            --run-dir "$absolute_target_dir" \
             --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT" \
             --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT" \
             --central-transfer-server-name "$LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME" \
@@ -881,24 +883,53 @@ run_simulator() {
             --gateway-client-cert-root "$LOADTOOL_CERT_ROOT" \
             --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
     ) | tee "${target_dir}/go-loadtool-output.txt"
+    pipeline_status=("${PIPESTATUS[@]}")
+    if ((pipeline_status[0] != 0)); then
+        return "${pipeline_status[0]}"
+    fi
+    return "${pipeline_status[1]}"
 }
 
-generate_sla_report() {
-    local target_dir="$1"
-    local tool_out="$2"
+validate_sla_report() {
+    local report_path="$1"
 
-    log_phase "simulator finished; generating SLA report"
-    (
-        cd go-loadtool
-        "$LOADTOOL_BIN" report \
-            --profile "$PROFILE_NAME" \
-            --starts "../${tool_out}/starts.csv" \
-            --events "../${tool_out}/events.csv" \
-            --status-starts "../${tool_out}/status-starts.csv" \
-            --replays "../${tool_out}/replays.csv" \
-            --run-window "../${target_dir}/run-window.json"
-    ) | tee "${target_dir}/sla-report.json"
-    log_phase "SLA report generated"
+    python3 - "$report_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as handle:
+        document = json.load(handle)
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"invalid SLA report {path!r}: {error}")
+
+violations = []
+
+def visit(value, location="$"):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_location = f"{location}.{key}"
+            if key == "violations":
+                if type(child) is not int or child < 0:
+                    raise SystemExit(
+                        f"invalid SLA report {path!r}: {child_location} must be a non-negative integer"
+                    )
+                violations.append((child_location, child))
+            visit(child, child_location)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            visit(child, f"{location}[{index}]")
+
+visit(document)
+if not violations:
+    raise SystemExit(f"invalid SLA report {path!r}: no violations fields found")
+
+failed = [(location, count) for location, count in violations if count > 0]
+if failed:
+    details = ", ".join(f"{location}={count}" for location, count in failed)
+    raise SystemExit(f"SLA report contains violations: {details}")
+PY
 }
 
 main() {
@@ -909,14 +940,14 @@ main() {
     build_loadtool "$LOADTOOL_BIN"
     validate_profile_with_loadtool
 
-    local timestamp target_dir tool_out
-    local run_started_at drain_finished_at grafana_available_at_run_start
+    local timestamp target_dir
+    local run_started_at loadtool_finished_at grafana_available_at_run_start
+    local loadtool_status diagnostics_status
     timestamp="$(date +%Y%m%d_%H%M%S)"
     target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
-    tool_out="${target_dir}/go-loadtool"
     run_started_at="$(iso_now)"
 
-    prepare_run_workspace "$tool_out"
+    prepare_run_workspace "$target_dir"
     prepare_loadtool_certificates "$target_dir"
     if grafana_available; then
         grafana_available_at_run_start=true
@@ -930,11 +961,25 @@ main() {
     reset_persistent_test_state_if_enabled "$target_dir"
     provision_funds_if_enabled "$target_dir"
     start_optional_diagnostics "$target_dir"
-    run_simulator "$target_dir" "$tool_out"
-    drain_finished_at="$(iso_now)"
-    collect_optional_diagnostics "$target_dir"
-    write_run_window_json "$target_dir" "$run_started_at" "$drain_finished_at" "$grafana_available_at_run_start"
-    generate_sla_report "$target_dir" "$tool_out"
+    if run_loadtool "$target_dir"; then
+        loadtool_status=0
+    else
+        loadtool_status=$?
+    fi
+    loadtool_finished_at="$(iso_now)"
+    if collect_optional_diagnostics "$target_dir"; then
+        diagnostics_status=0
+    else
+        diagnostics_status=$?
+    fi
+    if ((loadtool_status != 0)); then
+        return "$loadtool_status"
+    fi
+    if ((diagnostics_status != 0)); then
+        return "$diagnostics_status"
+    fi
+    write_run_window_json "$target_dir" "$run_started_at" "$loadtool_finished_at" "$grafana_available_at_run_start"
+    validate_sla_report "${target_dir}/sla-report.json"
     print_grafana_links "$target_dir"
     log_phase "results written to ${target_dir}"
 }

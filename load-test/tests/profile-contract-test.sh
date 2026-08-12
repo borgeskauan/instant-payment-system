@@ -179,13 +179,17 @@ then
 fi
 
 PROFILE_PATH="$ROOT_DIR/go-loadtool/profiles/mixed-outcomes-smoke.json"
-prepare_run_workspace "$tmp_dir/workspace/go-loadtool"
+prepare_run_workspace "$tmp_dir/workspace"
 if ! cmp -s "$LOADTOOL_VALIDATION_FILE" "$tmp_dir/workspace/execution-plan.json"; then
     echo "execution-plan.json is not byte-identical to validate-profile output" >&2
     exit 1
 fi
 if ! cmp -s "$PROFILE_PATH" "$tmp_dir/workspace/profile.json"; then
     echo "profile.json is not byte-identical to the selected profile" >&2
+    exit 1
+fi
+if [[ -e "$tmp_dir/workspace/go-loadtool" ]]; then
+    echo "runner prepared generated go-loadtool output before the Go run" >&2
     exit 1
 fi
 

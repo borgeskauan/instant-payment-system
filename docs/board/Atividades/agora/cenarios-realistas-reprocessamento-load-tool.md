@@ -31,11 +31,15 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
 - o relatório expõe separadamente pagamentos originais, status `pacs.002`, replays `pacs.008` e replays `pacs.002`, além de tornar déficit ou excesso da geração ativa uma violação;
 - o relatório valida outcomes de negócio e replays no run inteiro; throughput, latência e SLA permanecem restritos à janela ativa;
+- o runner público executa uma única chamada `go-loadtool run --run-dir`, coleta diagnósticos mesmo quando essa chamada falha e preserva o exit code original do Go;
+- `loadtool_finished_at` registra o fim da chamada única, enquanto `replay_deadline_at` permanece o fim autoritativo da janela experimental;
+- o runner retorna zero somente quando o relatório é válido e todos os campos `violations` são zero;
 - a implementação da repetição deliberada de `pacs.002` está concluída e validada funcionalmente no load-tool;
 - o run de 2026-08-09 (`observable-pacs002-outcomes-smoke/20260809_233329`) terminou com 1.251 originais aceitos e notificados, zero violações, `ACSC` nos 1.001 happy-path e `RJCT`/`AM04` nos 250 insufficient-funds;
 - o run de 2026-08-11 (`pacs008-replay-functional-smoke/20260811_020918`) manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
 - o run de 2026-08-11 (`pacs002-replay-functional-smoke/20260811_040749`) iniciou exatamente 1.000 originais na janela ativa (100/s), aceitou 1.250 originais e 1.250 status, executou 126 replays `pacs.008` e 126 replays `pacs.002` e terminou com zero violações de geração, HTTP, replay ou outcome;
 - o run de caracterização de 2026-08-11 (`phase-2c1-characterization-smoke/20260811_050401`) confirmou 1.250 originais aceitos, 1.000 originais na janela ativa, 1.000 happy-path, 250 insufficient-funds, 1.250 status e 126 replays aceitos de cada tipo, com zero violações;
+- o run de migração de 2026-08-11 (`phase-2c4-single-run-smoke/20260811_142951`) validou o caminho único final com as mesmas contagens caracterizadas, exatamente um `sla-report.json`, 126 replays aceitos de cada tipo e todos os dez campos `violations` em zero;
 - 126 replays de cada tipo caracterizam somente o resultado atual de `mixed-outcomes-smoke`; não são uma regra geral para qualquer população de 1.250 mensagens com `share=0.10`;
 - a suíte de caracterização protege as populações de originais e status, as contagens separadas dos dois tipos de replay e um único resultado lógico final por pagamento, sem congelar quais `EndToEndId` são selecionados;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
@@ -186,18 +190,21 @@ O comando `run` produz sozinho um bundle completo em testes, inclusive usando o 
 
 ## Fatia 2C.4 — Migração do runner e remoção da compatibilidade interna
 
-**Resultado esperado:** o runner público usa uma única chamada Go por execução e os comandos e flags internos antigos só são removidos após validação funcional do novo caminho.
+**Resultado:** o runner público usa uma única chamada Go por execução, preserva diagnósticos e exit codes e rejeita relatórios com violações; os comandos e flags internos antigos foram removidos somente após validação funcional do caminho final.
 
-- [ ] Migrar `run-load-test.sh` para chamar `go-loadtool run --run-dir` depois da validação, preparação e provisionamento existentes.
-- [ ] Remover do runner a propagação individual dos caminhos dos CSVs e a chamada separada de relatório.
-- [ ] Preservar o enriquecimento posterior de `run-window.json`, os diagnósticos e o layout externo baseado em tag e timestamp.
-- [ ] Executar a suíte automatizada e um smoke funcional curto de `mixed-outcomes-smoke` pelo novo fluxo.
-- [ ] Confirmar no smoke as caracterizações semânticas da 2C.1 e a produção de um único `sla-report.json`.
-- [ ] Somente após o smoke, remover `simulate`, `report` e as flags internas de caminhos que deixaram de ter consumidores.
+- [x] Migrar `run-load-test.sh` para chamar `go-loadtool run --run-dir` depois da validação, preparação e provisionamento existentes.
+- [x] Remover do runner a propagação individual dos caminhos dos CSVs e a chamada separada de relatório.
+- [x] Preservar a coleta de diagnósticos após falha do Go, o exit code original, o enriquecimento posterior de `run-window.json` e o layout externo baseado em tag e timestamp.
+- [x] Renomear o metadado posterior para `loadtool_finished_at`, mantendo `replay_deadline_at` como fim autoritativo da janela experimental.
+- [x] Fazer o runner retornar zero somente para relatório válido com todos os campos `violations` em zero.
+- [x] Simplificar configuração do simulador e renderer baseado no layout antes do gate funcional.
+- [x] Executar a suíte automatizada e o smoke curto `phase-2c4-single-run-smoke/20260811_142951` pelo caminho final.
+- [x] Confirmar no smoke as caracterizações semânticas da 2C.1 e a produção de um único `sla-report.json`.
+- [x] Somente após o smoke, remover `simulate`, `report` e as flags internas de caminhos que deixaram de ter consumidores.
 
 ### Critério de saída
 
-O comando público permanece `./run-load-test.sh [--profile NAME] <run-tag>`, agora apoiado por uma única execução Go; o caminho interno anterior é removido apenas depois da evidência funcional.
+O comando público permanece `./run-load-test.sh [--profile NAME] <run-tag>`, agora apoiado por uma única execução Go com falha pública para qualquer violação; o caminho interno anterior foi removido depois da evidência funcional.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 
