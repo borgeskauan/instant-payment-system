@@ -141,8 +141,30 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 	}
 }
 
+func TestLoadProfileReadsSiblingCatalogFromModuleRoot(t *testing.T) {
+	root := t.TempDir()
+	profiles := filepath.Join(root, "profiles")
+	moduleRoot := filepath.Join(root, "go-loadtool")
+	if err := os.Mkdir(profiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProfile(t, profiles, "explicit-profile", testProfile)
+	t.Chdir(moduleRoot)
+
+	cfg, err := LoadProfile("explicit-profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Name != "explicit-profile" {
+		t.Fatalf("Name = %q, want explicit-profile", cfg.Name)
+	}
+}
+
 func TestUniformSmokePreservesCompatibilityWorkload(t *testing.T) {
-	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "profiles"), DefaultProfile)
+	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "..", "profiles"), DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +435,7 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 }
 
 func TestLoadProfileRejectsDuplicateScenarioNames(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "mixed-outcomes-smoke.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "profiles", "mixed-outcomes-smoke.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +450,7 @@ func TestLoadProfileRejectsDuplicateScenarioNames(t *testing.T) {
 }
 
 func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
-	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "profiles"), "mixed-outcomes-smoke")
+	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "..", "profiles"), "mixed-outcomes-smoke")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +484,7 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 }
 
 func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "profiles", "mixed-outcomes-smoke.json"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "profiles", "mixed-outcomes-smoke.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
 parse_args default-profile
 resolve_profile
-if [[ "$PROFILE_NAME" != "uniform-smoke" || "$PROFILE_PATH" != "${ROOT_DIR}/go-loadtool/profiles/uniform-smoke.json" ]]; then
+if [[ "$PROFILE_NAME" != "uniform-smoke" || "$PROFILE_PATH" != "${ROOT_DIR}/profiles/uniform-smoke.json" ]]; then
     echo "omitted --profile did not resolve uniform-smoke" >&2
     exit 1
 fi
@@ -45,7 +45,7 @@ PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
 parse_args --profile uniform-smoke explicit-profile
 resolve_profile
-if [[ "$PROFILE_NAME" != "uniform-smoke" || "$PROFILE_PATH" != "${ROOT_DIR}/go-loadtool/profiles/uniform-smoke.json" ]]; then
+if [[ "$PROFILE_NAME" != "uniform-smoke" || "$PROFILE_PATH" != "${ROOT_DIR}/profiles/uniform-smoke.json" ]]; then
     echo "explicit --profile uniform-smoke did not resolve correctly" >&2
     exit 1
 fi

@@ -24,7 +24,7 @@ const (
 	FundingFixed                = "fixed"
 	FundingCoverGeneratedDebits = "cover-generated-debits"
 	ScenarioSelectionBlockSize  = 100
-	profilesDir                 = "profiles"
+	profilesDir                 = "../profiles"
 	DefaultOutputDir            = "results/go-loadtool/manual"
 	maxPairSuffix               = 999999
 )

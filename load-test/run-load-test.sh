@@ -4,7 +4,7 @@ set -euo pipefail
 
 readonly RESULTS_DIR="results"
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/go-loadtool/profiles"
+readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/profiles"
 readonly PROFILE_SNAPSHOT_FILENAME="profile.json"
 readonly EXECUTION_PLAN_FILENAME="execution-plan.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"

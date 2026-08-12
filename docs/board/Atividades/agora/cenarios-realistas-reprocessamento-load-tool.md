@@ -14,6 +14,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 
 ## Estado atual
 
+- os perfis selecionáveis ficam no catálogo canônico `load-test/profiles/`, separado da implementação interna em Go;
 - `uniform-smoke` é o baseline sem replay: caminho feliz, `2.000` pagamentos originais/s, `1m` de warmup, `1m` de janela ativa, `30s` de drain, 10 pares quentes, 40 frios e `80%` do tráfego nos pares quentes;
 - `mixed-outcomes-smoke` é o workload funcional curto: 100 pagamentos originais/s, `5s` de warmup, `10s` de janela ativa e `10s` de drain;
 - `mixed-outcomes-smoke` distribui deterministicamente cada bloco completo de 100 originais em `80%` happy-path e `20%` insufficient-funds, com participantes isolados e provisionamento declarado por cenário;
