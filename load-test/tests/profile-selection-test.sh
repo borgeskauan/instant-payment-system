@@ -122,18 +122,6 @@ command = commands[0]
 assert command[0] == "run", commands
 run_dir_index = command.index("--run-dir")
 assert command[run_dir_index + 1] == sys.argv[2], command
-for removed in (
-    "--profile",
-    "--config",
-    "--out",
-    "--run-window",
-    "--starts",
-    "--events",
-    "--status-starts",
-    "--replays",
-    "--seed",
-):
-    assert removed not in command, command
 for required in (
     "--central-transfer-ca-cert",
     "--central-transfer-client-cert-root",

@@ -90,20 +90,6 @@ func TestParseRunConfigRequiresRunDirAndRejectsPositionalArguments(t *testing.T)
 	}
 }
 
-func TestParseRunConfigRejectsLegacyPathAndProfileFlags(t *testing.T) {
-	runDir := preparedRunDirectory(t)
-	for _, flagName := range []string{"--profile", "--config", "--out", "--run-window", "--starts", "--events", "--status-starts", "--replays"} {
-		t.Run(flagName, func(t *testing.T) {
-			_, err := parseRunConfig([]string{"--run-dir", runDir, flagName, "value"}, func(string) (config.Runtime, error) {
-				return commandTestRuntime(), nil
-			})
-			if err == nil {
-				t.Fatalf("parseRunConfig() accepted %s", flagName)
-			}
-		})
-	}
-}
-
 func TestExecuteRunPreparesSimulatesReportsAndPublishesInOrder(t *testing.T) {
 	runDir := preparedRunDirectory(t)
 	runtimeCfg := commandTestRuntime()

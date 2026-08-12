@@ -59,38 +59,6 @@ func TestStartEventsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReadStartsAcceptsLegacyHeaderWithoutReplaySelection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "starts.csv")
-	data := "end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_started_at_ns,request_done_at_ns,http_status,scenario_name\n" +
-		"tx-1,10000001,20000001,10,15,20,200,happy-path\n"
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := ReadStarts(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].Pacs008ReplaySelected {
-		t.Fatalf("legacy rows = %#v", rows)
-	}
-}
-
-func TestReadStartsRejectsPreviousContracts(t *testing.T) {
-	for _, header := range []string{
-		"end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_started_at_ns,request_done_at_ns,http_status,scenario_type",
-		"end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_started_at_ns,request_done_at_ns,http_status",
-	} {
-		path := filepath.Join(t.TempDir(), "starts.csv")
-		data := header + "\n" + "tx-1,10000001,20000001,10,15,20,200,happy-path\n"
-		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ReadStarts(path); err == nil {
-			t.Fatalf("ReadStarts accepted previous header %q", header)
-		}
-	}
-}
-
 func TestNotificationEventsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.csv")
@@ -131,7 +99,7 @@ func TestReplayEventsRoundTrip(t *testing.T) {
 	}
 	if err := writer.Write(Replay{
 		EndToEndID:         "tx-1",
-		PayerISPB:          "10000001",
+		SenderISPB:         "10000001",
 		ScenarioName:       "happy-path",
 		MessageType:        MessagePacs008,
 		RequestStartedAtNS: 25,
@@ -148,7 +116,7 @@ func TestReplayEventsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].PayerISPB != "10000001" || rows[0].ScenarioName != "happy-path" || rows[0].MessageType != MessagePacs008 || rows[0].RequestStartedAtNS != 25 || rows[0].RequestDoneAtNS != 30 || rows[0].HTTPStatus != 202 {
+	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].SenderISPB != "10000001" || rows[0].ScenarioName != "happy-path" || rows[0].MessageType != MessagePacs008 || rows[0].RequestStartedAtNS != 25 || rows[0].RequestDoneAtNS != 30 || rows[0].HTTPStatus != 202 {
 		t.Fatalf("replay rows = %#v", rows)
 	}
 }
@@ -183,43 +151,15 @@ func TestStatusStartEventsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReadReplaysAcceptsLegacyPayerHeader(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "replays.csv")
-	data := "end_to_end_id,payer_ispb,scenario_name,message_type,request_started_at_ns,request_done_at_ns,http_status\n" +
-		"tx-1,10000001,happy-path,pacs.008,25,30,200\n"
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := ReadReplays(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].SenderISPB != "10000001" {
-		t.Fatalf("legacy replay rows = %#v", rows)
-	}
-}
-
 func TestReadReplaysRejectsUnexpectedHeader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replays.csv")
-	data := "end_to_end_id,payer_ispb,http_status\n" +
+	data := "end_to_end_id,unexpected,http_status\n" +
 		"tx-1,10000001,200\n"
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ReadReplays(path); err == nil {
 		t.Fatal("ReadReplays accepted an unexpected header")
-	}
-}
-
-func TestReadNotificationsRejectsPreviousHeader(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "events.csv")
-	data := "end_to_end_id,ispb,event_type,received_at_ns\n" +
-		"tx-1,10000001,pacs002_received,30\n"
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadNotifications(path); err == nil {
-		t.Fatal("ReadNotifications accepted the previous four-column header")
 	}
 }
 

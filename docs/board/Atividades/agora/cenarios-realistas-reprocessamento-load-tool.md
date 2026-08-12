@@ -81,7 +81,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 
 - [x] Declarar por cenário `deliverySemantics: at-least-once`, status `pacs.002` e reason codes esperados.
 - [x] Capturar `TxSts` e `StsRsnInf[].Rsn.Cd` das notificações entregues ao pagador.
-- [x] Preservar status e reasons em `events/notifications.csv` para reprodução offline do relatório.
+- [x] Preservar status e reasons em `events/notifications.csv` como evidência auditável consumida pelo relatório da própria execução.
 - [x] Aceitar uma ou mais entregas compatíveis e usar a primeira para latência.
 - [x] Tratar ausência, status divergente ou reasons divergentes como violação por cenário.
 - [x] Validar correção para todos os originais do run, incluindo warmup, mantendo métricas de performance somente na janela ativa.
@@ -89,7 +89,7 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 
 ### Critério de saída
 
-`inputs/profile.json`, `inputs/execution-plan.json`, `events/pacs008-starts.csv` e `events/notifications.csv` reproduzem o relatório sem acesso ao banco, e o run curto detecta ausência ou outcome divergente sem penalizar entregas repetidas compatíveis.
+O relatório da própria execução usa os inputs preservados e os eventos auditáveis sem acesso ao banco, e o run curto detecta ausência ou outcome divergente sem penalizar entregas repetidas compatíveis.
 
 ## Fatia 2A — Replay idêntico de pacs.008 (concluída)
 
@@ -113,7 +113,7 @@ O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta
 
 ### Critério de saída
 
-O perfil, o plano resolvido, `events/pacs008-starts.csv`, `events/replays.csv` e `events/notifications.csv` reproduzem o relatório; testes provam seleção exata por bloco, agendamento independente da resposta e igualdade dos bodies; um run curto prova o fluxo externo com zero violações.
+O perfil, o plano resolvido e os CSVs auditáveis alimentam o relatório da própria execução; testes provam seleção exata por bloco, agendamento independente da resposta e igualdade dos bodies; um run curto prova o fluxo externo com zero violações.
 
 ## Fatia 2B — Repetição idêntica de pacs.002 (concluída)
 
@@ -128,7 +128,7 @@ O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma
 - [x] Construir cada `pacs.002` selecionado uma vez e reenviar body byte a byte idêntico, com o mesmo identificador e PSP recebedor.
 - [x] Agendar a repetição para `statusRequestStartedAt + delay` antes de conhecer a resposta original; timeout, status `0`, `4xx` ou `5xx` não cancelam a obrigação.
 - [x] Enviar original e repetição pelo ingresso normal `/transfer/status` com mTLS; não publicar diretamente no Kafka nem manipular offsets.
-- [x] Persistir `events/pacs002-starts.csv`, generalizar `events/replays.csv` para `pacs.008` e `pacs.002` e manter leitura do cabeçalho legado de replay.
+- [x] Persistir `events/pacs002-starts.csv` e generalizar `events/replays.csv` para `pacs.008` e `pacs.002`.
 - [x] Calcular no simulador, antes da geração, a janela autoritativa e o deadline fixo `generationEnd + max(delay) + drain`; o relatório não deriva tempo do menor registro.
 - [x] Usar intervalos semiabertos e impedir originais em `generation_ended_at` ou depois, removendo o registro extra no limite.
 - [x] Tratar obrigação que não caiba até o deadline como violação, sem prolongar dinamicamente o experimento para acomodar backlog.
@@ -141,7 +141,7 @@ O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma
 
 ### Critério de saída
 
-O modelo de repetição está explícito no contrato e na documentação; `run-window.json` e os quatro CSVs em `events/` reproduzem o relatório; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
+O modelo de repetição está explícito no contrato e na documentação; `run-window.json` e os quatro CSVs em `events/` alimentam o relatório da própria execução; testes focados preservam a idempotência interna; e um run curto prova outcomes externos compatíveis sem acesso direto ao banco.
 
 ## Fatia 2C.1 — Caracterização semântica antes da simplificação estrutural (concluída)
 
@@ -190,7 +190,7 @@ O pacote interno `runbundle` protege o layout, a preparação de uma execução 
 
 ### Critério de saída
 
-O comando `run` produz sozinho um bundle completo em testes, inclusive usando o renderer real sobre artefatos mínimos. Nenhuma interface antiga foi removida, o runner público ainda não foi migrado e não há promessa de reexecutar historicamente um diretório antigo.
+O comando `run` produz sozinho um bundle completo em testes, inclusive usando o renderer real sobre artefatos mínimos.
 
 ## Fatia 2C.4 — Migração do runner e remoção da compatibilidade interna
 
@@ -225,7 +225,22 @@ O comando público permanece `./run-load-test.sh [--profile NAME] <run-tag>`, ag
 
 ### Critério de saída
 
-Um run curto produz o bundle final e o relatório pode ser reproduzido pelos dois inputs e pelos quatro CSVs de `events/`; sucesso e falha preservam tudo que chegou a ser produzido, sem placeholders para fases não iniciadas.
+Um run curto produz o bundle final e gera seu relatório a partir dos dois inputs e dos quatro CSVs de `events/`; sucesso e falha preservam tudo que chegou a ser produzido, sem placeholders para fases não iniciadas.
+
+## Fatia 2C.6 — Contrato vigente sem compatibilidade histórica (concluída)
+
+**Resultado:** o load-tool aceita somente o bundle e os schemas de artefatos vigentes, sem carregar adapters de um requisito removido de regeneração de relatórios históricos.
+
+- [x] Remover campos e resolução do schema antigo de `run-window.json`.
+- [x] Remover headers e branches de parsing antigos dos CSVs de início e replay.
+- [x] Usar somente `sender_ispb` como identidade do emissor de replay.
+- [x] Unificar o builder e o printer do relatório e consumir sempre os quatro CSVs atuais.
+- [x] Remover testes e fixtures dedicados a formatos anteriores, mantendo somente testes do contrato atual.
+- [x] Preservar a geração do relatório sobre os mesmos CSVs auditáveis produzidos durante o run.
+
+### Critério de saída
+
+Simulação e relatório continuam funcionalmente iguais para o contrato vigente; não existe fallback, migração, fixture ou promessa documental para bundles e schemas anteriores.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 

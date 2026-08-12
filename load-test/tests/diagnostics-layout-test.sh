@@ -49,14 +49,3 @@ for artifact in \
         exit 1
     fi
 done
-
-for legacy_artifact in \
-    "$tmp_dir/result/spi-trace.csv" \
-    "$tmp_dir/result/spi-trace.log" \
-    "$tmp_dir/result/postgres-statements.csv" \
-    "$tmp_dir/result/postgres-statements.log"; do
-    if [[ -e "$legacy_artifact" ]]; then
-        echo "legacy root diagnostic artifact still produced: $legacy_artifact" >&2
-        exit 1
-    fi
-done

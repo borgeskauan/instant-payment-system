@@ -24,11 +24,8 @@ type Start struct {
 }
 
 type Replay struct {
-	EndToEndID string
-	SenderISPB string
-	// PayerISPB is retained for compatibility with in-memory callers that
-	// predate PACS.002 replay support.
-	PayerISPB          string
+	EndToEndID         string
+	SenderISPB         string
 	ScenarioName       string
 	MessageType        string
 	RequestStartedAtNS int64
@@ -63,10 +60,8 @@ const (
 	MessagePacs002       = "pacs.002"
 )
 
-var legacyStartHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name"}
 var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name", "pacs008_replay_selected"}
 var notificationHeader = []string{"end_to_end_id", "ispb", "event_type", "received_at_ns", "status_code", "reason_codes"}
-var legacyReplayHeader = []string{"end_to_end_id", "payer_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
 var replayHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
 var statusStartHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "request_started_at_ns", "request_done_at_ns", "http_status", "pacs002_replay_selected"}
 
@@ -144,13 +139,9 @@ func NewReplayWriter(path string) (*ReplayWriter, error) {
 }
 
 func (w *ReplayWriter) Write(row Replay) error {
-	senderISPB := row.SenderISPB
-	if senderISPB == "" {
-		senderISPB = row.PayerISPB
-	}
 	return w.csv.Write([]string{
 		row.EndToEndID,
-		senderISPB,
+		row.SenderISPB,
 		row.ScenarioName,
 		row.MessageType,
 		strconv.FormatInt(row.RequestStartedAtNS, 10),
@@ -275,8 +266,7 @@ func ReadStarts(path string) ([]Start, error) {
 	if err != nil {
 		return nil, err
 	}
-	legacy := slices.Equal(header, legacyStartHeader)
-	if !legacy && !slices.Equal(header, startHeader) {
+	if !slices.Equal(header, startHeader) {
 		return nil, fmt.Errorf("starts header is %v, want %v", header, startHeader)
 	}
 
@@ -289,7 +279,7 @@ func ReadStarts(path string) ([]Start, error) {
 		if err != nil {
 			return nil, err
 		}
-		row, err := parseStart(record, legacy)
+		row, err := parseStart(record)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +299,7 @@ func ReadReplays(path string) ([]Replay, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Equal(header, replayHeader) && !slices.Equal(header, legacyReplayHeader) {
+	if !slices.Equal(header, replayHeader) {
 		return nil, fmt.Errorf("replays header is %v, want %v", header, replayHeader)
 	}
 
@@ -394,13 +384,9 @@ func ReadNotifications(path string) ([]Notification, error) {
 	}
 }
 
-func parseStart(record []string, legacy bool) (Start, error) {
-	wantColumns := len(startHeader)
-	if legacy {
-		wantColumns = len(legacyStartHeader)
-	}
-	if len(record) != wantColumns {
-		return Start{}, fmt.Errorf("start record has %d columns, want %d", len(record), wantColumns)
+func parseStart(record []string) (Start, error) {
+	if len(record) != len(startHeader) {
+		return Start{}, fmt.Errorf("start record has %d columns, want %d", len(record), len(startHeader))
 	}
 	createdAtNS, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
@@ -418,12 +404,9 @@ func parseStart(record []string, legacy bool) (Start, error) {
 	if err != nil {
 		return Start{}, err
 	}
-	replaySelected := false
-	if !legacy {
-		replaySelected, err = strconv.ParseBool(record[8])
-		if err != nil {
-			return Start{}, err
-		}
+	replaySelected, err := strconv.ParseBool(record[8])
+	if err != nil {
+		return Start{}, err
 	}
 	return Start{
 		EndToEndID:            record[0],
@@ -457,7 +440,6 @@ func parseReplay(record []string) (Replay, error) {
 	return Replay{
 		EndToEndID:         record[0],
 		SenderISPB:         record[1],
-		PayerISPB:          record[1],
 		ScenarioName:       record[2],
 		MessageType:        record[3],
 		RequestStartedAtNS: requestStartedAtNS,

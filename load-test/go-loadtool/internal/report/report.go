@@ -141,15 +141,7 @@ type Options struct {
 	Window         runwindow.Window
 }
 
-func BuildWithOptions(starts []events.Start, notifications []events.Notification, options Options) (Summary, error) {
-	return BuildWithArtifacts(starts, notifications, nil, nil, options)
-}
-
-func BuildWithReplayOptions(starts []events.Start, notifications []events.Notification, replays []events.Replay, options Options) (Summary, error) {
-	return BuildWithArtifacts(starts, notifications, nil, replays, options)
-}
-
-func BuildWithArtifacts(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {
+func Build(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {
 	var summary Summary
 	scenarios := options.Scenarios
 	if len(scenarios) == 0 {
@@ -421,7 +413,7 @@ func summarizePacs008Replays(starts []events.Start, replays []events.Replay, con
 		if !start.Pacs008ReplaySelected {
 			summary.Violations++
 		}
-		if replaySenderISPB(replay) != start.PayerISPB || replay.ScenarioName != start.ScenarioName {
+		if replay.SenderISPB != start.PayerISPB || replay.ScenarioName != start.ScenarioName {
 			summary.Violations++
 		}
 		if configured == nil {
@@ -488,7 +480,7 @@ func summarizePacs002Replays(statusStarts []events.StatusStart, replays []events
 			continue
 		}
 		attemptsByID[replay.EndToEndID]++
-		if !status.Pacs002ReplaySelected || replaySenderISPB(replay) != status.SenderISPB || replay.ScenarioName != status.ScenarioName {
+		if !status.Pacs002ReplaySelected || replay.SenderISPB != status.SenderISPB || replay.ScenarioName != status.ScenarioName {
 			summary.Violations++
 		}
 		if configured == nil {
@@ -512,13 +504,6 @@ func summarizePacs002Replays(statusStarts []events.StatusStart, replays []events
 		}
 	}
 	return summary
-}
-
-func replaySenderISPB(replay events.Replay) string {
-	if replay.SenderISPB != "" {
-		return replay.SenderISPB
-	}
-	return replay.PayerISPB
 }
 
 func validateWindow(window runwindow.Window) error {
@@ -621,7 +606,7 @@ func cloneStrings(values []string) []string {
 	return cloned
 }
 
-func PrintWithArtifacts(startsPath string, eventsPath string, statusStartsPath string, replaysPath string, options Options, output io.Writer) error {
+func Print(startsPath string, eventsPath string, statusStartsPath string, replaysPath string, options Options, output io.Writer) error {
 	starts, err := events.ReadStarts(startsPath)
 	if err != nil {
 		return err
@@ -630,22 +615,16 @@ func PrintWithArtifacts(startsPath string, eventsPath string, statusStartsPath s
 	if err != nil {
 		return err
 	}
-	var replays []events.Replay
-	if replaysPath != "" {
-		replays, err = events.ReadReplays(replaysPath)
-		if err != nil {
-			return err
-		}
+	replays, err := events.ReadReplays(replaysPath)
+	if err != nil {
+		return err
 	}
-	var statusStarts []events.StatusStart
-	if statusStartsPath != "" {
-		statusStarts, err = events.ReadStatusStarts(statusStartsPath)
-		if err != nil {
-			return err
-		}
+	statusStarts, err := events.ReadStatusStarts(statusStartsPath)
+	if err != nil {
+		return err
 	}
 
-	summary, err := BuildWithArtifacts(starts, notifications, statusStarts, replays, options)
+	summary, err := Build(starts, notifications, statusStarts, replays, options)
 	if err != nil {
 		return err
 	}

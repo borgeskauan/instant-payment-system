@@ -34,9 +34,6 @@ type Window struct {
 	ReplayDeadlineAt    time.Time  `json:"replay_deadline_at"`
 	RunStartedAt        *time.Time `json:"run_started_at,omitempty"`
 	LoadtoolFinishedAt  *time.Time `json:"loadtool_finished_at,omitempty"`
-	// DrainFinishedAt is retained only to decode the legacy run-window schema.
-	DrainFinishedAt     *time.Time `json:"drain_finished_at,omitempty"`
-	LegacyActiveEndedAt *time.Time `json:"active_finished_at,omitempty"`
 }
 
 type Grafana struct {
@@ -114,33 +111,10 @@ func Validate(document Document, profileName string, warmup, duration, drain tim
 }
 
 func Resolve(document Document, profileName string, warmup, duration, drain time.Duration, replay config.Replay) (Window, error) {
-	if document.SchemaVersion == SchemaVersion {
-		if err := Validate(document, profileName, warmup, duration, drain, replay); err != nil {
-			return Window{}, err
-		}
-		return document.Window, nil
+	if err := Validate(document, profileName, warmup, duration, drain, replay); err != nil {
+		return Window{}, err
 	}
-	if document.SchemaVersion != 0 {
-		return Window{}, fmt.Errorf("unsupported run window schema_version %d", document.SchemaVersion)
-	}
-	if document.Profile.Name != profileName {
-		return Window{}, fmt.Errorf("run window profile is %q, want %q", document.Profile.Name, profileName)
-	}
-	w := document.Window
-	if w.ActiveStartedAt.IsZero() || w.LegacyActiveEndedAt == nil || w.DrainFinishedAt == nil {
-		return Window{}, fmt.Errorf("legacy run window is missing stored active or drain timestamps")
-	}
-	if !w.LegacyActiveEndedAt.Equal(w.ActiveStartedAt.Add(duration)) || w.DrainFinishedAt.Before(*w.LegacyActiveEndedAt) {
-		return Window{}, fmt.Errorf("legacy run window is inconsistent with the selected profile")
-	}
-	return Window{
-		GenerationStartedAt: w.ActiveStartedAt.Add(-warmup),
-		ActiveStartedAt:     w.ActiveStartedAt,
-		GenerationEndedAt:   *w.LegacyActiveEndedAt,
-		ReplayDeadlineAt:    *w.DrainFinishedAt,
-		RunStartedAt:        w.RunStartedAt,
-		DrainFinishedAt:     w.DrainFinishedAt,
-	}, nil
+	return document.Window, nil
 }
 
 func maxReplayDelay(replay config.Replay) time.Duration {

@@ -92,18 +92,6 @@ if [[ "$offline_log" != *"http://localhost:3000"* ]]; then
     exit 1
 fi
 
-if (RUN_TAG=""; parse_args --process-stats baseline) >/dev/null 2>&1; then
-    echo "--process-stats should not be accepted after Prometheus/Grafana cleanup" >&2
-    exit 1
-fi
-
-for removed_flag in --reset-state --no-reset-state --provision-funds --no-provision-funds; do
-    if (RUN_TAG=""; parse_args "$removed_flag" baseline) >/dev/null 2>&1; then
-        echo "$removed_flag should not be accepted by the public runner" >&2
-        exit 1
-    fi
-done
-
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
 parse_args --profile uniform-smoke explicit-profile

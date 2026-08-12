@@ -199,7 +199,7 @@ func TestSummaryReportsPacs002OriginalsAndSelectedReplays(t *testing.T) {
 			ReplayDeadlineAt:    time.Unix(30, 0),
 		},
 	}
-	summary, err := BuildWithArtifacts(nil, nil, statuses, replays, withDefaultScenario(options))
+	summary, err := Build(nil, nil, statuses, replays, withDefaultScenario(options))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,8 +220,8 @@ func TestSummaryReportsReplayCountsAndIngressRates(t *testing.T) {
 		{EndToEndID: "tx-2", PayerISPB: "10000002", ScenarioName: "happy-path", RequestStartedAtNS: 6_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},
 	}
 	replays := []events.Replay{
-		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 11_000_000_000, HTTPStatus: 200},
-		{EndToEndID: "tx-2", PayerISPB: "10000002", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 16_000_000_000, HTTPStatus: 202},
+		{EndToEndID: "tx-1", SenderISPB: "10000001", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 11_000_000_000, HTTPStatus: 200},
+		{EndToEndID: "tx-2", SenderISPB: "10000002", ScenarioName: "happy-path", MessageType: events.MessagePacs008, RequestStartedAtNS: 16_000_000_000, HTTPStatus: 202},
 	}
 	options := Options{
 		Duration: 20 * time.Second,
@@ -251,7 +251,7 @@ func TestSummaryAggregatesReplayGeneratorDefectsWithoutPublicTaxonomy(t *testing
 	}
 	validReplay := events.Replay{
 		EndToEndID:         "tx-1",
-		PayerISPB:          "10000001",
+		SenderISPB:         "10000001",
 		ScenarioName:       "happy-path",
 		MessageType:        events.MessagePacs008,
 		RequestStartedAtNS: 11_000_000_000,
@@ -267,7 +267,7 @@ func TestSummaryAggregatesReplayGeneratorDefectsWithoutPublicTaxonomy(t *testing
 		{name: "not selected", starts: []events.Start{func() events.Start { value := validStart; value.Pacs008ReplaySelected = false; return value }()}, replays: []events.Replay{validReplay}},
 		{name: "excess", starts: []events.Start{validStart}, replays: []events.Replay{validReplay, validReplay}},
 		{name: "unknown", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.EndToEndID = "unknown"; return value }()}},
-		{name: "metadata", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.PayerISPB = "10000002"; return value }()}},
+		{name: "metadata", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.SenderISPB = "10000002"; return value }()}},
 		{name: "http", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.HTTPStatus = 500; return value }()}},
 		{name: "early", starts: []events.Start{validStart}, replays: []events.Replay{func() events.Replay { value := validReplay; value.RequestStartedAtNS--; return value }()}},
 	}
@@ -413,13 +413,13 @@ func TestSummaryUsesConfiguredScenarioName(t *testing.T) {
 }
 
 func TestSummaryRejectsUnknownScenarioName(t *testing.T) {
-	_, err := BuildWithOptions([]events.Start{{
+	_, err := Build([]events.Start{{
 		EndToEndID:   "tx-1",
 		ScenarioName: "not-configured",
-	}}, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
+	}}, nil, nil, nil, Options{Scenarios: []config.Scenario{reportTestHappyPathScenario()}})
 
 	if err == nil {
-		t.Fatal("BuildWithOptions accepted unknown scenario name")
+		t.Fatal("Build accepted unknown scenario name")
 	}
 }
 
@@ -462,7 +462,7 @@ func TestSummaryReportsMixedScenarioNotificationCounts(t *testing.T) {
 }
 
 func TestSummaryRejectsUntaggedStartsForMixedProfile(t *testing.T) {
-	_, err := BuildWithOptions([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, Options{
+	_, err := Build([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, nil, nil, Options{
 		Scenarios: []config.Scenario{reportTestHappyPathScenario(), reportTestInsufficientFundsScenario()},
 	})
 	if err == nil || err.Error() == "" {
@@ -471,7 +471,7 @@ func TestSummaryRejectsUntaggedStartsForMixedProfile(t *testing.T) {
 }
 
 func TestSummaryRejectsUntaggedStartForSingleScenario(t *testing.T) {
-	_, err := BuildWithOptions([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, Options{
+	_, err := Build([]events.Start{{EndToEndID: "untagged", HTTPStatus: 200}}, nil, nil, nil, Options{
 		Scenarios: []config.Scenario{reportTestHappyPathScenario()},
 	})
 	if err == nil {
@@ -516,7 +516,7 @@ func mustBuildSummaryWithReplays(t *testing.T, starts []events.Start, notificati
 		}
 	}
 	options = withDefaultWindow(options)
-	summary, err := BuildWithArtifacts(starts, notifications, nil, replays, options)
+	summary, err := Build(starts, notifications, nil, replays, options)
 	if err != nil {
 		t.Fatal(err)
 	}

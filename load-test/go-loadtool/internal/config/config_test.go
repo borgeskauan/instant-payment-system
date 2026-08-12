@@ -163,7 +163,7 @@ func TestLoadProfileReadsSiblingCatalogFromModuleRoot(t *testing.T) {
 	}
 }
 
-func TestUniformSmokePreservesCompatibilityWorkload(t *testing.T) {
+func TestUniformSmokePreservesBaselineWorkload(t *testing.T) {
 	cfg, err := loadProfileFromDir(filepath.Join("..", "..", "..", "profiles"), DefaultProfile)
 	if err != nil {
 		t.Fatal(err)
@@ -317,62 +317,6 @@ func TestLoadRunProfileRejectsMissingFile(t *testing.T) {
 	_, err := LoadRunProfile(path)
 	if err == nil || !strings.Contains(err.Error(), `run profile not found`) {
 		t.Fatalf("error = %v, want missing run profile rejection", err)
-	}
-}
-
-func TestLoadProfileRejectsFlatLegacyContract(t *testing.T) {
-	dir := t.TempDir()
-	writeProfile(t, dir, "legacy", `{"schemaVersion":1,"targetTxRate":2000}`)
-
-	_, err := loadProfileFromDir(dir, "legacy")
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("error = %v, want flat contract rejection", err)
-	}
-}
-
-func TestLoadProfileRejectsPreviousNestedContract(t *testing.T) {
-	dir := t.TempDir()
-	content := strings.Replace(testProfile, `  "scenarios": [`, `  "participants": {},
-  "traffic": {},
-  "funding": {},
-  "scenarios": [`, 1)
-	writeProfile(t, dir, "previous-contract", content)
-
-	_, err := loadProfileFromDir(dir, "previous-contract")
-	if err == nil || !strings.Contains(err.Error(), `unknown field "participants"`) {
-		t.Fatalf("error = %v, want previous root layout rejection", err)
-	}
-}
-
-func TestLoadProfileRejectsRemovedSingletonTypeFields(t *testing.T) {
-	tests := []struct {
-		name string
-		old  string
-		new  string
-	}{
-		{
-			name: "participants",
-			old:  `"participants": {`,
-			new:  `"participants": {"type": "hot-cold-pairs",`,
-		},
-		{
-			name: "amount",
-			old:  `"amount": {`,
-			new:  `"amount": {"type": "sequential-range",`,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			dir := t.TempDir()
-			content := strings.Replace(testProfile, test.old, test.new, 1)
-			writeProfile(t, dir, "removed-type", content)
-
-			_, err := loadProfileFromDir(dir, "removed-type")
-			if err == nil || !strings.Contains(err.Error(), `unknown field "type"`) {
-				t.Fatalf("error = %v, want removed type field rejection", err)
-			}
-		})
 	}
 }
 

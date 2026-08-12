@@ -115,7 +115,7 @@ func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output 
 		return err
 	}
 	options.Window = window
-	return report.PrintWithArtifacts(layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, options, output)
+	return report.Print(layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, options, output)
 }
 
 func registerMTLSOverrides(flags *flag.FlagSet, overrides *mTLSOverrides) {

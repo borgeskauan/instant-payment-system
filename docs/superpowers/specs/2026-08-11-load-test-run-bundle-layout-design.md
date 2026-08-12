@@ -91,9 +91,9 @@ Existing guarantees remain:
 - a run directory containing previous generated output is not reused;
 - diagnostic collection after Go failure continues to preserve the original Go exit code.
 
-## Compatibility and historical results
+## Current artifact contract
 
-No migration or fallback reading of the former directory layout is required. Existing CSV format compatibility is unrelated to this path reorganization and remains unchanged.
+No migration or fallback reading of a former directory layout or artifact schema is supported. The load-tool reads only the current bundle paths, run-window schema and CSV headers.
 
 After automated verification succeeds, the existing contents of `load-test/results/` will be removed. One short functional smoke run will then validate the new layout through the public runner.
 
