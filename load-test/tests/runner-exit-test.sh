@@ -14,13 +14,15 @@ write_report() {
     printf '%s\n' "$content" > "$path"
 }
 
-write_report "$tmp_dir/valid.json" '{"load_generation":{"violations":0},"scenarios":[{"transactions":{"violations":0}}]}'
+write_report "$tmp_dir/valid.json" '{"valid":true}'
 validate_sla_report "$tmp_dir/valid.json"
 
 for fixture in \
-    '{"load_generation":{"violations":1}}' \
-    '{"load_generation":{"violations":"0"}}' \
-    '{"load_generation":{"started":1}}' \
+    '{"valid":false}' \
+    '{"valid":"true"}' \
+    '{"valid":1}' \
+    '{}' \
+    '[]' \
     '{'; do
     write_report "$tmp_dir/invalid.json" "$fixture"
     if validate_sla_report "$tmp_dir/invalid.json" >/dev/null 2>&1; then
@@ -64,10 +66,10 @@ run_loadtool() {
     printf '%s\n' run >> "$RUNNER_FLOW_LOG"
     case "$RUNNER_TEST_MODE" in
         valid)
-            printf '%s\n' '{"load_generation":{"violations":0}}' > "${target_dir}/sla-report.json"
+            printf '%s\n' '{"valid":true}' > "${target_dir}/sla-report.json"
             ;;
         violation)
-            printf '%s\n' '{"load_generation":{"violations":1}}' > "${target_dir}/sla-report.json"
+            printf '%s\n' '{"valid":false}' > "${target_dir}/sla-report.json"
             ;;
         go-failure)
             return 23

@@ -23,23 +23,24 @@ func TestSummaryCountsSLA(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
 
-	if summary.Transactions.Started != 3 {
-		t.Fatalf("Started = %d, want 3", summary.Transactions.Started)
+	payments := summary.Scenarios[0].Traffic.Payments
+	if payments.Started != 3 {
+		t.Fatalf("Started = %d, want 3", payments.Started)
 	}
-	if summary.Transactions.Accepted != 2 {
-		t.Fatalf("Accepted = %d, want 2", summary.Transactions.Accepted)
+	if payments.Accepted != 2 {
+		t.Fatalf("Accepted = %d, want 2", payments.Accepted)
 	}
-	if summary.Transactions.PayerNotification.Notified != 2 {
-		t.Fatalf("Notified = %d, want 2", summary.Transactions.PayerNotification.Notified)
+	if summary.Scenarios[0].Outcome.Matched != 2 {
+		t.Fatalf("Matched = %d, want 2", summary.Scenarios[0].Outcome.Matched)
 	}
-	if summary.Transactions.PayerNotifiedBySLA.AfterSLA != 1 {
-		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.AfterSLA)
+	if summary.Scenarios[0].Performance.AfterThreshold != 1 {
+		t.Fatalf("AfterThreshold = %d, want 1", summary.Scenarios[0].Performance.AfterThreshold)
 	}
-	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
+	if summary.Scenarios[0].Performance.WithinThreshold != 1 {
+		t.Fatalf("WithinThreshold = %d, want 1", summary.Scenarios[0].Performance.WithinThreshold)
 	}
-	if summary.Transactions.PayerNotification.NotNotified != 0 {
-		t.Fatalf("NotNotified = %d, want 0", summary.Transactions.PayerNotification.NotNotified)
+	if summary.Scenarios[0].Outcome.Missing != 0 {
+		t.Fatalf("Missing = %d, want 0", summary.Scenarios[0].Outcome.Missing)
 	}
 }
 
@@ -50,8 +51,8 @@ func TestSummaryCountsMissingPayerNotification(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, nil, Options{SLAThresholdMs: 4600})
 
-	if summary.Transactions.PayerNotification.NotNotified != 1 {
-		t.Fatalf("NotNotified = %d, want 1", summary.Transactions.PayerNotification.NotNotified)
+	if summary.Scenarios[0].Outcome.Missing != 1 || summary.Valid {
+		t.Fatalf("outcome = %#v, valid = %t", summary.Scenarios[0].Outcome, summary.Valid)
 	}
 }
 
@@ -67,12 +68,12 @@ func TestSummaryAllowsRepeatedExpectedPayerNotificationsAndUsesEarliest(t *testi
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 4600})
 
-	if summary.PayerNotificationLatencyMs.P50 != 1000 {
-		t.Fatalf("P50 = %f, want 1000", summary.PayerNotificationLatencyMs.P50)
+	if summary.Performance.LatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.Performance.LatencyMs.P50)
 	}
-	got := summary.Scenarios[0].Transactions.PayerNotification
-	if got.Observed != 1 || got.Matched != 1 || got.Violations != 0 || summary.Transactions.PayerNotification.Notified != 1 {
-		t.Fatalf("payer notification summary = %#v", summary.Scenarios[0].Transactions.PayerNotification)
+	got := summary.Scenarios[0].Outcome
+	if got.Matched != 1 || got.Missing != 0 || got.Contradictory != 0 || summary.Scenarios[0].Violations != 0 {
+		t.Fatalf("payer notification summary = %#v", got)
 	}
 }
 
@@ -84,11 +85,11 @@ func TestSummaryRejectsContradictoryPayerNotificationAlongsideExpectedOutcome(t 
 	}
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1_500})
-	got := summary.Scenarios[0].Transactions.PayerNotification
-	if got.Observed != 1 || got.Matched != 1 || got.StatusMismatch != 1 || got.ReasonCodesMismatch != 1 || got.Violations != 1 {
+	got := summary.Scenarios[0].Outcome
+	if got.Matched != 1 || got.Missing != 0 || got.Contradictory != 1 || summary.Scenarios[0].Violations != 1 || summary.Valid {
 		t.Fatalf("payer notification summary = %#v", got)
 	}
-	if summary.PayerNotificationLatencyMs.P50 != 1000 || summary.Diagnostics.ResultCollection.PayerNotifiedTotal != 1 || summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
+	if summary.Performance.LatencyMs.P50 != 1000 || summary.Scenarios[0].Performance.WithinThreshold != 1 {
 		t.Fatalf("matching outcome was not counted once in performance metrics: summary=%#v", summary)
 	}
 }
@@ -103,8 +104,8 @@ func TestSummaryComparesReasonCodesWithoutDependingOnOrder(t *testing.T) {
 		StatusCode: "RJCT", ReasonCodes: []string{"AB03", "AM04"},
 	}}, Options{Scenarios: []config.Scenario{scenario}})
 
-	got := summary.Scenarios[0].Transactions.PayerNotification
-	if got.Matched != 1 || got.ReasonCodesMismatch != 0 || got.Violations != 0 {
+	got := summary.Scenarios[0].Outcome
+	if got.Matched != 1 || got.Contradictory != 0 || summary.Scenarios[0].Violations != 0 {
 		t.Fatalf("payer notification summary = %#v", got)
 	}
 }
@@ -125,11 +126,11 @@ func TestSummaryMeasuresLatencyFromRequestStart(t *testing.T) {
 
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1500})
 
-	if summary.PayerNotificationLatencyMs.P50 != 1000 {
-		t.Fatalf("P50 = %f, want 1000", summary.PayerNotificationLatencyMs.P50)
+	if summary.Performance.LatencyMs.P50 != 1000 {
+		t.Fatalf("P50 = %f, want 1000", summary.Performance.LatencyMs.P50)
 	}
-	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
+	if summary.Scenarios[0].Performance.WithinThreshold != 1 {
+		t.Fatalf("WithinThreshold = %d, want 1", summary.Scenarios[0].Performance.WithinThreshold)
 	}
 }
 
@@ -146,11 +147,11 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 		Duration:       5 * time.Second,
 	})
 
-	if summary.Transactions.Started != 3 {
-		t.Fatalf("full-run Started = %d, want 3", summary.Transactions.Started)
+	if summary.Scenarios[0].Traffic.Payments.Started != 3 {
+		t.Fatalf("full-run Started = %d, want 3", summary.Scenarios[0].Traffic.Payments.Started)
 	}
-	if summary.ThroughputPerSecond.Started != 0.2 {
-		t.Fatalf("active-window throughput = %f, want 0.2", summary.ThroughputPerSecond.Started)
+	if summary.Performance.ActiveTPS.Payments != 0.2 {
+		t.Fatalf("active-window throughput = %f, want 0.2", summary.Performance.ActiveTPS.Payments)
 	}
 }
 
@@ -172,11 +173,11 @@ func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
 	}
 
 	summary := mustBuildSummary(t, starts, nil, options)
-	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.2 {
-		t.Fatalf("active original rate = %f, want 0.2", summary.ThroughputPerSecond.OriginalPaymentsStarted)
+	if summary.Performance.ActiveTPS.Payments != 0.2 {
+		t.Fatalf("active original rate = %f, want 0.2", summary.Performance.ActiveTPS.Payments)
 	}
-	if summary.LoadGeneration.Expected != 5 || summary.LoadGeneration.Started != 1 || summary.LoadGeneration.Violations == 0 {
-		t.Fatalf("load generation = %#v", summary.LoadGeneration)
+	if summary.Generation.Expected != 5 || summary.Generation.Started != 1 || summary.Generation.Violations == 0 || summary.Valid {
+		t.Fatalf("load generation = %#v", summary.Generation)
 	}
 }
 
@@ -203,14 +204,14 @@ func TestSummaryReportsPacs002OriginalsAndSelectedReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.StatusMessages.Pacs002.Attempted != 3 || summary.StatusMessages.Pacs002.Accepted != 2 || summary.StatusMessages.Pacs002.Violations != 2 {
-		t.Fatalf("PACS.002 originals = %#v", summary.StatusMessages.Pacs002)
+	if summary.Scenarios[0].Traffic.Pacs002.Started != 3 || summary.Scenarios[0].Traffic.Pacs002.Accepted != 2 || summary.Scenarios[0].Violations != 2 {
+		t.Fatalf("PACS.002 originals = %#v, violations = %d", summary.Scenarios[0].Traffic.Pacs002, summary.Scenarios[0].Violations)
 	}
-	if summary.Replays.Pacs002.Attempted != 1 || summary.Replays.Pacs002.Accepted != 1 || summary.Replays.Pacs002.Violations != 0 {
+	if summary.Replays.Pacs002.Started != 1 || summary.Replays.Pacs002.Accepted != 1 || summary.Replays.Pacs002.Violations != 0 {
 		t.Fatalf("PACS.002 replays = %#v", summary.Replays.Pacs002)
 	}
-	if summary.ThroughputPerSecond.Pacs002StatusesStarted != 0.1 || summary.ThroughputPerSecond.Pacs002ReplaysStarted != 0.05 {
-		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
+	if summary.Performance.ActiveTPS.Pacs002 != 0.1 || summary.Performance.ActiveTPS.Pacs002Replays != 0.05 {
+		t.Fatalf("throughput = %#v", summary.Performance.ActiveTPS)
 	}
 }
 
@@ -232,11 +233,11 @@ func TestSummaryReportsReplayCountsAndIngressRates(t *testing.T) {
 	}
 	summary := mustBuildSummaryWithReplays(t, starts, nil, replays, options)
 
-	if summary.Replays.Pacs008.Attempted != 2 || summary.Replays.Pacs008.Accepted != 2 || summary.Replays.Pacs008.Violations != 0 {
+	if summary.Replays.Pacs008.Started != 2 || summary.Replays.Pacs008.Accepted != 2 || summary.Replays.Pacs008.Violations != 0 {
 		t.Fatalf("replay summary = %#v", summary.Replays.Pacs008)
 	}
-	if summary.ThroughputPerSecond.OriginalPaymentsStarted != 0.1 || summary.ThroughputPerSecond.Pacs008ReplaysStarted != 0.1 {
-		t.Fatalf("throughput = %#v", summary.ThroughputPerSecond)
+	if summary.Performance.ActiveTPS.Payments != 0.1 || summary.Performance.ActiveTPS.Pacs008Replays != 0.1 {
+		t.Fatalf("throughput = %#v", summary.Performance.ActiveTPS)
 	}
 }
 
@@ -274,7 +275,7 @@ func TestSummaryAggregatesReplayGeneratorDefectsWithoutPublicTaxonomy(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			summary := mustBuildSummaryWithReplays(t, test.starts, nil, test.replays, options)
-			if summary.Replays.Pacs008.Violations == 0 {
+			if summary.Replays.Pacs008.Violations == 0 || summary.Valid {
 				t.Fatalf("replay summary = %#v, want aggregate violation", summary.Replays.Pacs008)
 			}
 		})
@@ -294,12 +295,12 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 		Duration:       2 * time.Second,
 	})
 
-	if summary.ThroughputPerSecond.Started != 1.5 {
-		t.Fatalf("Started throughput = %f, want 1.5", summary.ThroughputPerSecond.Started)
+	if summary.Generation.ActualTPS != 1.5 {
+		t.Fatalf("Started throughput = %f, want 1.5", summary.Generation.ActualTPS)
 	}
 }
 
-func TestSummaryIncludesRunConfiguration(t *testing.T) {
+func TestSummaryIncludesOnlyReportRelevantConfiguration(t *testing.T) {
 	summary := mustBuildSummary(t, nil, nil, Options{
 		SLAThresholdMs: 1000,
 		TargetTxRate:   2000,
@@ -307,21 +308,15 @@ func TestSummaryIncludesRunConfiguration(t *testing.T) {
 		Duration:       180 * time.Second,
 	})
 
-	if summary.Run.TargetTPS != 2000 {
-		t.Fatalf("TargetTPS = %d, want 2000", summary.Run.TargetTPS)
+	if summary.Generation.TargetTPS != 2000 || summary.Generation.Expected != 360_000 {
+		t.Fatalf("Generation = %#v", summary.Generation)
 	}
-	if summary.Run.WarmupSeconds != 30 {
-		t.Fatalf("WarmupSeconds = %f, want 30", summary.Run.WarmupSeconds)
-	}
-	if summary.Run.ActiveSeconds != 180 {
-		t.Fatalf("ActiveSeconds = %f, want 180", summary.Run.ActiveSeconds)
-	}
-	if summary.Run.SLAThresholdMs != 1000 {
-		t.Fatalf("SLAThresholdMs = %d, want 1000", summary.Run.SLAThresholdMs)
+	if summary.Performance.ThresholdMs != 1000 {
+		t.Fatalf("ThresholdMs = %d, want 1000", summary.Performance.ThresholdMs)
 	}
 }
 
-func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing.T) {
+func TestSummaryReportsPayerNotificationsOutsideActiveWindow(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", CreatedAtNS: 0, HTTPStatus: 200},
 		{EndToEndID: "tx-2", PayerISPB: "10000002", CreatedAtNS: 0, HTTPStatus: 200},
@@ -339,17 +334,11 @@ func TestSummaryReportsResultCollectionDiagnosticsOutsideActiveWindow(t *testing
 		Duration:       2 * time.Second,
 	})
 
-	if summary.ThroughputPerSecond.PayerNotifiedDuringActive != 1 {
-		t.Fatalf("PayerNotifiedDuringActive = %f, want 1", summary.ThroughputPerSecond.PayerNotifiedDuringActive)
+	if summary.Performance.ActiveTPS.PayerNotifications != 1 {
+		t.Fatalf("PayerNotifications = %f, want 1", summary.Performance.ActiveTPS.PayerNotifications)
 	}
-	if summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive != 1 {
-		t.Fatalf("PayerNotifiedAfterActive = %d, want 1", summary.Diagnostics.ResultCollection.PayerNotifiedAfterActive)
-	}
-	if summary.Diagnostics.ResultCollection.PayerNotifiedTotal != 3 {
-		t.Fatalf("PayerNotifiedTotal = %d, want 3", summary.Diagnostics.ResultCollection.PayerNotifiedTotal)
-	}
-	if summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate != 1.5 {
-		t.Fatalf("PayerNotifiedTotalRate = %f, want 1.5", summary.Diagnostics.ResultCollection.PayerNotifiedTotalRate)
+	if summary.Performance.PayerNotificationsAfterActive != 1 {
+		t.Fatalf("PayerNotificationsAfterActive = %d, want 1", summary.Performance.PayerNotificationsAfterActive)
 	}
 }
 
@@ -373,20 +362,20 @@ func TestSummaryValidatesFullRunButMeasuresOnlyActiveWindow(t *testing.T) {
 		Duration:       5 * time.Second,
 	})
 
-	if summary.Transactions.Started != 4 {
-		t.Fatalf("full-run Started = %d, want 4", summary.Transactions.Started)
+	if summary.Scenarios[0].Traffic.Payments.Started != 4 {
+		t.Fatalf("full-run Started = %d, want 4", summary.Scenarios[0].Traffic.Payments.Started)
 	}
-	if summary.Transactions.Accepted != 4 {
-		t.Fatalf("full-run Accepted = %d, want 4", summary.Transactions.Accepted)
+	if summary.Scenarios[0].Traffic.Payments.Accepted != 4 {
+		t.Fatalf("full-run Accepted = %d, want 4", summary.Scenarios[0].Traffic.Payments.Accepted)
 	}
-	if summary.Transactions.PayerNotifiedBySLA.WithinSLA != 1 {
-		t.Fatalf("WithinSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.WithinSLA)
+	if summary.Scenarios[0].Performance.WithinThreshold != 1 {
+		t.Fatalf("WithinThreshold = %d, want 1", summary.Scenarios[0].Performance.WithinThreshold)
 	}
-	if summary.Transactions.PayerNotifiedBySLA.AfterSLA != 1 {
-		t.Fatalf("AfterSLA = %d, want 1", summary.Transactions.PayerNotifiedBySLA.AfterSLA)
+	if summary.Scenarios[0].Performance.AfterThreshold != 1 {
+		t.Fatalf("AfterThreshold = %d, want 1", summary.Scenarios[0].Performance.AfterThreshold)
 	}
-	if summary.ThroughputPerSecond.Started != 0.4 {
-		t.Fatalf("Started throughput = %f, want 0.4", summary.ThroughputPerSecond.Started)
+	if summary.Performance.ActiveTPS.Payments != 0.4 {
+		t.Fatalf("Started throughput = %f, want 0.4", summary.Performance.ActiveTPS.Payments)
 	}
 }
 
@@ -407,8 +396,8 @@ func TestSummaryUsesConfiguredScenarioName(t *testing.T) {
 		Scenarios:      []config.Scenario{scenario},
 	})
 
-	if summary.Transactions.Accepted != 1 || summary.Transactions.PayerNotification.Notified != 1 {
-		t.Fatalf("Transactions = %#v", summary.Transactions)
+	if summary.Scenarios[0].Traffic.Payments.Accepted != 1 || summary.Scenarios[0].Outcome.Matched != 1 {
+		t.Fatalf("Scenario = %#v", summary.Scenarios[0])
 	}
 }
 
@@ -439,24 +428,18 @@ func TestSummaryReportsMixedScenarioNotificationCounts(t *testing.T) {
 	}
 	summary := mustBuildSummary(t, starts, notifications, Options{SLAThresholdMs: 1000, Scenarios: scenarios})
 
-	if summary.Transactions.Started != 5 || summary.Transactions.Accepted != 4 {
-		t.Fatalf("aggregate transaction counts = %#v", summary.Transactions)
-	}
-	if summary.Transactions.PayerNotification.Notified != 2 || summary.Transactions.PayerNotification.NotNotified != 2 {
-		t.Fatalf("aggregate payer notifications = %#v", summary.Transactions.PayerNotification)
-	}
 	if len(summary.Scenarios) != 2 || summary.Scenarios[0].Name != "happy-path" || summary.Scenarios[1].Name != "insufficient-funds" {
 		t.Fatalf("ordered scenarios = %#v", summary.Scenarios)
 	}
-	happy := summary.Scenarios[0].Transactions
-	if happy.PayerNotification.Observed != 1 || happy.PayerNotification.Missing != 1 || happy.PayerNotification.Violations != 1 || happy.Violations != 1 {
+	happy := summary.Scenarios[0]
+	if happy.Traffic.Payments.Started != 2 || happy.Traffic.Payments.Accepted != 2 || happy.Outcome.Matched != 1 || happy.Outcome.Missing != 1 || happy.Violations != 1 {
 		t.Fatalf("happy-path summary = %#v", happy)
 	}
-	insufficient := summary.Scenarios[1].Transactions
-	if insufficient.Started != 3 || insufficient.Accepted != 2 || insufficient.PayerNotification.Observed != 1 || insufficient.PayerNotification.Missing != 1 {
+	insufficient := summary.Scenarios[1]
+	if insufficient.Traffic.Payments.Started != 3 || insufficient.Traffic.Payments.Accepted != 2 || insufficient.Outcome.Matched != 1 || insufficient.Outcome.Missing != 1 {
 		t.Fatalf("insufficient-funds counts = %#v", insufficient)
 	}
-	if insufficient.HTTPStatus.Violations != 1 || insufficient.PayerNotification.Violations != 1 || insufficient.Violations != 2 {
+	if insufficient.Violations != 2 || summary.Valid {
 		t.Fatalf("insufficient-funds violations = %#v", insufficient)
 	}
 }

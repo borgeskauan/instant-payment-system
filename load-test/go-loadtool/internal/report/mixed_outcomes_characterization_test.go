@@ -23,19 +23,16 @@ func TestMixedOutcomesCharacterizesOneLogicalFinalResultPerPayment(t *testing.T)
 
 	summary := mustBuildSummary(t, starts, notifications, Options{Scenarios: scenarios})
 
-	if summary.Transactions.Started != 2 || summary.Transactions.Accepted != 2 {
-		t.Fatalf("transactions = %#v, want two accepted originals", summary.Transactions)
-	}
-	if summary.Transactions.PayerNotification.Notified != 2 || summary.Transactions.PayerNotification.NotNotified != 0 {
-		t.Fatalf("logical payer notifications = %#v, want two notified payments", summary.Transactions.PayerNotification)
-	}
 	if len(summary.Scenarios) != 2 {
 		t.Fatalf("scenarios = %#v, want two", summary.Scenarios)
 	}
 	for _, scenario := range summary.Scenarios {
-		outcome := scenario.Transactions.PayerNotification
-		if outcome.Eligible != 1 || outcome.Observed != 1 || outcome.Matched != 1 || outcome.Missing != 0 || outcome.Violations != 0 {
+		outcome := scenario.Outcome
+		if scenario.Traffic.Payments.Started != 1 || scenario.Traffic.Payments.Accepted != 1 || outcome.Matched != 1 || outcome.Missing != 0 || outcome.Contradictory != 0 || scenario.Violations != 0 {
 			t.Fatalf("scenario %q logical outcome = %#v, want one matching final result", scenario.Name, outcome)
 		}
+	}
+	if !summary.Valid {
+		t.Fatalf("valid = false, summary=%#v", summary)
 	}
 }

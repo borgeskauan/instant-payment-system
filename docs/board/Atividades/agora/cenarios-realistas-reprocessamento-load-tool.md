@@ -30,11 +30,12 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - `events/pacs008-starts.csv` registra a seleção de `pacs.008`, `events/pacs002-starts.csv` registra os status originais e a seleção de `pacs.002`, `events/notifications.csv` registra os outcomes observados e `events/replays.csv` registra as tentativas repetidas dos dois tipos;
 - o simulador calcula e persiste antes da geração `generation_started_at`, `active_started_at`, `generation_ended_at` e `replay_deadline_at`; o relatório consome esses instantes sem derivar a janela dos CSVs;
 - warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
-- o relatório expõe separadamente pagamentos originais, status `pacs.002`, replays `pacs.008` e replays `pacs.002`, além de tornar déficit ou excesso da geração ativa uma violação;
-- o relatório valida outcomes de negócio e replays no run inteiro; throughput, latência e SLA permanecem restritos à janela ativa;
+- `sla-report.json` é centrado nos cenários: cada cenário reúne seu tráfego de pagamentos e `pacs.002` originais, seu outcome lógico e suas métricas, enquanto geração de originais e replays permanecem globais;
+- no relatório, `started` significa tentativa HTTP iniciada e `accepted` significa resposta HTTP `2xx`; aceitação HTTP permanece distinta do outcome assíncrono de negócio;
+- o relatório valida tráfego, outcomes de negócio e replays no run inteiro; throughput, latência e threshold permanecem restritos à janela ativa;
 - o runner público executa uma única chamada `go-loadtool run --run-dir`, coleta diagnósticos mesmo quando essa chamada falha e preserva o exit code original do Go;
 - `loadtool_finished_at` registra o fim da chamada única, enquanto `replay_deadline_at` permanece o fim autoritativo da janela experimental;
-- o runner retorna zero somente quando o relatório é válido e todos os campos `violations` são zero;
+- o relatório publica `valid` como decisão agregada, verdadeira somente quando geração, todos os cenários e os dois tipos de replay têm zero violações; o runner retorna zero somente para `valid: true`;
 - a implementação da repetição deliberada de `pacs.002` está concluída e validada funcionalmente no load-tool;
 - o run de 2026-08-09 (`observable-pacs002-outcomes-smoke/20260809_233329`) terminou com 1.251 originais aceitos e notificados, zero violações, `ACSC` nos 1.001 happy-path e `RJCT`/`AM04` nos 250 insufficient-funds;
 - o run de 2026-08-11 (`pacs008-replay-functional-smoke/20260811_020918`) manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
@@ -241,6 +242,23 @@ Um run curto produz o bundle final e gera seu relatório a partir dos dois input
 ### Critério de saída
 
 Simulação e relatório continuam funcionalmente iguais para o contrato vigente; não existe fallback, migração, fixture ou promessa documental para bundles e schemas anteriores.
+
+## Fatia 2C.7 — Relatório agregado centrado nos cenários (concluída)
+
+**Resultado:** `sla-report.json` passou a apresentar a decisão do run, o workload funcional e as métricas sem repetir configuração, aliases ou diagnósticos já preservados em outros artefatos do bundle.
+
+- [x] Publicar `valid` como decisão explícita do run e fazer o runner consumir esse booleano sem percorrer recursivamente campos chamados `violations`.
+- [x] Manter geração de pagamentos originais como contrato global, com target, esperado, iniciado, TPS efetivo e violações da janela autoritativa.
+- [x] Agrupar por cenário os pagamentos e `pacs.002` originais iniciados/aceitos, o outcome esperado/observado e as métricas da janela ativa.
+- [x] Preservar semântica `at-least-once`: entregas compatíveis repetidas contam como um resultado lógico; ausência ou qualquer entrega contraditória invalida o cenário.
+- [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas, com tentativas iniciadas, aceitas e violações.
+- [x] Consolidar performance global em threshold, TPS ativo por tipo de tráfego, notificações posteriores à janela ativa e percentis de latência arredondados.
+- [x] Remover os blocos redundantes `run`, `transactions`, `status_messages`, `load_generation`, `throughput_per_second`, `payer_notification_latency_ms` e `diagnostics`.
+- [x] Manter `run-window.json`, `inputs/profile.json` e os quatro CSVs de `events/` como fontes autoritativas de janela, configuração e evidência detalhada.
+
+### Critério de saída
+
+O relatório raiz responde diretamente se o run é válido, quanto tráfego original foi gerado, qual workload e outcome cada cenário produziu, qual carga global de replay ocorreu e quais métricas foram observadas na janela ativa. O runner preserva falha pública para qualquer run inválido, e a auditoria temporal continua disponível nos CSVs sem duplicação no JSON agregado.
 
 ## Fatia 3 — Matriz final e handoff para estabilização
 

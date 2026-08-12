@@ -705,31 +705,12 @@ try:
 except (OSError, json.JSONDecodeError) as error:
     raise SystemExit(f"invalid SLA report {path!r}: {error}")
 
-violations = []
-
-def visit(value, location="$"):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_location = f"{location}.{key}"
-            if key == "violations":
-                if type(child) is not int or child < 0:
-                    raise SystemExit(
-                        f"invalid SLA report {path!r}: {child_location} must be a non-negative integer"
-                    )
-                violations.append((child_location, child))
-            visit(child, child_location)
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            visit(child, f"{location}[{index}]")
-
-visit(document)
-if not violations:
-    raise SystemExit(f"invalid SLA report {path!r}: no violations fields found")
-
-failed = [(location, count) for location, count in violations if count > 0]
-if failed:
-    details = ", ".join(f"{location}={count}" for location, count in failed)
-    raise SystemExit(f"SLA report contains violations: {details}")
+if not isinstance(document, dict):
+    raise SystemExit(f"invalid SLA report {path!r}: root must be an object")
+if type(document.get("valid")) is not bool:
+    raise SystemExit(f"invalid SLA report {path!r}: valid must be a boolean")
+if not document["valid"]:
+    raise SystemExit("SLA report is invalid")
 PY
 }
 

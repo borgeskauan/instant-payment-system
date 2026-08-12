@@ -212,17 +212,16 @@ func TestExecuteRunUsesRealReportRendererWithCompletedArtifacts(t *testing.T) {
 		t.Fatalf("ReadFile(sla-report.json) error = %v", err)
 	}
 	var document struct {
-		Run struct {
-			TargetTPS int `json:"target_tps"`
-		} `json:"run"`
-		LoadGeneration struct {
+		Valid      bool `json:"valid"`
+		Generation struct {
+			TargetTPS  int `json:"target_tps"`
 			Violations int `json:"violations"`
-		} `json:"load_generation"`
+		} `json:"generation"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("report is not valid JSON: %v", err)
 	}
-	if document.Run.TargetTPS != 321 || document.LoadGeneration.Violations == 0 {
+	if document.Valid || document.Generation.TargetTPS != 321 || document.Generation.Violations == 0 {
 		t.Fatalf("report document = %#v", document)
 	}
 }
