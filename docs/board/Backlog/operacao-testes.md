@@ -73,6 +73,10 @@ Nesse desenho, as duas stacks devem compartilhar o mesmo PostgreSQL. Isso precis
 
 **Tarefas**
 
+- [ ] Usar `mixed-outcomes-2k-15m` como o workload oficial: `cd load-test && ./run-load-test.sh --profile mixed-outcomes-2k-15m <run-tag>`.
+- [ ] Sustentar 2.000 pagamentos originais/s durante os 15 minutos ativos; os replays configurados de 5% para `pacs.008` e 5% para `pacs.002` são carga adicional e não substituem originais.
+- [ ] Validar o mix funcional 80% happy-path (`ACSC`) e 20% insufficient-funds (`RJCT/AM04`), a distribuição hot-pair e `sla-report.json` com `valid: true` antes de avaliar os gates de performance.
+- [ ] Usar `mixed-outcomes-smoke` para checagens funcionais rápidas; `uniform-smoke` permanece controle happy-path e não substitui o workload oficial de 15 minutos.
 - [ ] Definir o budget alvo de CPU por serviço dentro do limite total de 3 vCPUs por stack.
 - [ ] Rebalancear CPU no Docker Compose para refletir o budget alvo, não apenas o melhor resultado local.
 - [ ] Definir memória alvo por serviço junto com CPU para evitar OOM ou swap durante o load test.

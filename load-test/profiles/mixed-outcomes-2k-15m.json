@@ -1,5 +1,5 @@
 {
-  "name": "mixed-outcomes-smoke",
+  "name": "mixed-outcomes-2k-15m",
   "schemaVersion": 1,
   "connections": {
     "centralTransfer": {
@@ -16,10 +16,10 @@
     }
   },
   "load": {
-    "targetTxRate": 100,
-    "warmup": "5s",
-    "duration": "10s",
-    "drain": "10s"
+    "targetTxRate": 2000,
+    "warmup": "1m",
+    "duration": "15m",
+    "drain": "30s"
   },
   "replay": {
     "pacs008": {

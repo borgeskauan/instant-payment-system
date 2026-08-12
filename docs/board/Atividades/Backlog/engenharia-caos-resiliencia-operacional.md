@@ -8,7 +8,7 @@ Validar que o sistema se recupera de falhas deliberadamente injetadas sem perder
 
 Esta é uma task guarda-chuva. Cada classe de falha deve ser refinada em fatias ou tasks focadas quando entrar em execução.
 
-A matriz de workloads continua em [`cenarios-realistas-reprocessamento-load-tool.md`](../agora/cenarios-realistas-reprocessamento-load-tool.md). Aqui, a variável do experimento é a falha operacional introduzida.
+A matriz de workloads foi concluída em [`cenarios-realistas-reprocessamento-load-tool.md`](../concluidas/cenarios-realistas-reprocessamento-load-tool.md). Aqui, a variável do experimento é a falha operacional introduzida.
 
 ## Áreas a explorar
 

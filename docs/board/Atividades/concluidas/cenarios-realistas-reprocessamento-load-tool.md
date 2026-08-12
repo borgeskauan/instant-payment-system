@@ -1,6 +1,6 @@
 # Matriz funcional de workloads para estabilização de performance
 
-- [ ] Preparar a matriz funcional de workloads para estabilização de performance
+- [x] Preparar a matriz funcional de workloads para estabilização de performance
 
 ## Objetivo
 
@@ -17,13 +17,14 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - os perfis selecionáveis ficam no catálogo canônico `load-test/profiles/`, separado da implementação interna em Go;
 - `uniform-smoke` é o baseline sem replay: caminho feliz, `2.000` pagamentos originais/s, `1m` de warmup, `1m` de janela ativa, `30s` de drain, 10 pares quentes, 40 frios e `80%` do tráfego nos pares quentes;
 - `mixed-outcomes-smoke` é o workload funcional curto: 100 pagamentos originais/s, `5s` de warmup, `10s` de janela ativa e `10s` de drain;
+- `mixed-outcomes-2k-15m` reproduz o mesmo workload funcional com 2.000 pagamentos originais/s, `1m` de warmup, `15m` de janela ativa e `30s` de drain; ele é o único perfil longo entregue à estabilização;
 - `mixed-outcomes-smoke` distribui deterministicamente cada bloco completo de 100 originais em `80%` happy-path e `20%` insufficient-funds, com participantes isolados e provisionamento declarado por cenário;
-- a divisão `80/20` é funcional, não uma estimativa final de produção, e deverá ser refinada antes do handoff para estabilização;
+- a divisão `80/20` é funcional, não uma estimativa final de produção, e foi mantida como mix explícito para a primeira estabilização;
 - happy-path espera HTTP `2xx` e notificação ao pagador `pacs.002 ACSC`; insufficient-funds espera HTTP `2xx` e notificação `pacs.002 RJCT` com reason `AM04`;
 - notificações ao pagador usam semântica `at-least-once`: uma ou mais entregas compatíveis são válidas, ausência ou outcome contraditório é violação;
 - `targetTxRate` controla somente pagamentos originais; replays são agendados como carga adicional;
-- `mixed-outcomes-smoke` seleciona `10%` dos originais para uma única retransmissão `pacs.008` idêntica, iniciada `10s` após o começo da tentativa original e independentemente de sua resposta HTTP;
-- para cada bloco completo de 100 `pacs.002` originais efetivamente iniciados, `mixed-outcomes-smoke` seleciona 10 para uma única repetição idêntica, iniciada `10s` após o começo do status original e independentemente de sua resposta HTTP;
+- os dois perfis mixed-outcomes selecionam `5%` dos originais para uma única retransmissão `pacs.008` idêntica, iniciada `10s` após o começo da tentativa original e independentemente de sua resposta HTTP;
+- para cada bloco completo de 100 `pacs.002` originais efetivamente iniciados, os dois perfis mixed-outcomes selecionam 5 para uma única repetição idêntica, iniciada `10s` após o começo do status original e independentemente de sua resposta HTTP;
 - as seleções de `pacs.008` e `pacs.002` usam populações, configurações e contagens próprias; notificações `pacs.008` repetidas no PSP recebedor são deduplicadas e não criam novos status originais;
 - o replay `pacs.008` já passa pelo ingresso normal `/transfer`, com o mesmo pagador e mTLS, sem publicação direta no Kafka;
 - a repetição de `pacs.002` passa pelo ingresso normal `/transfer/status`, com o mesmo PSP recebedor, mTLS e body byte a byte idêntico;
@@ -38,12 +39,12 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - o relatório publica `valid` como decisão agregada, verdadeira somente quando geração, todos os cenários e os dois tipos de replay têm zero violações; o runner retorna zero somente para `valid: true`;
 - a implementação da repetição deliberada de `pacs.002` está concluída e validada funcionalmente no load-tool;
 - o run de 2026-08-09 (`observable-pacs002-outcomes-smoke/20260809_233329`) terminou com 1.251 originais aceitos e notificados, zero violações, `ACSC` nos 1.001 happy-path e `RJCT`/`AM04` nos 250 insufficient-funds;
-- o run de 2026-08-11 (`pacs008-replay-functional-smoke/20260811_020918`) manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
+- as evidências históricas de 2026-08-11 e o primeiro smoke do bundle usaram o share anterior de `10%`; o run `pacs008-replay-functional-smoke/20260811_020918` manteve 100 originais/s na janela ativa, aceitou os 1.251 originais e os 126 replays selecionados e terminou com zero violações de replay ou outcome; o menor atraso observado foi `10,000038s`;
 - o run de 2026-08-11 (`pacs002-replay-functional-smoke/20260811_040749`) iniciou exatamente 1.000 originais na janela ativa (100/s), aceitou 1.250 originais e 1.250 status, executou 126 replays `pacs.008` e 126 replays `pacs.002` e terminou com zero violações de geração, HTTP, replay ou outcome;
 - o run de caracterização de 2026-08-11 (`phase-2c1-characterization-smoke/20260811_050401`) confirmou 1.250 originais aceitos, 1.000 originais na janela ativa, 1.000 happy-path, 250 insufficient-funds, 1.250 status e 126 replays aceitos de cada tipo, com zero violações;
 - o run de migração de 2026-08-11 (`phase-2c4-single-run-smoke/20260811_142951`) validou o caminho único final com as mesmas contagens caracterizadas, exatamente um `sla-report.json`, 126 replays aceitos de cada tipo e todos os dez campos `violations` em zero;
 - o run de 2026-08-12 (`run-bundle-layout-smoke/20260812_000828`) validou o bundle final com 1.250 originais e 1.250 status aceitos, 126 replays aceitos de cada tipo, quatro CSVs em `events/`, snapshots em `inputs/`, logs operacionais em `logs/`, zero violações e nenhum certificado retido;
-- 126 replays de cada tipo caracterizam somente o resultado atual de `mixed-outcomes-smoke`; não são uma regra geral para qualquer população de 1.250 mensagens com `share=0.10`;
+- o smoke final de 2026-08-12 (`phase-3-workload-matrix-smoke/20260812_012859`) validou a configuração vigente de `5%`: 1.250 originais e 1.250 status aceitos, 1.000 happy-path, 250 insufficient-funds, 64 replays `pacs.008`, 63 replays `pacs.002` e zero violações; as contagens 64/63 incluem o bloco parcial final e caracterizam apenas essa sequência curta;
 - a suíte de caracterização protege as populações de originais e status, as contagens separadas dos dois tipos de replay e um único resultado lógico final por pagamento, sem congelar quais `EndToEndId` são selecionados;
 - a SPI persiste falta de liquidez como `REJECTED / INSUFFICIENT_FUNDS`; settlement, saldos, auditoria, outbox e atomicidade permanecem cobertos pelos testes focados da SPI, sem consultas PostgreSQL no load-test.
 - o runner não trunca mais estado persistente antes dos runs: a preparação automática e obrigatória do ambiente consome `inputs/execution-plan.json`, usa o lag atual dos três consumer groups Kafka como heurística best-effort e somente então provisiona os fundos declarados; `run-load-test.sh` apenas orquestra essa unidade interna, sem alegar quiescência forte ou detectar trabalho residual em outbox/delivery;
@@ -96,7 +97,7 @@ O relatório da própria execução usa os inputs preservados e os eventos audit
 
 **Resultado:** `mixed-outcomes-smoke` mantém a taxa de pagamentos originais e acrescenta retransmissões idênticas de `pacs.008` pelo ingresso normal.
 
-O modelo exercitado é: em `10%` das submissões, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica `10s` após o início da tentativa original. `share` e `delay` são configuráveis no perfil; os valores concretos de `mixed-outcomes-smoke` são `0.10` e `10s`.
+O modelo exercitado é: em uma parcela configurável das submissões, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica após o delay configurado. Os valores vigentes dos perfis mixed-outcomes são `0.05` e `10s`.
 
 - [x] Adicionar ao contrato opcional `replay.pacs008.share` e `replay.pacs008.delay`, mantendo `uniform-smoke` sem replay.
 - [x] Exigir que `share × 100` produza uma quantidade inteira e selecionar exatamente essa quantidade em cada bloco completo de 100 originais.
@@ -120,7 +121,7 @@ O perfil, o plano resolvido e os CSVs auditáveis alimentam o relatório da pró
 
 **Resultado:** um workload normal acrescenta repetições idênticas de status pelo ingresso usado pelo PSP recebedor, sem reduzir a taxa de pagamentos originais nem produzir outcomes contraditórios para o pagador.
 
-O modelo exercitado é: em `10%` dos `pacs.002` originais, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica `10s` após o início da tentativa original. `share` e `delay` são próprios e configuráveis; os valores concretos de `mixed-outcomes-smoke` são `0.10` e `10s`.
+O modelo exercitado é: em uma parcela configurável dos `pacs.002` originais, o PSP não obtém uma resposta conclusiva e envia uma única repetição idêntica após o delay configurado. `share` e `delay` são próprios; os valores vigentes dos perfis mixed-outcomes são `0.05` e `10s`.
 
 - [x] Aplicar `pacs002.share` à população de status originais efetivamente iniciados e selecionar exatamente `share × 100` em cada bloco completo de 100 status.
 - [x] Aplicar a seleção à população própria de `pacs.002` originais, separada de `pacs.008` e sem alterar a distribuição happy-path/insufficient-funds.
@@ -150,7 +151,7 @@ O modelo de repetição está explícito no contrato e na documentação; `run-w
 
 - [x] Manter como interface pública somente `./run-load-test.sh [--profile NAME] <run-tag>`.
 - [x] Caracterizar `mixed-outcomes-smoke` com 1.250 originais no run, 1.000 na janela ativa, 1.000 happy-path, 250 insufficient-funds e 1.250 `pacs.002` originais iniciados.
-- [x] Proteger, para esse workload caracterizado, 126 seleções de replay `pacs.008` sobre originais e 126 seleções de replay `pacs.002` sobre status originais.
+- [x] Proteger, para o workload curto vigente, 64 seleções de replay `pacs.008` sobre originais e 63 seleções de replay `pacs.002` sobre status originais, preservando a regra exata de 5 por bloco completo de 100.
 - [x] Manter as populações, configurações e contagens dos dois tipos separadas e impedir que replay `pacs.008` crie outro `pacs.002` original.
 - [x] Não proteger ordinais, identidade dos pagamentos selecionados, coincidência entre conjuntos ou reprodutibilidade de `EndToEndId`.
 - [x] Tratar entregas `pacs.002` idênticas sob `at-least-once` como um único resultado lógico final e transformar ausência, status contraditório ou reason contraditório em violação do relatório.
@@ -260,16 +261,26 @@ Simulação e relatório continuam funcionalmente iguais para o contrato vigente
 
 O relatório raiz responde diretamente se o run é válido, quanto tráfego original foi gerado, qual workload e outcome cada cenário produziu, qual carga global de replay ocorreu e quais métricas foram observadas na janela ativa. O runner preserva falha pública para qualquer run inválido, e a auditoria temporal continua disponível nos CSVs sem duplicação no JSON agregado.
 
-## Fatia 3 — Matriz final e handoff para estabilização
+## Fatia 3 — Matriz final e handoff para estabilização (concluída)
 
 **Resultado:** a task de estabilização recebe uma matriz funcional validada e sabe quais perfis ou workloads usar em cada experimento de performance.
 
-- [ ] Consolidar o baseline happy-path e o workload de resultados mistos, ambos com a distribuição hot-pair existente e com as repetições aplicáveis.
-- [ ] Refinar antes do handoff as proporções de outcomes e repetições; `80/20` e os valores atuais de replay são parâmetros funcionais, não representatividade presumida de produção.
-- [ ] Registrar para cada perfil ou workload: comando, objetivo, distribuição, taxa de originais, carga adicional, outcomes esperados e evidência do run funcional curto.
-- [ ] Identificar quais perfis ou workloads a estabilização deve exercitar e qual aspecto do sistema cada um cobre.
-- [ ] Entregar a meta de `2.000` pagamentos originais/s para os workloads selecionados, com mensagens repetidas como carga adicional mensurada separadamente.
-- [ ] Entregar a matriz à task [`operacao-testes.md`](../../Backlog/operacao-testes.md), sem concluir capacidade a partir dos runs funcionais curtos.
+### Matriz entregue
+
+| Perfil | Papel | Originais e janela | Cenários e distribuição | Carga adicional | Evidência e destino |
+| --- | --- | --- | --- | --- | --- |
+| `uniform-smoke` | Controle funcional happy-path, sem replay | 2.000/s; warmup `1m`, ativo `1m`, drain `30s` | 100% `ACSC`; 10 pares hot, 40 cold, 80% nos hot | Nenhuma | Baseline funcional existente; não é perfil oficial de 15 minutos |
+| `mixed-outcomes-smoke` | Prova funcional rápida do workload oficial | 100/s; warmup `5s`, ativo `10s`, drain `10s` | 80% `ACSC`, 20% `RJCT/AM04`; 80% do tráfego nos pares hot | 5% de replay `pacs.008` + 5% de replay `pacs.002`, ambos após `10s` | `./run-load-test.sh --profile mixed-outcomes-smoke phase-3-workload-matrix-smoke`; run válido `20260812_012859` |
+| `mixed-outcomes-2k-15m` | Único workload longo para estabilização e gate oficial | 2.000/s; warmup `1m`, ativo `15m`, drain `30s` | Mesmo contrato funcional `80/20` e mesma distribuição do smoke | 5% + 5%, sem reduzir os 2.000 originais/s | `./run-load-test.sh --profile mixed-outcomes-2k-15m <run-tag>`; contrato validado automaticamente, execução longa entregue à estabilização |
+
+O perfil longo exercita simultaneamente throughput contratual de pagamentos originais, outcomes de negócio aceito/rejeitado, concentração hot-pair e pressão adicional de retransmissão pelos ingressos normais. Os percentuais `80/20` e `5%` são parâmetros funcionais deliberados da primeira estabilização, não uma alegação de representatividade de produção. A task de performance pode alterá-los em experimentos posteriores, desde que registre o perfil efetivamente executado e não reduza a taxa de originais para acomodar replays.
+
+- [x] Consolidar o baseline happy-path e o workload de resultados mistos, ambos com a distribuição hot-pair existente e com as repetições aplicáveis.
+- [x] Refinar antes do handoff as proporções de outcomes e repetições: manter `80/20` e usar `5%` para cada tipo de replay como parâmetros funcionais explícitos.
+- [x] Registrar para cada perfil ou workload: comando, objetivo, distribuição, taxa de originais, carga adicional, outcomes esperados e evidência do run funcional curto.
+- [x] Identificar `mixed-outcomes-2k-15m` como o único perfil longo que a estabilização deve exercitar; os dois smokes permanecem controles funcionais.
+- [x] Entregar a meta de `2.000` pagamentos originais/s, com mensagens repetidas como carga adicional mensurada separadamente.
+- [x] Entregar a matriz à task [`operacao-testes.md`](../../Backlog/operacao-testes.md), sem concluir capacidade a partir dos runs funcionais curtos.
 
 ## Critérios de conclusão da task guarda-chuva
 

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -419,11 +420,36 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if cfg.Scenarios[0].Funding.Payer.Mode != FundingCoverGeneratedDebits || cfg.Scenarios[1].Funding.Payer.Mode != FundingFixed || cfg.Scenarios[1].Funding.Payer.Balance != "0.00" {
 		t.Fatalf("mixed funding = %#v", cfg.Scenarios)
 	}
-	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.10 || cfg.Replay.Pacs008.Delay != 10*time.Second {
+	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.05 || cfg.Replay.Pacs008.Delay != 10*time.Second {
 		t.Fatalf("mixed replay = %#v", cfg.Replay)
 	}
-	if cfg.Replay.Pacs002 == nil || cfg.Replay.Pacs002.Share != 0.10 || cfg.Replay.Pacs002.Delay != 10*time.Second {
+	if cfg.Replay.Pacs002 == nil || cfg.Replay.Pacs002.Share != 0.05 || cfg.Replay.Pacs002.Delay != 10*time.Second {
 		t.Fatalf("mixed PACS.002 replay = %#v", cfg.Replay)
+	}
+}
+
+func TestMixedOutcomesLongProfileDefinesStabilizationWorkload(t *testing.T) {
+	profilesDir := filepath.Join("..", "..", "..", "profiles")
+	smoke, err := loadProfileFromDir(profilesDir, "mixed-outcomes-smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := loadProfileFromDir(profilesDir, "mixed-outcomes-2k-15m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if long.Load.TargetTxRate != 2000 || long.Load.Warmup != time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
+		t.Fatalf("mixed-outcomes-2k-15m Load = %#v", long.Load)
+	}
+	if !reflect.DeepEqual(long.Replay, smoke.Replay) {
+		t.Fatalf("long replay = %#v, want smoke replay %#v", long.Replay, smoke.Replay)
+	}
+	if !reflect.DeepEqual(long.Scenarios, smoke.Scenarios) {
+		t.Fatalf("long scenarios differ from functionally validated smoke")
+	}
+	if !reflect.DeepEqual(long.Connections, smoke.Connections) || !reflect.DeepEqual(long.Reporting, smoke.Reporting) {
+		t.Fatalf("long runtime configuration differs from functionally validated smoke")
 	}
 }
 

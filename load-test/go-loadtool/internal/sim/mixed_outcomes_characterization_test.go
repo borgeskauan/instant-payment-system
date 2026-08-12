@@ -14,8 +14,8 @@ func TestMixedOutcomesSmokeCharacterizesWorkloadPopulations(t *testing.T) {
 		Duration:     10 * time.Second,
 		Scenarios:    mixedPlannerScenarios(),
 		Replay: config.Replay{
-			Pacs008: &config.Pacs008Replay{Share: 0.10, Delay: 10 * time.Second},
-			Pacs002: &config.Pacs002Replay{Share: 0.10, Delay: 10 * time.Second},
+			Pacs008: &config.Pacs008Replay{Share: 0.05, Delay: 10 * time.Second},
+			Pacs002: &config.Pacs002Replay{Share: 0.05, Delay: 10 * time.Second},
 		},
 	}
 
@@ -68,7 +68,7 @@ func TestMixedOutcomesSmokeCharacterizesWorkloadPopulations(t *testing.T) {
 	if pacs002OriginalsStarted != 1_250 {
 		t.Fatalf("PACS.002 originals started = %d, want 1250", pacs002OriginalsStarted)
 	}
-	if pacs008Selected != 126 || pacs002Selected != 126 {
-		t.Fatalf("selected replays = pacs.008:%d pacs.002:%d, want 126 each", pacs008Selected, pacs002Selected)
+	if pacs008Selected != 64 || pacs002Selected != 63 {
+		t.Fatalf("selected replays = pacs.008:%d pacs.002:%d, want 64/63", pacs008Selected, pacs002Selected)
 	}
 }
