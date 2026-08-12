@@ -97,21 +97,12 @@ if (RUN_TAG=""; parse_args --process-stats baseline) >/dev/null 2>&1; then
     exit 1
 fi
 
-RUN_TAG=""
-RESET_TEST_STATE=true
-parse_args --no-reset-state baseline
-if [[ "$RUN_TAG" != "baseline" || "$RESET_TEST_STATE" != false ]]; then
-    echo "--no-reset-state was not parsed correctly" >&2
-    exit 1
-fi
-
-RUN_TAG=""
-RESET_TEST_STATE=false
-parse_args --reset-state baseline
-if [[ "$RUN_TAG" != "baseline" || "$RESET_TEST_STATE" != true ]]; then
-    echo "--reset-state was not parsed correctly" >&2
-    exit 1
-fi
+for removed_flag in --reset-state --no-reset-state; do
+    if (RUN_TAG=""; parse_args "$removed_flag" baseline) >/dev/null 2>&1; then
+        echo "$removed_flag should not be accepted after PostgreSQL state cleanup removal" >&2
+        exit 1
+    fi
+done
 
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"

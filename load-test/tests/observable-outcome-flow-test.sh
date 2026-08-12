@@ -25,7 +25,6 @@ grafana_available() { return 1; }
 log_selected_options() { :; }
 log_grafana_status() { :; }
 run_preflight_checks() { :; }
-reset_persistent_test_state_if_enabled() { :; }
 provision_funds_if_enabled() { :; }
 start_optional_diagnostics() { :; }
 run_loadtool() { echo run >> "$FLOW_LOG"; }
