@@ -47,9 +47,7 @@ build_loadtool() { :; }
 validate_profile_with_loadtool() { :; }
 prepare_run_workspace() { mkdir -p "$1"; }
 prepare_loadtool_certificates() { :; }
-grafana_available() { return 1; }
 log_selected_options() { :; }
-log_grafana_status() { :; }
 run_preflight_checks() { :; }
 prepare_environment() {
     printf '%s\n' prepare-environment >> "$RUNNER_FLOW_LOG"
@@ -58,7 +56,6 @@ prepare_environment() {
     fi
 }
 start_optional_diagnostics() { :; }
-print_grafana_links() { :; }
 iso_now() { printf '%s\n' '2026-08-11T12:00:00.000000000-03:00'; }
 
 run_loadtool() {

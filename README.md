@@ -7,18 +7,17 @@ Kafka, PostgreSQL e entrega de notificações aos PSPs.
 
 Os comandos abaixo partem da raiz do repositório e exigem Docker com Compose.
 
-Suba a stack usada pelos testes de carga, incluindo Grafana, Prometheus e os
-exporters:
+Suba a stack usada pelos testes de carga:
 
 ```bash
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-docker compose -f infra/docker-compose.yml --profile observability up -d --build
+docker compose -f infra/docker-compose.yml up -d --build
 ```
 
 Confira se os containers estão em execução:
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile observability ps
+docker compose -f infra/docker-compose.yml ps
 ```
 
 Para acompanhar o caminho principal:
@@ -27,8 +26,6 @@ Para acompanhar o caminho principal:
 docker compose -f infra/docker-compose.yml logs -f \
   kafka-producer spi notification-gateway
 ```
-
-O Grafana fica disponível em [http://localhost:3000](http://localhost:3000).
 
 ## Teste de carga
 
@@ -52,11 +49,10 @@ Os resultados são gravados em `load-test/results/<run-tag>/<timestamp>/`.
 ## Encerrar o ambiente
 
 ```bash
-docker compose -f infra/docker-compose.yml --profile observability down
+docker compose -f infra/docker-compose.yml down
 ```
 
-O comando não remove volumes. Para subir somente os serviços principais, sem a
-stack de observabilidade, omita `--profile observability` nos comandos acima.
+O comando não remove volumes.
 
 ## Fluxo manual com PSPs
 

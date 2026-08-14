@@ -23,7 +23,7 @@ The sustained budget stays below 3 CPU and 3 GB of memory for the services that 
 
 Persistent volumes are excluded from the memory budget. Runtime memory used by persistence services, including Postgres buffers, Kafka memory, and operating process memory, remains included in the sustained memory budget.
 
-Init containers, administrative tools, observability services, and `kafka-ui` are excluded from the sustained budget. `kafka-ui` must remain disabled unless it is explicitly started with its Compose profile.
+Init containers, administrative tools, and `kafka-ui` are excluded from the sustained budget. `kafka-ui` must remain disabled unless it is explicitly started with its Compose profile.
 
 The load generator must run outside the measured runtime budget.
 
