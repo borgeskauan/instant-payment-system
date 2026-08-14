@@ -16,6 +16,8 @@ readonly KAFKA_PRODUCER_CONTAINER="kafka-producer"
 readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
+readonly GRAFANA_BASE_URL="${GRAFANA_BASE_URL:-http://localhost:3000}"
+readonly GRAFANA_DASHBOARD_PATH="/d/load-test/load-test"
 
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
@@ -65,30 +67,52 @@ iso_now() {
     date '+%Y-%m-%dT%H:%M:%S.%N%:z'
 }
 
+grafana_available() {
+    curl -fsS --max-time 2 "${GRAFANA_BASE_URL}/api/health" >/dev/null 2>&1
+}
+
+log_grafana_status() {
+    local grafana_available_at_run_start="$1"
+
+    log_phase "Grafana available at run start: ${grafana_available_at_run_start}"
+    if [[ "$grafana_available_at_run_start" != true ]]; then
+        log_phase "Grafana is offline; start observability with: cd ../infra && docker compose --profile observability up -d"
+        log_phase "Grafana URL after startup: ${GRAFANA_BASE_URL}"
+    fi
+}
+
 write_run_window_json() {
     local target_dir="$1"
     local run_started_at="$2"
     local loadtool_finished_at="$3"
+    local grafana_available_at_run_start="$4"
 
     python3 - \
         "$RUN_TAG" \
         "$target_dir" \
         "$run_started_at" \
         "$loadtool_finished_at" \
+        "$grafana_available_at_run_start" \
+        "$GRAFANA_BASE_URL" \
+        "$GRAFANA_DASHBOARD_PATH" \
         "$PROFILE_NAME" \
         "$PROFILE_SNAPSHOT_RELATIVE_PATH" \
         "$EXECUTION_PLAN_RELATIVE_PATH" <<'PY'
 import json
 import os
 import sys
+from urllib.parse import quote
 
 tag = sys.argv[1]
 target_dir = sys.argv[2]
 run_started_at = sys.argv[3]
 loadtool_finished_at = sys.argv[4]
-profile_name = sys.argv[5]
-profile_snapshot = sys.argv[6]
-execution_plan = sys.argv[7]
+grafana_available = sys.argv[5].lower() == "true"
+base_url = sys.argv[6]
+dashboard_path = sys.argv[7]
+profile_name = sys.argv[8]
+profile_snapshot = sys.argv[9]
+execution_plan = sys.argv[10]
 path = f"{target_dir}/run-window.json"
 
 with open(path, encoding="utf-8") as handle:
@@ -102,6 +126,9 @@ for field in ("generation_started_at", "active_started_at", "generation_ended_at
     if not isinstance(window.get(field), str) or not window[field]:
         raise SystemExit(f"simulator run-window.json is missing window.{field}")
 
+def dashboard_url(start, end):
+    return f"{base_url}{dashboard_path}?from={quote(start, safe='')}&to={quote(end, safe='')}"
+
 payload["tag"] = tag
 payload["result_dir"] = target_dir
 payload["profile"].update({"snapshot": profile_snapshot, "execution_plan": execution_plan})
@@ -114,6 +141,12 @@ payload["artifacts"] = {
 }
 window["run_started_at"] = run_started_at
 window["loadtool_finished_at"] = loadtool_finished_at
+payload["grafana"] = {
+    "available_at_run_start": grafana_available,
+    "base_url": base_url,
+    "full_run_url": dashboard_url(run_started_at, loadtool_finished_at),
+    "active_window_url": dashboard_url(window["active_started_at"], window["generation_ended_at"]),
+}
 
 temporary_path = path + ".tmp"
 with open(temporary_path, "w", encoding="utf-8") as handle:
@@ -121,6 +154,22 @@ with open(temporary_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 os.replace(temporary_path, path)
 PY
+}
+
+print_grafana_links() {
+    local target_dir="$1"
+    local -a urls
+    mapfile -t urls < <(python3 - "${target_dir}/run-window.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    grafana = json.load(handle)["grafana"]
+print(grafana["full_run_url"])
+print(grafana["active_window_url"])
+PY
+)
+    log_phase "Grafana full run: ${urls[0]}"
+    log_phase "Grafana active window: ${urls[1]}"
 }
 
 cleanup() {
@@ -647,7 +696,7 @@ main() {
     validate_profile_with_loadtool
 
     local timestamp target_dir
-    local run_started_at loadtool_finished_at
+    local run_started_at loadtool_finished_at grafana_available_at_run_start
     local loadtool_status diagnostics_status
     timestamp="$(date +%Y%m%d_%H%M%S)"
     target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
@@ -655,8 +704,14 @@ main() {
 
     prepare_run_workspace "$target_dir"
     prepare_loadtool_certificates "$target_dir"
+    if grafana_available; then
+        grafana_available_at_run_start=true
+    else
+        grafana_available_at_run_start=false
+    fi
 
     log_selected_options "$target_dir"
+    log_grafana_status "$grafana_available_at_run_start"
     run_preflight_checks
     prepare_environment "$target_dir"
     start_optional_diagnostics "$target_dir"
@@ -677,8 +732,9 @@ main() {
     if ((diagnostics_status != 0)); then
         return "$diagnostics_status"
     fi
-    write_run_window_json "$target_dir" "$run_started_at" "$loadtool_finished_at"
+    write_run_window_json "$target_dir" "$run_started_at" "$loadtool_finished_at" "$grafana_available_at_run_start"
     validate_sla_report "${target_dir}/sla-report.json"
+    print_grafana_links "$target_dir"
     log_phase "results written to ${target_dir}"
 }
 

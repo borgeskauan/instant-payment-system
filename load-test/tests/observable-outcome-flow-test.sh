@@ -21,7 +21,9 @@ validate_profile_with_loadtool() {
 }
 prepare_run_workspace() { :; }
 prepare_loadtool_certificates() { :; }
+grafana_available() { return 1; }
 log_selected_options() { :; }
+log_grafana_status() { :; }
 run_preflight_checks() { :; }
 prepare_environment() { echo prepare-environment >> "$FLOW_LOG"; }
 start_optional_diagnostics() { :; }
@@ -33,6 +35,7 @@ capture_and_assert_outbox_drained() {
 collect_optional_diagnostics() { echo diagnostics >> "$FLOW_LOG"; }
 write_run_window_json() { echo run-window >> "$FLOW_LOG"; }
 validate_sla_report() { echo validate-report >> "$FLOW_LOG"; }
+print_grafana_links() { :; }
 
 main observable-flow
 
