@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $(basename "$0") start <container> <recording-name> <container-jfr-file>"
+    echo "Usage: $(basename "$0") start <container> <recording-name> <container-jfr-file> [event-setting ...]"
     echo "       $(basename "$0") stop <container> <recording-name> <container-jfr-file> <host-output-file>"
 }
 
@@ -18,6 +18,8 @@ start_jfr() {
     local container="$1"
     local recording_name="$2"
     local container_file="$3"
+    shift 3
+    local -a event_settings=("$@")
 
     echo "Starting ${container} JFR recording at $(date --iso-8601=seconds)"
     run_jcmd "$container" JFR.stop name="$recording_name" || true
@@ -26,7 +28,8 @@ start_jfr() {
         name="$recording_name" \
         settings=profile \
         filename="$container_file" \
-        dumponexit=true
+        dumponexit=true \
+        "${event_settings[@]}"
 }
 
 stop_jfr() {
@@ -49,11 +52,11 @@ main() {
 
     case "$1" in
         start)
-            if [[ $# -ne 4 ]]; then
+            if [[ $# -lt 4 ]]; then
                 usage >&2
                 exit 2
             fi
-            start_jfr "$2" "$3" "$4"
+            start_jfr "$2" "$3" "$4" "${@:5}"
             ;;
         stop)
             if [[ $# -ne 5 ]]; then

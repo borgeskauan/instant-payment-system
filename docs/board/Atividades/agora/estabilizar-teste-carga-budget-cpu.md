@@ -152,6 +152,40 @@ front door e a reutilização/renovação de conexões antes de qualquer mudanç
 buckets ou PostgreSQL. A pressão de WAL fica registrada como possível segundo
 limite para reavaliação quando o ingresso conseguir admitir a carga contratada.
 
+### Evidência nativa de handshakes TLS
+
+Na revisão `d249142`, com apenas a instrumentação ainda não commitada desta
+task, o smoke `tls-handshake-smoke-2/20260815_143425` validou a compatibilidade
+do evento JFR nativo `jdk.TLSHandshake`: os outcomes e replays permaneceram
+corretos e o `kafka-producer` registrou 257 handshakes completos.
+
+O diagnóstico `tls-handshake-diagnostic/20260815_143609` repetiu o workload
+curto de 2.000 TPS e encontrou:
+
+- 6.717 handshakes TLS 1.3 completos no `kafka-producer`, todos com
+  `TLS_AES_128_GCM_SHA256`: 18 antes da geração, 990 no warmup, 4.550 na janela
+  ativa e 1.159 no drain;
+- os handshakes ativos ocorreram em ondas, não apenas na abertura inicial: houve
+  novas ondas entre os segundos 11–18 e 45–56 da janela ativa, além de ondas no
+  drain;
+- o ingresso permaneceu saturado durante essas renovações, com CPU média de
+  `101,47%`, máximo de `106,04%` e 45 de 48 amostras ativas em pelo menos
+  `95%`;
+- o load-tool iniciou 14.226 tentativas HTTP entre `pacs.008`, `pacs.002` e
+  replays. Somente 1.243 receberam 2xx e 12.983 terminaram sem status;
+- na janela ativa foram iniciados 6.903 pagamentos originais, com mínimo rolling
+  de zero e máximo de 642 pagamentos/s. O SPI continuou muito abaixo do piso
+  contratado, portanto o run é somente diagnóstico.
+
+O evento nativo informa a conclusão e o instante do handshake, mas nesta JVM
+reporta duração zero; ele não explica sozinho por que cada conexão foi criada ou
+encerrada. Ainda assim, a quantidade e a recorrência tardia das ondas descartam
+a hipótese de que o custo X25519 observado estivesse limitado ao estabelecimento
+inicial das conexões. A próxima comparação deve alterar uma única variável do
+ciclo de vida/reutilização das conexões HTTP e repetir o mesmo diagnóstico. Não
+há autorização, nesta evidência, para mudar buckets, PostgreSQL, protocolo TLS
+ou timeout simultaneamente.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Preservar a reutilização atual de conexões HTTP persistentes entre PSP e

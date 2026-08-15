@@ -6,7 +6,30 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-mkdir -p "$tmp_dir/scripts" "$tmp_dir/results"
+mkdir -p "$tmp_dir/bin" "$tmp_dir/scripts" "$tmp_dir/results"
+
+export DOCKER_COMMAND_LOG="$tmp_dir/docker-commands.log"
+cat > "$tmp_dir/bin/docker" <<'SH'
+#!/bin/bash
+set -euo pipefail
+echo "$*" >> "$DOCKER_COMMAND_LOG"
+SH
+chmod +x "$tmp_dir/bin/docker"
+
+if ! PATH="$tmp_dir/bin:$PATH" \
+    bash "$ROOT_DIR/scripts/container-jfr.sh" \
+        start kafka-producer test /tmp/test.jfr \
+        'jdk.TLSHandshake#enabled=true'; then
+    echo "container JFR helper rejected an event-setting override" >&2
+    exit 1
+fi
+
+expected_start='exec kafka-producer jcmd 1 JFR.start name=test settings=profile filename=/tmp/test.jfr dumponexit=true jdk.TLSHandshake#enabled=true'
+if [[ "$(tail -n 1 "$DOCKER_COMMAND_LOG")" != "$expected_start" ]]; then
+    echo "container JFR helper did not forward the event-setting override" >&2
+    exit 1
+fi
+
 cat > "$tmp_dir/scripts/container-jfr.sh" <<'SH'
 #!/bin/bash
 set -euo pipefail
@@ -35,7 +58,7 @@ fi
 
 expected="$tmp_dir/expected.log"
 cat > "$expected" <<EOF
-start kafka-producer kafka-producer-load-test /tmp/kafka-producer-load-test.jfr
+start kafka-producer kafka-producer-load-test /tmp/kafka-producer-load-test.jfr jdk.TLSHandshake#enabled=true
 start spi spi-load-test /tmp/spi-load-test.jfr
 start notification-gateway notification-gateway-load-test /tmp/notification-gateway-load-test.jfr
 stop kafka-producer kafka-producer-load-test /tmp/kafka-producer-load-test.jfr $tmp_dir/results/diagnostics/jfr/kafka-producer.jfr

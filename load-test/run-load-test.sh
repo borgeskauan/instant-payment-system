@@ -564,9 +564,13 @@ start_container_jfr() {
     local recording_name="$2"
     local container_file="$3"
     local log_file="$4"
+    shift 4
+    local -a event_settings=("$@")
 
     log_phase "starting ${container} JFR recording"
-    "${SCRIPTS_DIR}/container-jfr.sh" start "$container" "$recording_name" "$container_file" > "$log_file" 2>&1
+    "${SCRIPTS_DIR}/container-jfr.sh" \
+        start "$container" "$recording_name" "$container_file" \
+        "${event_settings[@]}" > "$log_file" 2>&1
 }
 
 stop_container_jfr() {
@@ -587,7 +591,12 @@ start_jfr_recordings() {
     JFR_TARGET_DIR="$target_dir"
     JFR_ACTIVE=true
 
-    start_container_jfr "$KAFKA_PRODUCER_CONTAINER" "kafka-producer-load-test" "/tmp/kafka-producer-load-test.jfr" "${target_dir}/logs/jfr/kafka-producer.log"
+    start_container_jfr \
+        "$KAFKA_PRODUCER_CONTAINER" \
+        "kafka-producer-load-test" \
+        "/tmp/kafka-producer-load-test.jfr" \
+        "${target_dir}/logs/jfr/kafka-producer.log" \
+        'jdk.TLSHandshake#enabled=true'
     start_container_jfr "$SPI_CONTAINER" "spi-load-test" "/tmp/spi-load-test.jfr" "${target_dir}/logs/jfr/spi.log"
     start_container_jfr "$NOTIFICATION_GATEWAY_CONTAINER" "notification-gateway-load-test" "/tmp/notification-gateway-load-test.jfr" "${target_dir}/logs/jfr/notification-gateway.log"
 }
