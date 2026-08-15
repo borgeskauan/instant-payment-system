@@ -2,6 +2,7 @@ package report
 
 import (
 	"testing"
+	"time"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
@@ -21,7 +22,12 @@ func TestMixedOutcomesCharacterizesOneLogicalFinalResultPerPayment(t *testing.T)
 		{EndToEndID: "insufficient", ISPB: "10000041", EventType: events.EventPacs002Received, StatusCode: "RJCT", ReasonCodes: []string{"AM04"}, ReceivedAtNS: 4_000_000},
 	}
 
-	summary := mustBuildSummary(t, starts, notifications, Options{Scenarios: scenarios})
+	summary := mustBuildSummary(t, starts, notifications, Options{
+		TargetTxRate:   2,
+		Duration:       time.Second,
+		SLAThresholdMs: 1_000,
+		Scenarios:      scenarios,
+	})
 
 	if len(summary.Scenarios) != 2 {
 		t.Fatalf("scenarios = %#v, want two", summary.Scenarios)

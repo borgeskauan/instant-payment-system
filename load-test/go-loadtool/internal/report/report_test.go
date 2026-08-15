@@ -175,7 +175,7 @@ func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
 	if summary.Performance.ActiveTPS.Payments != 0.2 {
 		t.Fatalf("active original rate = %f, want 0.2", summary.Performance.ActiveTPS.Payments)
 	}
-	if summary.Generation.Expected != 5 || summary.Generation.Started != 1 || summary.Generation.Violations == 0 || summary.Valid {
+	if summary.Generation.TargetTPS != 1 || summary.Generation.Started != 1 || summary.Generation.AverageTPS != 0.2 || summary.Generation.MinimumObservedTPS != 0 || summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 1 || summary.Valid {
 		t.Fatalf("load generation = %#v", summary.Generation)
 	}
 }
@@ -294,8 +294,8 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 		Duration:       2 * time.Second,
 	})
 
-	if summary.Generation.ActualTPS != 1.5 {
-		t.Fatalf("Started throughput = %f, want 1.5", summary.Generation.ActualTPS)
+	if summary.Generation.AverageTPS != 1.5 {
+		t.Fatalf("Started throughput = %f, want 1.5", summary.Generation.AverageTPS)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestSummaryIncludesOnlyReportRelevantConfiguration(t *testing.T) {
 		Duration:       180 * time.Second,
 	})
 
-	if summary.Generation.TargetTPS != 2000 || summary.Generation.Expected != 360_000 {
+	if summary.Generation.TargetTPS != 2000 || summary.Generation.RollingWindowSeconds != 1 {
 		t.Fatalf("Generation = %#v", summary.Generation)
 	}
 	if summary.Performance.ThresholdMs != 1000 {

@@ -6,7 +6,7 @@ This document defines the performance target used by the local Pix/SPI stack loa
 
 The measured flow starts when the PSP simulator creates a transaction request and ends when the PSP simulator receives the final confirmation notification.
 
-The contractual rate counts original payment submissions, independent of their expected business outcome. Expected business-rule rejections are reported separately from happy-path outcomes and from technical failures.
+The contractual rate counts original payment submissions, independent of their expected business outcome. The configured rate is a sustained minimum: every continuous one-second window fully contained in the active period must contain at least that many original HTTP attempts. Expected business-rule rejections are reported separately from happy-path outcomes and from technical failures.
 
 The active runtime stack is:
 
@@ -31,7 +31,7 @@ Warmup traffic may be generated before the active test window. Warmup is used on
 
 ## Targets
 
-| Target | Active duration | Original payment rate | Latency target |
+| Target | Active duration | Minimum original payment rate | Latency target |
 | ------ | --------------: | --------------------: | -------------- |
 | Contractual | 15 minutes | 2000/s | p99 below 4.6s |
 | Internal engineering | 15 minutes | 2000/s | p99 below 1s |
@@ -39,6 +39,8 @@ Warmup traffic may be generated before the active test window. Warmup is used on
 Additional notes:
 
 * The internal engineering target is stricter than the contractual target. It is the acceptance bar for saying the stack has enough operational margin for the contractual SLA.
+* Throughput is reconstructed after the run from `RequestStartedAtNS` and evaluated over every rolling one-second window inside the active period. Average throughput and total submissions are diagnostic only.
+* Catch-up and peaks above the configured rate are permitted, but they never compensate for an earlier rolling window below the minimum.
 * Error/loss tolerance is zero for both targets: no technical failures, application errors, lost transactions, contradictory final outcomes, or inconclusive transactions.
 * Every original payment must receive at least one compatible final payer notification. Repeated compatible deliveries represent the same logical outcome under the at-least-once delivery contract.
 * Runtime health requirements are the same for both targets: no container restart, OOM kill, swap usage, or unbounded Kafka/internal backlog growth.
@@ -47,7 +49,7 @@ Additional notes:
 
 ## Recommended Validation Sequence
 
-1. Run warmup traffic at 2000 TPS.
+1. Run the configured warmup traffic after the environment is ready.
 2. Start the active measured window only after warmup is complete.
 3. Run `mixed-outcomes-2k-15m` as the official 2000 original-payments/s / 15 minute test, with configured replays measured as additional load.
 4. Repeat the official test without recreating the stack.
@@ -55,6 +57,6 @@ Additional notes:
 
 ## Pass/Fail Summary
 
-The stack passes the performance target only if it satisfies all contractual and internal engineering targets during the official test run.
+The stack passes the performance target only if every rolling one-second window sustains the configured minimum and all contractual and internal engineering latency/correctness targets hold during the official test run.
 
 The exploratory 2500 TPS run is a capacity-margin signal only. It must not redefine the contractual target or mask a failure at the official 2000 TPS target.

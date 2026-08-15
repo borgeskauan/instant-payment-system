@@ -2,8 +2,9 @@
 
 ## Por que existe
 
-O sistema precisa sustentar 2.000 pagamentos originais por segundo durante 15
-minutos dentro de um budget fixo de aproximadamente 3 vCPUs por stack. Os
+O sistema precisa sustentar pelo menos 2.000 pagamentos originais em qualquer
+janela contínua de um segundo durante os 15 minutos ativos, dentro de um budget
+fixo de aproximadamente 3 vCPUs por stack. Os
 replays configurados fazem parte do ambiente instável prometido, mas são carga
 adicional e não substituem os pagamentos originais.
 
@@ -23,9 +24,11 @@ duas stacks compartilhando o mesmo PostgreSQL.
   exercitado, preservando inclusive a implementação atual de buckets e replay.
 - Fixar workload, código, ambiente, limites de recursos e configuração durante
   cada comparação.
-- Distinguir correção funcional de capacidade: status ou motivo contraditório
-  invalida o experimento; não alcançar TPS ou latência alvo é um resultado
-  válido do diagnóstico, mesmo que o runner retorne erro e `valid: false`.
+- Distinguir execução técnica de aprovação: o runner e o relatório devem concluir
+  para preservar evidências, enquanto throughput rolling, p99 ou correção fora
+  do contrato tornam `valid: false`.
+- Tratar média e total como diagnóstico. Catch-up e picos não compensam nenhuma
+  rolling window de um segundo abaixo do piso.
 - Não fazer tuning ou refatoração sem uma hipótese sustentada pelas medições.
 - Alterar uma variável relevante por vez e repetir o mesmo benchmark.
 - Manter uma intervenção somente quando houver melhora mensurável, sem regressão
@@ -37,7 +40,8 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
-- Meta: 2.000 pagamentos originais/s durante os 15 minutos ativos.
+- Meta: pelo menos 2.000 pagamentos originais iniciados em toda rolling window
+  de um segundo integralmente contida nos 15 minutos ativos.
 - Replays: 5% de `pacs.008` e 5% de `pacs.002`, sempre como carga adicional.
 - Mix funcional: 80% happy-path (`ACSC`) e 20% insufficient-funds
   (`RJCT/AM04`), preservando a distribuição hot-pair.
@@ -58,8 +62,13 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - [ ] Rodar `mixed-outcomes-2k-15m` sem alterar a implementação atual.
 - [ ] Preservar os artefatos mesmo quando a geração, throughput ou SLA não
   atingirem a meta.
-- [ ] Registrar pagamentos originais/s, carga adicional de replay, p50, p95,
-  p99, max, Kafka lag, CPU, memória e duração do drain.
+- [ ] Registrar média, mínimo e máximo rolling de pagamentos originais/s, carga
+  adicional de replay, p50, p95, p99, max, Kafka lag, CPU, memória e duração do
+  drain.
+- [x] Descartar `baseline-buckets/20260814_023552` como baseline comparável: o
+  scheduler aplicou a taxa ativa a um cursor atrasado do warmup. A análise
+  posterior encontrou média `2.113,898`, mínimo rolling `0` e máximo rolling
+  `10.563` pagamentos/s, portanto picos mascaravam períodos sem carga.
 - [ ] Registrar PostgreSQL CPU, I/O, conexões, locks, waits e query latency.
 - [ ] Repetir o baseline antes de qualquer intervenção se houver indício de
   ruído, interferência externa ou resultado atípico.
@@ -108,8 +117,8 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - [ ] Definir memória alvo por serviço junto com CPU para evitar OOM ou swap.
 - [ ] Ajustar concorrência de consumers/producers apenas quando a comparação
   demonstrar benefício dentro do budget final.
-- [ ] Sustentar 2.000 pagamentos originais/s dentro do SLA com os outcomes e
-  replays corretos.
+- [ ] Sustentar o piso de 2.000 pagamentos originais em toda rolling window de
+  um segundo, dentro do SLA e com outcomes/replays corretos.
 - [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência
   de degradação progressiva e ambiente quiescente ao final segundo as heurísticas
   observáveis atuais.
@@ -140,8 +149,9 @@ estável dentro do budget.
 - o gargalo inicial e cada deslocamento posterior estão sustentados por
   evidências, não por suposição;
 - alterações mantidas possuem comparação antes/depois sob o mesmo experimento;
-- o workload oficial sustenta 2.000 pagamentos originais/s, mais replays, com
-  correção funcional e dentro do budget/SLA final;
+- o workload oficial sustenta o piso de 2.000 pagamentos originais em toda
+  rolling window de um segundo, mais replays, com correção funcional e dentro
+  do budget/SLA final;
 - runs repetidos não apresentam degradação progressiva;
 - o perfil final de CPU e memória está documentado para Kubernetes;
 - o impacto de duas stacks com PostgreSQL compartilhado está medido e

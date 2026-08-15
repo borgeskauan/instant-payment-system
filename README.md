@@ -54,6 +54,15 @@ docker compose -f infra/docker-compose.yml down
 
 O comando não remove volumes.
 
+Para recriar o ambiente do zero, removendo também os volumes:
+
+```bash
+docker compose -f infra/docker-compose.yml down -v --remove-orphans
+```
+
+Esse comando apaga permanentemente os dados persistidos do PostgreSQL e Kafka.
+As imagens Docker são preservadas.
+
 ## Fluxo manual com PSPs
 
 Para exercitar o fluxo manualmente com dois PSPs simulados, consulte a

@@ -399,8 +399,7 @@ func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, plann
 		if !canStartOriginal(now, window.GenerationEndedAt) {
 			return
 		}
-		elapsed := now.Sub(start)
-		rate := loadRateForElapsed(elapsed, s.cfg.Warmup, s.cfg.TargetTxRate)
+		rate := loadRateForScheduledTime(next, start, s.cfg.Warmup, s.cfg.TargetTxRate)
 		next = next.Add(time.Second / time.Duration(rate))
 
 		job := s.transferJobForSequence(seq, planner.Next())
@@ -455,6 +454,10 @@ func loadRateForElapsed(elapsed time.Duration, warmup time.Duration, targetRate 
 		return targetRate
 	}
 	return warmupRate(targetRate)
+}
+
+func loadRateForScheduledTime(scheduledAt, generationStart time.Time, warmup time.Duration, targetRate int) int {
+	return loadRateForElapsed(scheduledAt.Sub(generationStart), warmup, targetRate)
 }
 
 func warmupRate(targetRate int) int {

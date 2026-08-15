@@ -43,6 +43,35 @@ func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
 	}
 }
 
+func TestLoadRateUsesScheduledCursorWhenGeneratorIsBehind(t *testing.T) {
+	start := time.Unix(100, 0)
+	scheduledAt := start.Add(10 * time.Second)
+
+	if got := loadRateForScheduledTime(scheduledAt, start, time.Minute, 2_000); got != 1_000 {
+		t.Fatalf("load rate for delayed warmup cursor = %d, want 1000", got)
+	}
+}
+
+func TestDelayedCursorDoesNotCreateAdditionalScheduledTransfers(t *testing.T) {
+	start := time.Unix(100, 0)
+	next := start.Add(time.Second)
+	end := start.Add(4 * time.Second)
+	generated := 0
+
+	for next.Before(end) {
+		rate := loadRateForScheduledTime(next, start, 2*time.Second, 4)
+		next = next.Add(time.Second / time.Duration(rate))
+		generated++
+	}
+
+	// The delayed cursor has two remaining warmup positions at 2/s followed
+	// by eight active positions at 4/s. Applying the active rate
+	// retroactively would incorrectly produce twelve positions.
+	if generated != 10 {
+		t.Fatalf("scheduled transfers after delay = %d, want 10", generated)
+	}
+}
+
 func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run")
 	err := Run(Config{

@@ -45,7 +45,7 @@ func TestSummaryUsesScenarioCenteredContract(t *testing.T) {
 	if !summary.Valid {
 		t.Fatalf("Valid = false, summary=%#v", summary)
 	}
-	if summary.Generation.TargetTPS != 2 || summary.Generation.Expected != 2 || summary.Generation.Started != 2 || summary.Generation.ActualTPS != 2 {
+	if summary.Generation.TargetTPS != 2 || summary.Generation.RollingWindowSeconds != 1 || summary.Generation.Started != 2 || summary.Generation.AverageTPS != 2 || summary.Generation.MinimumObservedTPS != 2 || summary.Generation.MaximumObservedTPS != 2 || !summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 0 {
 		t.Fatalf("generation = %#v", summary.Generation)
 	}
 	if len(summary.Scenarios) != 2 {
@@ -86,6 +86,29 @@ func TestSummaryJSONOmitsRemovedAggregateBlocks(t *testing.T) {
 		if _, exists := document[key]; exists {
 			t.Fatalf("removed report key %q is present in %s", key, encoded)
 		}
+	}
+
+	var generation map[string]json.RawMessage
+	if err := json.Unmarshal(document["generation"], &generation); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"target_tps", "rolling_window_seconds", "started", "average_tps", "minimum_observed_tps", "maximum_observed_tps", "sustained_minimum_met", "outside_window"} {
+		if _, exists := generation[key]; !exists {
+			t.Fatalf("generation key %q is absent from %s", key, document["generation"])
+		}
+	}
+	for _, key := range []string{"expected", "actual_tps", "intervals_below_target", "violations"} {
+		if _, exists := generation[key]; exists {
+			t.Fatalf("removed generation key %q is present in %s", key, document["generation"])
+		}
+	}
+
+	var performance map[string]json.RawMessage
+	if err := json.Unmarshal(document["performance"], &performance); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := performance["within_sla"]; !exists {
+		t.Fatalf("performance.within_sla is absent from %s", document["performance"])
 	}
 }
 
@@ -144,7 +167,7 @@ func TestSummaryRoundsPublishedMetricsToThreeDecimalPlaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Generation.ActualTPS != 0.333 || summary.Performance.LatencyMs.P50 != 1.235 || summary.Scenarios[0].Performance.LatencyMs.P50 != 1.235 {
+	if summary.Generation.AverageTPS != 0.333 || summary.Performance.LatencyMs.P50 != 1.235 || summary.Scenarios[0].Performance.LatencyMs.P50 != 1.235 {
 		t.Fatalf("rounded metrics = generation:%#v performance:%#v scenario:%#v", summary.Generation, summary.Performance, summary.Scenarios[0].Performance)
 	}
 }

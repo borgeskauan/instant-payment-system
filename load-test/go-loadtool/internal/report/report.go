@@ -27,11 +27,14 @@ type ReplaySummary struct {
 }
 
 type GenerationSummary struct {
-	TargetTPS  int     `json:"target_tps"`
-	Expected   int     `json:"expected"`
-	Started    int     `json:"started"`
-	ActualTPS  float64 `json:"actual_tps"`
-	Violations int     `json:"violations"`
+	TargetTPS            int     `json:"target_tps"`
+	Started              int     `json:"started"`
+	RollingWindowSeconds int     `json:"rolling_window_seconds"`
+	AverageTPS           float64 `json:"average_tps"`
+	MinimumObservedTPS   int     `json:"minimum_observed_tps"`
+	MaximumObservedTPS   int     `json:"maximum_observed_tps"`
+	SustainedMinimumMet  bool    `json:"sustained_minimum_met"`
+	OutsideWindow        int     `json:"outside_window"`
 }
 
 type ReplayTypeSummary struct {
@@ -79,6 +82,7 @@ type ScenarioPerformanceSummary struct {
 
 type PerformanceSummary struct {
 	ThresholdMs                   int64            `json:"threshold_ms"`
+	WithinSLA                     bool             `json:"within_sla"`
 	ActiveTPS                     ActiveTPSSummary `json:"active_tps"`
 	PayerNotificationsAfterActive int              `json:"payer_notifications_after_active"`
 	LatencyMs                     LatencySummary   `json:"latency_ms"`
@@ -123,7 +127,7 @@ func Build(starts []events.Start, notifications []events.Notification, statusSta
 	if err := validateWindow(options.Window); err != nil {
 		return Summary{}, err
 	}
-	summary.Generation.TargetTPS = options.TargetTxRate
+	summary.Generation = summarizeGeneration(starts, options)
 	summary.Performance.ThresholdMs = options.SLAThresholdMs
 	summary.Scenarios = make([]ScenarioSummary, len(scenarios))
 	scenarioIndexes := make(map[string]int, len(scenarios))
@@ -153,24 +157,12 @@ func Build(starts []events.Start, notifications []events.Notification, statusSta
 	measuredStatuses := measuredWindowStatusStarts(statusStarts, options.Window)
 	summary.Replays.Pacs008 = summarizePacs008Replays(starts, replays, options.Replay.Pacs008, options.Window)
 	summary.Replays.Pacs002 = summarizePacs002Replays(statusStarts, replays, options.Replay.Pacs002, options.Window)
-	summary.Generation.Started = len(measuredStarts)
 	if options.Duration > 0 {
 		durationSeconds := options.Duration.Seconds()
-		summary.Generation.ActualTPS = roundMetric(float64(len(measuredStarts)) / durationSeconds)
-		summary.Performance.ActiveTPS.Payments = summary.Generation.ActualTPS
+		summary.Performance.ActiveTPS.Payments = summary.Generation.AverageTPS
 		summary.Performance.ActiveTPS.Pacs002 = roundMetric(float64(len(measuredStatuses)) / durationSeconds)
 		summary.Performance.ActiveTPS.Pacs008Replays = roundMetric(float64(len(measuredPacs008Replays)) / durationSeconds)
 		summary.Performance.ActiveTPS.Pacs002Replays = roundMetric(float64(len(measuredPacs002Replays)) / durationSeconds)
-		if options.TargetTxRate > 0 {
-			summary.Generation.Expected = int(float64(options.TargetTxRate) * durationSeconds)
-			summary.Generation.Violations = absoluteDifference(summary.Generation.Expected, summary.Generation.Started)
-		}
-	}
-	for _, start := range starts {
-		startedAt := requestStartedAt(start)
-		if startedAt < options.Window.GenerationStartedAt.UnixNano() || startedAt >= options.Window.GenerationEndedAt.UnixNano() {
-			summary.Generation.Violations++
-		}
 	}
 
 	payerNotifications := collectPayerNotifications(notifications)
@@ -262,14 +254,17 @@ func Build(starts []events.Start, notifications []events.Notification, statusSta
 
 	sort.Float64s(durations)
 	summary.Performance.LatencyMs = summarizeLatency(durations)
+	summary.Performance.WithinSLA = len(durations) > 0 && summary.Performance.LatencyMs.P99 <= float64(options.SLAThresholdMs)
 	for index := range summary.Scenarios {
 		sort.Float64s(scenarioDurations[index])
 		summary.Scenarios[index].Performance.LatencyMs = summarizeLatency(scenarioDurations[index])
 	}
-	summary.Valid = summary.Generation.Violations == 0 &&
+	summary.Valid = summary.Generation.SustainedMinimumMet &&
+		summary.Generation.OutsideWindow == 0 &&
 		summary.Replays.Pacs008.Violations == 0 &&
 		summary.Replays.Pacs002.Violations == 0 &&
-		scenariosAreValid(summary.Scenarios)
+		scenariosAreValid(summary.Scenarios) &&
+		summary.Performance.WithinSLA
 	return summary, nil
 }
 
@@ -473,13 +468,6 @@ func validateWindow(window runwindow.Window) error {
 		return fmt.Errorf("report requires a valid authoritative run window")
 	}
 	return nil
-}
-
-func absoluteDifference(left, right int) int {
-	if left > right {
-		return left - right
-	}
-	return right - left
 }
 
 func requestStartedAt(start events.Start) int64 {

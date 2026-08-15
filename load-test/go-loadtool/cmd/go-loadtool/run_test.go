@@ -214,14 +214,14 @@ func TestExecuteRunUsesRealReportRendererWithCompletedArtifacts(t *testing.T) {
 	var document struct {
 		Valid      bool `json:"valid"`
 		Generation struct {
-			TargetTPS  int `json:"target_tps"`
-			Violations int `json:"violations"`
+			TargetTPS           int  `json:"target_tps"`
+			SustainedMinimumMet bool `json:"sustained_minimum_met"`
 		} `json:"generation"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("report is not valid JSON: %v", err)
 	}
-	if document.Valid || document.Generation.TargetTPS != 321 || document.Generation.Violations == 0 {
+	if document.Valid || document.Generation.TargetTPS != 321 || document.Generation.SustainedMinimumMet {
 		t.Fatalf("report document = %#v", document)
 	}
 }
