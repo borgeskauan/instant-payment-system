@@ -75,11 +75,30 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 ## Fase 2 — Diagnóstico e decisão
 
-- [ ] Identificar o primeiro serviço, recurso ou estágio que satura quando o
+### Experimento diagnóstico atual
+
+Usar `mixed-outcomes-2k-diagnostic` para reproduzir o atraso do ingresso
+PACS.008 sem repetir o run de 15 minutos: 2.000 TPS, 15 segundos de warmup, 60
+segundos ativos e 30 segundos de drain. Mix, participantes, funding e replays de
+5% permanecem idênticos a `mixed-outcomes-2k-15m`.
+
+Executar com `--jfr --spi-trace --postgres-statements`. Além dos artefatos já
+existentes, o bundle inclui:
+
+- `diagnostics/postgres-activity.csv`, com waits e bloqueadores a cada 250 ms;
+- `diagnostics/postgres-io.csv`, com snapshots antes/depois;
+- `diagnostics/postgres-statements.csv`, com tempos de I/O por query;
+- `diagnostics/container-stats.csv`, com CPU, memória e I/O a cada segundo.
+
+O objetivo desta execução é classificar a limitação do ingresso como CPU, I/O,
+lock, conexão ou combinação desses fatores. O run é diagnóstico, pode resultar
+em `valid: false` e não autoriza tuning nem mudança dos buckets por si só.
+
+- [x] Identificar o primeiro serviço, recurso ou estágio que satura quando o
   budget é respeitado.
-- [ ] Correlacionar a saturação com perda de geração, crescimento de lag,
+- [x] Correlacionar a saturação com perda de geração, crescimento de lag,
   aumento de latência ou drain prolongado.
-- [ ] Separar custo de ingresso HTTP, produção/consumo Kafka, processamento no
+- [x] Separar custo de ingresso HTTP, produção/consumo Kafka, processamento no
   SPI, PostgreSQL, outbox, claim, lease e dispatch do notification-gateway.
 - [ ] Para a hipótese de buckets, medir locks e waits em
   `funds_bucket_entity`, duração das transações de `pacs.002`, custo de bloquear
@@ -94,6 +113,44 @@ duas stacks compartilhando o mesmo PostgreSQL.
   repetir o diagnóstico sem antecipar uma solução.
 - [ ] Registrar para cada intervenção a hipótese, evidência anterior, mudança,
   resultado posterior e decisão de manter ou descartar.
+
+### Resultado do primeiro diagnóstico curto
+
+O smoke funcional final
+`postgres-diagnostics-smoke-final-2/20260815_135645` preservou os 1.250
+pagamentos esperados, outcomes e replays sem violações funcionais. Em seguida,
+o run `postgres-ingress-diagnostic/20260815_135825`, na revisão `60a0345` mais a
+instrumentação ainda não commitada desta task, encontrou o limite antes do
+processamento financeiro:
+
+- o `kafka-producer`, front door HTTPS/mTLS, usou em média `99,86%` de um core
+  na janela ativa; 44 de 47 amostras ficaram em pelo menos `95%`;
+- foram iniciados 6.662 pagamentos originais na janela ativa. O cliente recebeu
+  1.222 respostas HTTP 200 no run inteiro e 7.116 tentativas terminaram sem
+  status; 6.754 delas chegaram ao timeout de 5–5,5 segundos;
+- o perfil JFR do front door foi dominado por operações criptográficas de
+  X25519/TLS. Isso sustenta como próxima hipótese o custo e o ciclo de vida das
+  conexões mTLS sob concorrência; ainda não constitui autorização para mudar
+  TLS, pooling ou timeout;
+- o PostgreSQL também mostrou pressão, com `76,82%` de CPU média durante o
+  ativo, mas sem bloqueadores, deadlocks, arquivos temporários ou leituras de
+  disco no intervalo. Das sessões ativas observadas, `63,7%` aguardavam WAL
+  (`WALWrite`, `WalSync` ou `WalWrite`) e `33,45%` estavam executando em CPU;
+- Kafka, SPI e notification-gateway ficaram respectivamente em `29,50%`,
+  `23,88%` e `15,91%` de CPU média no ativo. O lag observado após o drain era
+  zero; portanto esses estágios processaram a carga admitida, mas ainda não
+  foram exercitados a 2.000 pagamentos/s;
+- no trace amostrado do SPI, `request_consumed -> request_saved` teve p95 de
+  `198 ms` e `status_received -> settlement_completed` p95 de `302 ms`. Esses
+  números são diagnóstico da carga admitida, não capacidade comprovada.
+
+Conclusão atual: o primeiro gargalo observado é a saturação de CPU do ingresso
+HTTPS/mTLS. O bloqueio dos requests prende os workers do gerador; isso não prova
+um limite autônomo do load-tool. Como registros que já deram timeout no cliente
+continuam podendo chegar ao Kafka, o próximo experimento deve caracterizar o
+front door e a reutilização/renovação de conexões antes de qualquer mudança em
+buckets ou PostgreSQL. A pressão de WAL fica registrada como possível segundo
+limite para reavaliação quando o ingresso conseguir admitir a carga contratada.
 
 ## Hipóteses já conhecidas, não assumidas
 

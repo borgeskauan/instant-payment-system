@@ -62,7 +62,7 @@ run_loadtool() {
     local target_dir="$1"
     printf '%s\n' run >> "$RUNNER_FLOW_LOG"
     case "$RUNNER_TEST_MODE" in
-        valid)
+        valid|diagnostics-failure)
             printf '%s\n' '{"valid":true}' > "${target_dir}/sla-report.json"
             ;;
         violation)
@@ -79,7 +79,7 @@ run_loadtool() {
 
 collect_optional_diagnostics() {
     printf '%s\n' diagnostics >> "$RUNNER_FLOW_LOG"
-    if [[ "$RUNNER_TEST_MODE" == go-failure ]]; then
+    if [[ "$RUNNER_TEST_MODE" == go-failure || "$RUNNER_TEST_MODE" == diagnostics-failure ]]; then
         return 19
     fi
 }
@@ -128,6 +128,21 @@ run
 diagnostics
 EOF
 diff -u "$tmp_dir/go-failure.expected" "$tmp_dir/go-failure.flow"
+
+set +e
+run_driver diagnostics-failure >"$tmp_dir/diagnostics-failure.log" 2>&1
+diagnostics_failure_status=$?
+set -e
+if [[ "$diagnostics_failure_status" -ne 19 ]]; then
+    echo "runner returned $diagnostics_failure_status, want diagnostic exit code 19" >&2
+    exit 1
+fi
+cat > "$tmp_dir/diagnostics-failure.expected" <<'EOF'
+prepare-environment
+run
+diagnostics
+EOF
+diff -u "$tmp_dir/diagnostics-failure.expected" "$tmp_dir/diagnostics-failure.flow"
 
 set +e
 run_driver preparation-failure >"$tmp_dir/preparation-failure.log" 2>&1

@@ -16,6 +16,11 @@ readonly KAFKA_PRODUCER_CONTAINER="kafka-producer"
 readonly NOTIFICATION_GATEWAY_CONTAINER="notification-gateway"
 readonly POSTGRES_STATEMENTS_FILE="postgres-statements.csv"
 readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
+readonly POSTGRES_ACTIVITY_FILE="postgres-activity.csv"
+readonly POSTGRES_IO_FILE="postgres-io.csv"
+readonly POSTGRES_RUNTIME_LOG="postgres-runtime.log"
+readonly CONTAINER_STATS_FILE="container-stats.csv"
+readonly CONTAINER_STATS_LOG="container-stats.log"
 
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
@@ -39,6 +44,8 @@ ENABLE_POSTGRES_STATEMENTS=false
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
+POSTGRES_ACTIVITY_PID=""
+CONTAINER_STATS_PID=""
 JFR_TARGET_DIR=""
 POSTGRES_STATEMENTS_TARGET_DIR=""
 LOADTOOL_BUILD_DIR=""
@@ -125,6 +132,12 @@ PY
 
 cleanup() {
     trap - EXIT INT TERM
+    if [[ -n "$POSTGRES_ACTIVITY_PID" ]]; then
+        stop_postgres_activity_sampler "$POSTGRES_STATEMENTS_TARGET_DIR" || true
+    fi
+    if [[ -n "$CONTAINER_STATS_PID" ]]; then
+        stop_container_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
+    fi
     if [[ "$SPI_TRACE_ACTIVE" == true ]]; then
         stop_spi_trace "" || true
     fi
@@ -350,12 +363,20 @@ copy_spi_trace() {
 enable_postgres_statement_stats() {
     local target_dir="$1"
     local log_file="${target_dir}/logs/${POSTGRES_STATEMENTS_LOG}"
+    local status
 
     log_phase "enabling Postgres statement stats"
-    {
+    if {
         echo "Enabling Postgres statement stats at $(date --iso-8601=seconds)"
         "${SCRIPTS_DIR}/postgres-statements.sh" enable-and-reset
-    } > "$log_file" 2>&1
+    } > "$log_file" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    if ((status != 0)); then
+        return "$status"
+    fi
     POSTGRES_STATEMENTS_ACTIVE=true
     POSTGRES_STATEMENTS_TARGET_DIR="$target_dir"
 }
@@ -364,14 +385,19 @@ capture_postgres_statement_stats() {
     local target_dir="$1"
     local output_file="${target_dir}/diagnostics/${POSTGRES_STATEMENTS_FILE}"
     local log_file="${target_dir}/logs/${POSTGRES_STATEMENTS_LOG}"
+    local status=0
 
     log_phase "capturing Postgres statement stats"
     mkdir -p "$target_dir/diagnostics"
     {
         echo "Capturing Postgres statement stats at $(date --iso-8601=seconds)"
-        "${SCRIPTS_DIR}/postgres-statements.sh" snapshot "$output_file"
-        echo "Postgres statement stats saved to ${output_file}"
+        if "${SCRIPTS_DIR}/postgres-statements.sh" snapshot "$output_file"; then
+            echo "Postgres statement stats saved to ${output_file}"
+        else
+            status=$?
+        fi
     } >> "$log_file" 2>&1
+    return "$status"
 }
 
 disable_postgres_statement_stats() {
@@ -382,11 +408,155 @@ disable_postgres_statement_stats() {
     fi
 
     log_phase "disabling Postgres statement stats"
-    {
+    local status=0
+    if {
         echo "Disabling Postgres statement stats at $(date --iso-8601=seconds)"
         "${SCRIPTS_DIR}/postgres-statements.sh" disable
-    } >> "$log_file" 2>&1
+    } >> "$log_file" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
     POSTGRES_STATEMENTS_ACTIVE=false
+    return "$status"
+}
+
+wait_for_sampler_file() {
+    local pid="$1"
+    local output_file="$2"
+    local sampler_name="$3"
+
+    for _ in {1..100}; do
+        if [[ -s "$output_file" ]] && kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            echo "${sampler_name} stopped before producing ${output_file}." >&2
+            return 1
+        fi
+        sleep 0.01
+    done
+
+    echo "Timed out waiting for ${sampler_name} to produce ${output_file}." >&2
+    return 1
+}
+
+start_postgres_runtime_diagnostics() {
+    local target_dir="$1"
+    local activity_file="${target_dir}/diagnostics/${POSTGRES_ACTIVITY_FILE}"
+    local io_file="${target_dir}/diagnostics/${POSTGRES_IO_FILE}"
+    local log_file="${target_dir}/logs/${POSTGRES_RUNTIME_LOG}"
+
+    mkdir -p "$target_dir/diagnostics"
+    log_phase "capturing initial Postgres I/O snapshot"
+    {
+        echo "Capturing initial Postgres I/O snapshot at $(date --iso-8601=seconds)"
+        "${SCRIPTS_DIR}/postgres-runtime.sh" snapshot-io before "$io_file"
+    } > "$log_file" 2>&1
+
+    log_phase "starting Postgres activity sampling"
+    "${SCRIPTS_DIR}/postgres-runtime.sh" sample-activity "$activity_file" >> "$log_file" 2>&1 &
+    POSTGRES_ACTIVITY_PID=$!
+    wait_for_sampler_file "$POSTGRES_ACTIVITY_PID" "$activity_file" "Postgres activity sampler"
+}
+
+stop_postgres_activity_sampler() {
+    local target_dir="$1"
+    local log_file="/dev/null"
+    local pid="$POSTGRES_ACTIVITY_PID"
+    local failed=0
+    local wait_status=0
+
+    if [[ -z "$pid" ]]; then
+        return 0
+    fi
+    if [[ -n "$target_dir" ]]; then
+        log_file="${target_dir}/logs/${POSTGRES_RUNTIME_LOG}"
+    fi
+
+    log_phase "stopping Postgres activity sampling"
+    echo "Stopping Postgres activity sampling at $(date --iso-8601=seconds)" >> "$log_file"
+    if kill -0 "$pid" 2>/dev/null; then
+        if ! kill -TERM "$pid" 2>/dev/null; then
+            failed=1
+        fi
+    else
+        echo "Postgres activity sampler stopped before collection." >> "$log_file"
+        failed=1
+    fi
+    if wait "$pid"; then
+        wait_status=0
+    else
+        wait_status=$?
+        failed=1
+    fi
+    if ((wait_status != 0)); then
+        echo "Postgres activity sampler exited with status ${wait_status}." >> "$log_file"
+    fi
+    POSTGRES_ACTIVITY_PID=""
+    return "$failed"
+}
+
+capture_final_postgres_io() {
+    local target_dir="$1"
+    local io_file="${target_dir}/diagnostics/${POSTGRES_IO_FILE}"
+    local log_file="${target_dir}/logs/${POSTGRES_RUNTIME_LOG}"
+
+    log_phase "capturing final Postgres I/O snapshot"
+    {
+        echo "Capturing final Postgres I/O snapshot at $(date --iso-8601=seconds)"
+        "${SCRIPTS_DIR}/postgres-runtime.sh" snapshot-io after "$io_file"
+    } >> "$log_file" 2>&1
+}
+
+start_container_stats() {
+    local target_dir="$1"
+    local output_file="${target_dir}/diagnostics/${CONTAINER_STATS_FILE}"
+    local log_file="${target_dir}/logs/${CONTAINER_STATS_LOG}"
+
+    mkdir -p "$target_dir/diagnostics"
+    log_phase "starting container resource sampling"
+    "${SCRIPTS_DIR}/container-stats.sh" sample "$output_file" > "$log_file" 2>&1 &
+    CONTAINER_STATS_PID=$!
+    wait_for_sampler_file "$CONTAINER_STATS_PID" "$output_file" "Container resource sampler"
+}
+
+stop_container_stats() {
+    local target_dir="$1"
+    local log_file="/dev/null"
+    local pid="$CONTAINER_STATS_PID"
+    local failed=0
+    local wait_status=0
+
+    if [[ -z "$pid" ]]; then
+        return 0
+    fi
+    if [[ -n "$target_dir" ]]; then
+        log_file="${target_dir}/logs/${CONTAINER_STATS_LOG}"
+    fi
+
+    log_phase "stopping container resource sampling"
+    echo "Stopping container resource sampling at $(date --iso-8601=seconds)" >> "$log_file"
+    if kill -0 "$pid" 2>/dev/null; then
+        if ! kill -TERM "$pid" 2>/dev/null; then
+            failed=1
+        fi
+    else
+        echo "Container resource sampler stopped before collection." >> "$log_file"
+        failed=1
+    fi
+    if wait "$pid"; then
+        wait_status=0
+    else
+        wait_status=$?
+        failed=1
+    fi
+    if ((wait_status != 0)); then
+        echo "Container resource sampler exited with status ${wait_status}." >> "$log_file"
+    fi
+    CONTAINER_STATS_PID=""
+    return "$failed"
 }
 
 start_container_jfr() {
@@ -471,7 +641,7 @@ log_selected_options() {
         log_phase "SPI trace collection enabled"
     fi
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
-        log_phase "Postgres statement stats enabled"
+        log_phase "Postgres statement, activity, I/O, and container stats enabled"
     fi
 }
 
@@ -564,6 +734,8 @@ start_optional_diagnostics() {
 
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         enable_postgres_statement_stats "$target_dir"
+        start_postgres_runtime_diagnostics "$target_dir"
+        start_container_stats "$target_dir"
     fi
     if [[ "$ENABLE_JFR" == true ]]; then
         start_jfr_recordings "$target_dir"
@@ -575,18 +747,23 @@ start_optional_diagnostics() {
 
 collect_optional_diagnostics() {
     local target_dir="$1"
+    local failed=0
 
     if [[ "$ENABLE_JFR" == true ]]; then
-        stop_jfr_recordings "$target_dir"
+        stop_jfr_recordings "$target_dir" || failed=1
     fi
     if [[ "$ENABLE_SPI_TRACE" == true ]]; then
-        stop_spi_trace "$target_dir"
-        copy_spi_trace "$target_dir"
+        stop_spi_trace "$target_dir" || failed=1
+        copy_spi_trace "$target_dir" || failed=1
     fi
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
-        capture_postgres_statement_stats "$target_dir"
-        disable_postgres_statement_stats "$target_dir"
+        stop_postgres_activity_sampler "$target_dir" || failed=1
+        stop_container_stats "$target_dir" || failed=1
+        capture_final_postgres_io "$target_dir" || failed=1
+        capture_postgres_statement_stats "$target_dir" || failed=1
+        disable_postgres_statement_stats "$target_dir" || failed=1
     fi
+    return "$failed"
 }
 
 run_loadtool() {

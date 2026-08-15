@@ -83,6 +83,12 @@ snapshot_stats() {
             shared_blks_written,
             temp_blks_read,
             temp_blks_written,
+            round(shared_blk_read_time::numeric, 3) AS shared_blk_read_time_ms,
+            round(shared_blk_write_time::numeric, 3) AS shared_blk_write_time_ms,
+            round(local_blk_read_time::numeric, 3) AS local_blk_read_time_ms,
+            round(local_blk_write_time::numeric, 3) AS local_blk_write_time_ms,
+            round(temp_blk_read_time::numeric, 3) AS temp_blk_read_time_ms,
+            round(temp_blk_write_time::numeric, 3) AS temp_blk_write_time_ms,
             wal_records,
             wal_bytes,
             regexp_replace(query, '[[:space:]]+', ' ', 'g') AS query

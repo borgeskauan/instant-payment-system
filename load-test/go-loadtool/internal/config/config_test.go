@@ -453,6 +453,31 @@ func TestMixedOutcomesLongProfileDefinesStabilizationWorkload(t *testing.T) {
 	}
 }
 
+func TestMixedOutcomesDiagnosticProfileDefinesShortInvestigationWorkload(t *testing.T) {
+	profilesDir := filepath.Join("..", "..", "..", "profiles")
+	diagnostic, err := loadProfileFromDir(profilesDir, "mixed-outcomes-2k-diagnostic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := loadProfileFromDir(profilesDir, "mixed-outcomes-2k-15m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diagnostic.Load.TargetTxRate != 2000 ||
+		diagnostic.Load.Warmup != 15*time.Second ||
+		diagnostic.Load.Duration != time.Minute ||
+		diagnostic.Load.Drain != 30*time.Second {
+		t.Fatalf("mixed-outcomes-2k-diagnostic Load = %#v", diagnostic.Load)
+	}
+	if !reflect.DeepEqual(diagnostic.Replay, long.Replay) ||
+		!reflect.DeepEqual(diagnostic.Scenarios, long.Scenarios) ||
+		!reflect.DeepEqual(diagnostic.Connections, long.Connections) ||
+		!reflect.DeepEqual(diagnostic.Reporting, long.Reporting) {
+		t.Fatal("diagnostic workload differs from mixed-outcomes-2k-15m outside the execution window")
+	}
+}
+
 func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "profiles", "mixed-outcomes-smoke.json"))
 	if err != nil {
