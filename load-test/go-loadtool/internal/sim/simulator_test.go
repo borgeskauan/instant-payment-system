@@ -261,13 +261,13 @@ func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
 		"10000001",
 		"https://localhost:8001/transfer",
 		[]byte("pacs008"),
-	)
+	).HTTPStatus
 	receiverStatus := s.post(
 		context.Background(),
 		"20000001",
 		"https://localhost:8001/transfer/status",
 		[]byte("pacs002"),
-	)
+	).HTTPStatus
 
 	if payerStatus != http.StatusOK || payerCalls.Load() != 1 {
 		t.Fatalf("payer status/calls = %d/%d", payerStatus, payerCalls.Load())

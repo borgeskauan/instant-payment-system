@@ -12,35 +12,44 @@ import (
 )
 
 type Start struct {
-	EndToEndID            string
-	PayerISPB             string
-	ReceiverISPB          string
-	CreatedAtNS           int64
-	RequestStartedAtNS    int64
-	RequestDoneAtNS       int64
-	HTTPStatus            int
-	ScenarioName          string
-	Pacs008ReplaySelected bool
+	EndToEndID             string
+	PayerISPB              string
+	ReceiverISPB           string
+	CreatedAtNS            int64
+	RequestStartedAtNS     int64
+	RequestDoneAtNS        int64
+	HTTPStatus             int
+	ScenarioName           string
+	Pacs008ReplaySelected  bool
+	ConnectionAcquiredAtNS int64
+	RequestWrittenAtNS     int64
+	ConnectionReused       bool
 }
 
 type Replay struct {
-	EndToEndID         string
-	SenderISPB         string
-	ScenarioName       string
-	MessageType        string
-	RequestStartedAtNS int64
-	RequestDoneAtNS    int64
-	HTTPStatus         int
+	EndToEndID             string
+	SenderISPB             string
+	ScenarioName           string
+	MessageType            string
+	RequestStartedAtNS     int64
+	RequestDoneAtNS        int64
+	HTTPStatus             int
+	ConnectionAcquiredAtNS int64
+	RequestWrittenAtNS     int64
+	ConnectionReused       bool
 }
 
 type StatusStart struct {
-	EndToEndID            string
-	SenderISPB            string
-	ScenarioName          string
-	RequestStartedAtNS    int64
-	RequestDoneAtNS       int64
-	HTTPStatus            int
-	Pacs002ReplaySelected bool
+	EndToEndID             string
+	SenderISPB             string
+	ScenarioName           string
+	RequestStartedAtNS     int64
+	RequestDoneAtNS        int64
+	HTTPStatus             int
+	Pacs002ReplaySelected  bool
+	ConnectionAcquiredAtNS int64
+	RequestWrittenAtNS     int64
+	ConnectionReused       bool
 }
 
 type Notification struct {
@@ -60,10 +69,10 @@ const (
 	MessagePacs002       = "pacs.002"
 )
 
-var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name", "pacs008_replay_selected"}
+var startHeader = []string{"end_to_end_id", "payer_ispb", "receiver_ispb", "created_at_ns", "request_started_at_ns", "request_done_at_ns", "http_status", "scenario_name", "pacs008_replay_selected", "connection_acquired_at_ns", "request_written_at_ns", "connection_reused"}
 var notificationHeader = []string{"end_to_end_id", "ispb", "event_type", "received_at_ns", "status_code", "reason_codes"}
-var replayHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status"}
-var statusStartHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "request_started_at_ns", "request_done_at_ns", "http_status", "pacs002_replay_selected"}
+var replayHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "message_type", "request_started_at_ns", "request_done_at_ns", "http_status", "connection_acquired_at_ns", "request_written_at_ns", "connection_reused"}
+var statusStartHeader = []string{"end_to_end_id", "sender_ispb", "scenario_name", "request_started_at_ns", "request_done_at_ns", "http_status", "pacs002_replay_selected", "connection_acquired_at_ns", "request_written_at_ns", "connection_reused"}
 
 type StartWriter struct {
 	file   *os.File
@@ -96,6 +105,9 @@ func (w *StartWriter) Write(row Start) error {
 		strconv.Itoa(row.HTTPStatus),
 		row.ScenarioName,
 		strconv.FormatBool(row.Pacs008ReplaySelected),
+		strconv.FormatInt(row.ConnectionAcquiredAtNS, 10),
+		strconv.FormatInt(row.RequestWrittenAtNS, 10),
+		strconv.FormatBool(row.ConnectionReused),
 	})
 }
 
@@ -147,6 +159,9 @@ func (w *ReplayWriter) Write(row Replay) error {
 		strconv.FormatInt(row.RequestStartedAtNS, 10),
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
+		strconv.FormatInt(row.ConnectionAcquiredAtNS, 10),
+		strconv.FormatInt(row.RequestWrittenAtNS, 10),
+		strconv.FormatBool(row.ConnectionReused),
 	})
 }
 
@@ -179,6 +194,9 @@ func (w *StatusStartWriter) Write(row StatusStart) error {
 		strconv.FormatInt(row.RequestDoneAtNS, 10),
 		strconv.Itoa(row.HTTPStatus),
 		strconv.FormatBool(row.Pacs002ReplaySelected),
+		strconv.FormatInt(row.ConnectionAcquiredAtNS, 10),
+		strconv.FormatInt(row.RequestWrittenAtNS, 10),
+		strconv.FormatBool(row.ConnectionReused),
 	})
 }
 
@@ -408,16 +426,23 @@ func parseStart(record []string) (Start, error) {
 	if err != nil {
 		return Start{}, err
 	}
+	connectionAcquiredAtNS, requestWrittenAtNS, connectionReused, err := parseTransportObservation(record, 9)
+	if err != nil {
+		return Start{}, err
+	}
 	return Start{
-		EndToEndID:            record[0],
-		PayerISPB:             record[1],
-		ReceiverISPB:          record[2],
-		CreatedAtNS:           createdAtNS,
-		RequestStartedAtNS:    requestStartedAtNS,
-		RequestDoneAtNS:       requestDoneAtNS,
-		HTTPStatus:            status,
-		ScenarioName:          record[7],
-		Pacs008ReplaySelected: replaySelected,
+		EndToEndID:             record[0],
+		PayerISPB:              record[1],
+		ReceiverISPB:           record[2],
+		CreatedAtNS:            createdAtNS,
+		RequestStartedAtNS:     requestStartedAtNS,
+		RequestDoneAtNS:        requestDoneAtNS,
+		HTTPStatus:             status,
+		ScenarioName:           record[7],
+		Pacs008ReplaySelected:  replaySelected,
+		ConnectionAcquiredAtNS: connectionAcquiredAtNS,
+		RequestWrittenAtNS:     requestWrittenAtNS,
+		ConnectionReused:       connectionReused,
 	}, nil
 }
 
@@ -437,14 +462,21 @@ func parseReplay(record []string) (Replay, error) {
 	if err != nil {
 		return Replay{}, err
 	}
+	connectionAcquiredAtNS, requestWrittenAtNS, connectionReused, err := parseTransportObservation(record, 7)
+	if err != nil {
+		return Replay{}, err
+	}
 	return Replay{
-		EndToEndID:         record[0],
-		SenderISPB:         record[1],
-		ScenarioName:       record[2],
-		MessageType:        record[3],
-		RequestStartedAtNS: requestStartedAtNS,
-		RequestDoneAtNS:    requestDoneAtNS,
-		HTTPStatus:         status,
+		EndToEndID:             record[0],
+		SenderISPB:             record[1],
+		ScenarioName:           record[2],
+		MessageType:            record[3],
+		RequestStartedAtNS:     requestStartedAtNS,
+		RequestDoneAtNS:        requestDoneAtNS,
+		HTTPStatus:             status,
+		ConnectionAcquiredAtNS: connectionAcquiredAtNS,
+		RequestWrittenAtNS:     requestWrittenAtNS,
+		ConnectionReused:       connectionReused,
 	}, nil
 }
 
@@ -468,7 +500,38 @@ func parseStatusStart(record []string) (StatusStart, error) {
 	if err != nil {
 		return StatusStart{}, err
 	}
-	return StatusStart{EndToEndID: record[0], SenderISPB: record[1], ScenarioName: record[2], RequestStartedAtNS: startedAt, RequestDoneAtNS: doneAt, HTTPStatus: status, Pacs002ReplaySelected: selected}, nil
+	connectionAcquiredAtNS, requestWrittenAtNS, connectionReused, err := parseTransportObservation(record, 7)
+	if err != nil {
+		return StatusStart{}, err
+	}
+	return StatusStart{
+		EndToEndID:             record[0],
+		SenderISPB:             record[1],
+		ScenarioName:           record[2],
+		RequestStartedAtNS:     startedAt,
+		RequestDoneAtNS:        doneAt,
+		HTTPStatus:             status,
+		Pacs002ReplaySelected:  selected,
+		ConnectionAcquiredAtNS: connectionAcquiredAtNS,
+		RequestWrittenAtNS:     requestWrittenAtNS,
+		ConnectionReused:       connectionReused,
+	}, nil
+}
+
+func parseTransportObservation(record []string, offset int) (int64, int64, bool, error) {
+	connectionAcquiredAtNS, err := strconv.ParseInt(record[offset], 10, 64)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	requestWrittenAtNS, err := strconv.ParseInt(record[offset+1], 10, 64)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	connectionReused, err := strconv.ParseBool(record[offset+2])
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return connectionAcquiredAtNS, requestWrittenAtNS, connectionReused, nil
 }
 
 func parseNotification(record []string) (Notification, error) {

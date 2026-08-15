@@ -1,12 +1,10 @@
 package sim
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -338,18 +336,12 @@ func newHTTPClients(cfg Config, pairs []ids.Pair) (map[string]*http.Client, erro
 				return nil, fmt.Errorf("load central transfer client certificate for ISPB %s: %w", ispb, err)
 			}
 			clients[ispb] = &http.Client{
-				Transport: &http.Transport{
-					MaxIdleConns:        4096,
-					MaxIdleConnsPerHost: 4096,
-					MaxConnsPerHost:     4096,
-					IdleConnTimeout:     90 * time.Second,
-					TLSClientConfig: &tls.Config{
-						MinVersion:   tls.VersionTLS12,
-						ServerName:   cfg.CentralTransferServerName,
-						RootCAs:      rootCAs,
-						Certificates: []tls.Certificate{certificate},
-					},
-				},
+				Transport: newHTTP11Transport(&tls.Config{
+					MinVersion:   tls.VersionTLS12,
+					ServerName:   cfg.CentralTransferServerName,
+					RootCAs:      rootCAs,
+					Certificates: []tls.Certificate{certificate},
+				}),
 				Timeout: 5 * time.Second,
 			}
 		}
@@ -519,22 +511,26 @@ func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
 	}
 	s.transferScenarios[job.ID] = job.ScenarioName
 	s.transferScenariosMu.Unlock()
-	status := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body)
+	attempt := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body)
+	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
 	if status >= 200 && status < 300 {
 		s.accepted.Add(1)
 	}
 	s.writeStart(events.Start{
-		EndToEndID:            job.ID,
-		PayerISPB:             job.Pair.Payer,
-		ReceiverISPB:          job.Pair.Receiver,
-		CreatedAtNS:           job.Created,
-		RequestStartedAtNS:    startedAt,
-		RequestDoneAtNS:       doneAt,
-		HTTPStatus:            status,
-		ScenarioName:          job.ScenarioName,
-		Pacs008ReplaySelected: job.ReplaySelected,
+		EndToEndID:             job.ID,
+		PayerISPB:              job.Pair.Payer,
+		ReceiverISPB:           job.Pair.Receiver,
+		CreatedAtNS:            job.Created,
+		RequestStartedAtNS:     startedAt,
+		RequestDoneAtNS:        doneAt,
+		HTTPStatus:             status,
+		ScenarioName:           job.ScenarioName,
+		Pacs008ReplaySelected:  job.ReplaySelected,
+		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
+		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
+		ConnectionReused:       attempt.ConnectionReused,
 	})
 }
 
@@ -543,20 +539,24 @@ func (s *simulator) sendReplay(ctx context.Context, job replayJob) {
 		return
 	}
 	startedAt := time.Now().UnixNano()
-	status := s.post(ctx, job.senderISPB, s.cfg.BaseURL+job.endpoint, job.body)
+	attempt := s.post(ctx, job.senderISPB, s.cfg.BaseURL+job.endpoint, job.body)
+	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.replaysSent.Add(1)
 	if status >= 200 && status < 300 {
 		s.replaysAccepted.Add(1)
 	}
 	s.writeReplay(events.Replay{
-		EndToEndID:         job.endToEndID,
-		SenderISPB:         job.senderISPB,
-		ScenarioName:       job.scenarioName,
-		MessageType:        job.messageType,
-		RequestStartedAtNS: startedAt,
-		RequestDoneAtNS:    doneAt,
-		HTTPStatus:         status,
+		EndToEndID:             job.endToEndID,
+		SenderISPB:             job.senderISPB,
+		ScenarioName:           job.scenarioName,
+		MessageType:            job.messageType,
+		RequestStartedAtNS:     startedAt,
+		RequestDoneAtNS:        doneAt,
+		HTTPStatus:             status,
+		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
+		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
+		ConnectionReused:       attempt.ConnectionReused,
 	})
 }
 
@@ -605,21 +605,25 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 			s.replaysScheduled.Add(1)
 		}
 	}
-	status := s.post(
+	attempt := s.post(
 		ctx,
 		job.receiverISPB,
 		fmt.Sprintf("%s/transfer/status", s.cfg.BaseURL),
 		body,
 	)
+	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.writeStatusStart(events.StatusStart{
-		EndToEndID:            job.endToEndID,
-		SenderISPB:            job.receiverISPB,
-		ScenarioName:          job.scenarioName,
-		RequestStartedAtNS:    startedAtTime.UnixNano(),
-		RequestDoneAtNS:       doneAt,
-		HTTPStatus:            status,
-		Pacs002ReplaySelected: selected,
+		EndToEndID:             job.endToEndID,
+		SenderISPB:             job.receiverISPB,
+		ScenarioName:           job.scenarioName,
+		RequestStartedAtNS:     startedAtTime.UnixNano(),
+		RequestDoneAtNS:        doneAt,
+		HTTPStatus:             status,
+		Pacs002ReplaySelected:  selected,
+		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
+		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
+		ConnectionReused:       attempt.ConnectionReused,
 	})
 	if status < 200 || status >= 300 {
 		return
@@ -678,25 +682,6 @@ func (s *simulator) startStatusWorkers(
 			}
 		}()
 	}
-}
-
-func (s *simulator) post(ctx context.Context, ispb string, url string, body []byte) int {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return 0
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	client, exists := s.httpClients[ispb]
-	if !exists {
-		return 0
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	return resp.StatusCode
 }
 
 func (s *simulator) openNotificationStreams(

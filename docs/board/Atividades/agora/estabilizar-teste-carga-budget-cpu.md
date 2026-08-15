@@ -107,7 +107,7 @@ em `valid: false` e não autoriza tuning nem mudança dos buckets por si só.
 - [ ] Se buckets forem relevantes, executar a task
   [`Substituir buckets por reserva no saldo do participante`](../Backlog/produto-dominio/substituir-buckets-por-reserva-no-saldo.md)
   como experimento isolado e comparar antes/depois.
-- [ ] Se o gargalo estiver em outro componente, atacar primeiro esse componente
+- [x] Se o gargalo estiver em outro componente, atacar primeiro esse componente
   com uma alteração isolada e repetir o benchmark.
 - [ ] Se as medições não permitirem atribuição, instrumentar o ponto ambíguo e
   repetir o diagnóstico sem antecipar uma solução.
@@ -186,11 +186,62 @@ ciclo de vida/reutilização das conexões HTTP e repetir o mesmo diagnóstico. 
 há autorização, nesta evidência, para mudar buckets, PostgreSQL, protocolo TLS
 ou timeout simultaneamente.
 
+### A/B do pool HTTP/1.1 por PSP
+
+O B manteve protocolo, mTLS, timeout, workload, recursos e servidor. A única
+intervenção foi limitar o pool do load-tool a 32 conexões HTTP/1.1 por PSP,
+preservando keep-alive. Os CSVs existentes passaram a registrar aquisição,
+escrita efetiva e a informação `GotConnInfo.Reused`, sem alterar o
+`sla-report.json`. Ele foi executado sobre a revisão `56129a0`, mais as mudanças
+de pool e observação ainda não commitadas desta intervenção.
+
+O smoke `http11-pool-smoke/20260815_151103` completou 1.250 pagamentos, 1.250
+PACS.002 e 127 replays, todos aceitos e com outcomes corretos. Em seguida, o B
+`http11-pool-32-diagnostic/20260815_151254` produziu:
+
+| Evidência | A sem limite efetivo | B com pool 32 |
+| --- | ---: | ---: |
+| tentativas HTTP totais | 14.226 | 153.976 |
+| respostas 2xx | 1.243 | 149.640 |
+| tentativas sem status | 12.983 | 4.336 |
+| handshakes TLS completos | 6.717 | 4.416 |
+| handshakes por 100 tentativas | 47,22 | 2,87 |
+| pagamentos originais totais | 8.709 | 134.999 |
+| pagamentos originais ativos | 6.903 | 132.648 |
+| CPU média do ingresso no ativo | `101,47%` | `81,74%` |
+
+O B realizou 10,8 vezes mais tentativas com 34,3% menos handshakes absolutos; a
+taxa normalizada de handshake caiu 93,9%. Das tentativas do B, 153.026
+adquiriram e escreveram uma conexão e 149.640 receberam 2xx. Entre pagamentos
+originais ativos, a espera para adquirir conexão teve p50 de `2,87 ms`, p95 de
+`80,83 ms` e p99 de `2.627,86 ms`. A espera não cresceu progressivamente: nos
+últimos 20 segundos ativos ela caiu para aproximadamente `0,025 ms`, enquanto
+foram escritos 40.000 pagamentos, média exata de 2.000/s e faixa alinhada de
+1.998–2.002/s.
+
+`GotConnInfo.Reused` não é uma contagem de novos handshakes. O transporte Go
+pode concluir um dial já iniciado e colocar a conexão no pool depois que outra
+conexão atendeu a request; por isso o JFR do servidor é a fonte autoritativa
+para handshakes. No B, os handshakes ficaram concentrados até o segundo 29 do
+ativo, com somente três eventos posteriores no segundo 47.
+
+O B ainda não aprova performance. O começo do ativo ficou abaixo do piso e foi
+seguido por catch-up, resultando em mínimo rolling zero, máximo `8.945/s` e
+outcomes que não couberam no deadline. Entretanto, a fila do cliente drenou e
+o trecho estável final sustentou a escrita de 2.000/s; portanto o pool fixo de
+32 fica mantido como candidato para o workload longo, não como tuning final.
+
+Quando o ingresso estabilizou nos últimos 20 segundos, sua CPU média caiu para
+`39,89%`, enquanto o PostgreSQL chegou a `101,54%`. No ativo inteiro, 435
+observações de sessões PostgreSQL aguardavam WAL e 423 executavam sem wait. O
+primeiro limite foi deslocado do ingresso para o caminho SPI/PostgreSQL; buckets
+continuam sendo hipótese, ainda sem autorização para mudança arquitetural.
+
 ## Hipóteses já conhecidas, não assumidas
 
-- Preservar a reutilização atual de conexões HTTP persistentes entre PSP e
-  `kafka-producer`; configurar pool, limites ou timeouts somente se as medições
-  apontarem esse caminho.
+- Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.
+  Validá-lo no workload longo antes de tratá-lo como configuração final; não
+  alterar timeout ou protocolo no mesmo experimento.
 - Avaliar claim e dispatch no `notification-gateway` separadamente. Filas
   limitadas por ISPB são apenas uma possível resposta caso o ciclo atual se
   prove gargalo.
