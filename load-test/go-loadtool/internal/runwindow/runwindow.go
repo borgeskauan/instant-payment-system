@@ -38,7 +38,7 @@ func New(profileName string, started time.Time, warmup, duration, drain time.Dur
 			GenerationStartedAt: started,
 			ActiveStartedAt:     activeStarted,
 			GenerationEndedAt:   generationEnded,
-			ReplayDeadlineAt:    generationEnded.Add(maxReplayDelay(replay)).Add(drain),
+			ReplayDeadlineAt:    generationEnded.Add(drain),
 		},
 	}
 }
@@ -89,8 +89,8 @@ func Validate(document Document, profileName string, warmup, duration, drain tim
 	if !w.GenerationEndedAt.Equal(w.ActiveStartedAt.Add(duration)) {
 		return fmt.Errorf("run window generation_ended_at is inconsistent with duration")
 	}
-	if !w.ReplayDeadlineAt.Equal(w.GenerationEndedAt.Add(maxReplayDelay(replay)).Add(drain)) {
-		return fmt.Errorf("run window replay_deadline_at is inconsistent with replay delay and drain")
+	if !w.ReplayDeadlineAt.Equal(w.GenerationEndedAt.Add(drain)) {
+		return fmt.Errorf("run window replay_deadline_at is inconsistent with drain")
 	}
 	return nil
 }
@@ -100,15 +100,4 @@ func Resolve(document Document, profileName string, warmup, duration, drain time
 		return Window{}, err
 	}
 	return document.Window, nil
-}
-
-func maxReplayDelay(replay config.Replay) time.Duration {
-	var delay time.Duration
-	if replay.Pacs008 != nil && replay.Pacs008.Delay > delay {
-		delay = replay.Pacs008.Delay
-	}
-	if replay.Pacs002 != nil && replay.Pacs002.Delay > delay {
-		delay = replay.Pacs002.Delay
-	}
-	return delay
 }

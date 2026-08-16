@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -128,6 +129,32 @@ class SubscriberRegistryTest {
         }
     }
 
+    @Test
+    void dispatchCapturedBeforeUnregisterDoesNotSendAfterUnregister() throws Exception {
+        var registry = new SubscriberRegistry();
+        var observer = new CapturingObserver();
+        var sent = new AtomicBoolean(true);
+        var dispatchStarted = new CountDownLatch(1);
+        Thread dispatch;
+
+        registry.register("20000001", observer);
+        synchronized (observer) {
+            dispatch = Thread.ofPlatform().start(() -> {
+                dispatchStarted.countDown();
+                sent.set(registry.dispatch(delivery("delivery-1", "20000001", "payload".getBytes())));
+            });
+            assertThat(dispatchStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            awaitBlocked(dispatch);
+
+            registry.unregister("20000001", observer);
+        }
+        dispatch.join(TimeUnit.SECONDS.toMillis(1));
+
+        assertThat(dispatch.isAlive()).isFalse();
+        assertThat(sent).isFalse();
+        assertThat(observer.notifications).isEmpty();
+    }
+
     private static NotificationDelivery delivery(String communicationId, String ispb, byte[] payload) {
         return new NotificationDelivery(communicationId, ispb, payload);
     }
@@ -139,6 +166,14 @@ class SubscriberRegistryTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(e);
         }
+    }
+
+    private static void awaitBlocked(Thread thread) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (thread.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+            Thread.sleep(1);
+        }
+        assertThat(thread.getState()).isEqualTo(Thread.State.BLOCKED);
     }
 
     private static final class CapturingObserver implements StreamObserver<Notification> {

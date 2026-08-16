@@ -452,6 +452,9 @@ func summarizePacs002Replays(statusStarts []events.StatusStart, replays []events
 		if !status.Pacs002ReplaySelected {
 			continue
 		}
+		if status.RequestStartedAtNS >= window.GenerationEndedAt.UnixNano() {
+			summary.Violations++
+		}
 		attempts := attemptsByID[status.EndToEndID]
 		if attempts == 0 {
 			summary.Violations++

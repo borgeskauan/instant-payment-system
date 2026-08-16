@@ -3,10 +3,15 @@ package br.kauan.notificationgateway.delivery;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.Array;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -74,15 +79,18 @@ public class NotificationDeliveryRepository {
                 delivery.payload
             """;
 
-    private static final String ACK_SQL = """
-            UPDATE notification_delivery
+    private static final String ACK_ALL_SQL = """
+            UPDATE notification_delivery AS delivery
             SET delivery_status = 'ACKED',
-                acknowledged_at = :now,
+                acknowledged_at = ?,
                 lease_until = NULL,
-                updated_at = :now
-            WHERE communication_id = :communicationId
-              AND recipient_ispb = :recipientIspb
-              AND delivery_status <> 'ACKED'
+                updated_at = ?
+            FROM unnest(?::text[], ?::text[])
+                 AS ack(communication_id, recipient_ispb)
+            WHERE delivery.communication_id = ack.communication_id
+              AND delivery.recipient_ispb = ack.recipient_ispb
+              AND delivery.delivery_status <> 'ACKED'
+            RETURNING delivery.communication_id
             """;
 
     private static final String RETRYABLE_FAILED_SQL = """
@@ -169,13 +177,42 @@ public class NotificationDeliveryRepository {
         });
     }
 
-    public boolean acknowledge(String communicationId, String recipientIspb) {
-        Instant now = clock.instant();
-        int updatedRows = jdbcTemplate.update(ACK_SQL, new MapSqlParameterSource()
-                .addValue("communicationId", communicationId)
-                .addValue("recipientIspb", recipientIspb)
-                .addValue("now", timestamp(now)));
-        return updatedRows > 0;
+    public int acknowledgeAll(List<Acknowledgement> acknowledgements) {
+        if (acknowledgements.isEmpty()) {
+            return 0;
+        }
+        Integer updated = transactionTemplate.execute(ignored ->
+                jdbcTemplate.getJdbcTemplate().execute((ConnectionCallback<Integer>) connection -> {
+                    String[] communicationIds = acknowledgements.stream()
+                            .map(Acknowledgement::communicationId)
+                            .toArray(String[]::new);
+                    String[] recipientIspbs = acknowledgements.stream()
+                            .map(Acknowledgement::recipientIspb)
+                            .toArray(String[]::new);
+                    OffsetDateTime now = timestamp(clock.instant());
+                    Array communicationIdArray = null;
+                    Array recipientIspbArray = null;
+                    try {
+                        communicationIdArray = connection.createArrayOf("text", communicationIds);
+                        recipientIspbArray = connection.createArrayOf("text", recipientIspbs);
+                        try (PreparedStatement statement = connection.prepareStatement(ACK_ALL_SQL)) {
+                            statement.setObject(1, now);
+                            statement.setObject(2, now);
+                            statement.setArray(3, communicationIdArray);
+                            statement.setArray(4, recipientIspbArray);
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                int count = 0;
+                                while (resultSet.next()) {
+                                    count++;
+                                }
+                                return count;
+                            }
+                        }
+                    } finally {
+                        free(communicationIdArray, recipientIspbArray);
+                    }
+                }));
+        return updated == null ? 0 : updated;
     }
 
     public void markRetryableFailed(String communicationId, String error, Duration retryDelay) {
@@ -189,6 +226,14 @@ public class NotificationDeliveryRepository {
 
     private OffsetDateTime timestamp(Instant instant) {
         return instant.atOffset(ZoneOffset.UTC);
+    }
+
+    private void free(Array... arrays) throws SQLException {
+        for (Array array : arrays) {
+            if (array != null) {
+                array.free();
+            }
+        }
     }
 
     private String truncate(String error) {

@@ -343,6 +343,97 @@ O próximo experimento pode avaliar ACKs em batch como uma intervenção separad
 Não há, neste resultado, autorização para alterar simultaneamente concorrência,
 PostgreSQL, SPI, buckets, claim ou dispatch.
 
+### Resultado do A/B de ACKs em batch
+
+A comparação usou o A imutável
+`load-test/results/preparation-workflow-verification/20260816_004331`, no commit
+`1a4f395`, e o único B
+`load-test/results/notification-ack-batch-diagnostic/20260816_021705`, sobre o
+mesmo commit mais o diff de ACK batching ainda não staged e não commitado. O B
+foi executado uma vez com o perfil `mixed-outcomes-2k-diagnostic`, terminou com
+exit `1` por SLA inválido e preservou todos os diagnósticos. Os cinco parâmetros
+efetivos, confirmados no container, foram batch `500`, flush `20 ms`, fila
+`10.000`, retry `100 ms` e shutdown `5.000 ms`.
+
+| Evidência | A — ACK individual | B — ACK em batch |
+| --- | ---: | ---: |
+| chamadas / rows / rows por chamada do ACK | `36.042 / 36.042 / 1,00` | `345 / 76.090 / 220,55` |
+| tempo total / médio / máximo do ACK | `31.739,475 / 0,881 / 396,886 ms` | `22.366,045 / 64,829 / 683,428 ms` |
+| WAL do ACK: records / bytes | `143.312 / 44.838.385` | `309.360 / 98.745.671` |
+| WAL do ACK por row: records / bytes | `3,976 / 1.244,06` | `4,066 / 1.297,75` |
+| waits ativos do ACK `WALWrite / WalSync` | `615 / 84` | `0 / 0` |
+| delta global de commits / rollbacks | `39.586 / 0` | `4.993 / 0` |
+| PostgreSQL CPU média/máxima; memória média/máxima | `102,69% / 113,94%; 242,9 / 271,6 MiB` | `101,99% / 109,52%; 216,4 / 239,6 MiB` |
+| gateway CPU média/máxima; memória média/máxima | `15,42% / 41,82%; 310,8 / 318,2 MiB` | `18,05% / 72,84%; 295,4 / 301,2 MiB` |
+| originais iniciados no ativo; TPS média/mínima/máxima | `120.000; 2.000 / 1.947 / 2.053` | `129.406; 2.156,767 / 1.944 / 5.377` |
+| originais aceitos no run | `134.952 / 135.000` | `134.885 / 135.000` |
+| PACS.002 aceitos; throughput ativo | `33.706; 490,883/s` | `57.947; 742,767/s` |
+| notificações de pagador ativas / após o ativo | `0/s / 0` | `66,867/s / 955` |
+| outcomes matched / missing / contradictory | `4.668 / 130.284 / 0` | `9.905 / 124.980 / 0` |
+| violações de replay PACS.008 / PACS.002 | `0 / 0` | `0 / 50` |
+| saturação da fila de ACK | não aplicável | ausente: `0` parks em `enqueue`; `364` parks somente no writer `nextBatch` |
+
+As janelas de CPU e memória foram filtradas pelos instantes autoritativos
+`active_started_at` e `generation_ended_at`. `pg_stat_statements` cobre o run
+completo; por isso os totais do ACK também foram normalizados por row. A forma
+do B é o bulk estável `UPDATE notification_delivery AS delivery ... FROM
+unnest(...)`; a normalização do PostgreSQL substituiu o literal `ACKED` por um
+parâmetro. As chamadas caíram 99,0%, o tempo por row caiu 66,6%, commits globais
+caíram 87,4% e os waits ativos de WAL do ACK desapareceram. Entretanto, o B
+atualizou 2,11 vezes mais rows, seu WAL por row não caiu (`+2,25%` records e
+`+4,32%` bytes), e os totais brutos de WAL não podem fundamentar uma decisão
+favorável.
+
+O run B permanece **inválido para o gate pré-definido** e não autoriza manter a
+mudança com base neste A/B isolado. Isso, porém, não caracteriza uma regressão
+funcional do batching. A inspeção dos 50 replays PACS.002 ausentes mostrou que
+todos foram selecionados a partir de PACS.002 originais iniciados entre
+`generationEnd + 33,902 s` e `generationEnd + 33,950 s`. O drain configurado era
+de `30 s`, mas o simulador antigo estendia o experimento até `generationEnd +
+40 s` por somar o maior delay de replay. Como cada repetição venceria `10 s`
+depois, todas ficaram aproximadamente `3,9 s` além desse deadline artificial.
+Não houve replay ausente cujo instante agendado ainda coubesse no deadline, e os
+50 PACS.002 originais receberam HTTP 2xx.
+
+Portanto, o resultado correto é **batching promissor, mas inconclusivo até a
+correção da fronteira temporal**. O run B preservou ACSC e RJCT/AM04, melhorou
+PACS.002, notificações e outcomes, reduziu chamadas em 99,0%, tempo por row em
+66,6% e commits globais em 87,4%, além de eliminar os waits ativos de WAL do
+ACK. Ainda assim, não se fará outro A/B nem run de 15 minutos nesta correção. A
+admissão ativa não caiu, porém o pico de `5.377/s` evidencia catch-up, não um
+novo estado estável. Não houve backpressure de produtores na fila, nem WARN de
+retry observado durante a janela; o Minor de WARN repetido continua apenas
+deferido para review final.
+
+Antes de um novo diagnóstico, o gateway deve garantir que o batcher esteja
+operacional durante toda a vida do servidor gRPC e serializar delivery e
+encerramento do mesmo observer. O simulador passa a usar `generationEnd +
+drain` como deadline absoluto: replays de originais iniciados antes de
+`generationEnd` podem executar durante o drain, mas PACS.002 originais que só
+começam no drain completam o fluxo normal sem entrar na população do seletor e
+sem criar nova obrigação de replay. O drain deve ser ao menos igual ao maior
+delay configurado. Nenhum campo público novo é acrescentado ao
+`sla-report.json`.
+
+A correção foi validada pelo smoke qualificado
+`environment-setup-20260816_165447-1935946-attempt-2/20260816_165801` em uma
+stack recriada sem volumes residuais: `1.250/1.250` pagamentos originais e
+PACS.002 foram aceitos, ACSC e RJCT/AM04 ficaram completos, e os replays
+PACS.008 (`64/64`) e PACS.002 (`62/62`) terminaram sem violações. O relatório
+permaneceu inválido apenas porque o rolling mínimo observado foi `99/s` para o
+alvo de `100/s`; o qualificador funcional aceitou o run e o Kafka ficou
+quiescente ao final. O primeiro smoke antes da limpeza recebeu `28.000`
+notificações residuais do experimento anterior e foi corretamente tratado como
+contaminação ambiental, não como evidência da mudança.
+
+Com o ACK removido da liderança de amostras ativas, o PostgreSQL continuou em
+aproximadamente um core e a query de settlement PACS.002 passou a liderar, com
+342 amostras ativas e `280.235,705 ms` de execução acumulada; a admissão
+PACS.008 veio em seguida, com 274 amostras. Isso é a próxima hipótese medida,
+não autorização para alterar SPI, buckets, claim, dispatch ou recursos. Nenhum
+run de 15 minutos foi executado e este experimento não constitui aprovação do
+SLA final.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.

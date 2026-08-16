@@ -93,8 +93,8 @@ class NotificationDeliveryDeduplicationIntegrationTest {
 
     @Test
     void invalidNotificationRollsBackTheCompletePoll() {
-        IncomingNotification valid = incomingNotification("v1:valid", "v1");
-        IncomingNotification invalid = incomingNotification("v1:invalid", null);
+        IncomingNotification valid = incomingNotification("v1:valid", "20000001", "v1");
+        IncomingNotification invalid = incomingNotification("v1:invalid", "20000001", null);
 
         assertThatThrownBy(() -> repository.saveAllIfAbsent(List.of(valid, invalid)))
                 .isInstanceOf(DataAccessException.class);
@@ -104,6 +104,37 @@ class NotificationDeliveryDeduplicationIntegrationTest {
                 Integer.class,
                 valid.communicationId()
         )).isZero();
+    }
+
+    @Test
+    void bulkAcknowledgementUpdatesOnlyMatchingAuthenticatedPairs() {
+        repository.saveAllIfAbsent(List.of(
+                incomingDelivery("v1:first", "20000001"),
+                incomingDelivery("v1:second", "20000002"),
+                incomingDelivery("v1:third", "20000003")
+        ));
+
+        int updated = repository.acknowledgeAll(List.of(
+                new Acknowledgement("v1:first", "20000001"),
+                new Acknowledgement("v1:second", "99999999"),
+                new Acknowledgement("v1:unknown", "20000003")
+        ));
+
+        assertThat(updated).isOne();
+        assertThat(deliveryStatus("v1:first")).isEqualTo("ACKED");
+        assertThat(deliveryStatus("v1:second")).isEqualTo("PENDING");
+        assertThat(deliveryStatus("v1:third")).isEqualTo("PENDING");
+    }
+
+    @Test
+    void replayedBulkAcknowledgementDoesNotCreateAnotherTransition() {
+        repository.saveAllIfAbsent(List.of(incomingDelivery("v1:first", "20000001")));
+        List<Acknowledgement> batch =
+                List.of(new Acknowledgement("v1:first", "20000001"));
+
+        assertThat(repository.acknowledgeAll(batch)).isOne();
+        assertThat(repository.acknowledgeAll(batch)).isZero();
+        assertThat(deliveryStatus("v1:first")).isEqualTo("ACKED");
     }
 
     private ConsumerRecord<String, byte[]> notificationRecord(long offset) {
@@ -130,15 +161,34 @@ class NotificationDeliveryDeduplicationIntegrationTest {
         return record;
     }
 
-    private IncomingNotification incomingNotification(String communicationId, String schemaVersion) {
+    private IncomingNotification incomingDelivery(
+            String communicationId,
+            String recipientIspb
+    ) {
+        return incomingNotification(communicationId, recipientIspb, "v1");
+    }
+
+    private IncomingNotification incomingNotification(
+            String communicationId,
+            String recipientIspb,
+            String schemaVersion
+    ) {
         return new IncomingNotification(
                 communicationId,
-                "20000001",
+                recipientIspb,
                 "SETTLED_NOTIFICATION",
                 "E2E-1",
                 "ACSC",
                 schemaVersion,
                 PAYLOAD
+        );
+    }
+
+    private String deliveryStatus(String communicationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT delivery_status FROM notification_delivery WHERE communication_id = ?",
+                String.class,
+                communicationId
         );
     }
 

@@ -214,6 +214,40 @@ func TestSummaryReportsPacs002OriginalsAndSelectedReplays(t *testing.T) {
 	}
 }
 
+func TestPacs002OriginalStartedDuringDrainCannotBeMarkedForReplay(t *testing.T) {
+	window := runwindow.Window{
+		GenerationStartedAt: time.Unix(0, 0),
+		ActiveStartedAt:     time.Unix(0, 0),
+		GenerationEndedAt:   time.Unix(10, 0),
+		ReplayDeadlineAt:    time.Unix(30, 0),
+	}
+	statuses := []events.StatusStart{{
+		EndToEndID:            "tx-in-drain",
+		SenderISPB:            "20000001",
+		ScenarioName:          "happy-path",
+		RequestStartedAtNS:    time.Unix(11, 0).UnixNano(),
+		HTTPStatus:            200,
+		Pacs002ReplaySelected: true,
+	}}
+	replays := []events.Replay{{
+		EndToEndID:         "tx-in-drain",
+		SenderISPB:         "20000001",
+		ScenarioName:       "happy-path",
+		MessageType:        events.MessagePacs002,
+		RequestStartedAtNS: time.Unix(21, 0).UnixNano(),
+		HTTPStatus:         200,
+	}}
+
+	summary := summarizePacs002Replays(statuses, replays, &config.Pacs002Replay{
+		Share: 0.05,
+		Delay: 10 * time.Second,
+	}, window)
+
+	if summary.Started != 1 || summary.Accepted != 1 || summary.Violations != 1 {
+		t.Fatalf("PACS.002 replay summary = %#v", summary)
+	}
+}
+
 func TestSummaryReportsReplayCountsAndIngressRates(t *testing.T) {
 	starts := []events.Start{
 		{EndToEndID: "tx-1", PayerISPB: "10000001", ScenarioName: "happy-path", RequestStartedAtNS: 1_000_000_000, HTTPStatus: 200, Pacs008ReplaySelected: true},

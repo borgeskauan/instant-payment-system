@@ -3,17 +3,30 @@ package br.kauan.notificationgateway.delivery;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.sql.Array;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.time.Clock;
 import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class NotificationDeliveryRepositoryTest {
@@ -46,55 +59,73 @@ class NotificationDeliveryRepositoryTest {
     }
 
     @Test
-    void acknowledgeRequiresRecipientIspb() {
-        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
-        NotificationDeliveryRepository repository = new NotificationDeliveryRepository(
-                jdbcTemplate,
-                mock(TransactionTemplate.class)
+    void acknowledgeAllUsesOneAuthenticatedArrayUpdateInsideOneTransaction() throws Exception {
+        NamedParameterJdbcTemplate named = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        TransactionTemplate transaction = mock(TransactionTemplate.class);
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class);
+        Array communicationIds = mock(Array.class);
+        Array recipientIspbs = mock(Array.class);
+
+        when(named.getJdbcTemplate()).thenReturn(jdbc);
+        when(transaction.execute(org.mockito.ArgumentMatchers.<TransactionCallback<Integer>>any()))
+                .thenAnswer(invocation -> {
+                    TransactionCallback<Integer> callback = invocation.getArgument(0);
+                    return callback.doInTransaction(mock(TransactionStatus.class));
+                });
+        when(jdbc.execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any()))
+                .thenAnswer(invocation -> {
+                    ConnectionCallback<Integer> callback = invocation.getArgument(0);
+                    return callback.doInConnection(connection);
+                });
+        when(connection.createArrayOf(eq("text"), any(Object[].class)))
+                .thenReturn(communicationIds, recipientIspbs);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeQuery()).thenReturn(rows);
+        when(rows.next()).thenReturn(true, true, false);
+
+        NotificationDeliveryRepository repository =
+                new NotificationDeliveryRepository(named, transaction, Clock.systemUTC());
+
+        int updated = repository.acknowledgeAll(List.of(
+                new Acknowledgement("v1:first", "20000001"),
+                new Acknowledgement("v1:second", "20000002")
+        ));
+
+        assertThat(updated).isEqualTo(2);
+        verify(transaction, times(1)).execute(any());
+        verify(jdbc, times(1)).execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any());
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(connection).prepareStatement(sql.capture());
+        assertThat(sql.getValue())
+                .contains("FROM unnest(?::text[], ?::text[])")
+                .contains("delivery.communication_id = ack.communication_id")
+                .contains("delivery.recipient_ispb = ack.recipient_ispb")
+                .contains("delivery.delivery_status <> 'ACKED'")
+                .contains("RETURNING delivery.communication_id");
+
+        ArgumentCaptor<Object[]> arrays = ArgumentCaptor.forClass(Object[].class);
+        verify(connection, times(2)).createArrayOf(eq("text"), arrays.capture());
+        assertThat(arrays.getAllValues()).containsExactly(
+                new String[]{"v1:first", "v1:second"},
+                new String[]{"20000001", "20000002"}
         );
-
-        repository.acknowledge("v1:abc", "20000001");
-
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
-        verify(jdbcTemplate).update(sqlCaptor.capture(), paramsCaptor.capture());
-        assertThat(sqlCaptor.getValue()).contains("recipient_ispb = :recipientIspb");
-        assertThat(sqlCaptor.getValue()).contains("delivery_status <> 'ACKED'");
-        assertThat(paramsCaptor.getValue().getValue("communicationId")).isEqualTo("v1:abc");
-        assertThat(paramsCaptor.getValue().getValue("recipientIspb")).isEqualTo("20000001");
+        verify(communicationIds).free();
+        verify(recipientIspbs).free();
     }
 
     @Test
-    void acknowledgeReturnsFalseWhenNoDeliveryMatchesTheAuthenticatedIspb() {
-        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
-        NotificationDeliveryRepository repository = new NotificationDeliveryRepository(
-                jdbcTemplate,
-                mock(TransactionTemplate.class)
-        );
-        when(jdbcTemplate.update(anyString(), any(MapSqlParameterSource.class))).thenReturn(0);
+    void acknowledgeAllSkipsJdbcForAnEmptyBatch() {
+        NamedParameterJdbcTemplate named = mock(NamedParameterJdbcTemplate.class);
+        TransactionTemplate transaction = mock(TransactionTemplate.class);
+        NotificationDeliveryRepository repository =
+                new NotificationDeliveryRepository(named, transaction, Clock.systemUTC());
 
-        boolean acknowledged = repository.acknowledge("v1:abc", "20000002");
+        assertThat(repository.acknowledgeAll(List.of())).isZero();
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
-        verify(jdbcTemplate).update(sqlCaptor.capture(), paramsCaptor.capture());
-        assertThat(acknowledged).isFalse();
-        assertThat(sqlCaptor.getValue()).contains("recipient_ispb = :recipientIspb");
-        assertThat(paramsCaptor.getValue().getValue("communicationId")).isEqualTo("v1:abc");
-        assertThat(paramsCaptor.getValue().getValue("recipientIspb")).isEqualTo("20000002");
-    }
-
-    @Test
-    void acknowledgeReturnsTrueWhenDeliveryMatchesTheAuthenticatedIspb() {
-        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
-        NotificationDeliveryRepository repository = new NotificationDeliveryRepository(
-                jdbcTemplate,
-                mock(TransactionTemplate.class)
-        );
-        when(jdbcTemplate.update(anyString(), any(MapSqlParameterSource.class))).thenReturn(1);
-
-        boolean acknowledged = repository.acknowledge("v1:abc", "20000001");
-
-        assertThat(acknowledged).isTrue();
+        verifyNoInteractions(named, transaction);
     }
 }

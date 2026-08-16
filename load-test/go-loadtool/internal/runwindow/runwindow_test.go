@@ -8,11 +8,11 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 )
 
-func TestNewUsesSimulatorClockAndMaximumEnabledReplayDelay(t *testing.T) {
+func TestNewUsesSimulatorClockAndEndsAfterConfiguredDrain(t *testing.T) {
 	started := time.Date(2026, 8, 11, 12, 0, 0, 123, time.UTC)
 	document := New("mixed-outcomes-smoke", started, 5*time.Second, 10*time.Second, 10*time.Second, config.Replay{
 		Pacs008: &config.Pacs008Replay{Delay: 7 * time.Second},
-		Pacs002: &config.Pacs002Replay{Delay: 11 * time.Second},
+		Pacs002: &config.Pacs002Replay{Delay: 9 * time.Second},
 	})
 
 	if !document.Window.GenerationStartedAt.Equal(started) {
@@ -24,7 +24,7 @@ func TestNewUsesSimulatorClockAndMaximumEnabledReplayDelay(t *testing.T) {
 	if !document.Window.GenerationEndedAt.Equal(started.Add(15 * time.Second)) {
 		t.Fatalf("generation end = %s", document.Window.GenerationEndedAt)
 	}
-	if !document.Window.ReplayDeadlineAt.Equal(started.Add(36 * time.Second)) {
+	if !document.Window.ReplayDeadlineAt.Equal(started.Add(25 * time.Second)) {
 		t.Fatalf("replay deadline = %s", document.Window.ReplayDeadlineAt)
 	}
 }

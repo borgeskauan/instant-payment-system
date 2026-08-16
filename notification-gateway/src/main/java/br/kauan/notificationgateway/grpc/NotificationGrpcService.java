@@ -1,12 +1,14 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.delivery.Acknowledgement;
+import br.kauan.notificationgateway.delivery.AcknowledgementBatcher;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
 import br.kauan.notificationgateway.grpc.proto.ClientMessage;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import io.grpc.Status;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
@@ -28,7 +30,7 @@ import net.devh.boot.grpc.server.service.GrpcService;
 public class NotificationGrpcService extends NotificationGatewayGrpc.NotificationGatewayImplBase {
 
     private final SubscriberRegistry subscriberRegistry;
-    private final NotificationDeliveryRepository deliveryRepository;
+    private final AcknowledgementBatcher acknowledgementBatcher;
 
     @Override
     public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
@@ -50,17 +52,22 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
                 if (message.hasAck()) {
                     String deliveryId = message.getAck().getDeliveryId();
                     if (!deliveryId.isBlank()) {
-                        boolean acknowledged = deliveryRepository.acknowledge(deliveryId, authenticatedIspb);
-                        if (acknowledged) {
-                            log.debug("ACK received for delivery {} from ISPB {}", deliveryId, authenticatedIspb);
-                        } else {
-                            log.info("ACK ignored for delivery {} from ISPB {}", deliveryId, authenticatedIspb);
+                        try {
+                            boolean enqueued = acknowledgementBatcher.enqueue(
+                                    new Acknowledgement(deliveryId, authenticatedIspb)
+                            );
+                            if (!enqueued) {
+                                fail(Status.UNAVAILABLE, "acknowledgement persistence is stopping");
+                            }
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            fail(Status.UNAVAILABLE, "acknowledgement enqueue interrupted");
                         }
                     }
                     return;
                 }
 
-                failInvalid("message must contain ack");
+                fail(Status.INVALID_ARGUMENT, "message must contain ack");
             }
 
             @Override
@@ -70,19 +77,21 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
 
             @Override
             public void onCompleted() {
-                unregister();
-                responseObserver.onCompleted();
+                if (unregister()) {
+                    responseObserver.onCompleted();
+                }
             }
 
-            private void unregister() {
-                subscriberRegistry.unregister(authenticatedIspb, responseObserver);
+            private boolean unregister() {
+                return subscriberRegistry.unregister(authenticatedIspb, responseObserver);
             }
 
-            private void failInvalid(String description) {
-                unregister();
-                responseObserver.onError(io.grpc.Status.INVALID_ARGUMENT
-                        .withDescription(description)
-                        .asRuntimeException());
+            private void fail(Status status, String description) {
+                if (unregister()) {
+                    responseObserver.onError(status
+                            .withDescription(description)
+                            .asRuntimeException());
+                }
             }
         };
     }

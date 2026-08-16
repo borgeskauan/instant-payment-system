@@ -214,6 +214,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 		replayWriter:          replayWriter,
 		replayScheduler:       scheduler,
 		pacs002ReplaySelector: selector,
+		generationEndedAt:     time.Now().Add(time.Second),
 		buildPacs002Func: func(string) []byte {
 			buildCalls.Add(1)
 			return []byte("exact-pacs002-body")
@@ -269,5 +270,66 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 	}
 	if len(replays) != 1 || replays[0].MessageType != events.MessagePacs002 || replays[0].SenderISPB != "20000001" || replays[0].HTTPStatus != http.StatusAccepted {
 		t.Fatalf("replays = %#v", replays)
+	}
+}
+
+func TestPacs002StartedDuringDrainIsSentWithoutCreatingReplayObligation(t *testing.T) {
+	dir := t.TempDir()
+	statusWriter, err := events.NewStatusStartWriter(filepath.Join(dir, "status-starts.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventWriter, err := events.NewNotificationWriter(filepath.Join(dir, "notifications.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selector, err := newReplaySelectorWithDomain(1, pacs002ReplayShuffleDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpCalls := atomic.Int64{}
+	s := &simulator{
+		cfg: Config{
+			BaseURL: "https://localhost:8001",
+			Replay: config.Replay{Pacs002: &config.Pacs002Replay{
+				Share: 1,
+				Delay: 10 * time.Second,
+			}},
+		},
+		httpClients: map[string]*http.Client{"20000001": {
+			Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				httpCalls.Add(1)
+				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+			}),
+		}},
+		statusStartWriter:     statusWriter,
+		eventWriter:           eventWriter,
+		pacs002ReplaySelector: selector,
+		generationEndedAt:     time.Now().Add(-time.Second),
+		replayDeadlineAt:      time.Now().Add(time.Second),
+	}
+
+	s.sendPacs002(context.Background(), statusJob{
+		receiverISPB: "20000001",
+		endToEndID:   "tx-in-drain",
+		scenarioName: "happy-path",
+	})
+	if err := statusWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := eventWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses, err := events.ReadStatusStarts(filepath.Join(dir, "status-starts.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statuses) != 1 || statuses[0].HTTPStatus != http.StatusOK || statuses[0].Pacs002ReplaySelected {
+		t.Fatalf("status starts = %#v", statuses)
+	}
+	if httpCalls.Load() != 1 || selector.blockOffset != 0 || s.replaysScheduled.Load() != 0 || s.currentRunError() != nil {
+		t.Fatalf("drain PACS.002 created replay state: calls=%d selector_offset=%d scheduled=%d error=%v",
+			httpCalls.Load(), selector.blockOffset, s.replaysScheduled.Load(), s.currentRunError())
 	}
 }

@@ -581,13 +581,13 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 		buildPayload = s.buildPacs002Func
 	}
 	body := buildPayload(job.endToEndID)
+	startedAtTime := time.Now()
 	selected := false
-	if s.pacs002ReplaySelector != nil {
+	if s.pacs002ReplaySelector != nil && (s.generationEndedAt.IsZero() || startedAtTime.Before(s.generationEndedAt)) {
 		s.pacs002SelectorMu.Lock()
 		selected = s.pacs002ReplaySelector.Next()
 		s.pacs002SelectorMu.Unlock()
 	}
-	startedAtTime := time.Now()
 	if selected {
 		if s.replayScheduler == nil || s.cfg.Replay.Pacs002 == nil {
 			s.recordRunError(fmt.Errorf("selected pacs.002 replay %q has no configured scheduler", job.endToEndID))

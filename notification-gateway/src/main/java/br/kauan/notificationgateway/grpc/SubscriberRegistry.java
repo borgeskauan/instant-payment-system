@@ -47,11 +47,14 @@ public class SubscriberRegistry {
      * Removes a gRPC stream observer for the given ISPB.
      * Called when the client disconnects or an error occurs.
      */
-    public void unregister(String ispb, StreamObserver<Notification> observer) {
-        List<StreamObserver<Notification>> list = subscribers.get(ispb);
-        if (list != null) {
-            list.remove(observer);
-            log.info("Unregistered subscriber for ISPB: {} (remaining: {})", ispb, list.size());
+    public boolean unregister(String ispb, StreamObserver<Notification> observer) {
+        synchronized (observer) {
+            List<StreamObserver<Notification>> list = subscribers.get(ispb);
+            if (list != null && list.remove(observer)) {
+                log.info("Unregistered subscriber for ISPB: {} (remaining: {})", ispb, list.size());
+                return true;
+            }
+            return false;
         }
     }
 
@@ -77,6 +80,9 @@ public class SubscriberRegistry {
 
         try {
             synchronized (observer) {
+                if (!isRegistered(ispb, observer)) {
+                    return false;
+                }
                 observer.onNext(notification);
             }
             log.debug("Dispatched delivery {} to ISPB {}", delivery.communicationId(), ispb);
@@ -94,5 +100,10 @@ public class SubscriberRegistry {
             return null;
         }
         return list.getFirst();
+    }
+
+    private boolean isRegistered(String ispb, StreamObserver<Notification> observer) {
+        List<StreamObserver<Notification>> list = subscribers.get(ispb);
+        return list != null && list.contains(observer);
     }
 }

@@ -342,6 +342,7 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "schema version", old: `"schemaVersion": 1`, new: `"schemaVersion": 2`, wantMessage: "schemaVersion"},
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
+		{name: "drain shorter than replay delay", old: `"drain": "12s"`, new: `"drain": "10s"`, wantMessage: "at least the largest replay delay"},
 		{name: "replay share zero", old: `"share": 0.25`, new: `"share": 0`, wantMessage: "replay.pacs008.share"},
 		{name: "replay share greater than one", old: `"share": 0.25`, new: `"share": 1.01`, wantMessage: "replay.pacs008.share"},
 		{name: "replay share not integral per block", old: `"share": 0.25`, new: `"share": 0.015`, wantMessage: "whole number of entries"},

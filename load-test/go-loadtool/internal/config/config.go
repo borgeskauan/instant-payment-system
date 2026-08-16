@@ -317,6 +317,9 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if err != nil {
 		return Runtime{}, err
 	}
+	if drain < maximumReplayDelay(replay) {
+		return Runtime{}, malformedProfile(name, "load.drain", errors.New("must be at least the largest replay delay"))
+	}
 
 	if len(file.Scenarios) == 0 {
 		return Runtime{}, malformedProfile(name, "scenarios", errors.New("must contain at least one scenario"))
@@ -416,6 +419,17 @@ func decodeReplayRule(profileName string, field string, share float64, delayText
 		return 0, 0, err
 	}
 	return share, delay, nil
+}
+
+func maximumReplayDelay(replay Replay) time.Duration {
+	var delay time.Duration
+	if replay.Pacs008 != nil && replay.Pacs008.Delay > delay {
+		delay = replay.Pacs008.Delay
+	}
+	if replay.Pacs002 != nil && replay.Pacs002.Delay > delay {
+		delay = replay.Pacs002.Delay
+	}
+	return delay
 }
 
 func decodeScenario(profileName string, index int, file fileScenario) (Scenario, error) {
