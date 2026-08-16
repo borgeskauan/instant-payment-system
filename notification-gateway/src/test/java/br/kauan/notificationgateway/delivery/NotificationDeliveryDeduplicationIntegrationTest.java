@@ -2,11 +2,13 @@ package br.kauan.notificationgateway.delivery;
 
 import br.kauan.notificationgateway.kafka.NotificationKafkaConsumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
@@ -14,8 +16,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -42,12 +46,16 @@ class NotificationDeliveryDeduplicationIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @BeforeEach
+    void truncateDeliveries() {
+        jdbcTemplate.update("TRUNCATE notification_delivery");
+    }
+
     @Test
     void duplicateKafkaPublicationsCreateOneLogicalDelivery() {
         NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository);
 
-        consumer.consume(notificationRecord(10L));
-        consumer.consume(notificationRecord(11L));
+        consumer.consume(List.of(notificationRecord(10L), notificationRecord(11L)));
 
         Integer deliveryCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification_delivery WHERE communication_id = ?",
@@ -68,7 +76,45 @@ class NotificationDeliveryDeduplicationIntegrationTest {
         )).isEqualTo(DeliveryStatus.PENDING.name());
     }
 
+    @Test
+    void oneKafkaPollPersistsEachDistinctNotification() {
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository);
+
+        consumer.consume(List.of(
+                notificationRecord(10L, "v1:first", "E2E-1"),
+                notificationRecord(11L, "v1:second", "E2E-2")
+        ));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notification_delivery",
+                Integer.class
+        )).isEqualTo(2);
+    }
+
+    @Test
+    void invalidNotificationRollsBackTheCompletePoll() {
+        IncomingNotification valid = incomingNotification("v1:valid", "v1");
+        IncomingNotification invalid = incomingNotification("v1:invalid", null);
+
+        assertThatThrownBy(() -> repository.saveAllIfAbsent(List.of(valid, invalid)))
+                .isInstanceOf(DataAccessException.class);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM notification_delivery WHERE communication_id = ?",
+                Integer.class,
+                valid.communicationId()
+        )).isZero();
+    }
+
     private ConsumerRecord<String, byte[]> notificationRecord(long offset) {
+        return notificationRecord(offset, COMMUNICATION_ID, "E2E-1");
+    }
+
+    private ConsumerRecord<String, byte[]> notificationRecord(
+            long offset,
+            String communicationId,
+            String paymentId
+    ) {
         ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
                 "psp-notifications",
                 0,
@@ -76,12 +122,24 @@ class NotificationDeliveryDeduplicationIntegrationTest {
                 "20000001",
                 PAYLOAD
         );
-        record.headers().add("notification.communication-id", bytes(COMMUNICATION_ID));
+        record.headers().add("notification.communication-id", bytes(communicationId));
         record.headers().add("notification.event-type", bytes("SETTLED_NOTIFICATION"));
-        record.headers().add("notification.payment-id", bytes("E2E-1"));
+        record.headers().add("notification.payment-id", bytes(paymentId));
         record.headers().add("notification.status", bytes("ACSC"));
         record.headers().add("notification.schema-version", bytes("v1"));
         return record;
+    }
+
+    private IncomingNotification incomingNotification(String communicationId, String schemaVersion) {
+        return new IncomingNotification(
+                communicationId,
+                "20000001",
+                "SETTLED_NOTIFICATION",
+                "E2E-1",
+                "ACSC",
+                schemaVersion,
+                PAYLOAD
+        );
     }
 
     private byte[] bytes(String value) {

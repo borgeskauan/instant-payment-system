@@ -10,6 +10,8 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Consumes every message from {@code psp-notifications} and records it as a
@@ -33,26 +35,34 @@ public class NotificationKafkaConsumer {
             groupId = "${spring.kafka.consumer.group-id}",
             containerFactory = "notificationKafkaListenerContainerFactory"
     )
-    public void consume(ConsumerRecord<String, byte[]> record) {
-        String ispb = record.key();
-        IncomingNotification notification = new IncomingNotification(
-                requiredHeader(record, "notification.communication-id"),
-                ispb,
-                requiredHeader(record, "notification.event-type"),
-                requiredHeader(record, "notification.payment-id"),
-                optionalHeader(record, "notification.status"),
-                requiredHeader(record, "notification.schema-version"),
-                record.value()
-        );
+    public void consume(List<ConsumerRecord<String, byte[]>> records) {
+        if (records.isEmpty()) {
+            return;
+        }
 
-        log.debug(
-                "Persisting notification delivery. communicationId={}, ispb={}, partition={}, offset={}",
-                notification.communicationId(),
-                ispb,
-                record.partition(),
-                record.offset()
-        );
-        deliveryRepository.saveIfAbsent(notification);
+        List<IncomingNotification> notifications = new ArrayList<>(records.size());
+        for (ConsumerRecord<String, byte[]> record : records) {
+            String ispb = record.key();
+            IncomingNotification notification = new IncomingNotification(
+                    requiredHeader(record, "notification.communication-id"),
+                    ispb,
+                    requiredHeader(record, "notification.event-type"),
+                    requiredHeader(record, "notification.payment-id"),
+                    optionalHeader(record, "notification.status"),
+                    requiredHeader(record, "notification.schema-version"),
+                    record.value()
+            );
+            log.debug(
+                    "Persisting notification delivery. communicationId={}, ispb={}, partition={}, offset={}",
+                    notification.communicationId(),
+                    ispb,
+                    record.partition(),
+                    record.offset()
+            );
+            notifications.add(notification);
+        }
+
+        deliveryRepository.saveAllIfAbsent(notifications);
     }
 
     private String requiredHeader(ConsumerRecord<String, byte[]> record, String name) {

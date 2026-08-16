@@ -22,7 +22,9 @@ case "$*" in
     *"FROM pg_stat_io"*)
         printf '%s\n' \
             'pg_stat_io,client backend|relation|normal,reads,4' \
-            'pg_stat_database,postgres,deadlocks,0'
+            'pg_stat_database,postgres,deadlocks,0' \
+            'pg_stat_database,postgres,xact_commit,100' \
+            'pg_stat_database,postgres,xact_rollback,2'
         ;;
 esac
 SH
@@ -70,10 +72,21 @@ if [[ "$(grep -c '^phase,' "$tmp_dir/postgres-io.csv")" -ne 1 ]]; then
     echo "PostgreSQL I/O snapshots duplicated their header" >&2
     exit 1
 fi
-if [[ "$(grep -c '^before,' "$tmp_dir/postgres-io.csv")" -ne 2 || "$(grep -c '^after,' "$tmp_dir/postgres-io.csv")" -ne 2 ]]; then
+if [[ "$(grep -c '^before,' "$tmp_dir/postgres-io.csv")" -ne 4 || "$(grep -c '^after,' "$tmp_dir/postgres-io.csv")" -ne 4 ]]; then
     echo "PostgreSQL I/O snapshots did not preserve both phases" >&2
     exit 1
 fi
+
+for metric in xact_commit xact_rollback; do
+    if ! grep -q "$metric" "$DOCKER_INVOCATIONS_LOG"; then
+        echo "PostgreSQL I/O snapshot query omitted $metric" >&2
+        exit 1
+    fi
+    if [[ "$(grep -c ",pg_stat_database,postgres,$metric," "$tmp_dir/postgres-io.csv")" -ne 2 ]]; then
+        echo "PostgreSQL I/O snapshots did not preserve $metric in both phases" >&2
+        exit 1
+    fi
+done
 
 for column in \
     shared_blk_read_time \

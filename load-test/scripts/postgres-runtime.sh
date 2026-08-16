@@ -135,7 +135,9 @@ snapshot_io() {
             ('blk_write_time_ms', blk_write_time::numeric),
             ('temp_files', temp_files::numeric),
             ('temp_bytes', temp_bytes::numeric),
-            ('deadlocks', deadlocks::numeric)
+            ('deadlocks', deadlocks::numeric),
+            ('xact_commit', xact_commit::numeric),
+            ('xact_rollback', xact_rollback::numeric)
         ) AS metrics(metric, value)
         WHERE datname = current_database()
     ) TO STDOUT WITH CSV" |

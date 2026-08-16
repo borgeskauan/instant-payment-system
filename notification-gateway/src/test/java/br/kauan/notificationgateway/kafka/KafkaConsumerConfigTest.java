@@ -33,6 +33,18 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
+    void deliversEachKafkaPollToTheListenerAsOneBatch() {
+        contextRunner.run(context -> {
+            var factory = context.getBean(
+                    "notificationKafkaListenerContainerFactory",
+                    ConcurrentKafkaListenerContainerFactory.class
+            );
+
+            assertThat(factory.isBatchListener()).isTrue();
+        });
+    }
+
+    @Test
     void allowsNotificationListenerConcurrencyOverride() {
         contextRunner
                 .withPropertyValues("notification-gateway.kafka.listener-concurrency=4")

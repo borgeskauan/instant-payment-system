@@ -237,6 +237,108 @@ observações de sessões PostgreSQL aguardavam WAL e 423 executavam sem wait. O
 primeiro limite foi deslocado do ingresso para o caminho SPI/PostgreSQL; buckets
 continuam sendo hipótese, ainda sem autorização para mudança arquitetural.
 
+### Próxima intervenção — persistência em batch no notification-gateway
+
+O PostgreSQL permanece limitado a 1 vCPU. A próxima comparação reduz trabalho
+por notificação sem relaxar durabilidade, idempotência ou a entrega
+at-least-once.
+
+O consumer do gateway já busca até 500 registros por poll e confirma offsets em
+modo `BATCH`, mas o listener recebe um `ConsumerRecord` por chamada e executa um
+`INSERT ... ON CONFLICT DO NOTHING` isolado. Assim, o batch Kafka atual não é um
+batch transacional no PostgreSQL. O diagnóstico registrou aproximadamente 20
+mil inserts individuais de `notification_delivery`, enquanto inserts e ACKs
+individuais responderam por cerca de 92% das observações de `WALWrite` e
+`WalSync` atribuíveis a queries conhecidas.
+
+A primeira intervenção deve alterar somente o ingresso do gateway:
+
+- o listener recebe a lista de registros entregue pelo poll;
+- todos os registros são decodificados e persistidos por uma operação bulk em
+  uma única transação;
+- o método retorna, e o offset Kafka pode ser confirmado, somente depois do
+  commit bem-sucedido;
+- falha de banco aborta o batch e permite reprocessamento pelo Kafka;
+- `ON CONFLICT (communication_id) DO NOTHING` preserva o reprocessamento
+  idempotente;
+- claim, dispatch, ACK, retry, SPI, buckets e PACS.008 permanecem inalterados.
+
+Depois dos testes funcionais, repetir exatamente o diagnóstico curto. A
+comparação deve verificar quantidade de chamadas/commits, waits de WAL, CPU do
+PostgreSQL, throughput, latência e outcomes. A alteração só permanece se reduzir
+o custo do banco sem perda ou regressão funcional.
+
+O agrupamento de ACKs é uma segunda intervenção independente. Ele será desenhado
+e medido somente depois desse A/B. Se os ACKs individuais permanecerem como a
+principal fonte de WAL, poderão ser acumulados em uma fila limitada e
+persistidos por update bulk; uma falha antes do commit deve resultar em
+redelivery, nunca em perda. A query PACS.008 e a arquitetura de buckets só serão
+reavaliadas depois dessas medições.
+
+### Resultado do A/B de persistência em batch
+
+A comparação final usou condições simétricas para evitar dois contaminantes
+encontrados nas primeiras tentativas: JVM/TLS frios no primeiro A e trabalho
+residual do A entregue durante o primeiro smoke B. Para cada variante foram
+removidos apenas os volumes da stack, preservado o build cache, aguardada a
+inicialização dos consumers, executado um smoke de aquecimento e, sem reiniciar
+os serviços, executado o diagnóstico com `--jfr --spi-trace
+--postgres-statements`. Runs frios, sem instrumentação ou com trabalho residual
+foram preservados, mas não entram nesta comparação.
+
+Os runs comparáveis são:
+
+- A por registro: `notification-per-record-final-diagnostic/20260815_224502`;
+- B por poll/batch: `notification-ingress-batch-final-diagnostic/20260815_225155`;
+- smoke funcional B: `notification-ingress-batch-final-smoke/20260815_225026`.
+
+O smoke B iniciou e recebeu `2xx` para 1.134 pagamentos, enviou os 1.134
+PACS.002 e terminou com zero violações de cenário ou replay. Happy-path produziu
+`ACSC`; insufficient-funds produziu `RJCT/AM04`. O `valid: false` do smoke foi
+exclusivamente consequência do piso rolling do perfil curto, não de regressão
+funcional.
+
+| Evidência | A por registro | B por poll/batch |
+| --- | ---: | ---: |
+| pagamentos originais totais iniciados | 8.124 | 91.479 |
+| respostas HTTP 200 | 618 | 86.856 |
+| tentativas sem status | 7.506 | 4.623 |
+| pagamentos originais ativos | 6.586 | 89.936 |
+| throughput ativo médio | `109,767/s` | `1.498,933/s` |
+| throughput rolling máximo | `512/s` | `8.911/s` |
+| notificações persistidas observadas por `pg_stat_statements` | 10.183 | 55.831 |
+| delta de `xact_commit` no PostgreSQL | 32.336 | 29.848 |
+| `xact_rollback` | 0 | 0 |
+| commits globais por notificação persistida | `3,175` | `0,535` |
+| amostras ativas `WALWrite/WalSync` no insert | 165 | 0 |
+| CPU média do PostgreSQL no ativo | `71,63%` | `77,64%` |
+| CPU média do notification-gateway no ativo | `38,57%` | `40,61%` |
+| memória média do PostgreSQL no ativo | `100,7 MiB` | `120,0 MiB` |
+| memória média do notification-gateway no ativo | `295,0 MiB` | `302,5 MiB` |
+
+`pg_stat_statements.calls` continua contando cada execução preparada dentro do
+JDBC batch e, portanto, não representa a quantidade de transações do listener.
+O efeito transacional aparece em `pg_stat_database`: o B processou 5,48 vezes
+mais inserts de delivery com 7,7% menos commits globais, reduzindo em 83,2% a
+razão global de commits por notificação observada. O volume absoluto de WAL dos
+inserts cresceu com a workload admitida, mas as amostras `WALWrite/WalSync`
+atribuídas ao insert caíram de 165 para zero. No B, 640 dessas amostras ficaram
+atribuídas ao update individual de ACK, que passa a ser a principal hipótese de
+redução de WAL no gateway.
+
+A mudança fica mantida: ela preservou o comportamento funcional, reduziu a
+pressão transacional e admitiu uma workload muito maior sem elevar
+proporcionalmente CPU ou memória. Ela não aprova a performance. O B permaneceu
+abaixo do piso sustentado, teve mínimo rolling zero, catch-up de até 8.911/s e
+outcomes que não couberam no deadline. O `kafka-producer` continuou saturado em
+aproximadamente um core e é novamente parte do caminho crítico sob a carga
+maior. O lag dos três consumer groups estava em zero na observação posterior ao
+run, mas isso não substitui as violações de deadline registradas pelo relatório.
+
+O próximo experimento pode avaliar ACKs em batch como uma intervenção separada.
+Não há, neste resultado, autorização para alterar simultaneamente concorrência,
+PostgreSQL, SPI, buckets, claim ou dispatch.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.

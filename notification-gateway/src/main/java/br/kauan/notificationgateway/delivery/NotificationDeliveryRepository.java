@@ -2,6 +2,7 @@ package br.kauan.notificationgateway.delivery;
 
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -117,18 +118,30 @@ public class NotificationDeliveryRepository {
         this.clock = clock;
     }
 
-    public void saveIfAbsent(IncomingNotification notification) {
+    public void saveAllIfAbsent(List<IncomingNotification> notifications) {
+        if (notifications.isEmpty()) {
+            return;
+        }
+
         Instant now = clock.instant();
-        jdbcTemplate.update(INSERT_SQL, new MapSqlParameterSource()
-                .addValue("communicationId", notification.communicationId())
-                .addValue("recipientIspb", notification.recipientIspb())
-                .addValue("eventType", notification.eventType())
-                .addValue("paymentId", notification.paymentId())
-                .addValue("status", notification.status())
-                .addValue("schemaVersion", notification.schemaVersion())
-                .addValue("payload", notification.payload())
-                .addValue("deliveryStatus", DeliveryStatus.PENDING.name())
-                .addValue("nextAttemptAt", timestamp(now)));
+        SqlParameterSource[] batch = new SqlParameterSource[notifications.size()];
+        for (int index = 0; index < notifications.size(); index++) {
+            IncomingNotification notification = notifications.get(index);
+            batch[index] = new MapSqlParameterSource()
+                    .addValue("communicationId", notification.communicationId())
+                    .addValue("recipientIspb", notification.recipientIspb())
+                    .addValue("eventType", notification.eventType())
+                    .addValue("paymentId", notification.paymentId())
+                    .addValue("status", notification.status())
+                    .addValue("schemaVersion", notification.schemaVersion())
+                    .addValue("payload", notification.payload())
+                    .addValue("deliveryStatus", DeliveryStatus.PENDING.name())
+                    .addValue("nextAttemptAt", timestamp(now));
+        }
+
+        transactionTemplate.executeWithoutResult(
+                ignored -> jdbcTemplate.batchUpdate(INSERT_SQL, batch)
+        );
     }
 
     public List<NotificationDelivery> claimForLocalIspbs(
