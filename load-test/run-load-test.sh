@@ -21,6 +21,8 @@ readonly POSTGRES_IO_FILE="postgres-io.csv"
 readonly POSTGRES_RUNTIME_LOG="postgres-runtime.log"
 readonly CONTAINER_STATS_FILE="container-stats.csv"
 readonly CONTAINER_STATS_LOG="container-stats.log"
+readonly INVALID_REPORT_EXIT=1
+readonly OPERATIONAL_FAILURE_EXIT=2
 
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
@@ -38,9 +40,9 @@ PROFILE_SCENARIO_SHARES=()
 PROFILE_SCENARIO_PAIR_NUMBER_STARTS=()
 PROFILE_SCENARIO_HOT_PAIR_COUNTS=()
 PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
-ENABLE_JFR=false
-ENABLE_SPI_TRACE=false
-ENABLE_POSTGRES_STATEMENTS=false
+ENABLE_JFR=true
+ENABLE_SPI_TRACE=true
+ENABLE_POSTGRES_STATEMENTS=true
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
@@ -58,7 +60,7 @@ LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
 LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--profile NAME] [--jfr] [--spi-trace] [--postgres-statements] <run-tag>"
+    echo "Usage: $(basename "$0") [--profile NAME] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] <run-tag>"
     echo "Examples:"
     echo "  $(basename "$0") --profile uniform-smoke smoke-run"
     echo "  $(basename "$0") smoke-run  # defaults to uniform-smoke"
@@ -158,16 +160,16 @@ cleanup() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --jfr)
-                ENABLE_JFR=true
+            --no-jfr)
+                ENABLE_JFR=false
                 shift
                 ;;
-            --spi-trace)
-                ENABLE_SPI_TRACE=true
+            --no-spi-trace)
+                ENABLE_SPI_TRACE=false
                 shift
                 ;;
-            --postgres-statements)
-                ENABLE_POSTGRES_STATEMENTS=true
+            --no-postgres-statements)
+                ENABLE_POSTGRES_STATEMENTS=false
                 shift
                 ;;
             --profile)
@@ -813,24 +815,36 @@ try:
     with open(path, encoding="utf-8") as handle:
         document = json.load(handle)
 except (OSError, json.JSONDecodeError) as error:
-    raise SystemExit(f"invalid SLA report {path!r}: {error}")
+    print(f"invalid SLA report {path!r}: {error}", file=sys.stderr)
+    raise SystemExit(2)
 
 if not isinstance(document, dict):
-    raise SystemExit(f"invalid SLA report {path!r}: root must be an object")
+    print(f"invalid SLA report {path!r}: root must be an object", file=sys.stderr)
+    raise SystemExit(2)
 if type(document.get("valid")) is not bool:
-    raise SystemExit(f"invalid SLA report {path!r}: valid must be a boolean")
+    print(f"invalid SLA report {path!r}: valid must be a boolean", file=sys.stderr)
+    raise SystemExit(2)
 if not document["valid"]:
-    raise SystemExit("SLA report is invalid")
+    print("SLA report is invalid", file=sys.stderr)
+    raise SystemExit(1)
 PY
 }
 
 main() {
     parse_args "$@"
-    resolve_profile
-    prepare_loadtool_binary
+    if ! resolve_profile; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
+    if ! prepare_loadtool_binary; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
     trap cleanup EXIT INT TERM
-    build_loadtool "$LOADTOOL_BIN"
-    validate_profile_with_loadtool
+    if ! build_loadtool "$LOADTOOL_BIN"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
+    if ! validate_profile_with_loadtool; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
 
     local timestamp target_dir
     local run_started_at loadtool_finished_at
@@ -839,13 +853,23 @@ main() {
     target_dir="${RESULTS_DIR}/${RUN_TAG}/${timestamp}"
     run_started_at="$(iso_now)"
 
-    prepare_run_workspace "$target_dir"
-    prepare_loadtool_certificates "$target_dir"
+    if ! prepare_run_workspace "$target_dir"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
+    if ! prepare_loadtool_certificates "$target_dir"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
 
     log_selected_options "$target_dir"
-    run_preflight_checks
-    prepare_environment "$target_dir"
-    start_optional_diagnostics "$target_dir"
+    if ! run_preflight_checks; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
+    if ! prepare_environment "$target_dir"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
+    if ! start_optional_diagnostics "$target_dir"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
     if run_loadtool "$target_dir"; then
         loadtool_status=0
     else
@@ -857,14 +881,24 @@ main() {
     else
         diagnostics_status=$?
     fi
-    if ((loadtool_status != 0)); then
-        return "$loadtool_status"
+    if ((loadtool_status != 0 || diagnostics_status != 0)); then
+        return "$OPERATIONAL_FAILURE_EXIT"
     fi
-    if ((diagnostics_status != 0)); then
-        return "$diagnostics_status"
+    if ! write_run_window_json "$target_dir" "$run_started_at" "$loadtool_finished_at"; then
+        return "$OPERATIONAL_FAILURE_EXIT"
     fi
-    write_run_window_json "$target_dir" "$run_started_at" "$loadtool_finished_at"
-    validate_sla_report "${target_dir}/sla-report.json"
+    local report_status
+    if validate_sla_report "${target_dir}/sla-report.json"; then
+        report_status=0
+    else
+        report_status=$?
+    fi
+    if ((report_status == INVALID_REPORT_EXIT)); then
+        return "$INVALID_REPORT_EXIT"
+    fi
+    if ((report_status != 0)); then
+        return "$OPERATIONAL_FAILURE_EXIT"
+    fi
     log_phase "results written to ${target_dir}"
 }
 

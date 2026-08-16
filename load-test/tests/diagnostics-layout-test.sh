@@ -78,6 +78,8 @@ chmod +x \
 export SCRIPTS_DIR="$tmp_dir/scripts"
 source "$ROOT_DIR/run-load-test.sh"
 
+ENABLE_JFR=false
+
 start_spi_trace "$tmp_dir/result/logs/spi-trace.log"
 stop_spi_trace "$tmp_dir/result"
 copy_spi_trace "$tmp_dir/result"

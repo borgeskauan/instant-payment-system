@@ -10,6 +10,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 mkdir -p "$tmp_dir/fake-bin" "$tmp_dir/run/inputs"
 export DOCKER_CALLS="$tmp_dir/docker-calls.log"
 export FUNDING_CALLS="$tmp_dir/funding-calls.log"
+export QUIESCENCE_CALLS="$tmp_dir/quiescence-calls.log"
 
 cat > "$tmp_dir/fake-bin/docker" <<'SH'
 #!/bin/bash
@@ -62,8 +63,20 @@ fi
 SH
 chmod +x "$tmp_dir/fake-provision-funds"
 
+cat > "$tmp_dir/fake-kafka-quiescence" <<'SH'
+#!/bin/bash
+set -euo pipefail
+
+printf '%s\n' check >> "$QUIESCENCE_CALLS"
+if [[ "${FAIL_QUIESCENCE:-false}" == true ]]; then
+    exit 44
+fi
+SH
+chmod +x "$tmp_dir/fake-kafka-quiescence"
+
 export PATH="$tmp_dir/fake-bin:$PATH"
 export PROVISION_FUNDS_SCRIPT="$tmp_dir/fake-provision-funds"
+export KAFKA_QUIESCENCE_SCRIPT="$tmp_dir/fake-kafka-quiescence"
 
 write_valid_plan() {
     cat > "$tmp_dir/run/inputs/execution-plan.json" <<'JSON'
@@ -108,10 +121,11 @@ JSON
 clear_calls() {
     : > "$DOCKER_CALLS"
     : > "$FUNDING_CALLS"
+    : > "$QUIESCENCE_CALLS"
 }
 
 assert_no_external_calls() {
-    if [[ -s "$DOCKER_CALLS" || -s "$FUNDING_CALLS" ]]; then
+    if [[ -s "$DOCKER_CALLS" || -s "$FUNDING_CALLS" || -s "$QUIESCENCE_CALLS" ]]; then
         echo "environment preparation caused external calls before validating its execution plan" >&2
         exit 1
     fi
@@ -161,38 +175,21 @@ assert_no_external_calls
 
 write_valid_plan
 clear_calls
-if SPI_PAYMENT_LAG=1 "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/run" >/dev/null 2>&1; then
-    echo "environment preparation accepted SPI input lag" >&2
+if FAIL_QUIESCENCE=true "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/run" >/dev/null 2>&1; then
+    echo "environment preparation accepted a failed Kafka quiescence gate" >&2
     exit 1
 fi
 if [[ -s "$FUNDING_CALLS" ]]; then
-    echo "environment preparation provisioned funds with SPI input lag" >&2
-    exit 1
-fi
-
-clear_calls
-if GATEWAY_LAG=2 "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/run" >/dev/null 2>&1; then
-    echo "environment preparation accepted notification-gateway lag" >&2
-    exit 1
-fi
-if [[ -s "$FUNDING_CALLS" ]]; then
-    echo "environment preparation provisioned funds with notification-gateway lag" >&2
-    exit 1
-fi
-
-clear_calls
-if KAFKA_UNREADABLE_GROUP=spi-payment-request-consumer-group \
-    "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/run" >/dev/null 2>&1; then
-    echo "environment preparation accepted unreadable Kafka lag" >&2
-    exit 1
-fi
-if [[ -s "$FUNDING_CALLS" ]]; then
-    echo "environment preparation provisioned funds when Kafka lag was unreadable" >&2
+    echo "environment preparation provisioned funds after quiescence failed" >&2
     exit 1
 fi
 
 clear_calls
 "$PREPARE_ENVIRONMENT" --run-dir "$tmp_dir/run" >/dev/null
+if [[ "$(wc -l < "$QUIESCENCE_CALLS")" -ne 1 ]]; then
+    echo "environment preparation did not invoke the Kafka quiescence gate once" >&2
+    exit 1
+fi
 cat > "$tmp_dir/expected-funding-calls.log" <<'EOF'
 --balance 123.45 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
 --balance 0.00 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003

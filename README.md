@@ -5,16 +5,19 @@ Kafka, PostgreSQL e entrega de notificações aos PSPs.
 
 ## Quick start
 
-Os comandos abaixo partem da raiz do repositório e exigem Docker com Compose.
-
-Suba a stack usada pelos testes de carga:
+Os comandos exigem Docker com Compose. Prepare uma stack limpa, aquecida e
+validada funcionalmente:
 
 ```bash
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
-docker compose -f infra/docker-compose.yml up -d --build
+cd load-test
+./prepare-performance-environment.sh
 ```
 
-Confira se os containers estão em execução:
+O comando remove os volumes do PostgreSQL e Kafka, preserva imagens e build
+cache e deixa a stack em execução. Repita-o depois de alterar o código ou antes
+de iniciar um novo baseline isolado.
+
+Para conferir os containers, a partir da raiz do repositório:
 
 ```bash
 docker compose -f infra/docker-compose.yml ps
@@ -27,14 +30,20 @@ docker compose -f infra/docker-compose.yml logs -f \
   kafka-producer spi notification-gateway
 ```
 
-## Teste de carga
+## Testes de carga
 
-O smoke funcional mais rápido é:
+Depois de uma única preparação, execute o diagnóstico curto quantas vezes forem
+necessárias:
 
 ```bash
 cd load-test
-./run-load-test.sh --profile mixed-outcomes-smoke local-smoke
+./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-1
+./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
+
+JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
+`--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
+experimento precisar desativá-los.
 
 O workload oficial de estabilização executa 2.000 pagamentos originais por
 segundo durante 15 minutos, além dos replays configurados:

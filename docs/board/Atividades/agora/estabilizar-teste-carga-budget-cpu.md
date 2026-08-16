@@ -38,6 +38,10 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 ## Workloads
 
+- Preparação por revisão/variante: `cd load-test &&
+  ./prepare-performance-environment.sh`. O comando recria volumes, sobe a stack,
+  espera readiness e só libera o ambiente após um `mixed-outcomes-smoke`
+  funcionalmente completo.
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
 - Meta: pelo menos 2.000 pagamentos originais iniciados em toda rolling window
@@ -55,10 +59,10 @@ duas stacks compartilhando o mesmo PostgreSQL.
   efetiva e os limites de CPU/memória usados no experimento.
 - [ ] Delimitar quais serviços compõem o budget de 3 vCPUs por stack e quais
   recursos são compartilhados ou pertencem ao gerador de carga.
-- [ ] Executar restart completo e preparação automática do ambiente antes do
-  baseline.
-- [ ] Rodar `mixed-outcomes-smoke` e confirmar os outcomes externos antes do run
-  longo.
+- [ ] Executar `prepare-performance-environment.sh` antes do baseline; não
+  iniciar o run longo se readiness, smoke ou quiescência falhar.
+- [ ] Confirmar que o preparador qualificou os 1.250 pagamentos e os outcomes
+  externos do `mixed-outcomes-smoke` antes do run longo.
 - [ ] Rodar `mixed-outcomes-2k-15m` sem alterar a implementação atual.
 - [ ] Preservar os artefatos mesmo quando a geração, throughput ou SLA não
   atingirem a meta.
@@ -82,8 +86,8 @@ PACS.008 sem repetir o run de 15 minutos: 2.000 TPS, 15 segundos de warmup, 60
 segundos ativos e 30 segundos de drain. Mix, participantes, funding e replays de
 5% permanecem idênticos a `mixed-outcomes-2k-15m`.
 
-Executar com `--jfr --spi-trace --postgres-statements`. Além dos artefatos já
-existentes, o bundle inclui:
+JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Além dos
+artefatos já existentes, o bundle inclui:
 
 - `diagnostics/postgres-activity.csv`, com waits e bloqueadores a cada 250 ms;
 - `diagnostics/postgres-io.csv`, com snapshots antes/depois;
@@ -282,9 +286,9 @@ encontrados nas primeiras tentativas: JVM/TLS frios no primeiro A e trabalho
 residual do A entregue durante o primeiro smoke B. Para cada variante foram
 removidos apenas os volumes da stack, preservado o build cache, aguardada a
 inicialização dos consumers, executado um smoke de aquecimento e, sem reiniciar
-os serviços, executado o diagnóstico com `--jfr --spi-trace
---postgres-statements`. Runs frios, sem instrumentação ou com trabalho residual
-foram preservados, mas não entram nesta comparação.
+os serviços, executado o diagnóstico com JFR, SPI trace e diagnósticos
+PostgreSQL ativos. Runs frios, sem instrumentação ou com trabalho residual foram
+preservados, mas não entram nesta comparação.
 
 Os runs comparáveis são:
 
@@ -366,8 +370,9 @@ PostgreSQL, SPI, buckets, claim ou dispatch.
 - [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência
   de degradação progressiva e ambiente quiescente ao final segundo as heurísticas
   observáveis atuais.
-- [ ] Executar múltiplos runs consecutivos, cada um após restart completo, e
-  verificar repetibilidade.
+- [ ] Executar múltiplos runs consecutivos após uma única preparação qualificada
+  do mesmo estado de código e verificar repetibilidade. Repetir a preparação ao
+  alterar a revisão/variante ou iniciar um novo baseline isolado.
 - [ ] Atualizar o load-test para registrar automaticamente o perfil efetivo de
   CPU/memória quando isso ainda não estiver presente nos artefatos.
 - [ ] Documentar requests, limits e justificativa por serviço para Kubernetes.

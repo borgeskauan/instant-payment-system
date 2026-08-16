@@ -68,6 +68,9 @@ run_loadtool() {
         violation)
             printf '%s\n' '{"valid":false}' > "${target_dir}/sla-report.json"
             ;;
+        malformed-report)
+            printf '%s\n' '{' > "${target_dir}/sla-report.json"
+            ;;
         go-failure)
             return 23
             ;;
@@ -105,8 +108,16 @@ enriched
 EOF
 diff -u "$tmp_dir/valid.expected" "$tmp_dir/valid.flow"
 
-if run_driver violation >"$tmp_dir/violation.log" 2>&1; then
+set +e
+run_driver violation >"$tmp_dir/violation.log" 2>&1
+violation_status=$?
+set -e
+if [[ "$violation_status" -eq 0 ]]; then
     echo "runner accepted an SLA report with violations" >&2
+    exit 1
+fi
+if [[ "$violation_status" -ne 1 ]]; then
+    echo "runner returned $violation_status for a completed invalid report, want 1" >&2
     exit 1
 fi
 if ! grep -q '^enriched$' "$tmp_dir/violation.flow"; then
@@ -115,11 +126,20 @@ if ! grep -q '^enriched$' "$tmp_dir/violation.flow"; then
 fi
 
 set +e
+run_driver malformed-report >"$tmp_dir/malformed-report.log" 2>&1
+malformed_report_status=$?
+set -e
+if [[ "$malformed_report_status" -ne 2 ]]; then
+    echo "runner returned $malformed_report_status for a malformed report, want operational exit code 2" >&2
+    exit 1
+fi
+
+set +e
 run_driver go-failure >"$tmp_dir/go-failure.log" 2>&1
 go_failure_status=$?
 set -e
-if [[ "$go_failure_status" -ne 23 ]]; then
-    echo "runner returned $go_failure_status, want original Go exit code 23" >&2
+if [[ "$go_failure_status" -ne 2 ]]; then
+    echo "runner returned $go_failure_status, want operational exit code 2" >&2
     exit 1
 fi
 cat > "$tmp_dir/go-failure.expected" <<'EOF'
@@ -133,8 +153,8 @@ set +e
 run_driver diagnostics-failure >"$tmp_dir/diagnostics-failure.log" 2>&1
 diagnostics_failure_status=$?
 set -e
-if [[ "$diagnostics_failure_status" -ne 19 ]]; then
-    echo "runner returned $diagnostics_failure_status, want diagnostic exit code 19" >&2
+if [[ "$diagnostics_failure_status" -ne 2 ]]; then
+    echo "runner returned $diagnostics_failure_status, want operational exit code 2" >&2
     exit 1
 fi
 cat > "$tmp_dir/diagnostics-failure.expected" <<'EOF'
@@ -148,8 +168,8 @@ set +e
 run_driver preparation-failure >"$tmp_dir/preparation-failure.log" 2>&1
 preparation_failure_status=$?
 set -e
-if [[ "$preparation_failure_status" -ne 17 ]]; then
-    echo "runner returned $preparation_failure_status, want environment-preparation exit code 17" >&2
+if [[ "$preparation_failure_status" -ne 2 ]]; then
+    echo "runner returned $preparation_failure_status, want operational exit code 2" >&2
     exit 1
 fi
 cat > "$tmp_dir/preparation-failure.expected" <<'EOF'
