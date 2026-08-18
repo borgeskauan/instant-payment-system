@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
@@ -25,7 +26,7 @@ class PaymentAuditServiceTest {
         PaymentAuditRepository repository = mock(PaymentAuditRepository.class);
         PaymentAuditService service = new PaymentAuditService(repository);
 
-        service.storeCreationEvents(List.of());
+        service.storeCreationEvents(List.of(), List.of());
         service.storeStatusEvents(List.of(), List.of());
 
         verifyNoInteractions(repository);
@@ -37,7 +38,7 @@ class PaymentAuditServiceTest {
         PaymentAuditService service = new PaymentAuditService(repository);
         PaymentTransactionCommand payment = payment("E2E-AUDIT-CREATED", 1_500L);
 
-        service.storeCreationEvents(List.of(payment));
+        service.storeCreationEvents(List.of(payment), List.of());
 
         assertThat(capturedEvents(repository)).containsExactly(new PaymentAuditEvent(
                 payment.getPaymentId(),
@@ -49,6 +50,31 @@ class PaymentAuditServiceTest {
                 "22222222",
                 null,
                 null
+        ));
+    }
+
+    @Test
+    void creationEventsRecordIngressRejectionAsTheOriginalOutcome() {
+        PaymentAuditRepository repository = mock(PaymentAuditRepository.class);
+        PaymentAuditService service = new PaymentAuditService(repository);
+        PaymentTransactionCommand payment = payment("E2E-AUDIT-NO-FUNDS", 1_500L);
+
+        service.storeCreationEvents(
+                List.of(payment),
+                List.of(new PaymentRejection(payment, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+        );
+
+        assertThat(capturedEvents(repository)).containsExactly(new PaymentAuditEvent(
+                payment.getPaymentId(),
+                PaymentAuditEventType.PAYMENT_CREATED,
+                null,
+                PaymentStatus.REJECTED,
+                1_500L,
+                "11111111",
+                "22222222",
+                null,
+                null,
+                PaymentRejectionReason.INSUFFICIENT_FUNDS
         ));
     }
 

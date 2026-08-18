@@ -2,6 +2,8 @@ package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
@@ -9,6 +11,7 @@ import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Array;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -18,13 +21,70 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 class IncomingPaymentRequestPersistence {
 
     private static final String PAYMENT_CREATED = "PAYMENT_CREATED";
-    private static final String ACCEPTANCE_REQUEST = "ACCEPTANCE_REQUEST";
     private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
     private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
+    private static final String RECHECK_EXISTING = "RECHECK_EXISTING";
+    private static final String IDENTICAL_REPLAY = "IDENTICAL_REPLAY";
+
+    private static final String RECHECK_EXISTING_SQL = """
+            WITH incoming AS (
+                SELECT *
+                FROM unnest(
+                    ?::int[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[]
+                ) AS i(
+                    ordinal,
+                    payment_id,
+                    request_fingerprint,
+                    request_fingerprint_version,
+                    authenticated_ispb
+                )
+            )
+            SELECT
+                i.ordinal,
+                CASE
+                    WHEN i.authenticated_ispb IS DISTINCT FROM p.sender_bank_code
+                        THEN 'UNAUTHORIZED_PSP'
+                    WHEN i.request_fingerprint_version IS DISTINCT FROM p.request_fingerprint_version
+                      OR i.request_fingerprint IS DISTINCT FROM p.request_fingerprint
+                        THEN 'DIVERGENT_DUPLICATE'
+                    ELSE 'IDENTICAL_REPLAY'
+                END AS action
+            FROM incoming i
+            JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
+            ORDER BY i.ordinal
+            """;
+
+    private static final String LOCK_BALANCES_SQL = """
+            SELECT bank_code, balance_cents
+            FROM participant_balance_entity
+            WHERE bank_code = ANY (?::text[])
+            ORDER BY bank_code
+            FOR UPDATE
+            """;
+
+    private static final String APPLY_DEBITS_SQL = """
+            UPDATE participant_balance_entity balance
+            SET balance_cents = balance.balance_cents - debit.amount_cents
+            FROM unnest(?::text[], ?::bigint[]) AS debit(bank_code, amount_cents)
+            WHERE balance.bank_code = debit.bank_code
+              AND balance.balance_cents >= debit.amount_cents
+            """;
+
+    private static final String REJECT_INSUFFICIENT_SQL = """
+            UPDATE payment_transaction_entity
+            SET status = ?, rejection_reason = ?
+            WHERE payment_id = ANY (?::text[])
+              AND status = ?
+            """;
 
     private static final String PERSISTENCE_SQL = """
             WITH incoming AS (
@@ -133,14 +193,6 @@ class IncomingPaymentRequestPersistence {
                 FROM logical_incoming i
                 JOIN inserted ins ON ins.payment_id = i.payment_id
             ),
-            existing_waiting_acceptance_actions AS (
-                SELECT li.ordinal, 'ACCEPTANCE_REQUEST'::text AS action
-                FROM logical_incoming li
-                WHERE li.existing_payment_id IS NOT NULL
-                  AND li.existing_fingerprint_version = li.request_fingerprint_version
-                  AND li.existing_fingerprint = li.request_fingerprint
-                  AND li.existing_status = ?
-            ),
             existing_divergent_payment_ids AS (
                 SELECT li.payment_id
                 FROM logical_incoming li
@@ -154,6 +206,13 @@ class IncomingPaymentRequestPersistence {
                 SELECT ai.ordinal, 'DIVERGENT_DUPLICATE'::text AS action
                 FROM authorized_incoming ai
                 JOIN existing_divergent_payment_ids d USING (payment_id)
+            ),
+            conflict_loser_actions AS (
+                SELECT li.ordinal, 'RECHECK_EXISTING'::text AS action
+                FROM logical_incoming li
+                LEFT JOIN inserted ins ON ins.payment_id = li.payment_id
+                WHERE li.existing_payment_id IS NULL
+                  AND ins.payment_id IS NULL
             )
             SELECT ordinal, action FROM payload_unauthorized_actions
             UNION ALL
@@ -163,9 +222,9 @@ class IncomingPaymentRequestPersistence {
             UNION ALL
             SELECT ordinal, action FROM inserted_actions
             UNION ALL
-            SELECT ordinal, action FROM existing_waiting_acceptance_actions
-            UNION ALL
             SELECT ordinal, action FROM existing_divergent_actions
+            UNION ALL
+            SELECT ordinal, action FROM conflict_loser_actions
             ORDER BY ordinal
             """;
 
@@ -179,15 +238,15 @@ class IncomingPaymentRequestPersistence {
             List<AuthenticatedPaymentRequest> paymentRequests
     ) {
         if (paymentRequests.isEmpty()) {
-            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of());
+            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
         BatchLocalPaymentClassification batchLocalClassification =
                 classifyPaymentRequestsWithinBatch(paymentRequests);
         Map<Integer, AuthenticatedPaymentRequest> requestsByOrdinal =
                 requestsByOrdinal(paymentRequests);
-        List<PaymentTransactionCommand> acceptanceRequests = new ArrayList<>();
-        List<PaymentTransactionCommand> createdPayments = new ArrayList<>();
+        List<AuthenticatedPaymentRequest> createdRequests = new ArrayList<>();
+        List<AuthenticatedPaymentRequest> conflictLoserRequests = new ArrayList<>();
         Set<Integer> divergentDuplicateOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedRequestOrdinals = new LinkedHashSet<>();
 
@@ -198,11 +257,8 @@ class IncomingPaymentRequestPersistence {
             }
 
             switch (actionRow.action()) {
-                case PAYMENT_CREATED -> {
-                    createdPayments.add(paymentRequest.command());
-                    acceptanceRequests.add(paymentRequest.command());
-                }
-                case ACCEPTANCE_REQUEST -> acceptanceRequests.add(paymentRequest.command());
+                case PAYMENT_CREATED -> createdRequests.add(paymentRequest);
+                case RECHECK_EXISTING -> conflictLoserRequests.add(paymentRequest);
                 case DIVERGENT_DUPLICATE -> addExpandedOrdinals(
                         divergentDuplicateOrdinals,
                         batchLocalClassification.originalOrdinalsByRepresentative(),
@@ -217,9 +273,47 @@ class IncomingPaymentRequestPersistence {
             }
         }
 
+        for (PersistenceActionRow actionRow : recheckExisting(conflictLoserRequests)) {
+            switch (actionRow.action()) {
+                case IDENTICAL_REPLAY -> {
+                    // A concurrent transaction already created the same logical payment.
+                }
+                case DIVERGENT_DUPLICATE -> addExpandedOrdinals(
+                        divergentDuplicateOrdinals,
+                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        actionRow.ordinal()
+                );
+                case UNAUTHORIZED_PSP -> addExpandedOrdinals(
+                        unauthorizedRequestOrdinals,
+                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        actionRow.ordinal()
+                );
+                default -> throw new IllegalStateException("Unknown payment recheck action: " + actionRow.action());
+            }
+        }
+
+        List<PaymentTransactionCommand> acceptanceRequests = new ArrayList<>();
+        List<PaymentRejection> rejectedPayments = new ArrayList<>();
+        for (ReservationOutcome outcome : reserveCreatedPayments(createdRequests)) {
+            PaymentTransactionCommand payment = outcome.paymentRequest().command();
+            if (outcome.reserved()) {
+                acceptanceRequests.add(payment);
+            } else {
+                rejectedPayments.add(new PaymentRejection(
+                        payment,
+                        PaymentRejectionReason.INSUFFICIENT_FUNDS
+                ));
+            }
+        }
+
+        List<PaymentTransactionCommand> createdPayments = createdRequests.stream()
+                .map(AuthenticatedPaymentRequest::command)
+                .toList();
+
         return new PaymentTransactionPersistenceResult(
                 acceptanceRequests,
                 createdPayments,
+                rejectedPayments,
                 requestsWithOrdinals(paymentRequests, divergentDuplicateOrdinals),
                 requestsWithOrdinals(paymentRequests, unauthorizedRequestOrdinals)
         );
@@ -299,8 +393,6 @@ class IncomingPaymentRequestPersistence {
                     statement.setArray(7, requestFingerprintArray);
                     statement.setArray(8, requestFingerprintVersionArray);
                     statement.setArray(9, authenticatedIspbArray);
-                    statement.setString(10, PaymentStatus.WAITING_ACCEPTANCE.name());
-
                     try (ResultSet resultSet = statement.executeQuery()) {
                         List<PersistenceActionRow> actionRows = new ArrayList<>(incomingRows.size());
                         while (resultSet.next()) {
@@ -326,6 +418,182 @@ class IncomingPaymentRequestPersistence {
                 );
             }
         });
+    }
+
+    private List<PersistenceActionRow> recheckExisting(
+            List<AuthenticatedPaymentRequest> conflictLoserRequests
+    ) {
+        if (conflictLoserRequests.isEmpty()) {
+            return List.of();
+        }
+
+        return jdbcTemplate.execute((ConnectionCallback<List<PersistenceActionRow>>) connection -> {
+            IncomingPaymentArrays incoming = incomingPaymentArrays(incomingRows(conflictLoserRequests));
+            Array ordinalArray = null;
+            Array paymentIdArray = null;
+            Array requestFingerprintArray = null;
+            Array requestFingerprintVersionArray = null;
+            Array authenticatedIspbArray = null;
+            try {
+                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
+                paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
+                requestFingerprintArray = connection.createArrayOf("text", incoming.requestFingerprints());
+                requestFingerprintVersionArray = connection.createArrayOf(
+                        "text",
+                        incoming.requestFingerprintVersions()
+                );
+                authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
+
+                try (var statement = connection.prepareStatement(RECHECK_EXISTING_SQL)) {
+                    statement.setArray(1, ordinalArray);
+                    statement.setArray(2, paymentIdArray);
+                    statement.setArray(3, requestFingerprintArray);
+                    statement.setArray(4, requestFingerprintVersionArray);
+                    statement.setArray(5, authenticatedIspbArray);
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        List<PersistenceActionRow> actions = new ArrayList<>(conflictLoserRequests.size());
+                        while (resultSet.next()) {
+                            actions.add(new PersistenceActionRow(resultSet.getInt(1), resultSet.getString(2)));
+                        }
+                        if (actions.size() != conflictLoserRequests.size()) {
+                            throw new IllegalStateException("Concurrent payment conflict could not be reclassified");
+                        }
+                        return actions;
+                    }
+                }
+            } finally {
+                free(
+                        ordinalArray,
+                        paymentIdArray,
+                        requestFingerprintArray,
+                        requestFingerprintVersionArray,
+                        authenticatedIspbArray
+                );
+            }
+        });
+    }
+
+    private List<ReservationOutcome> reserveCreatedPayments(
+            List<AuthenticatedPaymentRequest> createdRequests
+    ) {
+        if (createdRequests.isEmpty()) {
+            return List.of();
+        }
+
+        return jdbcTemplate.execute((ConnectionCallback<List<ReservationOutcome>>) connection -> {
+            Map<String, List<AuthenticatedPaymentRequest>> requestsByPayer = new TreeMap<>();
+            for (AuthenticatedPaymentRequest createdRequest : createdRequests) {
+                String payerIspb = Utils.getBankCode(createdRequest.command().getSender());
+                requestsByPayer.computeIfAbsent(payerIspb, ignored -> new ArrayList<>())
+                        .add(createdRequest);
+            }
+            for (List<AuthenticatedPaymentRequest> payerRequests : requestsByPayer.values()) {
+                payerRequests.sort((first, second) -> Integer.compare(
+                        first.sourceOrdinal(),
+                        second.sourceOrdinal()
+                ));
+            }
+
+            Map<String, Long> lockedBalances = lockBalances(
+                    connection,
+                    requestsByPayer.keySet().toArray(String[]::new)
+            );
+            Map<String, Long> debitsByPayer = new TreeMap<>();
+            List<String> insufficientPaymentIds = new ArrayList<>();
+            List<ReservationOutcome> outcomes = new ArrayList<>(createdRequests.size());
+
+            for (Map.Entry<String, List<AuthenticatedPaymentRequest>> payerEntry : requestsByPayer.entrySet()) {
+                String payerIspb = payerEntry.getKey();
+                long remainingBalance = lockedBalances.getOrDefault(payerIspb, 0L);
+                for (AuthenticatedPaymentRequest paymentRequest : payerEntry.getValue()) {
+                    long amountCents = paymentRequest.command().getAmountCents();
+                    if (remainingBalance >= amountCents) {
+                        remainingBalance = Math.subtractExact(remainingBalance, amountCents);
+                        debitsByPayer.merge(payerIspb, amountCents, Math::addExact);
+                        outcomes.add(new ReservationOutcome(paymentRequest, true));
+                    } else {
+                        insufficientPaymentIds.add(paymentRequest.command().getPaymentId());
+                        outcomes.add(new ReservationOutcome(paymentRequest, false));
+                    }
+                }
+            }
+
+            applyDebits(connection, debitsByPayer);
+            rejectInsufficientPayments(connection, insufficientPaymentIds);
+            outcomes.sort((first, second) -> Integer.compare(
+                    first.paymentRequest().sourceOrdinal(),
+                    second.paymentRequest().sourceOrdinal()
+            ));
+            return outcomes;
+        });
+    }
+
+    private Map<String, Long> lockBalances(Connection connection, String[] payerIspbs) throws SQLException {
+        Array payerIspbArray = null;
+        try {
+            payerIspbArray = connection.createArrayOf("text", payerIspbs);
+            try (var statement = connection.prepareStatement(LOCK_BALANCES_SQL)) {
+                statement.setArray(1, payerIspbArray);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    Map<String, Long> balances = new LinkedHashMap<>(mapCapacity(payerIspbs.length));
+                    while (resultSet.next()) {
+                        balances.put(resultSet.getString(1), resultSet.getLong(2));
+                    }
+                    return balances;
+                }
+            }
+        } finally {
+            free(payerIspbArray);
+        }
+    }
+
+    private void applyDebits(Connection connection, Map<String, Long> debitsByPayer) throws SQLException {
+        if (debitsByPayer.isEmpty()) {
+            return;
+        }
+
+        Array payerIspbArray = null;
+        Array debitArray = null;
+        try {
+            payerIspbArray = connection.createArrayOf("text", debitsByPayer.keySet().toArray(String[]::new));
+            debitArray = connection.createArrayOf("int8", debitsByPayer.values().toArray(Long[]::new));
+            try (var statement = connection.prepareStatement(APPLY_DEBITS_SQL)) {
+                statement.setArray(1, payerIspbArray);
+                statement.setArray(2, debitArray);
+                int updatedRows = statement.executeUpdate();
+                if (updatedRows != debitsByPayer.size()) {
+                    throw new IllegalStateException("Could not apply every payer reservation");
+                }
+            }
+        } finally {
+            free(payerIspbArray, debitArray);
+        }
+    }
+
+    private void rejectInsufficientPayments(
+            Connection connection,
+            List<String> insufficientPaymentIds
+    ) throws SQLException {
+        if (insufficientPaymentIds.isEmpty()) {
+            return;
+        }
+
+        Array paymentIdArray = null;
+        try {
+            paymentIdArray = connection.createArrayOf("text", insufficientPaymentIds.toArray(String[]::new));
+            try (var statement = connection.prepareStatement(REJECT_INSUFFICIENT_SQL)) {
+                statement.setString(1, PaymentStatus.REJECTED.name());
+                statement.setString(2, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
+                statement.setArray(3, paymentIdArray);
+                statement.setString(4, PaymentStatus.WAITING_ACCEPTANCE.name());
+                int updatedRows = statement.executeUpdate();
+                if (updatedRows != insufficientPaymentIds.size()) {
+                    throw new IllegalStateException("Could not reject every insufficient payment");
+                }
+            }
+        } finally {
+            free(paymentIdArray);
+        }
     }
 
     private BatchLocalPaymentClassification classifyPaymentRequestsWithinBatch(
@@ -461,6 +729,12 @@ class IncomingPaymentRequestPersistence {
     }
 
     private record PersistenceActionRow(int ordinal, String action) {
+    }
+
+    private record ReservationOutcome(
+            AuthenticatedPaymentRequest paymentRequest,
+            boolean reserved
+    ) {
     }
 
     private record BatchLocalPaymentClassification(

@@ -1,13 +1,16 @@
 package br.kauan.spi.domain.services.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
+import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentStatusTransition;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static br.kauan.spi.Utils.getBankCode;
 
@@ -20,25 +23,44 @@ public class PaymentAuditService {
         this.auditRepository = auditRepository;
     }
 
-    public void storeCreationEvents(List<PaymentTransactionCommand> createdPayments) {
+    public void storeCreationEvents(
+            List<PaymentTransactionCommand> createdPayments,
+            List<PaymentRejection> rejectedPayments
+    ) {
         if (createdPayments.isEmpty()) {
+            if (!rejectedPayments.isEmpty()) {
+                throw new IllegalArgumentException("Rejected payments must belong to the created payment set");
+            }
             return;
+        }
+
+        Map<String, PaymentRejection> rejectionByPaymentId = new HashMap<>();
+        for (PaymentRejection rejection : rejectedPayments) {
+            validatePayment(rejection.payment());
+            if (rejectionByPaymentId.put(rejection.payment().getPaymentId(), rejection) != null) {
+                throw new IllegalArgumentException("Duplicate rejected payment: " + rejection.payment().getPaymentId());
+            }
         }
 
         List<PaymentAuditEvent> events = new ArrayList<>(createdPayments.size());
         for (PaymentTransactionCommand payment : createdPayments) {
             validatePayment(payment);
+            PaymentRejection rejection = rejectionByPaymentId.remove(payment.getPaymentId());
             events.add(new PaymentAuditEvent(
                     payment.getPaymentId(),
                     PaymentAuditEventType.PAYMENT_CREATED,
                     null,
-                    PaymentStatus.WAITING_ACCEPTANCE,
+                    rejection == null ? PaymentStatus.WAITING_ACCEPTANCE : PaymentStatus.REJECTED,
                     payment.getAmountCents(),
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
                     null,
-                    null
+                    null,
+                    rejection == null ? null : rejection.reason()
             ));
+        }
+        if (!rejectionByPaymentId.isEmpty()) {
+            throw new IllegalArgumentException("Rejected payments must belong to the created payment set");
         }
         auditRepository.insertAll(events);
     }

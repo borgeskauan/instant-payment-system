@@ -42,10 +42,11 @@ public record PaymentAuditEvent(
 
     public PaymentAuditEvent {
         if (reason != null && (
-                eventType != PaymentAuditEventType.PAYMENT_STATUS_CHANGED
+                (eventType != PaymentAuditEventType.PAYMENT_STATUS_CHANGED
+                        && eventType != PaymentAuditEventType.PAYMENT_CREATED)
                         || resultingStatus != PaymentStatus.REJECTED
         )) {
-            throw new IllegalArgumentException("Rejection reason is only valid for rejected status-change events");
+            throw new IllegalArgumentException("Rejection reason is only valid for rejected payment events");
         }
     }
 }

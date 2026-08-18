@@ -5,104 +5,64 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FundsJpaAdapterTest {
 
     @Test
-    void provisionAccountCreatesSixteenBucketsWhenItDoesNotExist() {
+    void provisionAccountCreatesOrResetsOneParticipantBalance() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("COUNT"),
-                eq(Integer.class),
-                eq("10000001")
-        )).thenReturn(0);
 
-        adapter.provisionAccount("10000001", 16000L, true);
+        adapter.provisionAccount("10000001", 16_000L, true);
 
-        verify(jdbcTemplate, times(16)).update(
-                org.mockito.ArgumentMatchers.contains("DO UPDATE"),
+        verify(jdbcTemplate).update(
+                contains("DO UPDATE"),
                 eq("10000001"),
-                any(Integer.class),
-                eq(1000L)
+                eq(16_000L)
         );
     }
 
     @Test
-    void provisionAccountResetsExistingBucketsWhenRequested() {
+    void provisionAccountPreservesOneParticipantBalanceWhenResetIsDisabled() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("COUNT"),
-                eq(Integer.class),
-                eq("10000001")
-        )).thenReturn(16);
 
-        adapter.provisionAccount("10000001", 16000L, true);
+        adapter.provisionAccount("10000001", 16_000L, false);
 
-        verify(jdbcTemplate, times(16)).update(
-                org.mockito.ArgumentMatchers.contains("DO UPDATE"),
+        verify(jdbcTemplate).update(
+                contains("DO NOTHING"),
                 eq("10000001"),
-                any(Integer.class),
-                eq(1000L)
+                eq(16_000L)
         );
     }
 
     @Test
-    void provisionAccountPreservesExistingBucketsWhenResetIsDisabled() {
+    void getAvailableFundsReturnsParticipantBalance() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
         when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("COUNT"),
-                eq(Integer.class),
-                eq("10000001")
-        )).thenReturn(16);
-
-        adapter.provisionAccount("10000001", 1000L, false);
-
-        verify(jdbcTemplate, times(16)).update(
-                org.mockito.ArgumentMatchers.contains("DO NOTHING"),
-                eq("10000001"),
-                any(Integer.class),
-                any(Long.class)
-        );
-    }
-
-    @Test
-    void getAvailableFundsReturnsSumOfBuckets() {
-        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("COUNT"),
-                eq(Integer.class),
-                eq("10000001")
-        )).thenReturn(16);
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("SUM"),
+                contains("participant_balance_entity"),
                 eq(Long.class),
                 eq("10000001")
-        )).thenReturn(1000L);
+        )).thenReturn(1_000L);
 
-        long balance = adapter.getAvailableFundsCents("10000001");
-
-        assertEquals(1000L, balance);
+        assertEquals(1_000L, adapter.getAvailableFundsCents("10000001"));
     }
 
     @Test
-    void getAvailableFundsFailsWhenAccountDoesNotExist() {
+    void getAvailableFundsFailsWhenParticipantBalanceDoesNotExist() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
         when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("COUNT"),
-                eq(Integer.class),
+                contains("participant_balance_entity"),
+                eq(Long.class),
                 eq("10000001")
-        )).thenReturn(0);
+        )).thenReturn(null);
 
         assertThrows(IllegalStateException.class, () -> adapter.getAvailableFundsCents("10000001"));
     }

@@ -39,7 +39,7 @@ Cada ISPB possui uma única row conceitual:
 ```text
 participant_balance
 -------------------
-ispb           primary key
+bank_code      primary key
 balance_cents  bigint, non-negative
 ```
 
@@ -62,8 +62,15 @@ entra em `WAITING_ACCEPTANCE`.
 
 ## Processamento de `pacs.008`
 
-Depois das validações de autenticação, idempotência e duplicidade divergente, os
-novos pagamentos do batch são agrupados por ISPB pagador.
+Depois das validações de autenticação, idempotência e duplicidade divergente, a
+transação precisa primeiro estabelecer quais pagamentos são realmente novos. O
+conjunto usado para calcular reservas deve ser formado somente pelas rows que a
+transação corrente conseguiu inserir ou adquirir de forma equivalente. Records
+Kafka recebidos, classificação anterior ao lock ou tentativa de insert que
+perdeu um `ON CONFLICT` não podem contribuir para o débito agregado.
+
+Os pagamentos efetivamente estabelecidos como novos são então agrupados por
+ISPB pagador.
 
 As rows dos pagadores distintos são bloqueadas uma vez, preferencialmente em uma
 consulta bulk `FOR UPDATE`, com ISPBs em ordem determinística. Dentro de cada
@@ -101,13 +108,21 @@ Para cada pagamento sem saldo:
 Todos os resultados e a mutação agregada do saldo confirmam ou fazem rollback em
 conjunto.
 
-Replay idêntico permanece no-op e não reserva novamente. Duplicata divergente
-continua sendo rejeitada explicitamente.
+Replay idêntico permanece no-op e não reserva novamente. Isso também vale para
+dois `pacs.008` idênticos processados concorrentemente: somente a transação que
+estabelecer o pagamento como novo pode reservar saldo e criar seus efeitos.
+Duplicata divergente continua sendo rejeitada explicitamente.
 
-## Processamento de `pacs.002` aceito
+## Aquisição da transição de `pacs.002`
 
 Somente pagamentos que ainda estejam em `WAITING_ACCEPTANCE` podem consumir o
-resultado original.
+resultado original. Mais precisamente, crédito ou liberação só pode ser
+calculado a partir das rows cuja transição desde `WAITING_ACCEPTANCE` foi
+efetivamente adquirida e aplicada pela transação corrente, por exemplo pelo
+conjunto devolvido por um update guardado. O delta nunca é derivado diretamente
+dos records Kafka recebidos nem de uma leitura anterior ao lock.
+
+## Processamento de `pacs.002` aceito
 
 Os pagamentos aceitos são agrupados pelo ISPB recebedor. O total de cada grupo é
 creditado com uma mutação agregada na row do recebedor. O saldo do pagador não é
@@ -152,9 +167,11 @@ O único conflito financeiro intencional passa a ser entre mutações da mesma r
 de participante, por exemplo uma nova reserva concorrendo com uma liberação.
 
 Locks precisam ser adquiridos em ordem determinística para evitar deadlocks
-entre batches. A correção deve permanecer válida sob dois processadores
-concorrentes, embora o requisito de deployment e performance do MVP seja apenas
-uma instância de processamento do SPI.
+entre batches. A correção concorrente já é requisito do MVP de instância única:
+o `ConcurrentMessageListenerContainer` configurado com concorrência `3` cria
+múltiplos child containers/consumer threads capazes de processar replays em
+paralelo. Portanto, a aquisição exclusiva da criação ou da transição é parte da
+correção atual, não apenas proteção para escala horizontal futura.
 
 Escala horizontal, rebalanceamento Kafka e contenção entre réplicas ficam para
 trabalho futuro.
@@ -169,20 +186,18 @@ trabalho futuro.
   helpers de teste correspondentes.
 - Não adicionar persistência específica de reservas.
 
-A migração precisa estabelecer a equivalência entre saldo e
-`WAITING_ACCEPTANCE`. Ela não pode simplesmente somar buckets se já existirem
-pagamentos aguardando aceite sem reserva no modelo antigo.
+A implementação experimental escolheu explicitamente a estratégia reset-only.
+A migration V10 remove as duas tabelas legadas e cria
+`participant_balance_entity(bank_code, balance_cents)`. Não existe backfill nem
+coexistência dos dois modelos; o ambiente B precisa ser criado com volumes
+limpos para que nenhum `WAITING_ACCEPTANCE` legado viole a nova equivalência.
 
-Para o MVP, deve ser escolhida explicitamente uma destas estratégias antes da
-implementação:
-
-1. exigir reset do estado local do SPI durante a mudança; ou
-2. fazer backfill validado, somando buckets e descontando os pagamentos
-   `WAITING_ACCEPTANCE` por pagador, abortando se o estado não puder satisfazer a
-   nova invariável.
-
-Não será aceita migração silenciosa que produza estado incompatível com o novo
-modelo.
+No `pacs.008`, a fronteira bulk é composta pelo insert que reivindica as rows,
+um lock ordenado dos pagadores, um fold determinístico por `sourceOrdinal`, uma
+atualização agregada de débitos e uma atualização das rejeições. No `pacs.002`,
+a mesma conexão transacional bloqueia pagamentos por `payment_id`, bloqueia os
+participantes necessários por ISPB, aplica a transição guardada e só então
+calcula os deltas a partir das rows retornadas por essa transição.
 
 ## Auditoria e outbox
 
@@ -223,6 +238,9 @@ existe.
 - aceite nunca altera novamente o saldo do pagador;
 - replay de rejeição não libera duas vezes;
 - replay de aceite não credita duas vezes;
+- dois `pacs.008` idênticos concorrentes produzem exatamente uma reserva;
+- dois `pacs.002` idênticos concorrentes produzem exatamente um crédito ou uma
+  liberação, conforme o outcome;
 - falha de auditoria ou outbox desfaz saldo e status correspondentes;
 - concorrência na mesma row mantém saldo correto sob locking PostgreSQL;
 - duplicata divergente continua rejeitada;
@@ -233,8 +251,10 @@ existe.
 - `WAITING_ACCEPTANCE` pode manter liquidez reservada indefinidamente se o
   recebedor nunca responder; timeout e expiração ficam para evolução futura.
 - Participante sem row de saldo pode, inicialmente, continuar aparecendo como
-  `INSUFFICIENT_FUNDS`; futuramente deve ser distinguido como falha operacional
-  de integridade ou onboarding.
+  `INSUFFICIENT_FUNDS` no ingresso. Se um recebedor sem row for necessário para
+  concluir um `pacs.002`, a transação falha e o batch deve ser repetido; no
+  futuro, ambos os casos devem ter uma classificação operacional explícita de
+  integridade ou onboarding.
 - Não existe fila de liquidez: insuficiência rejeita imediatamente.
 - Não existe rebalanceamento porque não existem buckets.
 - Não existe entidade ou status próprio de reserva.

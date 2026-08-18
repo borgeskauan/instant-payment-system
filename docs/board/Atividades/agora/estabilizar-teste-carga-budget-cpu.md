@@ -567,6 +567,86 @@ classifica os waits numéricos e então executar uma vez o mesmo
 `mixed-outcomes-2k-diagnostic`, sem mudar nenhuma outra variável. Nenhum run de
 15 minutos ocorreu. O piso de 2.000 TPS e o SLA final permanecem não aprovados.
 
+### A/B da arquitetura de saldo único com reserva no PACS.008
+
+O A permaneceu imutável na revisão `d1483be`, bundle
+`postgres-lock-wait-attribution/20260816_201657`. O B foi implementado e
+commitado somente na branch experimental `reservation-balance-ab`: uma row de
+saldo por ISPB, reserva do pagador no PACS.008, crédito apenas do recebedor no
+PACS.002 aceito e liberação apenas do pagador no rejeitado. Concorrência `3`,
+recursos, Kafka, HTTP, perfil, replays e diagnósticos permaneceram iguais.
+
+A stack B foi recriada uma vez com volumes limpos, sem apagar build cache. O
+smoke `environment-setup-20260816_221416-2258684-attempt-1/20260816_221627`
+aceitou `1.250/1.250` PACS.008, observou `1.000` ACSC e `250` RJCT/AM04, sem
+outcome contraditório nem violação de replay, e ficou quiescente. O preparador
+inicialmente rejeitou esse bundle porque o qualificador ainda exigia um
+PACS.002 original do recebedor para insufficient-funds. A arquitetura rejeita
+esse cenário já no ingresso e corretamente não cria acceptance request. O
+qualificador e seu teste foram corrigidos; o mesmo bundle então qualificou,
+sem novo smoke ou tráfego.
+
+O único B foi
+`load-test/results/reservation-balance-diagnostic/20260816_221950`, com janela
+ativa semiaberta de `2026-08-16T22:20:34.410966223-03:00` até
+`2026-08-16T22:21:34.410966223-03:00`. O runner saiu `1` pelos gates do
+relatório, e o bundle ficou completo. Não houve segunda execução B nem run de
+15 minutos.
+
+| Evidência | A — 16 buckets | B — saldo único e reserva |
+| --- | ---: | ---: |
+| originais ativos iniciados / 2xx / timeout | `126.947 / 126.947 / 0` | `132.002 / 132.002 / 0` |
+| rolling mínimo / máximo de originais | `1.943 / 4.670/s` | `459 / 5.260/s` |
+| PACS.002 happy-path ativos aceitos | `32.611` | `28.393` |
+| PACS.002 happy-path totais iniciados / aceitos | `44.691 / 44.441` | `43.180 / 42.808` |
+| outcomes happy-path matched / missing / contradictory | `8.869 / 99.066 / 0` | `7.548 / 100.360 / 0` |
+| outcomes insufficient-funds matched / missing / contradictory | `2.266 / 24.729 / 0` | `10.784 / 16.198 / 0` |
+| latência global p50 / p95 / p99 / máxima | `52,644 / 74,491 / 74,678 / 78,476 s` | `24,422 / 66,622 / 70,118 / 73,375 s` |
+| violações de replay PACS.008 / PACS.002 | `0 / 0` | `0 / 1` |
+| CPU PostgreSQL média / máxima no ativo | `103,96% / 110,77%` | `101,23% / 107,43%` |
+| lag imediato pagamento / status / gateway | `40.547 / 41.139 / 955` | `57.206 / 36.355 / 0` |
+
+O replay inválido foi o PACS.002 de
+`go-1786929615525890120-11`: o original retornou HTTP `200`, mas sua única
+repetição idêntica terminou com status `0` após o timeout de cinco segundos. O
+Kafka do B ficou quiescente na única leitura posterior, sem nova carga; houve
+atraso, não evidência de desaparecimento do backlog.
+
+O settlement A era uma query agregada: `113` calls, `13.668` rows,
+`244.433,930 ms` totais, média `2.163,132 ms` e máxima `16.094,436 ms`. No B,
+as três queries principais do PACS.002 observadas no top 50 do
+`pg_stat_statements` foram:
+
+| Query B | calls / rows | total / média / máxima |
+| --- | ---: | ---: |
+| lock de pagamentos | `122 / 8.828` | `2.755,753 / 22,588 / 788,388 ms` |
+| lock do saldo por participante | `115 / 1.515` | `79.564,414 / 691,864 / 28.904,898 ms` |
+| transição guardada | `114 / 7.640` | `50.883,533 / 446,347 / 27.996,693 ms` |
+
+O subtotal observável do B é `133.203,700 ms`, um limite inferior porque os
+updates de delta ficaram fora do top 50. Normalizado pelos PACS.002 originais
+aceitos no run inteiro, esse limite é `3,112 ms` por status contra `4,401 ms`
+no A. Portanto o SQL financeiro observado ficou mais barato, mas o trabalho
+útil happy-path caiu: `-12,9%` nos PACS.002 ativos, `-3,7%` nos PACS.002 totais
+aceitos e `-14,9%` nos outcomes matched.
+
+As amostras ativas explicam a troca de gargalo. O lock do saldo único apareceu
+`142` vezes (`135 transactionid`, `7 tuple`) e o lock dos pagamentos `43`
+vezes (`42 transactionid`). Nos logs nativos, `10` dos `11` eventos `still
+waiting` maiores que um segundo pertenciam ao lock de
+`participant_balance_entity`, com espera máxima de `28,904 s`; o restante
+pertencia a `payment_transaction_entity`. Os buckets fragmentavam liquidez, mas
+também faziam striping de contenção. A row única removeu o two-account
+settlement e concentrou pagamentos hot-pair no mesmo lock.
+
+A decisão predefinida é **DISCARD**. A redução de custo parcial, da CPU e da
+latência mediana não supera a redução de trabalho útil, o piso rolling de
+`459/s`, a nova serialização por participante e a violação de replay. A branch
+experimental permanece apenas como evidência reproduzível e não será mesclada.
+Uma futura hipótese deve separar a correção semântica da liquidez da estratégia
+de contenção; esta implementação não autoriza o perfil de 15 minutos nem aprova
+o piso de 2.000 TPS.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.

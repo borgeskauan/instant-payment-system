@@ -42,7 +42,7 @@ cat > "$tmp_dir/base/sla-report.json" <<'JSON'
       "share": 0.2,
       "traffic": {
         "payments": {"started": 250, "accepted": 250},
-        "pacs002": {"started": 250, "accepted": 250}
+        "pacs002": {"started": 0, "accepted": 0}
       },
       "outcome": {
         "expected": {"status": "RJCT", "reason_codes": ["AM04"]},
@@ -109,8 +109,6 @@ assert_status 0 "$tmp_dir/base"
 partial_dir="$(mutated_case partial '
   .scenarios[1].traffic.payments.started = 249 |
   .scenarios[1].traffic.payments.accepted = 249 |
-  .scenarios[1].traffic.pacs002.started = 249 |
-  .scenarios[1].traffic.pacs002.accepted = 249 |
   .scenarios[1].outcome.matched = 249')"
 sed '$d' "$partial_dir/events/pacs008-starts.csv" > "$partial_dir/events/pacs008-starts.csv.tmp"
 mv "$partial_dir/events/pacs008-starts.csv.tmp" "$partial_dir/events/pacs008-starts.csv"
@@ -129,6 +127,7 @@ assert_status 20 "$over_dir"
 assert_status 20 "$(mutated_case http-mismatch '.scenarios[0].traffic.payments.accepted = 999')"
 assert_status 20 "$(mutated_case pacs002-start-mismatch '.scenarios[0].traffic.pacs002.started = 999')"
 assert_status 20 "$(mutated_case pacs002-accept-mismatch '.scenarios[0].traffic.pacs002.accepted = 999')"
+assert_status 20 "$(mutated_case unexpected-insufficient-pacs002 '.scenarios[1].traffic.pacs002.started = 1 | .scenarios[1].traffic.pacs002.accepted = 1')"
 assert_status 20 "$(mutated_case missing-outcome '.scenarios[0].outcome.matched = 999 | .scenarios[0].outcome.missing = 1')"
 assert_status 20 "$(mutated_case contradictory-outcome '.scenarios[0].outcome.contradictory = 1')"
 assert_status 20 "$(mutated_case wrong-happy-status '.scenarios[0].outcome.expected.status = "RJCT"')"
@@ -148,8 +147,6 @@ timeout_dir="$(mutated_case retryable-timeouts '
   .scenarios[0].violations = 1 |
   .scenarios[1].traffic.payments.started = 167 |
   .scenarios[1].traffic.payments.accepted = 166 |
-  .scenarios[1].traffic.pacs002.started = 167 |
-  .scenarios[1].traffic.pacs002.accepted = 167 |
   .scenarios[1].outcome.matched = 166 |
   .scenarios[1].violations = 1')"
 {

@@ -91,9 +91,12 @@ def require_scenario(scenario: dict[str, Any], name: str) -> ScenarioResult:
 
     if payments_accepted > payments_started:
         raise InvalidReport(f"scenarios[{name}] accepts more payments than it starts")
-    if pacs002_started != payments_started or pacs002_accepted != payments_started:
+    expected_pacs002 = payments_started if name == "happy-path" else 0
+    if pacs002_started != expected_pacs002 or pacs002_accepted != expected_pacs002:
         raise InvalidReport(
-            f"scenarios[{name}] does not have one accepted original PACS.002 per payment"
+            f"scenarios[{name}] has unexpected original PACS.002 traffic: "
+            f"started={pacs002_started}, accepted={pacs002_accepted}, "
+            f"expected={expected_pacs002}"
         )
     if missing != 0 or contradictory != 0:
         raise InvalidReport(f"scenarios[{name}] has incomplete or contradictory outcomes")

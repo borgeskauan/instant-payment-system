@@ -46,7 +46,7 @@ class TransactionalOutboxIntegrationTest {
         jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update(
-                "DELETE FROM funds_bucket_entity WHERE bank_code IN (?, ?)",
+                "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
                 SENDER_ISPB,
                 RECEIVER_ISPB
         );
@@ -55,6 +55,8 @@ class TransactionalOutboxIntegrationTest {
     @Test
     void newPaymentAndAcceptanceObligationCommitTogether() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-NEW");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
 
         processor.processTransactions(authenticatedPayments(payment));
 
@@ -72,11 +74,44 @@ class TransactionalOutboxIntegrationTest {
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactly(new OutboxRow("ACCEPTANCE_REQUEST", RECEIVER_ISPB, null, "PENDING"));
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
+    }
+
+    @Test
+    void ingressInsufficientFundsCommitRejectionAuditAndPayerObligationTogether() {
+        PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-INGRESS-NO-FUNDS");
+        insertFunds(SENDER_ISPB, "0.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+
+        processor.processTransactions(authenticatedPayments(payment));
+
+        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(paymentRejectionReason(payment.getPaymentId())).isEqualTo("INSUFFICIENT_FUNDS");
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
+        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
+        assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
+                "PAYMENT_CREATED",
+                null,
+                PaymentStatus.REJECTED.name(),
+                1_000L,
+                SENDER_ISPB,
+                RECEIVER_ISPB,
+                null,
+                null,
+                "INSUFFICIENT_FUNDS"
+        ));
+        assertThat(outboxRows(payment.getPaymentId()))
+                .containsExactly(new OutboxRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT", "PENDING"));
+        assertThat(outboxPayload(payment.getPaymentId()))
+                .contains("\"TxSts\":\"RJCT\"")
+                .contains("\"Cd\":\"AM04\"");
     }
 
     @Test
     void rejectionAndItsObligationCommitTogether() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-REJECTED");
+        insertFunds(SENDER_ISPB, "990.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
 
         processor.processStatusReports(authenticatedReports(
@@ -98,12 +133,14 @@ class TransactionalOutboxIntegrationTest {
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactly(new OutboxRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT", "PENDING"));
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
+        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
     }
 
     @Test
     void settlementBalancesStatusAndBothObligationsCommitTogether() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-SETTLED");
-        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
 
@@ -149,7 +186,7 @@ class TransactionalOutboxIntegrationTest {
     @Test
     void repeatedAcceptedStatusCreatesOneLogicalSettlement() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-SETTLED-REPEATED");
-        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
 
@@ -193,67 +230,22 @@ class TransactionalOutboxIntegrationTest {
     }
 
     @Test
-    void insufficientFundsCommitRejectionAuditAndPayerObligationWithoutMovingFunds() {
-        PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-NO-FUNDS");
-        insertFunds(SENDER_ISPB, "0.00");
-        insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
-
-        processor.processStatusReports(authenticatedReports(
-                payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
-        ));
-
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
-        assertThat(paymentRejectionReason(payment.getPaymentId())).isEqualTo("INSUFFICIENT_FUNDS");
-        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
-        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
-        assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
-                "PAYMENT_STATUS_CHANGED",
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.REJECTED.name(),
-                null,
-                null,
-                null,
-                null,
-                null,
-                "INSUFFICIENT_FUNDS"
-        ));
-        assertThat(outboxRows(payment.getPaymentId()))
-                .containsExactly(new OutboxRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT", "PENDING"));
-        assertThat(outboxPayload(payment.getPaymentId()))
-                .contains("\"TxSts\":\"RJCT\"")
-                .contains("\"Cd\":\"AM04\"");
-    }
-
-    @Test
-    void waitingAcceptanceReplayKeepsExistingObligationOrRecreatesItWhenMissing() {
+    void waitingAcceptanceReplayIsANoOpEvenWhenTheOriginalOutboxRowIsMissing() {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-REPLAY");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         List<AuthenticatedPaymentRequest> request = authenticatedPayments(payment);
         processor.processTransactions(request);
-        byte[] originalPayload = jdbcTemplate.queryForObject(
-                "SELECT payload FROM notification_outbox WHERE payment_id = ?",
-                byte[].class,
-                payment.getPaymentId()
-        );
-
         processor.processTransactions(request);
 
         assertThat(outboxCount(payment.getPaymentId())).isEqualTo(1);
         assertThat(auditRows(payment.getPaymentId())).hasSize(1);
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT payload FROM notification_outbox WHERE payment_id = ?",
-                byte[].class,
-                payment.getPaymentId()
-        )).isEqualTo(originalPayload);
 
         jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id = ?", payment.getPaymentId());
         processor.processTransactions(request);
 
-        assertThat(outboxCount(payment.getPaymentId())).isEqualTo(1);
+        assertThat(outboxCount(payment.getPaymentId())).isZero();
         assertThat(auditRows(payment.getPaymentId())).hasSize(1);
-        assertThat(outboxRows(payment.getPaymentId()))
-                .containsExactly(new OutboxRow("ACCEPTANCE_REQUEST", RECEIVER_ISPB, null, "PENDING"));
     }
 
     private List<AuthenticatedPaymentRequest> authenticatedPayments(PaymentTransactionCommand payment) {
@@ -378,21 +370,20 @@ class TransactionalOutboxIntegrationTest {
 
     private void insertFunds(String bankCode, String balance) {
         long balanceCents = Money.toCents(new BigDecimal(balance));
-        long bucketBalance = balanceCents / 16;
-        long remainder = balanceCents % 16;
-        for (int bucketId = 0; bucketId < 16; bucketId++) {
-            jdbcTemplate.update(
-                    "INSERT INTO funds_bucket_entity (bank_code, bucket_id, balance_cents) VALUES (?, ?, ?)",
-                    bankCode,
-                    bucketId,
-                    bucketId == 0 ? bucketBalance + remainder : bucketBalance
-            );
-        }
+        jdbcTemplate.update(
+                """
+                        INSERT INTO participant_balance_entity (bank_code, balance_cents)
+                        VALUES (?, ?)
+                        ON CONFLICT (bank_code) DO UPDATE SET balance_cents = EXCLUDED.balance_cents
+                        """,
+                bankCode,
+                balanceCents
+        );
     }
 
     private BigDecimal balance(String bankCode) {
         Long balanceCents = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(SUM(balance_cents), 0) FROM funds_bucket_entity WHERE bank_code = ?",
+                "SELECT COALESCE(balance_cents, 0) FROM participant_balance_entity WHERE bank_code = ?",
                 Long.class,
                 bankCode
         );

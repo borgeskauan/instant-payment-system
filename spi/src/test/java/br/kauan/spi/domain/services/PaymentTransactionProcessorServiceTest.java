@@ -316,6 +316,7 @@ class PaymentTransactionProcessorServiceTest {
                 List.of(firstPayment, secondPayment),
                 List.of(firstPayment, secondPayment),
                 List.of(),
+                List.of(),
                 List.of()
         ));
 
@@ -324,7 +325,7 @@ class PaymentTransactionProcessorServiceTest {
         verify(paymentTransactionRepository).storeAndClassifyIncomingPaymentRequests(
                 authenticatedPayments(firstPayment, secondPayment)
         );
-        verify(auditService).storeCreationEvents(List.of(firstPayment, secondPayment));
+        verify(auditService).storeCreationEvents(List.of(firstPayment, secondPayment), List.of());
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
         verify(notificationService).storeAcceptanceObligations(List.of(firstPayment, secondPayment));
@@ -352,6 +353,7 @@ class PaymentTransactionProcessorServiceTest {
         )).thenReturn(new PaymentTransactionPersistenceResult(
                 List.of(waitingDuplicate),
                 List.of(),
+                List.of(),
                 authenticatedPayments(divergentDuplicate),
                 List.of()
         ));
@@ -363,13 +365,46 @@ class PaymentTransactionProcessorServiceTest {
         ));
 
         verify(notificationService).storeAcceptanceObligations(List.of(waitingDuplicate));
-        verify(auditService).storeCreationEvents(List.of());
+        verify(auditService).storeCreationEvents(List.of(), List.of());
         verify(traceRecorder).record("E2E-WAITING", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder, never()).record("E2E-SETTLED", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder, never()).record("E2E-DIVERGENT", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         org.assertj.core.api.Assertions.assertThat(result.divergentDuplicates())
                 .extracting(AuthenticatedPaymentRequest::command)
                 .containsExactly(divergentDuplicate);
+    }
+
+    @Test
+    void transactionRequestStoresIngressRejectionAuditAndPayerNotification() {
+        PaymentTransactionRepository repository = mock(PaymentTransactionRepository.class);
+        PaymentAuditService auditService = mock(PaymentAuditService.class);
+        NotificationObligationService notificationService = mock(NotificationObligationService.class);
+        PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
+                repository,
+                auditService,
+                notificationService,
+                mock(SpiTraceRecorder.class)
+        );
+        PaymentTransactionCommand payment = paymentTransaction("E2E-NO-FUNDS");
+        PaymentRejection rejection = new PaymentRejection(
+                payment,
+                br.kauan.spi.domain.entity.status.PaymentRejectionReason.INSUFFICIENT_FUNDS
+        );
+        List<AuthenticatedPaymentRequest> requests = authenticatedPayments(payment);
+        when(repository.storeAndClassifyIncomingPaymentRequests(requests))
+                .thenReturn(new PaymentTransactionPersistenceResult(
+                        List.of(),
+                        List.of(payment),
+                        List.of(rejection),
+                        List.of(),
+                        List.of()
+                ));
+
+        service.processTransactions(requests);
+
+        verify(auditService).storeCreationEvents(List.of(payment), List.of(rejection));
+        verify(notificationService).storeStatusObligations(List.of(), List.of(rejection));
+        verify(notificationService, never()).storeAcceptanceObligations(org.mockito.ArgumentMatchers.anyList());
     }
 
     private static PaymentTransactionCommand paymentTransaction() {

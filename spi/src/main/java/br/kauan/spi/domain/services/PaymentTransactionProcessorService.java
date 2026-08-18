@@ -44,7 +44,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     @Transactional
     public PaymentTransactionPersistenceResult processTransactions(List<AuthenticatedPaymentRequest> transactions) {
         if (transactions.isEmpty()) {
-            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of());
+            return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
         log.debug("[PIX FLOW - Step 3] SPI received transaction requests. payments={}",
@@ -52,9 +52,18 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         PaymentTransactionPersistenceResult persistenceResult =
                 paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(transactions);
 
-        paymentAuditService.storeCreationEvents(persistenceResult.createdPayments());
+        paymentAuditService.storeCreationEvents(
+                persistenceResult.createdPayments(),
+                persistenceResult.rejectedPayments()
+        );
         if (!persistenceResult.acceptanceRequests().isEmpty()) {
             notificationObligationService.storeAcceptanceObligations(persistenceResult.acceptanceRequests());
+        }
+        if (!persistenceResult.rejectedPayments().isEmpty()) {
+            notificationObligationService.storeStatusObligations(
+                    List.of(),
+                    persistenceResult.rejectedPayments()
+            );
         }
         for (var paymentTransaction : persistenceResult.createdPayments()) {
             traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
