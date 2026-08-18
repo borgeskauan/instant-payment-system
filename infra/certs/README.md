@@ -106,10 +106,21 @@ SAN URI = urn:pix:ispb:12345678
 
 ## kafka-producer identity contract
 
-The `kafka-producer` exposes only the mTLS endpoints `POST /transfer` and
-`POST /transfer/status`. It extracts the PSP identity from the client
-certificate and requires exactly one SAN URI matching
-`urn:pix:ispb:<8 digits>`.
+The `kafka-producer` listener uses TLS with ALPN restricted to `h2`: it neither
+advertises nor accepts HTTP/1.1, H2C, or protocol downgrade. An mTLS client that
+does not offer `h2` fails protocol negotiation. The listener exposes exactly
+three authenticated endpoints:
+
+- `GET /health` authenticates the PSP and returns HTTP `200` without invoking
+  the payment publisher, publishing to Kafka, or creating business side
+  effects;
+- `POST /transfer` accepts `pacs.008` payloads;
+- `POST /transfer/status` accepts `pacs.002` payloads.
+
+All three endpoints extract the PSP identity from the client certificate and
+require exactly one SAN URI matching `urn:pix:ispb:<8 digits>`. An identity
+failure on `/health` is HTTP `401`, under the same authentication contract as
+the transfer routes.
 
 A certificate accepted by the CA but without a valid, unambiguous PSP identity
 receives HTTP `401`. A `pacs.008` whose payer does not match the authenticated

@@ -1,8 +1,10 @@
 package br.kauan.kafkaproducer.http;
 
+import io.netty.handler.ssl.ApplicationProtocolConfig;
+import io.netty.handler.ssl.ApplicationProtocolNames;
 import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
+import reactor.netty.http.Http2SslContextSpec;
 
 import javax.net.ssl.SSLException;
 import java.nio.file.Files;
@@ -23,11 +25,17 @@ public final class ServerSslContextFactory {
         requireReadable(trustCertCollection, "TLS trust certificate collection");
 
         try {
-            return SslContextBuilder
+            return Http2SslContextSpec
                     .forServer(certificateChain.toFile(), privateKey.toFile())
-                    .trustManager(trustCertCollection.toFile())
-                    .clientAuth(ClientAuth.REQUIRE)
-                    .build();
+                    .configure(builder -> builder
+                            .trustManager(trustCertCollection.toFile())
+                            .clientAuth(ClientAuth.REQUIRE)
+                            .applicationProtocolConfig(new ApplicationProtocolConfig(
+                                    ApplicationProtocolConfig.Protocol.ALPN,
+                                    ApplicationProtocolConfig.SelectorFailureBehavior.FATAL_ALERT,
+                                    ApplicationProtocolConfig.SelectedListenerFailureBehavior.FATAL_ALERT,
+                                    ApplicationProtocolNames.HTTP_2)))
+                    .sslContext();
         } catch (SSLException e) {
             throw new IllegalStateException("Failed to configure kafka-producer mTLS", e);
         }

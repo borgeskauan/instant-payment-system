@@ -77,10 +77,10 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 		call := callCount.Add(1)
 		if call == 1 {
 			<-originalRelease
-			return &http.Response{StatusCode: http.StatusInternalServerError, Body: http.NoBody}, nil
+			return &http.Response{StatusCode: http.StatusInternalServerError, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 		}
 		replaySent <- time.Now()
-		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+		return &http.Response{StatusCode: http.StatusAccepted, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 	})}
 	s := &simulator{
 		cfg: Config{
@@ -196,10 +196,10 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 		bodiesMu.Unlock()
 		if callCount.Add(1) == 1 {
 			<-originalRelease
-			return &http.Response{StatusCode: http.StatusInternalServerError, Body: http.NoBody}, nil
+			return &http.Response{StatusCode: http.StatusInternalServerError, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 		}
 		replaySent <- time.Now()
-		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+		return &http.Response{StatusCode: http.StatusAccepted, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 	})}
 	s := &simulator{
 		cfg: Config{
@@ -299,7 +299,7 @@ func TestPacs002StartedDuringDrainIsSentWithoutCreatingReplayObligation(t *testi
 		httpClients: map[string]*http.Client{"20000001": {
 			Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 				httpCalls.Add(1)
-				return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+				return &http.Response{StatusCode: http.StatusOK, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 			}),
 		}},
 		statusStartWriter:     statusWriter,

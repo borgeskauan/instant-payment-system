@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-const maxHTTP11ConnectionsPerPSP = 32
+const maxConnectionsPerPSP = 32
 
 type httpAttemptResult struct {
 	HTTPStatus             int
@@ -20,13 +21,16 @@ type httpAttemptResult struct {
 	ConnectionReused       bool
 }
 
-func newHTTP11Transport(tlsConfig *tls.Config) *http.Transport {
+func newHTTP2Transport(tlsConfig *tls.Config) *http.Transport {
+	protocols := new(http.Protocols)
+	protocols.SetHTTP2(true)
 	return &http.Transport{
-		MaxIdleConns:        maxHTTP11ConnectionsPerPSP,
-		MaxIdleConnsPerHost: maxHTTP11ConnectionsPerPSP,
-		MaxConnsPerHost:     maxHTTP11ConnectionsPerPSP,
+		MaxIdleConns:        maxConnectionsPerPSP,
+		MaxIdleConnsPerHost: maxConnectionsPerPSP,
+		MaxConnsPerHost:     maxConnectionsPerPSP,
 		IdleConnTimeout:     90 * time.Second,
 		TLSClientConfig:     tlsConfig,
+		Protocols:           protocols,
 	}
 }
 
@@ -71,5 +75,11 @@ func (s *simulator) post(ctx context.Context, ispb string, url string, body []by
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
+	if resp.ProtoMajor != 2 {
+		s.recordRunError(fmt.Errorf(
+			"central transfer response for ISPB %s used HTTP/%d, want HTTP/2",
+			ispb, resp.ProtoMajor))
+		return result(0)
+	}
 	return result(resp.StatusCode)
 }

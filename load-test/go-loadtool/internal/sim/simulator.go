@@ -118,7 +118,16 @@ type grpcReadyConn interface {
 	WaitForStateChange(context.Context, connectivity.State) bool
 }
 
+type runDependencies struct {
+	newHTTPClients         func(Config, []ids.Pair) (map[string]*http.Client, error)
+	openNotificationStream func(context.Context, string) (notificationStreamClient, func() error, error)
+}
+
 func Run(cfg Config) error {
+	return runWithDependencies(cfg, runDependencies{newHTTPClients: newHTTPClients})
+}
+
+func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	if cfg.TargetTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
 	}
@@ -173,29 +182,36 @@ func Run(cfg Config) error {
 	}
 
 	pairs := pairsForScenarios(cfg.Scenarios)
-	httpClients, err := newHTTPClients(cfg, pairs)
+	httpClients, err := dependencies.newHTTPClients(cfg, pairs)
 	if err != nil {
 		return err
 	}
 	defer closeHTTPClients(httpClients)
 
 	s := &simulator{
-		cfg:                   cfg,
-		runID:                 fmt.Sprintf("go-%d", time.Now().UnixNano()),
-		httpClients:           httpClients,
-		startWriter:           startWriter,
-		eventWriter:           eventWriter,
-		replayWriter:          replayWriter,
-		statusStartWriter:     statusStartWriter,
-		statusJobs:            make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
-		statusQueuedIDs:       make(map[string]struct{}),
-		transferScenarios:     make(map[string]string),
-		pacs002ReplaySelector: pacs002ReplaySelector,
+		cfg:                        cfg,
+		runID:                      fmt.Sprintf("go-%d", time.Now().UnixNano()),
+		httpClients:                httpClients,
+		startWriter:                startWriter,
+		eventWriter:                eventWriter,
+		replayWriter:               replayWriter,
+		statusStartWriter:          statusStartWriter,
+		statusJobs:                 make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
+		statusQueuedIDs:            make(map[string]struct{}),
+		transferScenarios:          make(map[string]string),
+		pacs002ReplaySelector:      pacs002ReplaySelector,
+		openNotificationStreamFunc: dependencies.openNotificationStream,
 	}
 	s.sendPacs002Func = s.sendPacs002
 
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	logPhase("prewarming central transfer HTTP/2 clients: psps=%d", len(httpClients))
+	if err := prewarmHTTP2Clients(rootCtx, cfg.BaseURL, httpClients); err != nil {
+		return fmt.Errorf("prewarm central transfer HTTP/2 clients: %w", err)
+	}
+	logPhase("central transfer HTTP/2 prewarm finished: psps=%d protocol=h2", len(httpClients))
 
 	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
 	notificationCtx, stopNotifications := context.WithCancel(rootCtx)
@@ -336,7 +352,7 @@ func newHTTPClients(cfg Config, pairs []ids.Pair) (map[string]*http.Client, erro
 				return nil, fmt.Errorf("load central transfer client certificate for ISPB %s: %w", ispb, err)
 			}
 			clients[ispb] = &http.Client{
-				Transport: newHTTP11Transport(&tls.Config{
+				Transport: newHTTP2Transport(&tls.Config{
 					MinVersion:   tls.VersionTLS12,
 					ServerName:   cfg.CentralTransferServerName,
 					RootCAs:      rootCAs,

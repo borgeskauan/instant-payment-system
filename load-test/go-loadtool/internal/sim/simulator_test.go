@@ -88,6 +88,66 @@ func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	}
 }
 
+func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testing.T) {
+	outputDir := t.TempDir()
+	runWindowPath := filepath.Join(outputDir, "run-window.json")
+	var notificationStreamCalls atomic.Int64
+	var businessCalls atomic.Int64
+	client := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.Path != "/health" {
+			businessCalls.Add(1)
+		}
+		return http2Response(http.StatusInternalServerError), nil
+	})}
+
+	err := runWithDependencies(Config{
+		ProfileName:   "prewarm-failure-test",
+		BaseURL:       "https://localhost:8001",
+		TargetTxRate:  1,
+		Duration:      time.Second,
+		Scenarios:     mixedPlannerScenarios(),
+		OutputDir:     outputDir,
+		RunWindowPath: runWindowPath,
+	}, runDependencies{
+		newHTTPClients: func(Config, []ids.Pair) (map[string]*http.Client, error) {
+			return map[string]*http.Client{"10000001": client}, nil
+		},
+		openNotificationStream: func(context.Context, string) (notificationStreamClient, func() error, error) {
+			notificationStreamCalls.Add(1)
+			return nil, nil, errors.New("notification stream must not open")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "prewarm central transfer HTTP/2 clients") {
+		t.Fatalf("Run error = %v, want prewarm failure", err)
+	}
+	if notificationStreamCalls.Load() != 0 {
+		t.Fatalf("notification stream calls = %d, want 0", notificationStreamCalls.Load())
+	}
+	if businessCalls.Load() != 0 {
+		t.Fatalf("business HTTP calls = %d, want 0", businessCalls.Load())
+	}
+	if _, statErr := os.Stat(runWindowPath); !os.IsNotExist(statErr) {
+		t.Fatalf("run window exists after prewarm failure: %v", statErr)
+	}
+
+	starts, readErr := events.ReadStarts(filepath.Join(outputDir, "pacs008-starts.csv"))
+	if readErr != nil || len(starts) != 0 {
+		t.Fatalf("PACS.008 rows = %d, error = %v, want none", len(starts), readErr)
+	}
+	statuses, readErr := events.ReadStatusStarts(filepath.Join(outputDir, "pacs002-starts.csv"))
+	if readErr != nil || len(statuses) != 0 {
+		t.Fatalf("PACS.002 rows = %d, error = %v, want none", len(statuses), readErr)
+	}
+	notifications, readErr := events.ReadNotifications(filepath.Join(outputDir, "notifications.csv"))
+	if readErr != nil || len(notifications) != 0 {
+		t.Fatalf("notification rows = %d, error = %v, want none", len(notifications), readErr)
+	}
+	replays, readErr := events.ReadReplays(filepath.Join(outputDir, "replays.csv"))
+	if readErr != nil || len(replays) != 0 {
+		t.Fatalf("replay rows = %d, error = %v, want none", len(replays), readErr)
+	}
+}
+
 func TestOriginalStartWindowIsSemiOpen(t *testing.T) {
 	start := time.Unix(100, 0)
 	end := start.Add(time.Second)
@@ -244,13 +304,13 @@ func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
 			"10000001": {
 				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 					payerCalls.Add(1)
-					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+					return &http.Response{StatusCode: http.StatusOK, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 				}),
 			},
 			"20000001": {
 				Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 					receiverCalls.Add(1)
-					return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+					return &http.Response{StatusCode: http.StatusAccepted, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 				}),
 			},
 		},

@@ -779,11 +779,117 @@ qual mecanismo da concorrência adicional iniciou o ciclo de timeouts; não se
 deve transformar essa inferência em correção sem uma hipótese separada e
 instrumentação própria.
 
+### HTTP/2 obrigatório no ingresso de transferência central
+
+A spec `fd56d26` e o plano `b33e010` definiram o corte controlado. A
+implementação medida ficou nos commits `5bce93b` (listener Reactor Netty com
+`HttpProtocol.H2`, mTLS e `GET /health` autenticado), `4291862` (transports Go
+HTTP/2-only),
+`2a3d9f1` (barreira de prewarm) e `3e2fcb9` (todas as tentativas de health dos
+100 PSPs são concluídas antes de retornar erro). HTTP/1.1, H2C e fallback
+continuam proibidos.
+
+Após esse run, o follow-up automatizado da revisão final restringiu também a
+oferta ALPN do servidor exclusivamente a `h2` e completou as gates de teste de
+publicação, orquestração e concorrência HTTP/2. Esse hardening é posterior à
+medição abaixo: não houve novo preparador, smoke, workload medido ou perfil de
+15 minutos, e nenhuma métrica do bundle foi reescrita.
+
+O preparador foi invocado exatamente uma vez, de
+`2026-08-18 17:38:21 -03` a `17:43:37`, executou seu único
+`docker compose down -v --remove-orphans`, preservou imagens/build cache e
+deixou a stack pronta. O primeiro e único smoke,
+`environment-setup-20260818_173821-3762800-attempt-1/20260818_174133`,
+qualificou. O log registrou `psps=100 protocol=h2` antes do warmup, depois
+`started=1250 accepted=1250`, PACS.002 `1000/1000`, replays
+scheduled/sent/accepted `111/111/111` e `3250` notificações. O qualifier
+confirmou `started=1250 planned=1250`, outcomes ACSC e RJCT/AM04, replays e
+quiescência.
+
+O único run medido foi
+`reservation-balance-http2-diagnostic/20260818_174415`, com janela ativa
+semiaberta de `2026-08-18T17:45:09.935762092-03:00` até
+`2026-08-18T17:46:09.935762092-03:00`. O runner saiu `1`: o bundle é completo,
+mas o relatório é inválido pelo piso rolling e pelo SLA/outcomes ausentes no
+drain fixo. Há exatamente um diretório de resultado, todos os artefatos
+obrigatórios são não vazios e o `inputs/profile.json` é byte a byte idêntico ao
+controle `reservation-balance-kafka-concurrency-eight-diagnostic/20260818_001442`.
+Não houve rerun.
+
+As contagens abaixo usam somente as fases semiabertas do `run-window.json`. O
+relatório ordena os timestamps de início antes das rolling windows; totais fora
+da janela não foram usados para compensar segundos deficientes. Os eventos JFR
+foram extraídos em ambos os bundles com
+`jfr print --json --events jdk.TLSHandshake,jdk.ExecutionSample` e filtrados
+pelas mesmas fronteiras.
+
+| Evidência | HTTP/1.1 keyed/c8 | HTTP/2-only keyed/c8 |
+| --- | ---: | ---: |
+| PACS.008 ativos iniciados / conexão adquirida / request escrito / 2xx / timeout | `6.410 / 4.171 / 4.171 / 693 / 5.717` | `127.456 / 127.456 / 127.456 / 127.456 / 0` |
+| PACS.008 timeout de aquisição / escrito sem resposta | `2.239 / 3.478` | `0 / 0` |
+| espera de aquisição PACS.008 p50 / p95 / p99 / máxima | `4.092,593 / 4.935,890 / 4.996,528 / 5.011,981 ms` | `0,018 / 0,036 / 0,783 / 22,280 ms` |
+| rolling mínimo / máximo de originais | `0 / 364/s` | `567 / 6.052/s` |
+| PACS.002 ativos iniciados / 2xx / timeout | `3.263 / 1.155 / 2.108` | `15.631 / 15.631 / 0` |
+| outcomes happy-path matched / missing / contradictory | `652 / 174 / 0` | `12.169 / 95.829 / 0` |
+| outcomes insufficient-funds matched / missing / contradictory | `208 / 0 / 0` | `6.582 / 20.417 / 0` |
+| violações de replay PACS.008 / PACS.002 | `328 / 98` | `0 / 0` |
+| CPU kafka-producer média / máxima no ativo | `98,312% / 110,57%` | `68,297% / 107,42%` |
+| CPU Kafka média / máxima no ativo | `47,986% / 105,65%` | `27,055% / 72,41%` |
+| CPU SPI média / máxima no ativo | `44,227% / 99,16%` | `33,357% / 88,13%` |
+| CPU PostgreSQL média / máxima no ativo | `76,632% / 109,10%` | `103,786% / 112,04%` |
+| handshakes TLS preparação / warmup / ativo / drain | `128 / 1.199 / 6.019 / 0` | `100 / 0 / 0 / 0` |
+| lag imediato pagamento / status / gateway | `0 / 0 / 0` | `42.271 / 0 / 1.252` |
+| lag após 30 s pagamento / status / gateway | `0 / 0 / 0` | `0 / 0 / 0` |
+| lock do saldo calls / rows / total / média / máxima | `867 / 1.526 / 316,115 / 0,365 / 80,979 ms` | `795 / 1.538 / 633,215 / 0,796 / 90,177 ms` |
+| waits nativos do saldo `>1 s` | `0` | `0` |
+
+No JFR do controle, `1.391/1.415` amostras ativas estavam em
+`reactor-http-epoll-1`; os leaf frames líderes eram
+`IntegerPolynomial25519.mult` (`281`), `carryReduce` (`173`),
+`MutableBigInteger.divWord` (`142`), `IntegerPolynomial25519.square` (`118`) e
+`MutableElement.setProduct` (`72`). No HTTP/2, as `753` amostras ativas se
+dividiram em `reactor-http-epoll-1=638`, producer network thread 1 `=105` e
+producer network thread 2 `=10`; os leaf frames líderes passaram a
+`AbstractChannelHandlerContext.executor` (`29`), `HashMap.getNode` (`26`),
+`BeanDeserializer._deserializeUsingPropertyBased` (`16`), `ByteBuffer.limit`
+(`16`) e `InternalThreadLocalMap.get` (`14`). A criptografia de handshake não
+domina mais o ativo.
+
+O corte removeu o colapso do ingresso: handshakes TLS recorrentes no ativo
+caíram de `6.019` para zero, não houve timeout nem request PACS.008/PACS.002 sem
+2xx, a aquisição deixou de esperar aproximadamente cinco segundos e a CPU
+média do kafka-producer caiu `30,015` pontos percentuais. As 100 sessões foram
+preaquecidas por H2, não houve violação de protocolo, os outcomes observados
+mantiveram ACSC e RJCT/AM04 sem contradição e os dois contratos de replay
+ficaram com zero violação. Os `95.829 + 20.417` outcomes ausentes no relatório
+formam evidência consistente com backlog downstream além do drain fixo, mas o
+lag imediato de pagamentos e gateway explica apenas parte desse total. A única
+leitura 30 segundos depois encontrou os três grupos com lag Kafka zero, o que
+prova o consumo dos offsets até aquele instante, mas não estabelece correção
+eventual, persistência ou entrega dos outcomes ausentes. Como fato separado,
+nenhum outcome registrado foi contraditório.
+
+O comportamento de lock keyed/c8 também permaneceu intacto: média menor que
+um milissegundo, máximo `90,177 ms` e nenhum wait nativo acima de um segundo.
+O gargalo medido deslocou-se para o processamento PACS.008 no SPI/PostgreSQL.
+O PostgreSQL ficou em `103,786%` de CPU média; `620/806` observações não-idle
+ativas estavam executando em CPU, e a query de ingestão de pagamento
+`8659961623242590219` liderou com `248` observações. Ao fim do drain ainda havia
+`42.271` registros no grupo de pagamentos, enquanto o grupo de status já estava
+em zero. Esse é o próximo gargalo a investigar, sem reabrir HTTP/1.1 e sem
+alterar outra variável neste run.
+
+O piso rolling melhorou de zero para `567/s`, mas ainda não sustenta
+`2.000/s`; portanto não há autorização para o perfil longo. Nenhum perfil de
+15 minutos, fallback HTTP/1.1 ou tuning adicional foi executado. HTTP/2-only
+permanece o contrato obrigatório do boundary; o resultado desloca a próxima
+medição para o caminho de persistência/consumo financeiro downstream.
+
 ## Hipóteses já conhecidas, não assumidas
 
-- Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.
-  Validá-lo no workload longo antes de tratá-lo como configuração final; não
-  alterar timeout ou protocolo no mesmo experimento.
+- Manter HTTP/2-only com uma sessão Go independente por PSP como boundary já
+  qualificado. HTTP/1.1 não é mais candidato nem fallback; investigar o novo
+  gargalo downstream sem alterar timeout ou protocolo no mesmo experimento.
 - Avaliar claim e dispatch no `notification-gateway` separadamente. Filas
   limitadas por ISPB são apenas uma possível resposta caso o ciclo atual se
   prove gargalo.

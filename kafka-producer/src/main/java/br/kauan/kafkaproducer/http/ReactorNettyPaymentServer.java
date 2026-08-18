@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 import reactor.netty.DisposableServer;
+import reactor.netty.http.HttpProtocol;
 import reactor.netty.http.server.HttpServer;
 import reactor.netty.http.server.HttpServerRequest;
 import reactor.netty.http.server.HttpServerResponse;
@@ -46,14 +47,25 @@ public class ReactorNettyPaymentServer {
     public DisposableServer start() {
         return HttpServer.create()
                 .port(port)
+                .protocol(HttpProtocol.H2)
                 .compress(false)
                 .secure(sslProvider -> sslProvider.sslContext(sslContext))
                 .route(routes -> routes
+                        .get("/health", this::health)
                         .post("/transfer", (request, response) ->
                                 handle(request, response, publisher::publishPaymentRequest))
                         .post("/transfer/status", (request, response) ->
                                 handle(request, response, publisher::publishStatusReport)))
                 .bindNow();
+    }
+
+    private Publisher<Void> health(HttpServerRequest request, HttpServerResponse response) {
+        return Mono.fromCallable(() -> identityExtractor.apply(request))
+                .then(Mono.defer(() -> response.status(HttpResponseStatus.OK).send().then()))
+                .onErrorResume(PspAuthenticationException.class, error -> {
+                    log.warn("PSP authentication failed: {}", error.getMessage());
+                    return response.status(HttpResponseStatus.UNAUTHORIZED).send().then();
+                });
     }
 
     private Publisher<Void> handle(
