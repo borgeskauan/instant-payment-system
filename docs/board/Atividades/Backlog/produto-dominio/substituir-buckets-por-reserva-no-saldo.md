@@ -79,6 +79,17 @@ no ingresso. Uma nova tentativa não deve reintroduzir buckets nem adicionar
 lanes em memória antes de medir uma estratégia Kafka que preserve afinidade e
 distribua os participantes quentes de forma compatível com a concorrência.
 
+Essa tentativa foi realizada com oito child consumers para as oito partições,
+preservando workload e uma vCPU. Cada partição ficou isolada em um consumer e
+os waits do saldo continuaram ausentes, mas o run
+`reservation-balance-kafka-concurrency-eight-diagnostic/20260818_001442`
+entrou em ciclo de timeout e handshake no ingresso: PACS.008 ativos 2xx caíram
+de `132.783` para `693`, violações de replay subiram de `37` para `426`
+e o kafka-producer ficou em `98,312%` de CPU média. A configuração também é
+**DISCARD** e não autoriza merge ou run longo. A afinidade continua validada
+como proteção local do settlement; a próxima hipótese deve atacar a fronteira
+HTTP/Kafka observada sem facilitar o hot-pair workload.
+
 ## Objetivo
 
 Substituir os buckets por uma row de saldo disponível por ISPB e dividir o fluxo

@@ -718,6 +718,67 @@ afinidade com oito partições, três consumers e o hash atual precisa ser
 avaliada junto da distribuição das hot keys. Não há autorização para merge ou
 run de 15 minutos.
 
+### A/B de um consumer por partição sobre a afinidade Kafka
+
+O passo seguinte manteve integralmente key por ISPB, oito partições, workload
+80/20 com dez hot pairs, batches, SQL, transações, diagnósticos e o limite de
+uma vCPU do SPI. A única variável foi
+`SPI_KAFKA_LISTENER_CONCURRENCY=8`: os grupos independentes de PACS.008 e
+PACS.002 passaram a ter oito child consumers. Antes do run, o Kafka confirmou
+oito consumer IDs por grupo, cada um proprietário de uma única partição.
+
+A stack foi recriada uma vez sem apagar build cache. O primeiro smoke foi
+correto, sem timeout, mas parcial em `704/1.250`; a segunda tentativa, na mesma
+stack e sem novo reset, qualificou `1.250/1.250`. O único run medido foi
+`reservation-balance-kafka-concurrency-eight-diagnostic/20260818_001442`,
+com janela ativa semiaberta de `2026-08-18T00:15:43.056606968-03:00` até
+`00:16:43.056606968-03:00`. O runner saiu `1`, o bundle ficou completo e
+não houve rerun nem perfil de 15 minutos.
+
+| Evidência | key ISPB, concurrency 3 | key ISPB, concurrency 8 |
+| --- | ---: | ---: |
+| PACS.008 ativos iniciados / 2xx / timeout | `132.947 / 132.783 / 164` | `6.410 / 693 / 5.717` |
+| rolling mínimo / máximo de originais | `0 / 8.530/s` | `0 / 364/s` |
+| PACS.002 ativos iniciados / 2xx / timeout | `18.539 / 18.474 / 65` | `3.263 / 1.155 / 2.108` |
+| outcomes happy-path matched / missing / contradictory | `12.724 / 94.493 / 0` | `652 / 174 / 0` |
+| outcomes insufficient-funds matched / missing / contradictory | `7.654 / 19.139 / 0` | `208 / 0 / 0` |
+| violações de replay PACS.008 / PACS.002 | `32 / 5` | `328 / 98` |
+| CPU kafka-producer média / máxima no ativo | `63,998% / 104,50%` | `98,312% / 110,57%` |
+| CPU Kafka média / máxima no ativo | `21,483% / 97,52%` | `47,986% / 105,65%` |
+| CPU SPI média / máxima no ativo | `21,237% / 93,60%` | `44,227% / 99,16%` |
+| CPU PostgreSQL média / máxima no ativo | `96,816% / 107,36%` | `76,632% / 109,10%` |
+| lag imediato pagamento / status / gateway | `75.619 / 0 / 987` | `0 / 0 / 0` |
+| waits nativos `>1 s` no saldo / máxima da query | `0 / 91,820 ms` | `0 / 80,979 ms` |
+
+O lag zero da variante não representa maior capacidade: ela admitiu muito
+menos trabalho. A distribuição medida dos `5.626` registros de pagamento
+consumidos no diagnóstico foi
+`5,69% / 19,27% / 27,32% / 2,06% / 18,47% / 15,00% / 9,95% / 2,24%`.
+Cada partição progrediu de forma independente, mas a carga continuou
+naturalmente desigual conforme o hash dos mesmos hot ISPBs.
+
+A falha ocorreu antes do settlement. Dos `9.850` timeouts HTTP de PACS.008 e
+PACS.002, `6.274` já tinham escrito o request e aguardavam resposta; `3.576`
+nem obtiveram conexão. A fração de tentativas que registrou uma conexão
+reutilizada caiu de `99,26%` para `69,59%`. No kafka-producer, o JFR
+registrou `7.346` handshakes contra
+`3.114` no controle, e os métodos mais amostrados eram operações
+criptográficas do TLS. Com o produtor no limite de CPU, formou-se o ciclo
+timeout, descarte de conexão, novo handshake e mais CPU. O Kafka já estava com
+lag zero na leitura imediata e permaneceu quiescente na única leitura 30
+segundos depois; não há evidência de perda ou backlog residual. A query de lock
+do saldo fez `867 calls / 1.526 rows / 316,115 ms`, média `0,365 ms` e
+máxima `80,979 ms`, sem wait nativo maior que um segundo, portanto a
+contenção financeira não retornou.
+
+A decisão é **DISCARD para esta configuração exata**. Um consumer por partição
+removeu o agrupamento desigual observado com concurrency 3, mas não melhorou
+trabalho útil, cobertura temporal ou replays e expôs um colapso no ingresso
+HTTP/Kafka. O único A/B associa o colapso à variante, mas não prova sozinho
+qual mecanismo da concorrência adicional iniciou o ciclo de timeouts; não se
+deve transformar essa inferência em correção sem uma hipótese separada e
+instrumentação própria.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.
