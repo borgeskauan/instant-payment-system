@@ -434,6 +434,139 @@ não autorização para alterar SPI, buckets, claim, dispatch ou recursos. Nenhu
 run de 15 minutos foi executado e este experimento não constitui aprovação do
 SLA final.
 
+### A/B da concorrência do settlement PACS.002
+
+O A reutilizado foi
+`notification-ack-batch-diagnostic-b2/20260816_170419`, na revisão `b772137`,
+com concorrência `3` tanto para PACS.008 quanto para PACS.002. O único B foi
+`pacs002-concurrency-one-diagnostic/20260816_174118`, na mesma revisão mais o
+diff experimental não commitado. Somente o listener PACS.002 passou de
+concorrência `3` para `1`; PACS.008 permaneceu em `3`. Workload, SQL, schema,
+buckets, `max.poll.records=500`, recursos, Kafka, HTTP e replays não mudaram.
+
+Antes do B, a stack foi recriada e qualificada por
+`environment-setup-20260816_173647-1996277-attempt-1/20260816_173851`. O smoke
+aceitou `1.250/1.250` pagamentos e PACS.002, observou `1.000` ACSC e `250`
+RJCT/AM04, sem contradições nem violações de replay. O relatório do smoke ficou
+inválido somente pelos gates de performance do perfil curto.
+
+| Evidência | A — concorrência 3 | B — concorrência 1 |
+| --- | ---: | ---: |
+| originais ativos iniciados / 2xx / sem status | `126.830 / 126.830 / 0` | `133.177 / 130.908 / 2.269` |
+| rolling mínimo / máximo de originais | `1.960 / 5.097/s` | `0 / 9.419/s` |
+| PACS.002 ativos aceitos | `35.377` | `18.024` |
+| PACS.002 totais iniciados / aceitos | `45.065 / 44.689` | `40.535 / 39.213` |
+| settlement: calls / rows | `113 / 17.477` | `176 / 12.061` |
+| settlement: tempo total / médio / máximo | `252.498,877 / 2.234,503 / 20.789,419 ms` | `50.379,879 / 286,249 / 4.600,389 ms` |
+| settlement: tempo total por PACS.002 aceito | `5,650 ms` | `1,285 ms` |
+| amostras ativas do settlement | `326` | `45` |
+| waits `transactionid / tuple / sem wait` | `190 / 21 / 111` | `0 / 0 / 45` |
+| CPU PostgreSQL média / máxima no ativo | `103,47% / 110,07%` | `81,74% / 110,34%` |
+| outcomes matched / missing / contradictory | `8.182 / 126.701 / 0` | `8.975 / 122.262 / 0` |
+| latência p50 / p95 / p99 | `65,075 / 84,683 / 85,083 s` | `29,675 / 53,886 / 55,281 s` |
+| violações de replay PACS.008 / PACS.002 | `0 / 0` | `149 / 52` |
+
+A redução para um consumer eliminou a participação observada em locks de
+transação e tuple, reduziu `77,3%` do tempo de settlement normalizado por
+PACS.002 aceito e diminuiu a CPU média do PostgreSQL. Isso confirma que parte
+relevante do custo com concorrência `3` era um lock convoy entre settlements,
+e não apenas CPU intrínseca da query.
+
+Entretanto, o B também reduziu em `49,1%` os PACS.002 ativos aceitos, teve
+timeouts no ingresso, violações de replay e terminou o deadline com lag
+`73.559 / 24.356 / 473` nos grupos de pagamento, status e gateway. O Kafka
+ficou quiescente em uma leitura posterior, sem nova carga, portanto o trabalho
+ficou atrasado em vez de desaparecer; ele não coube no horizonte do
+experimento. A menor latência dos outcomes que conseguiram terminar é uma
+amostra censurada pelo deadline e não compensa a queda de capacidade nem prova
+SLA.
+
+A decisão é **DISCARD** para a configuração PACS.002 com concorrência `1`.
+Serializar remove o convoy, mas também remove paralelismo necessário. A
+implementação experimental não deve permanecer no produto. A evidência
+autoriza como próximo experimento isolado a arquitetura de reserva no saldo do
+participante, descrita na task
+[`Substituir buckets por reserva no saldo do participante`](../Backlog/produto-dominio/substituir-buckets-por-reserva-no-saldo.md): ela deve tentar reduzir a forma de contenção sem serializar todo o settlement.
+Isso é autorização para um novo A/B, não aprovação antecipada da arquitetura.
+
+Não houve rerun do A, segunda execução B nem run de 15 minutos. O piso de
+2.000 TPS e o SLA final continuam não aprovados.
+
+### Atribuição nativa dos lock waits do settlement
+
+O ambiente da revisão `eaac7ed` foi recriado uma vez. O wrapper inicialmente
+tentado sem acesso ao socket Docker saiu `1` às `20:09:16 -03` antes de qualquer
+mutação. A execução autorizada iniciou às `20:10:06 -03`, deixou a stack pronta
+às `20:11:17 -03` e saiu `1` antes de gerar tráfego porque o Go 1.24 tentou
+obter o status VCS a partir do worktree externo em `/tmp`. Sem novo reset de
+volumes, a continuação na mesma stack usou somente
+`GOFLAGS=-buildvcs=false GOCACHE=/tmp/postgres-lock-go-cache`. O primeiro smoke,
+`load-test/results/environment-setup-20260816_201006-2120351-attempt-1/20260816_201259`, teve
+runner `1` e qualifier `10`: foi funcionalmente correto, sem timeout, mas
+parcial em `779/1.250`. O segundo,
+`load-test/results/environment-setup-20260816_201006-2120351-attempt-2/20260816_201447`, teve
+runner `1` e qualifier `0`, qualificou `1.250/1.250` pagamentos e PACS.002 e
+terminou com Kafka quiescente.
+
+Não havia instrumentação de load-test não commitada durante a medição. O diff
+diagnóstico exato já estava nos commits `b772137..eaac7ed`: habilitação de
+`log_lock_waits=on` com `deadlock_timeout=1s`, captura atômica do `docker logs`
+do PostgreSQL e integração da captura limitada por instantes no runner, com os
+testes correspondentes. As configurações efetivas consultadas na stack foram
+`deadlock_timeout=1000ms` e `log_lock_waits=on`; workload, SQL, schema,
+concorrência `3`, recursos, Kafka e replays permaneceram inalterados. Somente a
+documentação pré-existente estava não commitada.
+
+O único run de atribuição foi
+`load-test/results/postgres-lock-wait-attribution/20260816_201657`, perfil
+`mixed-outcomes-2k-diagnostic`, com janela ativa
+`2026-08-16T23:17:41.645766669Z` até
+`2026-08-16T23:18:41.645766669Z`. O runner saiu `1` apenas pelos gates do
+`sla-report.json`; o bundle está completo e analisável, inclusive com
+`logs/postgres-server.log`, CSVs do PostgreSQL e containers, JFR, janela,
+relatório e os quatro CSVs de eventos. O Kafka terminou o deadline com lag
+`40.547 / 41.139 / 955` nos grupos de pagamento, status e gateway e ficou
+quiescente na única leitura posterior, sem nova carga.
+
+| Evidência do run único | Valor |
+| --- | ---: |
+| originais ativos iniciados / 2xx / sem status | `126.947 / 126.947 / 0` |
+| throughput médio; rolling mínimo / máximo | `2.115,783/s; 1.943 / 4.670/s` |
+| PACS.002 ativos aceitos; totais iniciados / aceitos | `40.736; 55.859 / 55.544` |
+| settlement: calls / rows | `113 / 13.668` |
+| settlement: tempo total / médio / máximo | `244.433,930 / 2.163,132 / 16.094,436 ms` |
+| amostras ativas do settlement | `322` |
+| waits `transactionid / tuple / WALInsert / sem wait` | `158 / 49 / 1 / 114` |
+| CPU PostgreSQL média / máxima no ativo | `103,96% / 110,77%` |
+| outcomes matched / missing / contradictory | `11.135 / 123.795 / 0` |
+| latência p50 / p95 / p99 | `52,644 / 74,491 / 74,678 s` |
+| violações de replay PACS.008 / PACS.002 | `0 / 0` |
+
+A query de settlement foi localizada pela forma SQL e recebeu o query ID
+`2456203941879608086`; somente os PIDs `137`, `140` e `142`, observados nessa
+query dentro da janela ativa, foram usados para contar seus blocos nativos de
+`still waiting`. O resultado foi `32` eventos: `1` em
+`payment_transaction_entity`, `22` em `funds_bucket_entity`, `0` em outra
+relação e `9` não atribuídos. Assim, a cobertura é `23/32 = 71,875%` e a
+parcela não atribuída é `9/32 = 28,125%`.
+
+A classificação predeclarada é **INCONCLUSIVE** porque a cobertura ficou abaixo
+do gate de `75%`. A aparente concentração de `22/23` eventos nomeados em
+`funds_bucket_entity` não pode passar pelo gate de predominância de `70%`, que
+só se aplica depois de cobertura suficiente, e portanto não autoriza mudança
+em buckets, afinidade Kafka por payment ID ou outra alteração arquitetural.
+Os nove blocos não atribuídos eram waits de tuple que registraram apenas o OID
+numérico `16468`, sem o nome nativo da relação; o classificador predeclarado os
+manteve não atribuídos. O log também não promete payment ID, bucket ID, bind
+values nem cobertura completa entre amostras, e `pg_stat_statements` agrega o
+run completo em vez de somente a janela ativa.
+
+O único próximo experimento permitido é adicionar ao bundle um mapa por run de
+OID para nome de relação, capturado na mesma stack, predeclarar como esse mapa
+classifica os waits numéricos e então executar uma vez o mesmo
+`mixed-outcomes-2k-diagnostic`, sem mudar nenhuma outra variável. Nenhum run de
+15 minutos ocorreu. O piso de 2.000 TPS e o SLA final permanecem não aprovados.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.

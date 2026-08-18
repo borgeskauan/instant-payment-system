@@ -19,6 +19,7 @@ readonly POSTGRES_STATEMENTS_LOG="postgres-statements.log"
 readonly POSTGRES_ACTIVITY_FILE="postgres-activity.csv"
 readonly POSTGRES_IO_FILE="postgres-io.csv"
 readonly POSTGRES_RUNTIME_LOG="postgres-runtime.log"
+readonly POSTGRES_SERVER_LOG="postgres-server.log"
 readonly CONTAINER_STATS_FILE="container-stats.csv"
 readonly CONTAINER_STATS_LOG="container-stats.log"
 readonly INVALID_REPORT_EXIT=1
@@ -47,6 +48,7 @@ SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
 POSTGRES_ACTIVITY_PID=""
+POSTGRES_SERVER_LOG_SINCE=""
 CONTAINER_STATS_PID=""
 JFR_TARGET_DIR=""
 POSTGRES_STATEMENTS_TARGET_DIR=""
@@ -512,6 +514,33 @@ capture_final_postgres_io() {
     } >> "$log_file" 2>&1
 }
 
+start_postgres_server_log_capture() {
+    POSTGRES_SERVER_LOG_SINCE="$(iso_now)"
+}
+
+capture_postgres_server_log() {
+    local target_dir="$1"
+    local until="$2"
+    local output_file="${target_dir}/logs/${POSTGRES_SERVER_LOG}"
+    local runtime_log="${target_dir}/logs/${POSTGRES_RUNTIME_LOG}"
+    local status=0
+
+    log_phase "capturing Postgres server logs"
+    if [[ -z "$POSTGRES_SERVER_LOG_SINCE" ]]; then
+        echo "Postgres server-log capture has no start boundary." >> "$runtime_log"
+        return 2
+    fi
+    if "${SCRIPTS_DIR}/postgres-server-log.sh" \
+            capture "$POSTGRES_SERVER_LOG_SINCE" "$until" "$output_file" \
+            >> "$runtime_log" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    POSTGRES_SERVER_LOG_SINCE=""
+    return "$status"
+}
+
 start_container_stats() {
     local target_dir="$1"
     local output_file="${target_dir}/diagnostics/${CONTAINER_STATS_FILE}"
@@ -652,7 +681,7 @@ log_selected_options() {
         log_phase "SPI trace collection enabled"
     fi
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
-        log_phase "Postgres statement, activity, I/O, and container stats enabled"
+        log_phase "Postgres statement, activity, I/O, lock-wait logs, and container stats enabled"
     fi
 }
 
@@ -744,6 +773,7 @@ start_optional_diagnostics() {
     local target_dir="$1"
 
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        start_postgres_server_log_capture
         enable_postgres_statement_stats "$target_dir"
         start_postgres_runtime_diagnostics "$target_dir"
         start_container_stats "$target_dir"
@@ -759,6 +789,7 @@ start_optional_diagnostics() {
 collect_optional_diagnostics() {
     local target_dir="$1"
     local failed=0
+    local postgres_server_log_until=""
 
     if [[ "$ENABLE_JFR" == true ]]; then
         stop_jfr_recordings "$target_dir" || failed=1
@@ -768,11 +799,13 @@ collect_optional_diagnostics() {
         copy_spi_trace "$target_dir" || failed=1
     fi
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+        postgres_server_log_until="$(iso_now)"
         stop_postgres_activity_sampler "$target_dir" || failed=1
         stop_container_stats "$target_dir" || failed=1
         capture_final_postgres_io "$target_dir" || failed=1
         capture_postgres_statement_stats "$target_dir" || failed=1
         disable_postgres_statement_stats "$target_dir" || failed=1
+        capture_postgres_server_log "$target_dir" "$postgres_server_log_until" || failed=1
     fi
     return "$failed"
 }

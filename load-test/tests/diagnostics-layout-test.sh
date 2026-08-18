@@ -29,6 +29,20 @@ if [[ "$1" == snapshot ]]; then
 fi
 SH
 
+cat > "$tmp_dir/scripts/postgres-server-log.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$FAKE_POSTGRES_SERVER_LOG_INVOCATIONS"
+if [[ "${FAKE_POSTGRES_SERVER_LOG_FAIL:-}" == true ]]; then
+    exit 33
+fi
+printf '%s\n' \
+    '2026-08-16T20:00:01.000000000Z LOG: process 154 still waiting' \
+    '2026-08-16T20:00:01.000000000Z CONTEXT: while updating tuple in relation "funds_bucket_entity"' \
+    > "$4"
+SH
+
 cat > "$tmp_dir/scripts/postgres-runtime.sh" <<'SH'
 #!/bin/bash
 set -euo pipefail
@@ -72,10 +86,12 @@ SH
 chmod +x \
     "$tmp_dir/scripts/spi-trace.sh" \
     "$tmp_dir/scripts/postgres-statements.sh" \
+    "$tmp_dir/scripts/postgres-server-log.sh" \
     "$tmp_dir/scripts/postgres-runtime.sh" \
     "$tmp_dir/scripts/container-stats.sh"
 
 export SCRIPTS_DIR="$tmp_dir/scripts"
+export FAKE_POSTGRES_SERVER_LOG_INVOCATIONS="$tmp_dir/postgres-server-log-invocations.log"
 source "$ROOT_DIR/run-load-test.sh"
 
 ENABLE_JFR=false
@@ -110,6 +126,11 @@ if [[ "$(grep -c '^before,' "$tmp_dir/result/diagnostics/postgres-io.csv")" -ne 
     exit 1
 fi
 
+test -f "$tmp_dir/result/logs/postgres-server.log"
+grep -Fq 'relation "funds_bucket_entity"' "$tmp_dir/result/logs/postgres-server.log"
+grep -Eq '^capture .+ .+ .+/logs/postgres-server\.log$' \
+    "$FAKE_POSTGRES_SERVER_LOG_INVOCATIONS"
+
 mkdir -p "$tmp_dir/failing-result/logs" "$tmp_dir/failing-result/diagnostics"
 export FAKE_POSTGRES_STATEMENTS_FAIL_ACTION=snapshot
 start_optional_diagnostics "$tmp_dir/failing-result"
@@ -129,7 +150,24 @@ if collect_optional_diagnostics "$tmp_dir/sampler-failure"; then
 fi
 unset FAKE_POSTGRES_ACTIVITY_FAIL_AFTER_READY
 
+mkdir -p "$tmp_dir/server-log-failure/logs" "$tmp_dir/server-log-failure/diagnostics"
+export FAKE_POSTGRES_SERVER_LOG_FAIL=true
+start_optional_diagnostics "$tmp_dir/server-log-failure"
+if collect_optional_diagnostics "$tmp_dir/server-log-failure"; then
+    echo "PostgreSQL server-log capture failure was hidden" >&2
+    exit 1
+fi
+unset FAKE_POSTGRES_SERVER_LOG_FAIL
+
 if [[ -n "$POSTGRES_ACTIVITY_PID" || -n "$CONTAINER_STATS_PID" ]]; then
     echo "diagnostic collection retained a sampler PID" >&2
     exit 1
 fi
+
+mkdir -p "$tmp_dir/disabled/logs" "$tmp_dir/disabled/diagnostics"
+ENABLE_JFR=false
+ENABLE_SPI_TRACE=false
+ENABLE_POSTGRES_STATEMENTS=false
+start_optional_diagnostics "$tmp_dir/disabled"
+collect_optional_diagnostics "$tmp_dir/disabled"
+test ! -e "$tmp_dir/disabled/logs/postgres-server.log"

@@ -25,6 +25,10 @@ services:
       - pg_stat_statements.max=10000
       - -c
       - track_io_timing=on
+      - -c
+      - log_lock_waits=on
+      - -c
+      - deadlock_timeout=1s
     ports:
       - "5432:5432"
     restart: unless-stopped
