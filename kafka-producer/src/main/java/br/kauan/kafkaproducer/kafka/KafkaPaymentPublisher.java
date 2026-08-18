@@ -102,10 +102,11 @@ public class KafkaPaymentPublisher implements PaymentPublisher {
             String authenticatedIspb,
         byte[] payload
     ) {
-        ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topic, payload);
+        byte[] ispbKey = authenticatedIspb.getBytes(StandardCharsets.UTF_8);
+        ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topic, ispbKey, payload);
         record.headers().add(
                 AUTHENTICATED_ISPB_HEADER,
-                authenticatedIspb.getBytes(StandardCharsets.UTF_8));
+                ispbKey);
         return Mono.create(sink -> producer.send(record, failure -> {
             if (failure == null) {
                 sink.success();

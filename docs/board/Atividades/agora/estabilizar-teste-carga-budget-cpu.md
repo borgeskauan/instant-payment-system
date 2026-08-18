@@ -647,6 +647,77 @@ Uma futura hipótese deve separar a correção semântica da liquidez da estrat�
 de contenção; esta implementação não autoriza o perfil de 15 minutos nem aprova
 o piso de 2.000 TPS.
 
+### A/B da afinidade Kafka por ISPB sobre o saldo único
+
+O run anterior de saldo único sem key,
+`reservation-balance-diagnostic/20260816_221950`, permaneceu imutável. Na mesma
+branch experimental, o kafka-producer passou a usar o ISPB autenticado como key
+UTF-8: pagador no tópico PACS.008 e PSP reportante/recebedor no PACS.002. Não
+mudaram payload, header, tópicos, oito partições, grupos, concorrência `3`, SQL,
+transações, recursos, perfil ou diagnósticos.
+
+O primeiro preparador autorizado recriou a stack e saiu antes do smoke porque
+o Go 1.24 tentou obter VCS em `/tmp/.git`, fora do worktree real. O build isolado
+reproduziu a falha e o workaround já conhecido
+`GOFLAGS=-buildvcs=false GOCACHE=/tmp/kafka-key-go-cache` a eliminou. A mesma
+stack limpa foi retomada sem outro reset. O primeiro smoke foi correto, mas
+parcial em `1.004/1.250`; o segundo qualificou `1.250/1.250`, zero timeout,
+outcomes e replays corretos e Kafka quiescente.
+
+O único run keyed foi
+`reservation-balance-kafka-key-diagnostic/20260817_234042`, com janela ativa
+semiaberta de `2026-08-17T23:41:26.274722772-03:00` até
+`23:42:26.274722772-03:00`. O runner saiu `1` pelos gates do relatório e o
+bundle ficou completo. Não houve rerun nem perfil de 15 minutos.
+
+| Evidência | saldo único sem key | saldo único com key ISPB |
+| --- | ---: | ---: |
+| originais ativos iniciados / 2xx / timeout | `132.002 / 132.002 / 0` | `132.947 / 132.783 / 164` |
+| rolling mínimo / máximo de originais | `459 / 5.260/s` | `0 / 8.530/s` |
+| PACS.002 happy-path ativos aceitos | `28.393` | `18.474` |
+| PACS.002 happy-path totais iniciados / aceitos | `43.180 / 42.808` | `29.388 / 28.409` |
+| outcomes happy-path matched / missing / contradictory | `7.548 / 100.360 / 0` | `12.724 / 94.493 / 0` |
+| outcomes insufficient-funds matched / missing / contradictory | `10.784 / 16.198 / 0` | `7.654 / 19.139 / 0` |
+| latência global p50 / p95 / p99 / máxima | `24,422 / 66,622 / 70,118 / 73,375 s` | `46,794 / 71,779 / 77,869 / 78,755 s` |
+| violações de replay PACS.008 / PACS.002 | `0 / 1` | `32 / 5` |
+| CPU PostgreSQL média / máxima no ativo | `101,229% / 107,43%` | `96,816% / 107,36%` |
+| lag imediato pagamento / status / gateway | `57.206 / 36.355 / 0` | `75.619 / 0 / 987` |
+| waits nativos `>1 s` no saldo / máximo | `10 / 28,904 s` | `0 / <1 s` |
+
+A key confirmou a hipótese local do settlement. A query de lock do saldo caiu
+de `115 calls / 1.515 rows / 79.564,414 ms`, média `691,864 ms` e máxima
+`28.904,898 ms` para `391 / 1.280 / 253,162 ms`, média `0,647 ms` e máxima
+`91,820 ms`. O status lag caiu a zero, as transições guardadas aplicadas
+subiram de `7.640` para `23.470` e os outcomes happy-path observados cresceram
+`68,6%`. A afinidade eliminou a concorrência do mesmo recebedor entre consumers
+do tópico de status.
+
+O custo apareceu no ingresso. Após a stack ficar quiescente, os offsets do
+ambiente limpo — dois smokes e o diagnóstico, todos com a mesma topologia mista
+— estavam distribuídos entre os três consumers de pagamento como
+`74.113 / 53.339 / 16.580`, ou `51,46% / 37,03% / 11,51%`. Os dez pagadores
+hot caíram nas partições `1, 2, 4, 5, 6` em grupos de `2, 3, 2, 2, 1`; com a
+atribuição observada `0-2`, `3-5`, `6-7`, um consumer recebeu cinco hot keys e
+outro somente uma. Os consumers de status ficaram mais equilibrados em
+`40,57% / 31,20% / 28,23%`.
+
+A leitura imediata após o run encontrou o lag keyed da tabela; a única leitura
+posterior ficou quiescente. Houve backlog, não evidência de perda. Ainda assim,
+o desequilíbrio do tópico de pagamentos reduziu os PACS.002 ativos aceitos em
+`34,9%`, produziu uma rolling window sem originais e causou `37` timeouts de
+replay. O subtotal das três queries financeiras comparáveis aumentou de
+`133.203,700` para `194.579,368 ms`, ou de `3,112` para `6,849 ms` por PACS.002
+HTTP aceito. Normalizado pelas transições realmente aplicadas, porém, caiu de
+`17,435` para `8,291 ms`; isso reforça que o settlement melhorou enquanto o
+ingresso passou a limitar o trabalho oferecido a ele.
+
+A decisão predefinida é **DISCARD para esta configuração exata**: ela viola os
+gates de replay, piso rolling e trabalho útil, apesar de remover a contenção do
+saldo. O resultado não invalida afinidade por participante; demonstra que
+afinidade com oito partições, três consumers e o hash atual precisa ser
+avaliada junto da distribuição das hot keys. Não há autorização para merge ou
+run de 15 minutos.
+
 ## Hipóteses já conhecidas, não assumidas
 
 - Manter, como candidato medido, o pool HTTP/1.1 fixo de 32 conexões por PSP.

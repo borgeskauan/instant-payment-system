@@ -59,6 +59,26 @@ da branch experimental nem run de 15 minutos. Uma eventual nova proposta deve
 separar a semântica de liquidez da estratégia de contenção; não basta retomar
 esta substituição tal como implementada.
 
+Um A/B posterior aplicou somente `key = authenticated ISPB` nos dois tópicos de
+ingresso, mantendo toda a arquitetura e o workload. O run keyed
+`reservation-balance-kafka-key-diagnostic/20260817_234042` eliminou os waits
+nativos maiores que um segundo no saldo (`10 → 0`), reduziu a máxima da query
+de lock de `28.904,898` para `91,820 ms`, zerou o status lag e elevou as
+transições aplicadas de `7.640` para `23.470`.
+
+Mesmo assim, a configuração também foi **DISCARD**. O hash das dez hot keys e
+a atribuição das oito partições aos três consumers distribuíram o tópico de
+pagamentos em `51,46% / 37,03% / 11,51%`. O lag imediato de pagamentos subiu
+para `75.619`, PACS.002 ativos aceitos caíram de `28.393` para `18.474`, o piso
+rolling caiu a zero e os replays tiveram `32 / 5` violações. A única leitura
+posterior ficou quiescente e nenhum run de 15 minutos ocorreu.
+
+A evidência separa as hipóteses: afinidade por ISPB resolve a disputa da row no
+settlement, mas a distribuição atual das hot keys cria um gargalo por consumer
+no ingresso. Uma nova tentativa não deve reintroduzir buckets nem adicionar
+lanes em memória antes de medir uma estratégia Kafka que preserve afinidade e
+distribua os participantes quentes de forma compatível com a concorrência.
+
 ## Objetivo
 
 Substituir os buckets por uma row de saldo disponível por ISPB e dividir o fluxo

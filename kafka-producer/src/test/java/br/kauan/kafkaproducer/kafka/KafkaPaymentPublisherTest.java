@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -27,6 +28,7 @@ class KafkaPaymentPublisherTest {
 
         ProducerRecord<byte[], byte[]> record = paymentProducer.sends.getFirst();
         assertEquals("spi-payment-requests", record.topic());
+        assertRecordKey(record, "10000001");
         assertAuthenticatedIspb(record, "10000001");
         PaymentRequest request = PaymentRequest.parseFrom(record.value());
         assertEquals("E2E-1", request.getPaymentId());
@@ -50,6 +52,7 @@ class KafkaPaymentPublisherTest {
 
         ProducerRecord<byte[], byte[]> record = statusProducer.sends.getFirst();
         assertEquals("spi-payment-status-reports", record.topic());
+        assertRecordKey(record, "20000001");
         assertAuthenticatedIspb(record, "20000001");
         PaymentStatusReport report = PaymentStatusReport.parseFrom(record.value());
         assertEquals("E2E-1", report.getPaymentId());
@@ -78,6 +81,8 @@ class KafkaPaymentPublisherTest {
         assertEquals(2, paymentProducer.sends.size());
         assertEquals("E2E-1", PaymentRequest.parseFrom(paymentProducer.sends.get(0).value()).getPaymentId());
         assertEquals("E2E-2", PaymentRequest.parseFrom(paymentProducer.sends.get(1).value()).getPaymentId());
+        assertRecordKey(paymentProducer.sends.get(0), "10000001");
+        assertRecordKey(paymentProducer.sends.get(1), "10000001");
         assertAuthenticatedIspb(paymentProducer.sends.get(0), "10000001");
         assertAuthenticatedIspb(paymentProducer.sends.get(1), "10000001");
     }
@@ -106,8 +111,24 @@ class KafkaPaymentPublisherTest {
         assertEquals(2, statusProducer.sends.size());
         assertEquals("E2E-1", PaymentStatusReport.parseFrom(statusProducer.sends.get(0).value()).getPaymentId());
         assertEquals("E2E-2", PaymentStatusReport.parseFrom(statusProducer.sends.get(1).value()).getPaymentId());
+        assertRecordKey(statusProducer.sends.get(0), "20000001");
+        assertRecordKey(statusProducer.sends.get(1), "20000001");
         assertAuthenticatedIspb(statusProducer.sends.get(0), "20000001");
         assertAuthenticatedIspb(statusProducer.sends.get(1), "20000001");
+    }
+
+    @Test
+    void usesEachAuthenticatedIspbAsItsStatusRecordKey() throws Exception {
+        FakeProducerClient statusProducer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(new FakeProducerClient(), statusProducer);
+
+        publisher.publishStatusReport("20000001", pacs002("ACSP")).block();
+        publisher.publishStatusReport("20000002", pacs002("ACSP")).block();
+
+        assertRecordKey(statusProducer.sends.get(0), "20000001");
+        assertRecordKey(statusProducer.sends.get(1), "20000002");
+        assertEquals("E2E-1", PaymentStatusReport.parseFrom(statusProducer.sends.get(0).value()).getPaymentId());
+        assertEquals("E2E-1", PaymentStatusReport.parseFrom(statusProducer.sends.get(1).value()).getPaymentId());
     }
 
     @Test
@@ -140,6 +161,10 @@ class KafkaPaymentPublisherTest {
         record.headers().headers(KafkaPaymentPublisher.AUTHENTICATED_ISPB_HEADER).forEach(headers::add);
         assertEquals(1, headers.size());
         assertEquals(expectedIspb, new String(headers.getFirst().value(), StandardCharsets.UTF_8));
+    }
+
+    private static void assertRecordKey(ProducerRecord<byte[], byte[]> record, String expectedIspb) {
+        assertArrayEquals(expectedIspb.getBytes(StandardCharsets.UTF_8), record.key());
     }
 
     private static final class FakeProducerClient implements ProducerClient {
