@@ -10,6 +10,7 @@ import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -70,6 +72,27 @@ class ConcurrentParticipantBalanceIntegrationTest {
         assertThat(paymentCount(payment.getPaymentId())).isOne();
         assertThat(auditCount(payment.getPaymentId(), "PAYMENT_CREATED")).isOne();
         assertThat(outboxCount(payment.getPaymentId(), "ACCEPTANCE_REQUEST")).isOne();
+    }
+
+    @Test
+    void concurrentDivergentPaymentRequestsCreateAndReserveExactlyOnce() throws Exception {
+        insertBalance(SENDER_ISPB, 10_000L);
+        PaymentTransactionCommand first = payment(PAYMENT_ID_PREFIX + "DIVERGENT", RECEIVER_ISPB);
+        PaymentTransactionCommand second = payment(PAYMENT_ID_PREFIX + "DIVERGENT", "63333333");
+        AtomicReference<PaymentTransactionPersistenceResult> firstResult = new AtomicReference<>();
+        AtomicReference<PaymentTransactionPersistenceResult> secondResult = new AtomicReference<>();
+
+        invokeConcurrently(
+                () -> firstResult.set(processor.processTransactions(authenticatedPayments(first))),
+                () -> secondResult.set(processor.processTransactions(authenticatedPayments(second)))
+        );
+
+        assertThat(balanceCents(SENDER_ISPB)).isEqualTo(9_000L);
+        assertThat(paymentCount(first.getPaymentId())).isOne();
+        assertThat(auditCount(first.getPaymentId(), "PAYMENT_CREATED")).isOne();
+        assertThat(outboxCount(first.getPaymentId(), "ACCEPTANCE_REQUEST")).isOne();
+        assertThat(firstResult.get().divergentDuplicates().size()
+                + secondResult.get().divergentDuplicates().size()).isOne();
     }
 
     @Test
@@ -228,13 +251,17 @@ class ConcurrentParticipantBalanceIntegrationTest {
     }
 
     private PaymentTransactionCommand payment(String paymentId) {
+        return payment(paymentId, RECEIVER_ISPB);
+    }
+
+    private PaymentTransactionCommand payment(String paymentId, String receiverIspb) {
         return PaymentTransactionCommand.builder()
                 .paymentId(paymentId)
                 .amountCents(1_000L)
                 .currency("BRL")
                 .description("concurrent reservation test")
                 .sender(party(SENDER_ISPB))
-                .receiver(party(RECEIVER_ISPB))
+                .receiver(party(receiverIspb))
                 .build();
     }
 

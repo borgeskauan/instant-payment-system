@@ -523,3 +523,49 @@ do Kafka prova consumo dos offsets, não persistência ou entrega eventual.
 O próximo experimento deve atacar exclusivamente a persistência de PACS.008.
 Nenhuma qualificação de 15 minutos está autorizada antes de comprovar o piso
 sustentado no diagnóstico curto.
+
+## Fast path de persistência PACS.008
+
+O experimento curto comparou o controle
+`consolidated-baseline/20260818_185932` com
+`pacs008-fast-path/20260818_195402`. A intervenção moveu para Java a
+classificação local do batch e substituiu a CTE de admissão por um `INSERT ...
+ON CONFLICT DO NOTHING RETURNING payment_id`. Somente conflitos consultam o
+estado já persistido; o fluxo de reserva, auditoria, outbox e ACK permaneceu na
+mesma transação.
+
+O smoke da variante qualificou na primeira tentativa: `1.250/1.250` pagamentos
+originais, `1.000/1.000` PACS.002 e `112/112` replays foram aceitos. Os 287
+testes do SPI também passaram, incluindo concorrência entre PACS.008
+divergentes com o mesmo ID, que produziu uma única criação e uma única reserva.
+
+No diagnóstico de 60 segundos:
+
+- os `135.000/135.000` pagamentos originais e os `7.325/7.325` replays
+  receberam HTTP 2xx;
+- a latência HTTP PACS.008 p95 caiu de `264,820 ms` para `16,890 ms`, e a p99
+  de `698,384 ms` para `38,731 ms`;
+- a janela ativa passou de média/mínimo/máximo rolling
+  `2.124,8 / 196 / 5.959 TPS`, com catch-up, para
+  `2.000 / 1.978 / 2.021 TPS`;
+- o tempo acumulado da admissão caiu de `346.388,873 ms` para
+  `251.241,847 ms`; a consulta posterior dos conflitos consumiu apenas
+  `2.319,808 ms`;
+- o PostgreSQL permaneceu saturado em aproximadamente um core: CPU média
+  `102,949%` no controle e `100,749%` na variante.
+
+O fast path removeu o gargalo do ingresso HTTP, mas não estabilizou o sistema
+completo. O relatório continuou inválido porque o menor rolling ficou `22 TPS`
+abaixo do piso e porque o processamento downstream não concluiu os outcomes no
+deadline. A transição PACS.002 `ACCEPTED` passou a liderar o PostgreSQL, com
+`469.731,977 ms` acumulados, média de `1.008,009 ms` por chamada e máximo de
+`44.900,790 ms`. A nova admissão também apresentou espera `transactionid`
+quando replays alcançaram originais ainda não commitados; isso explica seus
+outliers de conflito e deve ser considerado no próximo desenho, sem reintroduzir
+a antiga CTE.
+
+Portanto, a evidência mantém a simplificação do ingresso, mas não qualifica o
+SLA final. O próximo experimento deve atacar uma única causa no caminho
+PACS.002/settlement ou reduzir o convoy transacional causado por batches que
+misturam trabalho novo e conflitos, preservando workload, recursos e o fast
+path já medido. Nenhum run de 15 minutos foi executado nesta intervenção.

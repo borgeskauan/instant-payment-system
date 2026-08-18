@@ -25,42 +25,14 @@ import java.util.TreeMap;
 
 class IncomingPaymentRequestPersistence {
 
-    private static final String PAYMENT_CREATED = "PAYMENT_CREATED";
-    private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
-    private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
-    private static final String RECHECK_EXISTING = "RECHECK_EXISTING";
-    private static final String IDENTICAL_REPLAY = "IDENTICAL_REPLAY";
-
-    private static final String RECHECK_EXISTING_SQL = """
-            WITH incoming AS (
-                SELECT *
-                FROM unnest(
-                    ?::int[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[]
-                ) AS i(
-                    ordinal,
-                    payment_id,
-                    request_fingerprint,
-                    request_fingerprint_version,
-                    authenticated_ispb
-                )
-            )
+    private static final String SELECT_CONFLICTS_SQL = """
             SELECT
-                i.ordinal,
-                CASE
-                    WHEN i.authenticated_ispb IS DISTINCT FROM p.sender_bank_code
-                        THEN 'UNAUTHORIZED_PSP'
-                    WHEN i.request_fingerprint_version IS DISTINCT FROM p.request_fingerprint_version
-                      OR i.request_fingerprint IS DISTINCT FROM p.request_fingerprint
-                        THEN 'DIVERGENT_DUPLICATE'
-                    ELSE 'IDENTICAL_REPLAY'
-                END AS action
-            FROM incoming i
-            JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-            ORDER BY i.ordinal
+                payment_id,
+                sender_bank_code,
+                request_fingerprint,
+                request_fingerprint_version
+            FROM payment_transaction_entity
+            WHERE payment_id = ANY (?::text[])
             """;
 
     private static final String LOCK_BALANCES_SQL = """
@@ -86,146 +58,41 @@ class IncomingPaymentRequestPersistence {
               AND status = ?
             """;
 
-    private static final String PERSISTENCE_SQL = """
-            WITH incoming AS (
-                SELECT *
-                FROM unnest(
-                    ?::int[],
-                    ?::text[],
-                    ?::bigint[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[],
-                    ?::text[]
-                ) AS i(
-                    ordinal,
-                    payment_id,
-                    amount_cents,
-                    status,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    request_fingerprint,
-                    request_fingerprint_version,
-                    authenticated_ispb
-                )
-            ),
-            payload_unauthorized_actions AS (
-                SELECT ordinal, 'UNAUTHORIZED_PSP'::text AS action
-                FROM incoming
-                WHERE authenticated_ispb IS DISTINCT FROM sender_bank_code
-            ),
-            payload_authorized AS (
-                SELECT *
-                FROM incoming
-                WHERE authenticated_ispb IS NOT DISTINCT FROM sender_bank_code
-            ),
-            existing_lookup AS MATERIALIZED (
-                SELECT
-                    i.*,
-                    p.payment_id AS existing_payment_id,
-                    p.status AS existing_status,
-                    p.sender_bank_code AS existing_sender_bank_code,
-                    p.request_fingerprint AS existing_fingerprint,
-                    p.request_fingerprint_version AS existing_fingerprint_version
-                FROM payload_authorized i
-                LEFT JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-            ),
-            existing_unauthorized_actions AS (
-                SELECT ordinal, 'UNAUTHORIZED_PSP'::text AS action
-                FROM existing_lookup
-                WHERE existing_payment_id IS NOT NULL
-                  AND authenticated_ispb IS DISTINCT FROM existing_sender_bank_code
-            ),
-            authorized_incoming AS (
-                SELECT *
-                FROM existing_lookup
-                WHERE existing_payment_id IS NULL
-                   OR authenticated_ispb IS NOT DISTINCT FROM existing_sender_bank_code
-            ),
-            authorized_group_stats AS (
-                SELECT
-                    payment_id,
-                    COUNT(DISTINCT (request_fingerprint_version, request_fingerprint)) > 1
-                        AS divergent
-                FROM authorized_incoming
-                GROUP BY payment_id
-            ),
-            same_batch_divergent_actions AS (
-                SELECT ai.ordinal, 'DIVERGENT_DUPLICATE'::text AS action
-                FROM authorized_incoming ai
-                JOIN authorized_group_stats stats USING (payment_id)
-                WHERE stats.divergent
-            ),
-            logical_incoming AS (
-                SELECT DISTINCT ON (ai.payment_id) ai.*
-                FROM authorized_incoming ai
-                JOIN authorized_group_stats stats USING (payment_id)
-                WHERE NOT stats.divergent
-                ORDER BY ai.payment_id, ai.ordinal
-            ),
-            inserted AS (
-                INSERT INTO payment_transaction_entity (
-                    payment_id,
-                    amount_cents,
-                    status,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    request_fingerprint,
-                    request_fingerprint_version
-                )
-                SELECT
-                    payment_id,
-                    amount_cents,
-                    status,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    request_fingerprint,
-                    request_fingerprint_version
-                FROM logical_incoming
-                WHERE existing_payment_id IS NULL
-                ON CONFLICT (payment_id) DO NOTHING
-                RETURNING payment_id
-            ),
-            inserted_actions AS (
-                SELECT i.ordinal, 'PAYMENT_CREATED'::text AS action
-                FROM logical_incoming i
-                JOIN inserted ins ON ins.payment_id = i.payment_id
-            ),
-            existing_divergent_payment_ids AS (
-                SELECT li.payment_id
-                FROM logical_incoming li
-                WHERE li.existing_payment_id IS NOT NULL
-                  AND (
-                      li.existing_fingerprint_version IS DISTINCT FROM li.request_fingerprint_version
-                      OR li.existing_fingerprint IS DISTINCT FROM li.request_fingerprint
-                  )
-            ),
-            existing_divergent_actions AS (
-                SELECT ai.ordinal, 'DIVERGENT_DUPLICATE'::text AS action
-                FROM authorized_incoming ai
-                JOIN existing_divergent_payment_ids d USING (payment_id)
-            ),
-            conflict_loser_actions AS (
-                SELECT li.ordinal, 'RECHECK_EXISTING'::text AS action
-                FROM logical_incoming li
-                LEFT JOIN inserted ins ON ins.payment_id = li.payment_id
-                WHERE li.existing_payment_id IS NULL
-                  AND ins.payment_id IS NULL
+    private static final String INSERT_CANDIDATES_SQL = """
+            INSERT INTO payment_transaction_entity (
+                payment_id,
+                amount_cents,
+                status,
+                sender_bank_code,
+                receiver_bank_code,
+                request_fingerprint,
+                request_fingerprint_version
             )
-            SELECT ordinal, action FROM payload_unauthorized_actions
-            UNION ALL
-            SELECT ordinal, action FROM existing_unauthorized_actions
-            UNION ALL
-            SELECT ordinal, action FROM same_batch_divergent_actions
-            UNION ALL
-            SELECT ordinal, action FROM inserted_actions
-            UNION ALL
-            SELECT ordinal, action FROM existing_divergent_actions
-            UNION ALL
-            SELECT ordinal, action FROM conflict_loser_actions
-            ORDER BY ordinal
+            SELECT
+                payment_id,
+                amount_cents,
+                ?::text,
+                sender_bank_code,
+                receiver_bank_code,
+                request_fingerprint,
+                request_fingerprint_version
+            FROM unnest(
+                ?::text[],
+                ?::bigint[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[]
+            ) AS incoming(
+                    payment_id,
+                    amount_cents,
+                    sender_bank_code,
+                    receiver_bank_code,
+                    request_fingerprint,
+                    request_fingerprint_version
+            )
+            ON CONFLICT (payment_id) DO NOTHING
+            RETURNING payment_id
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -241,56 +108,64 @@ class IncomingPaymentRequestPersistence {
             return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
+        validateUniqueSourceOrdinals(paymentRequests);
         BatchLocalPaymentClassification batchLocalClassification =
                 classifyPaymentRequestsWithinBatch(paymentRequests);
-        Map<Integer, AuthenticatedPaymentRequest> requestsByOrdinal =
-                requestsByOrdinal(paymentRequests);
         List<AuthenticatedPaymentRequest> createdRequests = new ArrayList<>();
-        List<AuthenticatedPaymentRequest> conflictLoserRequests = new ArrayList<>();
+        List<IncomingPaymentRow> conflictRows = new ArrayList<>();
         Set<Integer> divergentDuplicateOrdinals = new LinkedHashSet<>();
-        Set<Integer> unauthorizedRequestOrdinals = new LinkedHashSet<>();
+        Set<Integer> unauthorizedRequestOrdinals =
+                new LinkedHashSet<>(batchLocalClassification.unauthorizedRequestOrdinals());
 
-        for (PersistenceActionRow actionRow : persistAndClassify(batchLocalClassification.incomingRows())) {
-            AuthenticatedPaymentRequest paymentRequest = requestsByOrdinal.get(actionRow.ordinal());
-            if (paymentRequest == null) {
-                throw new IllegalStateException("Unknown payment request ordinal: " + actionRow.ordinal());
+        classifyNonHomogeneousGroups(
+                batchLocalClassification.nonHomogeneousGroups(),
+                divergentDuplicateOrdinals,
+                unauthorizedRequestOrdinals
+        );
+
+        Set<String> createdPaymentIds = insertCandidates(batchLocalClassification.insertionCandidates());
+        for (IncomingPaymentRow candidate : batchLocalClassification.insertionCandidates()) {
+            String paymentId = candidate.paymentRequest().command().getPaymentId();
+            if (createdPaymentIds.remove(paymentId)) {
+                createdRequests.add(candidate.paymentRequest());
+            } else {
+                conflictRows.add(candidate);
+            }
+        }
+        if (!createdPaymentIds.isEmpty()) {
+            throw new IllegalStateException("Insert returned unknown payment IDs: " + createdPaymentIds);
+        }
+
+        Map<String, ExistingPaymentRow> existingPayments = selectConflicts(conflictRows);
+        for (IncomingPaymentRow conflictRow : conflictRows) {
+            String paymentId = conflictRow.paymentRequest().command().getPaymentId();
+            ExistingPaymentRow existingPayment = existingPayments.get(paymentId);
+            if (existingPayment == null) {
+                throw new IllegalStateException("Payment conflict could not be reclassified: " + paymentId);
             }
 
-            switch (actionRow.action()) {
-                case PAYMENT_CREATED -> createdRequests.add(paymentRequest);
-                case RECHECK_EXISTING -> conflictLoserRequests.add(paymentRequest);
-                case DIVERGENT_DUPLICATE -> addExpandedOrdinals(
-                        divergentDuplicateOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
-                        actionRow.ordinal()
-                );
-                case UNAUTHORIZED_PSP -> addExpandedOrdinals(
+            if (!Objects.equals(
+                    conflictRow.paymentRequest().authenticatedIspb(),
+                    existingPayment.senderBankCode()
+            )) {
+                addExpandedOrdinals(
                         unauthorizedRequestOrdinals,
                         batchLocalClassification.originalOrdinalsByRepresentative(),
-                        actionRow.ordinal()
+                        conflictRow.ordinal()
                 );
-                default -> throw new IllegalStateException("Unknown payment persistence action: " + actionRow.action());
+            } else if (!sameFingerprint(conflictRow, existingPayment)) {
+                addExpandedOrdinals(
+                        divergentDuplicateOrdinals,
+                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        conflictRow.ordinal()
+                );
             }
         }
 
-        for (PersistenceActionRow actionRow : recheckExisting(conflictLoserRequests)) {
-            switch (actionRow.action()) {
-                case IDENTICAL_REPLAY -> {
-                    // A concurrent transaction already created the same logical payment.
-                }
-                case DIVERGENT_DUPLICATE -> addExpandedOrdinals(
-                        divergentDuplicateOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
-                        actionRow.ordinal()
-                );
-                case UNAUTHORIZED_PSP -> addExpandedOrdinals(
-                        unauthorizedRequestOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
-                        actionRow.ordinal()
-                );
-                default -> throw new IllegalStateException("Unknown payment recheck action: " + actionRow.action());
-            }
-        }
+        createdRequests.sort((first, second) -> Integer.compare(
+                first.sourceOrdinal(),
+                second.sourceOrdinal()
+        ));
 
         List<PaymentTransactionCommand> acceptanceRequests = new ArrayList<>();
         List<PaymentRejection> rejectedPayments = new ArrayList<>();
@@ -319,18 +194,16 @@ class IncomingPaymentRequestPersistence {
         );
     }
 
-    private Map<Integer, AuthenticatedPaymentRequest> requestsByOrdinal(
+    private void validateUniqueSourceOrdinals(
             List<AuthenticatedPaymentRequest> paymentRequests
     ) {
-        Map<Integer, AuthenticatedPaymentRequest> requestsByOrdinal =
-                new LinkedHashMap<>(mapCapacity(paymentRequests.size()));
+        Set<Integer> sourceOrdinals = new LinkedHashSet<>(mapCapacity(paymentRequests.size()));
         for (AuthenticatedPaymentRequest paymentRequest : paymentRequests) {
-            if (requestsByOrdinal.put(paymentRequest.sourceOrdinal(), paymentRequest) != null) {
+            if (!sourceOrdinals.add(paymentRequest.sourceOrdinal())) {
                 throw new IllegalArgumentException(
                         "Payment request source ordinals must be unique: " + paymentRequest.sourceOrdinal());
             }
         }
-        return requestsByOrdinal;
     }
 
     private void addExpandedOrdinals(
@@ -358,117 +231,157 @@ class IncomingPaymentRequestPersistence {
         return classifiedRequests;
     }
 
-    private List<PersistenceActionRow> persistAndClassify(
-            List<IncomingPaymentRow> incomingRows
-    ) {
-        return jdbcTemplate.execute((ConnectionCallback<List<PersistenceActionRow>>) connection -> {
-            IncomingPaymentArrays incoming = incomingPaymentArrays(incomingRows);
-            Array ordinalArray = null;
+    private Set<String> insertCandidates(List<IncomingPaymentRow> insertionCandidates) {
+        if (insertionCandidates.isEmpty()) {
+            return Set.of();
+        }
+
+        return jdbcTemplate.execute((ConnectionCallback<Set<String>>) connection -> {
+            IncomingPaymentArrays incoming = incomingPaymentArrays(insertionCandidates);
             Array paymentIdArray = null;
             Array amountCentsArray = null;
-            Array statusArray = null;
             Array senderBankCodeArray = null;
             Array receiverBankCodeArray = null;
             Array requestFingerprintArray = null;
             Array requestFingerprintVersionArray = null;
-            Array authenticatedIspbArray = null;
             try {
-                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
                 paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
                 amountCentsArray = connection.createArrayOf("int8", incoming.amountCents());
-                statusArray = connection.createArrayOf("text", incoming.statuses());
                 senderBankCodeArray = connection.createArrayOf("text", incoming.senderBankCodes());
                 receiverBankCodeArray = connection.createArrayOf("text", incoming.receiverBankCodes());
                 requestFingerprintArray = connection.createArrayOf("text", incoming.requestFingerprints());
                 requestFingerprintVersionArray = connection.createArrayOf("text", incoming.requestFingerprintVersions());
-                authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
 
-                try (var statement = connection.prepareStatement(PERSISTENCE_SQL)) {
-                    statement.setArray(1, ordinalArray);
+                try (var statement = connection.prepareStatement(INSERT_CANDIDATES_SQL)) {
+                    statement.setString(1, PaymentStatus.WAITING_ACCEPTANCE.name());
                     statement.setArray(2, paymentIdArray);
                     statement.setArray(3, amountCentsArray);
-                    statement.setArray(4, statusArray);
-                    statement.setArray(5, senderBankCodeArray);
-                    statement.setArray(6, receiverBankCodeArray);
-                    statement.setArray(7, requestFingerprintArray);
-                    statement.setArray(8, requestFingerprintVersionArray);
-                    statement.setArray(9, authenticatedIspbArray);
+                    statement.setArray(4, senderBankCodeArray);
+                    statement.setArray(5, receiverBankCodeArray);
+                    statement.setArray(6, requestFingerprintArray);
+                    statement.setArray(7, requestFingerprintVersionArray);
                     try (ResultSet resultSet = statement.executeQuery()) {
-                        List<PersistenceActionRow> actionRows = new ArrayList<>(incomingRows.size());
+                        Set<String> createdPaymentIds = new LinkedHashSet<>(insertionCandidates.size());
                         while (resultSet.next()) {
-                            actionRows.add(new PersistenceActionRow(
-                                    resultSet.getInt(1),
-                                    resultSet.getString(2)
-                            ));
+                            if (!createdPaymentIds.add(resultSet.getString(1))) {
+                                throw new IllegalStateException("Insert returned a duplicate payment ID");
+                            }
                         }
-                        return actionRows;
+                        return createdPaymentIds;
                     }
                 }
             } finally {
                 free(
-                        ordinalArray,
                         paymentIdArray,
                         amountCentsArray,
-                        statusArray,
                         senderBankCodeArray,
                         receiverBankCodeArray,
                         requestFingerprintArray,
-                        requestFingerprintVersionArray,
-                        authenticatedIspbArray
+                        requestFingerprintVersionArray
                 );
             }
         });
     }
 
-    private List<PersistenceActionRow> recheckExisting(
-            List<AuthenticatedPaymentRequest> conflictLoserRequests
+    private void classifyNonHomogeneousGroups(
+            List<List<IncomingPaymentRow>> nonHomogeneousGroups,
+            Set<Integer> divergentDuplicateOrdinals,
+            Set<Integer> unauthorizedRequestOrdinals
     ) {
-        if (conflictLoserRequests.isEmpty()) {
-            return List.of();
+        if (nonHomogeneousGroups.isEmpty()) {
+            return;
         }
 
-        return jdbcTemplate.execute((ConnectionCallback<List<PersistenceActionRow>>) connection -> {
-            IncomingPaymentArrays incoming = incomingPaymentArrays(incomingRows(conflictLoserRequests));
-            Array ordinalArray = null;
-            Array paymentIdArray = null;
-            Array requestFingerprintArray = null;
-            Array requestFingerprintVersionArray = null;
-            Array authenticatedIspbArray = null;
-            try {
-                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
-                paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
-                requestFingerprintArray = connection.createArrayOf("text", incoming.requestFingerprints());
-                requestFingerprintVersionArray = connection.createArrayOf(
-                        "text",
-                        incoming.requestFingerprintVersions()
-                );
-                authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
+        Set<String> paymentIds = new LinkedHashSet<>(nonHomogeneousGroups.size());
+        for (List<IncomingPaymentRow> paymentRows : nonHomogeneousGroups) {
+            paymentIds.add(paymentRows.get(0).paymentRequest().command().getPaymentId());
+        }
+        Map<String, ExistingPaymentRow> existingPayments = selectExistingPayments(paymentIds);
 
-                try (var statement = connection.prepareStatement(RECHECK_EXISTING_SQL)) {
-                    statement.setArray(1, ordinalArray);
-                    statement.setArray(2, paymentIdArray);
-                    statement.setArray(3, requestFingerprintArray);
-                    statement.setArray(4, requestFingerprintVersionArray);
-                    statement.setArray(5, authenticatedIspbArray);
+        for (List<IncomingPaymentRow> paymentRows : nonHomogeneousGroups) {
+            ExistingPaymentRow existingPayment = existingPayments.get(
+                    paymentRows.get(0).paymentRequest().command().getPaymentId()
+            );
+            if (existingPayment == null) {
+                for (IncomingPaymentRow paymentRow : paymentRows) {
+                    divergentDuplicateOrdinals.add(paymentRow.ordinal());
+                }
+                continue;
+            }
+
+            List<IncomingPaymentRow> ownerRows = new ArrayList<>(paymentRows.size());
+            for (IncomingPaymentRow paymentRow : paymentRows) {
+                if (Objects.equals(
+                        paymentRow.paymentRequest().authenticatedIspb(),
+                        existingPayment.senderBankCode()
+                )) {
+                    ownerRows.add(paymentRow);
+                } else {
+                    unauthorizedRequestOrdinals.add(paymentRow.ordinal());
+                }
+            }
+            if (ownerRows.isEmpty()) {
+                continue;
+            }
+
+            IncomingPaymentRow representative = ownerRows.get(0);
+            boolean ownerRowsDiverge = ownerRows.stream()
+                    .anyMatch(row -> !sameFingerprint(representative, row));
+            if (ownerRowsDiverge || !sameFingerprint(representative, existingPayment)) {
+                for (IncomingPaymentRow ownerRow : ownerRows) {
+                    divergentDuplicateOrdinals.add(ownerRow.ordinal());
+                }
+            }
+        }
+    }
+
+    private Map<String, ExistingPaymentRow> selectConflicts(List<IncomingPaymentRow> conflictRows) {
+        if (conflictRows.isEmpty()) {
+            return Map.of();
+        }
+
+        Set<String> paymentIds = new LinkedHashSet<>(conflictRows.size());
+        for (IncomingPaymentRow conflictRow : conflictRows) {
+            paymentIds.add(conflictRow.paymentRequest().command().getPaymentId());
+        }
+        Map<String, ExistingPaymentRow> existingPayments = selectExistingPayments(paymentIds);
+        if (existingPayments.size() != paymentIds.size()) {
+            throw new IllegalStateException("Not every payment conflict could be reclassified");
+        }
+        return existingPayments;
+    }
+
+    private Map<String, ExistingPaymentRow> selectExistingPayments(Set<String> paymentIds) {
+        if (paymentIds.isEmpty()) {
+            return Map.of();
+        }
+
+        return jdbcTemplate.execute((ConnectionCallback<Map<String, ExistingPaymentRow>>) connection -> {
+            Array paymentIdArray = null;
+            try {
+                paymentIdArray = connection.createArrayOf("text", paymentIds.toArray(String[]::new));
+
+                try (var statement = connection.prepareStatement(SELECT_CONFLICTS_SQL)) {
+                    statement.setArray(1, paymentIdArray);
                     try (ResultSet resultSet = statement.executeQuery()) {
-                        List<PersistenceActionRow> actions = new ArrayList<>(conflictLoserRequests.size());
+                        Map<String, ExistingPaymentRow> existingPayments =
+                                new LinkedHashMap<>(mapCapacity(paymentIds.size()));
                         while (resultSet.next()) {
-                            actions.add(new PersistenceActionRow(resultSet.getInt(1), resultSet.getString(2)));
+                            ExistingPaymentRow existingPayment = new ExistingPaymentRow(
+                                    resultSet.getString("payment_id"),
+                                    resultSet.getString("sender_bank_code"),
+                                    resultSet.getString("request_fingerprint"),
+                                    resultSet.getString("request_fingerprint_version")
+                            );
+                            if (existingPayments.put(existingPayment.paymentId(), existingPayment) != null) {
+                                throw new IllegalStateException("Conflict query returned a duplicate payment ID");
+                            }
                         }
-                        if (actions.size() != conflictLoserRequests.size()) {
-                            throw new IllegalStateException("Concurrent payment conflict could not be reclassified");
-                        }
-                        return actions;
+                        return existingPayments;
                     }
                 }
             } finally {
-                free(
-                        ordinalArray,
-                        paymentIdArray,
-                        requestFingerprintArray,
-                        requestFingerprintVersionArray,
-                        authenticatedIspbArray
-                );
+                free(paymentIdArray);
             }
         });
     }
@@ -602,16 +515,25 @@ class IncomingPaymentRequestPersistence {
         Map<String, List<IncomingPaymentRow>> rowsByPaymentId =
                 new LinkedHashMap<>(mapCapacity(paymentRequests.size()));
         List<IncomingPaymentRow> allIncomingRows = incomingRows(paymentRequests);
+        Set<Integer> unauthorizedRequestOrdinals = new LinkedHashSet<>();
         for (IncomingPaymentRow incomingRow : allIncomingRows) {
+            if (!Objects.equals(
+                    incomingRow.paymentRequest().authenticatedIspb(),
+                    Utils.getBankCode(incomingRow.paymentRequest().command().getSender())
+            )) {
+                unauthorizedRequestOrdinals.add(incomingRow.ordinal());
+                continue;
+            }
             rowsByPaymentId.computeIfAbsent(
                     incomingRow.paymentRequest().command().getPaymentId(),
                     ignored -> new ArrayList<>()
             ).add(incomingRow);
         }
 
-        List<IncomingPaymentRow> rowsToClassify = new ArrayList<>(rowsByPaymentId.size());
+        List<IncomingPaymentRow> insertionCandidates = new ArrayList<>(rowsByPaymentId.size());
         Map<Integer, List<Integer>> originalOrdinalsByRepresentative =
                 new LinkedHashMap<>(mapCapacity(paymentRequests.size()));
+        List<List<IncomingPaymentRow>> nonHomogeneousGroups = new ArrayList<>();
 
         for (List<IncomingPaymentRow> paymentRows : rowsByPaymentId.values()) {
             List<Integer> originalOrdinals = new ArrayList<>(paymentRows.size());
@@ -625,22 +547,18 @@ class IncomingPaymentRequestPersistence {
             }
 
             if (homogeneous) {
-                rowsToClassify.add(firstRow);
+                insertionCandidates.add(firstRow);
                 originalOrdinalsByRepresentative.put(firstRow.ordinal(), originalOrdinals);
             } else {
-                for (IncomingPaymentRow paymentRow : paymentRows) {
-                    rowsToClassify.add(paymentRow);
-                    originalOrdinalsByRepresentative.put(
-                            paymentRow.ordinal(),
-                            List.of(paymentRow.ordinal())
-                    );
-                }
+                nonHomogeneousGroups.add(paymentRows);
             }
         }
 
         return new BatchLocalPaymentClassification(
-                rowsToClassify,
-                originalOrdinalsByRepresentative
+                insertionCandidates,
+                originalOrdinalsByRepresentative,
+                nonHomogeneousGroups,
+                unauthorizedRequestOrdinals
         );
     }
 
@@ -648,9 +566,17 @@ class IncomingPaymentRequestPersistence {
         return Objects.equals(
                 firstRow.paymentRequest().authenticatedIspb(),
                 row.paymentRequest().authenticatedIspb()
-        )
-                && Objects.equals(firstRow.requestFingerprintVersion(), row.requestFingerprintVersion())
+        ) && sameFingerprint(firstRow, row);
+    }
+
+    private boolean sameFingerprint(IncomingPaymentRow firstRow, IncomingPaymentRow row) {
+        return Objects.equals(firstRow.requestFingerprintVersion(), row.requestFingerprintVersion())
                 && Objects.equals(firstRow.requestFingerprint(), row.requestFingerprint());
+    }
+
+    private boolean sameFingerprint(IncomingPaymentRow incoming, ExistingPaymentRow existing) {
+        return Objects.equals(incoming.requestFingerprintVersion(), existing.requestFingerprintVersion())
+                && Objects.equals(incoming.requestFingerprint(), existing.requestFingerprint());
     }
 
     private List<IncomingPaymentRow> incomingRows(List<AuthenticatedPaymentRequest> paymentRequests) {
@@ -668,41 +594,32 @@ class IncomingPaymentRequestPersistence {
 
     private IncomingPaymentArrays incomingPaymentArrays(List<IncomingPaymentRow> incomingRows) {
         int size = incomingRows.size();
-        Integer[] ordinals = new Integer[size];
         String[] paymentIds = new String[size];
         Long[] amountCents = new Long[size];
-        String[] statuses = new String[size];
         String[] senderBankCodes = new String[size];
         String[] receiverBankCodes = new String[size];
         String[] requestFingerprints = new String[size];
         String[] requestFingerprintVersions = new String[size];
-        String[] authenticatedIspbs = new String[size];
 
         for (int index = 0; index < incomingRows.size(); index++) {
             IncomingPaymentRow incomingRow = incomingRows.get(index);
             AuthenticatedPaymentRequest paymentRequest = incomingRow.paymentRequest();
             PaymentTransactionCommand paymentTransaction = paymentRequest.command();
-            ordinals[index] = incomingRow.ordinal();
             paymentIds[index] = paymentTransaction.getPaymentId();
             amountCents[index] = paymentTransaction.getAmountCents();
-            statuses[index] = PaymentStatus.WAITING_ACCEPTANCE.name();
             senderBankCodes[index] = Utils.getBankCode(paymentTransaction.getSender());
             receiverBankCodes[index] = Utils.getBankCode(paymentTransaction.getReceiver());
             requestFingerprints[index] = incomingRow.requestFingerprint();
             requestFingerprintVersions[index] = incomingRow.requestFingerprintVersion();
-            authenticatedIspbs[index] = paymentRequest.authenticatedIspb();
         }
 
         return new IncomingPaymentArrays(
-                ordinals,
                 paymentIds,
                 amountCents,
-                statuses,
                 senderBankCodes,
                 receiverBankCodes,
                 requestFingerprints,
-                requestFingerprintVersions,
-                authenticatedIspbs
+                requestFingerprintVersions
         );
     }
 
@@ -728,9 +645,6 @@ class IncomingPaymentRequestPersistence {
         }
     }
 
-    private record PersistenceActionRow(int ordinal, String action) {
-    }
-
     private record ReservationOutcome(
             AuthenticatedPaymentRequest paymentRequest,
             boolean reserved
@@ -738,34 +652,38 @@ class IncomingPaymentRequestPersistence {
     }
 
     private record BatchLocalPaymentClassification(
-            List<IncomingPaymentRow> incomingRows,
-            Map<Integer, List<Integer>> originalOrdinalsByRepresentative
+            List<IncomingPaymentRow> insertionCandidates,
+            Map<Integer, List<Integer>> originalOrdinalsByRepresentative,
+            List<List<IncomingPaymentRow>> nonHomogeneousGroups,
+            Set<Integer> unauthorizedRequestOrdinals
     ) {
     }
 
     private record IncomingPaymentArrays(
-            Integer[] ordinals,
             String[] paymentIds,
             Long[] amountCents,
-            String[] statuses,
             String[] senderBankCodes,
             String[] receiverBankCodes,
             String[] requestFingerprints,
-            String[] requestFingerprintVersions,
-            String[] authenticatedIspbs
+            String[] requestFingerprintVersions
     ) {
         private IncomingPaymentArrays {
-            int size = ordinals.length;
-            if (paymentIds.length != size
-                    || amountCents.length != size
-                    || statuses.length != size
+            int size = paymentIds.length;
+            if (amountCents.length != size
                     || senderBankCodes.length != size
                     || receiverBankCodes.length != size
                     || requestFingerprints.length != size
-                    || requestFingerprintVersions.length != size
-                    || authenticatedIspbs.length != size) {
+                    || requestFingerprintVersions.length != size) {
                 throw new IllegalStateException("Incoming payment arrays must have the same size");
             }
         }
+    }
+
+    private record ExistingPaymentRow(
+            String paymentId,
+            String senderBankCode,
+            String requestFingerprint,
+            String requestFingerprintVersion
+    ) {
     }
 }
