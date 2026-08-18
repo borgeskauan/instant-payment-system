@@ -63,7 +63,7 @@ public class PaymentMessageConsumer {
     @KafkaListener(
             topics = PAYMENT_REQUESTS_TOPIC,
             groupId = "${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
-            containerFactory = "spiKafkaListenerContainerFactory"
+            containerFactory = "paymentRequestKafkaListenerContainerFactory"
     )
     public void consumePaymentRequests(
             List<ConsumerRecord<String, byte[]>> records,
@@ -139,7 +139,7 @@ public class PaymentMessageConsumer {
     @KafkaListener(
             topics = PAYMENT_STATUS_REPORTS_TOPIC,
             groupId = "${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
-            containerFactory = "spiKafkaListenerContainerFactory"
+            containerFactory = "statusReportKafkaListenerContainerFactory"
     )
     public void consumeStatusReports(
             List<ConsumerRecord<String, byte[]>> records,

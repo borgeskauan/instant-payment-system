@@ -38,7 +38,8 @@ spi:
     fixed-delay: 20ms
     retry-delay: 1s
   kafka:
-    listener-concurrency: 3
+    payment-request-listener-concurrency: 3
+    status-report-listener-concurrency: 3
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group
     max-poll-records: 500

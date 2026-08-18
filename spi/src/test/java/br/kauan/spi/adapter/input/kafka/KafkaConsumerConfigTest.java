@@ -14,29 +14,36 @@ import static org.mockito.Mockito.mock;
 class KafkaConsumerConfigTest {
 
     @Test
-    void spiKafkaListenerContainerFactoryUsesBatchManualAckAndConfiguredConcurrency() {
+    void paymentAndStatusFactoriesUseTheirOwnConfiguredConcurrency() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "listenerConcurrency", 4);
+        ReflectionTestUtils.setField(config, "paymentRequestListenerConcurrency", 8);
+        ReflectionTestUtils.setField(config, "statusReportListenerConcurrency", 1);
+        ConsumerFactory<String, byte[]> consumerFactory = mock(ConsumerFactory.class);
+        CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
 
-        ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
-                config.spiKafkaListenerContainerFactory(
-                        mock(ConsumerFactory.class),
-                        mock(CommonErrorHandler.class));
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> paymentFactory =
+                config.paymentRequestKafkaListenerContainerFactory(consumerFactory, errorHandler);
+        ConcurrentKafkaListenerContainerFactory<String, byte[]> statusFactory =
+                config.statusReportKafkaListenerContainerFactory(consumerFactory, errorHandler);
 
-        assertThat(factory.isBatchListener()).isTrue();
-        assertThat(ReflectionTestUtils.getField(factory, "concurrency")).isEqualTo(4);
-        assertThat(factory.getContainerProperties().getAckMode())
+        assertThat(ReflectionTestUtils.getField(paymentFactory, "concurrency")).isEqualTo(8);
+        assertThat(ReflectionTestUtils.getField(statusFactory, "concurrency")).isEqualTo(1);
+        assertThat(paymentFactory.isBatchListener()).isTrue();
+        assertThat(statusFactory.isBatchListener()).isTrue();
+        assertThat(paymentFactory.getContainerProperties().getAckMode())
+                .isEqualTo(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        assertThat(statusFactory.getContainerProperties().getAckMode())
                 .isEqualTo(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
     }
 
     @Test
-    void spiKafkaListenerContainerFactoryUsesKafkaErrorHandler() {
+    void listenerFactoriesUseKafkaErrorHandler() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "listenerConcurrency", 4);
+        ReflectionTestUtils.setField(config, "paymentRequestListenerConcurrency", 4);
         CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
 
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
-                config.spiKafkaListenerContainerFactory(
+                config.paymentRequestKafkaListenerContainerFactory(
                         mock(ConsumerFactory.class),
                         errorHandler);
 
@@ -44,12 +51,13 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
-    void spiKafkaListenerContainerFactoryUsesConfiguredAutoStartup() {
+    void listenerFactoriesUseConfiguredAutoStartup() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "listenerAutoStartup", false);
+        ReflectionTestUtils.setField(config, "statusReportListenerConcurrency", 1);
 
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
-                config.spiKafkaListenerContainerFactory(
+                config.statusReportKafkaListenerContainerFactory(
                         mock(ConsumerFactory.class),
                         mock(CommonErrorHandler.class));
 

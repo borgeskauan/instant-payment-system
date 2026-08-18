@@ -70,8 +70,8 @@ class PaymentMessageConsumerTest {
                 paymentListener.groupId());
         assertEquals("${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
                 statusListener.groupId());
-        assertEquals("spiKafkaListenerContainerFactory", paymentListener.containerFactory());
-        assertEquals("spiKafkaListenerContainerFactory", statusListener.containerFactory());
+        assertEquals("paymentRequestKafkaListenerContainerFactory", paymentListener.containerFactory());
+        assertEquals("statusReportKafkaListenerContainerFactory", statusListener.containerFactory());
     }
 
     @Test

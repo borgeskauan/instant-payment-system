@@ -569,3 +569,51 @@ SLA final. O próximo experimento deve atacar uma única causa no caminho
 PACS.002/settlement ou reduzir o convoy transacional causado por batches que
 misturam trabalho novo e conflitos, preservando workload, recursos e o fast
 path já medido. Nenhum run de 15 minutos foi executado nesta intervenção.
+
+## Batch PACS.002 com concorrência independente
+
+O controle `pacs008-fast-path/20260818_195402` usava oito consumers tanto para
+PACS.008 quanto para PACS.002. A variante
+`status-concurrency-one/20260818_204528` separou as factories Kafka, preservou
+oito consumers PACS.008 e atribuiu as oito partições de status a um único
+consumer PACS.002. Workload, recursos, `max.poll.records`, fetch e restante da
+stack permaneceram iguais.
+
+O smoke final qualificou `1.250/1.250` pagamentos, `1.000/1.000` PACS.002 e
+`112/112` replays. A primeira preparação parou antes da workload por timeout de
+um dos 100 prewarms HTTP/2; uma tentativa aquecida ficou funcionalmente correta
+mas parcial em `1.249/1.250`, e a tentativa seguinte qualificou integralmente.
+Nenhuma dessas tentativas parciais foi usada como benchmark.
+
+No diagnóstico medido:
+
+- o tamanho médio das transições PACS.002 subiu de `49,118` para `319,714`
+  rows por chamada, um ganho de `6,51x`;
+- as chamadas do `UPDATE ... RETURNING` caíram de `466` para `77`;
+- o tempo acumulado dessa query caiu de `469.731,977 ms` para `5.901,082 ms`,
+  a média de `1.008,009 ms` para `76,637 ms` e o máximo de `44.900,790 ms`
+  para `308,782 ms`;
+- o throughput PACS.002 ativo subiu de `119,600/s` para `242,983/s`;
+- a latência externa p50 caiu de `70.284,359 ms` para `21.462,439 ms`, e a
+  p95 de `80.436,767 ms` para `75.396,138 ms`;
+- a persistência PACS.008 alcançou todos os `135.000` originais, contra
+  `80.905` rows no controle, enquanto seu custo acumulado caiu de
+  `251.241,847 ms` para `102.427,332 ms`;
+- os `135.000/135.000` originais e `7.829/7.829` replays receberam HTTP 2xx,
+  sem violações de replay ou outcomes contraditórios.
+
+A variante permanece **mantida**. Ela remove a fragmentação acidental dos
+batches de status sem reduzir a concorrência PACS.008 nem a workload externa.
+O PostgreSQL continuou saturado em aproximadamente um core (`103,596%` de CPU
+média), mas o settlement PACS.002 deixou de liderar seu tempo acumulado. As
+maiores queries passaram a ser a admissão PACS.008 (`102.427,332 ms`), o claim
+de `notification_delivery` (`94.391,226 ms`) e a publicação da outbox
+(`72.392,540 ms`).
+
+O run ainda não qualifica o SLA final: o menor rolling foi `1.924 TPS`, apenas
+`13.505` outcomes foram observados e a latência permaneceu acima do limite. Uma
+checagem posterior encontrou os grupos Kafka quiescentes, o que comprova
+consumo dos offsets, não conclusão de outbox ou entrega. O próximo experimento
+deve escolher uma única fronteira entre admissão PACS.008 e publicação/entrega
+de notificações com base na correlação temporal existente. Nenhum run de 15
+minutos foi executado.

@@ -29,8 +29,11 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.auto-offset-reset}")
     private String autoOffsetReset;
 
-    @Value("${spi.kafka.listener-concurrency:3}")
-    private int listenerConcurrency;
+    @Value("${spi.kafka.payment-request-listener-concurrency:3}")
+    private int paymentRequestListenerConcurrency;
+
+    @Value("${spi.kafka.status-report-listener-concurrency:3}")
+    private int statusReportListenerConcurrency;
 
     @Value("${spi.kafka.max-poll-records:500}")
     private int maxPollRecords;
@@ -64,15 +67,39 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
-    public ConcurrentKafkaListenerContainerFactory<String, byte[]> spiKafkaListenerContainerFactory(
+    public ConcurrentKafkaListenerContainerFactory<String, byte[]> paymentRequestKafkaListenerContainerFactory(
             @Qualifier("consumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
             @Qualifier("kafkaErrorHandler") CommonErrorHandler kafkaErrorHandler
+    ) {
+        return listenerContainerFactory(
+                consumerFactory,
+                kafkaErrorHandler,
+                paymentRequestListenerConcurrency
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, byte[]> statusReportKafkaListenerContainerFactory(
+            @Qualifier("consumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
+            @Qualifier("kafkaErrorHandler") CommonErrorHandler kafkaErrorHandler
+    ) {
+        return listenerContainerFactory(
+                consumerFactory,
+                kafkaErrorHandler,
+                statusReportListenerConcurrency
+        );
+    }
+
+    private ConcurrentKafkaListenerContainerFactory<String, byte[]> listenerContainerFactory(
+            ConsumerFactory<String, byte[]> consumerFactory,
+            CommonErrorHandler kafkaErrorHandler,
+            int concurrency
     ) {
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
 
         factory.setConsumerFactory(consumerFactory);
-        factory.setConcurrency(listenerConcurrency);
+        factory.setConcurrency(concurrency);
         factory.setBatchListener(true);
         factory.setCommonErrorHandler(kafkaErrorHandler);
         factory.setAutoStartup(listenerAutoStartup);
