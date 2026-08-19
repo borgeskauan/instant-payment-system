@@ -2,7 +2,6 @@ package br.kauan.notificationgateway.delivery;
 
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
@@ -23,7 +22,7 @@ import java.util.List;
 @Repository
 public class NotificationDeliveryRepository {
 
-    private static final String INSERT_SQL = """
+    private static final String INSERT_ALL_SQL = """
             INSERT INTO notification_delivery (
                 communication_id,
                 recipient_ispb,
@@ -34,16 +33,33 @@ public class NotificationDeliveryRepository {
                 payload,
                 delivery_status,
                 next_attempt_at
-            ) VALUES (
-                :communicationId,
-                :recipientIspb,
-                :eventType,
-                :paymentId,
-                :status,
-                :schemaVersion,
-                :payload,
-                :deliveryStatus,
-                :nextAttemptAt
+            )
+            SELECT
+                incoming.communication_id,
+                incoming.recipient_ispb,
+                incoming.event_type,
+                incoming.payment_id,
+                incoming.notification_status,
+                incoming.schema_version,
+                incoming.payload,
+                'PENDING',
+                ?
+            FROM unnest(
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::bytea[]
+            ) AS incoming(
+                communication_id,
+                recipient_ispb,
+                event_type,
+                payment_id,
+                notification_status,
+                schema_version,
+                payload
             )
             ON CONFLICT (communication_id) DO NOTHING
             """;
@@ -131,24 +147,64 @@ public class NotificationDeliveryRepository {
             return;
         }
 
-        Instant now = clock.instant();
-        SqlParameterSource[] batch = new SqlParameterSource[notifications.size()];
-        for (int index = 0; index < notifications.size(); index++) {
-            IncomingNotification notification = notifications.get(index);
-            batch[index] = new MapSqlParameterSource()
-                    .addValue("communicationId", notification.communicationId())
-                    .addValue("recipientIspb", notification.recipientIspb())
-                    .addValue("eventType", notification.eventType())
-                    .addValue("paymentId", notification.paymentId())
-                    .addValue("status", notification.status())
-                    .addValue("schemaVersion", notification.schemaVersion())
-                    .addValue("payload", notification.payload())
-                    .addValue("deliveryStatus", DeliveryStatus.PENDING.name())
-                    .addValue("nextAttemptAt", timestamp(now));
-        }
+        transactionTemplate.executeWithoutResult(ignored ->
+                jdbcTemplate.getJdbcTemplate().execute((ConnectionCallback<Integer>) connection -> {
+                    String[] communicationIds = new String[notifications.size()];
+                    String[] recipientIspbs = new String[notifications.size()];
+                    String[] eventTypes = new String[notifications.size()];
+                    String[] paymentIds = new String[notifications.size()];
+                    String[] notificationStatuses = new String[notifications.size()];
+                    String[] schemaVersions = new String[notifications.size()];
+                    byte[][] payloads = new byte[notifications.size()][];
+                    for (int index = 0; index < notifications.size(); index++) {
+                        IncomingNotification notification = notifications.get(index);
+                        communicationIds[index] = notification.communicationId();
+                        recipientIspbs[index] = notification.recipientIspb();
+                        eventTypes[index] = notification.eventType();
+                        paymentIds[index] = notification.paymentId();
+                        notificationStatuses[index] = notification.status();
+                        schemaVersions[index] = notification.schemaVersion();
+                        payloads[index] = notification.payload();
+                    }
 
-        transactionTemplate.executeWithoutResult(
-                ignored -> jdbcTemplate.batchUpdate(INSERT_SQL, batch)
+                    Array communicationIdArray = null;
+                    Array recipientIspbArray = null;
+                    Array eventTypeArray = null;
+                    Array paymentIdArray = null;
+                    Array notificationStatusArray = null;
+                    Array schemaVersionArray = null;
+                    Array payloadArray = null;
+                    try {
+                        communicationIdArray = connection.createArrayOf("text", communicationIds);
+                        recipientIspbArray = connection.createArrayOf("text", recipientIspbs);
+                        eventTypeArray = connection.createArrayOf("text", eventTypes);
+                        paymentIdArray = connection.createArrayOf("text", paymentIds);
+                        notificationStatusArray = connection.createArrayOf("text", notificationStatuses);
+                        schemaVersionArray = connection.createArrayOf("text", schemaVersions);
+                        payloadArray = connection.createArrayOf("bytea", payloads);
+                        try (PreparedStatement statement = connection.prepareStatement(INSERT_ALL_SQL)) {
+                            statement.setObject(1, timestamp(clock.instant()));
+                            statement.setArray(2, communicationIdArray);
+                            statement.setArray(3, recipientIspbArray);
+                            statement.setArray(4, eventTypeArray);
+                            statement.setArray(5, paymentIdArray);
+                            statement.setArray(6, notificationStatusArray);
+                            statement.setArray(7, schemaVersionArray);
+                            statement.setArray(8, payloadArray);
+                            return statement.executeUpdate();
+                        }
+                    } finally {
+                        free(
+                                communicationIdArray,
+                                recipientIspbArray,
+                                eventTypeArray,
+                                paymentIdArray,
+                                notificationStatusArray,
+                                schemaVersionArray,
+                                payloadArray
+                        );
+                    }
+                })
         );
     }
 

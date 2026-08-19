@@ -18,12 +18,14 @@ import java.sql.ResultSet;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -56,6 +58,73 @@ class NotificationDeliveryRepositoryTest {
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate).update(sqlCaptor.capture(), any(MapSqlParameterSource.class));
         assertThat(sqlCaptor.getValue()).contains("delivery_status <> 'ACKED'");
+    }
+
+    @Test
+    void saveAllIfAbsentUsesOneSetBasedInsertInsideOneTransaction() throws Exception {
+        NamedParameterJdbcTemplate named = mock(NamedParameterJdbcTemplate.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        TransactionTemplate transaction = mock(TransactionTemplate.class);
+        Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        Array textArray = mock(Array.class);
+        Array payloadArray = mock(Array.class);
+
+        when(named.getJdbcTemplate()).thenReturn(jdbc);
+        doAnswer(invocation -> {
+            Consumer<TransactionStatus> callback = invocation.getArgument(0);
+            callback.accept(mock(TransactionStatus.class));
+            return null;
+        }).when(transaction).executeWithoutResult(any());
+        when(jdbc.execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any()))
+                .thenAnswer(invocation -> {
+                    ConnectionCallback<Integer> callback = invocation.getArgument(0);
+                    return callback.doInConnection(connection);
+                });
+        when(connection.createArrayOf(eq("text"), any(Object[].class))).thenReturn(textArray);
+        when(connection.createArrayOf(eq("bytea"), any(Object[].class))).thenReturn(payloadArray);
+        when(connection.prepareStatement(anyString())).thenReturn(statement);
+        when(statement.executeUpdate()).thenReturn(2);
+
+        NotificationDeliveryRepository repository =
+                new NotificationDeliveryRepository(named, transaction, Clock.systemUTC());
+
+        repository.saveAllIfAbsent(List.of(
+                new IncomingNotification(
+                        "v1:first",
+                        "20000001",
+                        "SETTLED_NOTIFICATION",
+                        "E2E-1",
+                        "ACSC",
+                        "v1",
+                        new byte[]{1, 2}
+                ),
+                new IncomingNotification(
+                        "v1:second",
+                        "20000002",
+                        "REJECTED_NOTIFICATION",
+                        "E2E-2",
+                        "RJCT",
+                        "v1",
+                        new byte[]{3, 4}
+                )
+        ));
+
+        verify(transaction, times(1)).executeWithoutResult(any());
+        verify(jdbc, times(1)).execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any());
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(connection).prepareStatement(sql.capture());
+        assertThat(sql.getValue())
+                .contains("FROM unnest(")
+                .contains("?::text[]")
+                .contains("?::bytea[]")
+                .contains("ON CONFLICT (communication_id) DO NOTHING");
+        verify(statement, times(1)).executeUpdate();
+        verify(connection, times(6)).createArrayOf(eq("text"), any(Object[].class));
+        verify(connection, times(1)).createArrayOf(eq("bytea"), any(Object[].class));
+        verify(textArray, times(6)).free();
+        verify(payloadArray).free();
     }
 
     @Test

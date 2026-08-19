@@ -617,3 +617,127 @@ consumo dos offsets, não conclusão de outbox ou entrega. O próximo experiment
 deve escolher uma única fronteira entre admissão PACS.008 e publicação/entrega
 de notificações com base na correlação temporal existente. Nenhum run de 15
 minutos foi executado.
+
+## Persistência set-based de `notification_delivery`
+
+O experimento seguinte alterou somente a persistência Kafka do
+notification-gateway. O `NamedParameterJdbcTemplate.batchUpdate`, que aparecia
+no PostgreSQL como um `INSERT` por notificação, foi substituído por um único
+`INSERT ... SELECT FROM unnest(...) ON CONFLICT DO NOTHING` por poll. Claim,
+lease, dispatch e ACK permaneceram inalterados.
+
+A preparação subiu a stack, mas seu primeiro smoke parou antes da workload por
+timeout de um dos 100 prewarms HTTP/2. Sobre a stack aquecida, o smoke
+`notification-delivery-batch-smoke/20260818_210633` completou
+`1.250/1.250` originais, `1.000/1.000` PACS.002 e `112/112` replays, com todos
+os outcomes corretos. A única invalidez foi o piso rolling do gerador no perfil
+curto.
+
+O diagnóstico `notification-delivery-batch/20260818_210845` foi comparado com
+`status-concurrency-one/20260818_204528`:
+
+- as execuções de `INSERT INTO notification_delivery` caíram de `118.692` para
+  `629`, e o tamanho médio subiu de `1` para `115,254` rows por chamada;
+- o tempo acumulado desses INSERTs caiu de `90.686,636 ms` para
+  `66.791,363 ms`, mas as rows persistidas também variaram de `118.692` para
+  `72.495`; portanto o delta bruto não prova redução de custo por row;
+- os claims concluídos subiram de `45.713` para `69.301` deliveries, as
+  notificações recebidas pelo load-tool de `45.713` para `68.736` e os outcomes
+  correspondentes de `13.505` para `20.544`;
+- o PostgreSQL permaneceu saturado em um core, com CPU média praticamente
+  invariável (`103,596%` para `103,237%`);
+- todos os `134.998/134.998` originais iniciados e `8.224/8.224` replays
+  receberam HTTP 2xx, sem outcomes contraditórios nem violações de replay;
+- o piso rolling piorou de `1.924` para `1.163 TPS`, enquanto a média ativa
+  ficou em `2.084,617 TPS` e o pico em `3.877 TPS`; a forma da carga ativa não
+  foi equivalente ao controle e não comprova o piso sustentado;
+- a latência HTTP PACS.008 p95/p99 subiu de `44,367 / 85,535 ms` para
+  `271,013 / 402,151 ms`, ainda sem respostas não-2xx;
+- uma única transição PACS.002 apresentou máximo de `55.691,801 ms`; o total
+  dessa query subiu para `59.548,963 ms` e apenas `18.449` rows transicionaram,
+  impedindo atribuir toda a diferença end-to-end ao INSERT do gateway.
+
+A mudança set-based permanece porque remove `99,47%` das execuções SQL dessa
+fronteira e aumentou em aproximadamente `50%` o trabalho útil entregue, sem
+alterar as invariantes funcionais. Ela não qualifica o SLA global: o ganho
+deslocou pressão para outras queries do mesmo PostgreSQL. O lag Kafka imediato
+foi `0 / 0 / 869` para pagamento, status e gateway e chegou posteriormente a
+zero; isso não prova conclusão de outbox ou delivery. Nenhum run de 15 minutos
+foi executado.
+
+### Repetição limpa e gargalo remanescente
+
+A repetição `notification-delivery-batch-repeat/20260818_212030` partiu de
+volumes novos e teve preparação e smoke qualificados na primeira tentativa. A
+geração ativa foi comparável ao controle: `120.000` originais, média exata de
+`2.000 TPS`, mínimo rolling de `1.958 TPS` e máximo de `2.056 TPS`. Todos os
+`135.000/135.000` originais e `8.440/8.440` replays iniciados receberam HTTP
+2xx, sem outcomes contraditórios nem violações de replay.
+
+O outlier PACS.002 não era ruído. A transição `ACCEPTED` voltou a ocupar quase
+um minuto: máximo de `59.199,949 ms`, `86.519,779 ms` acumulados, apenas `19`
+chamadas e `2.536` rows transicionadas. A rejeição de saldo insuficiente também
+foi privada de capacidade: `171.248,040 ms` acumulados e apenas `11.876` das
+`27.000` rows esperadas. A amostragem encontrou essas queries ativas sem wait
+event em `169` e `283` amostras, respectivamente; portanto a evidência não
+caracteriza espera de row lock, mas competição por execução no PostgreSQL já
+saturado em um core (`103,919%` de CPU média).
+
+O claim do gateway foi o consumidor pesado mais estável nos três diagnósticos:
+
+- controle: `158` chamadas, `45.713` rows e `94.391,226 ms`;
+- primeira variante: `408` chamadas, `69.301` rows e `79.946,915 ms`;
+- repetição: `350` chamadas, `58.186` rows e `76.941,129 ms`.
+
+Na repetição, o claim tocou `2.177.219` buffers compartilhados e leu `232.597`,
+aproximadamente `6.220` hits por chamada. O INSERT set-based permaneceu efetivo:
+`550` execuções persistiram `62.186` deliveries, sem voltar ao padrão de um
+statement por row.
+
+No deadline havia lag Kafka de `34.738 / 45.401 / 973` para pagamento, status e
+gateway. Os offsets chegaram posteriormente a zero, mas, já sem os streams do
+load-tool, a tabela do gateway continha `61.436` deliveries `ACKED` e `169.308`
+`PENDING`. Isso confirma que quiescência Kafka não equivale a conclusão
+end-to-end.
+
+O gargalo remanescente está caracterizado como competição do pipeline inteiro
+pelo único core do PostgreSQL. O PACS.002 com um consumer sofre head-of-line
+blocking quando sua transação perde capacidade de execução; o claim do gateway
+é uma fonte grande, repetível e independente dessa pressão. Nenhum run de 15
+minutos está autorizado ainda.
+
+#### Causa da cauda PACS.002
+
+A reconstrução da chamada de `59,2 s` eliminou lock, I/O e plano inadequado como
+causas principais. O mesmo PID permaneceu por `58,8 s` na transição, sempre sem
+blocking PID e com apenas quatro amostras pontuais de `DataFileRead` ou
+`DataFileWrite`. Nas `19` execuções agregadas, o PostgreSQL registrou somente
+`373,635 ms` de leitura e `2,143 ms` de escrita. O plano genérico usa
+`Function Scan` no `unnest` seguido de `Index Scan` pela chave primária de
+`payment_transaction_entity`; não há sequential scan nem trigger.
+
+O JFR confirma que o único consumer PACS.002 permaneceu aguardando a resposta
+do PostgreSQL em `IncomingStatusReportPersistence.acquireTransitions`. Das
+`19` chamadas agregadas, dez socket reads acima do limiar do JFR foram capturados em
+`70,6 ms`, `73,2 ms`, `81,3 ms`, `157 ms`, `251 ms`, `1,11 s`, `3,07 s`,
+`3,51 s`, `15,3 s` e `50,8 s`. Esses eventos não permitem calcular p95/p99 por
+statement, pois uma chamada pode realizar mais de um socket read e leituras
+curtas podem ficar abaixo do limiar do JFR. Eles permitem concluir que não foi
+apenas uma espera extrema: o consumer sofreu várias esperas JDBC de segundos,
+incluindo duas acima de quinze segundos.
+
+Durante os `59,2 s`, havia em média `9,33` backends ativos, dos quais `6,08`
+sem wait event, com pico de dez backends executáveis concorrendo pelo único
+core. A maior concorrência veio das rejeições insufficient-funds, com média de
+`2,04` execuções simultâneas no intervalo, seguida por ACK, claim, publicação
+da outbox, lookup de conflitos, admissão PACS.008, auditoria e persistência de
+delivery. A evidência caracteriza fila de CPU/over-concurrency no PostgreSQL,
+não uma query PACS.002 intrinsecamente lenta.
+
+Antes de otimizar o claim isoladamente, o próximo A/B deve testar redução da
+concorrência transacional que chega ao único core, preservando taxa externa e
+recursos. A hipótese mais direta é aplicar ao consumer PACS.008 o mesmo
+princípio já validado para PACS.002: menos consumers, batches maiores e menos
+transações simultâneas. O resultado deve ser avaliado por throughput
+end-to-end, batches, backends ativos e cauda PACS.002; reduzir trabalho aceito
+ou a workload não é permitido.
