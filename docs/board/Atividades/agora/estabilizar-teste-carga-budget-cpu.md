@@ -1330,3 +1330,248 @@ e recuperáveis, conforme o contrato at-least-once.
 esperado desapareceu e houve ganho end-to-end sem regressão semântica. O próximo
 diagnóstico deve reordenar o trabalho PostgreSQL remanescente; `markPublished`
 continua como cleanup possível, mas não foi incluído nesta intervenção.
+
+### CPU real após o fast path de delivery
+
+O diagnóstico `notification-fast-path-executor-cpu/20260819_175110` repetiu a
+atribuição nativa de CPU no estado já contendo o fast path. A stack foi
+recriada, e o smoke qualificou na primeira tentativa com `1.250/1.250`
+pagamentos, `1.000/1.000` PACS.002 e `112/112` replays. O
+`log_executor_stats` permaneceu ativo somente durante uma execução de 60
+segundos; ao final, ele foi restaurado para `off`, e
+`pg_stat_statements.track` foi confirmado como `none`. Kafka também ficou
+quiescente depois do diagnóstico.
+
+A análise usou a janela ativa semiaberta registrada no `run-window.json`.
+Registros internos e externos de statements com `RETURNING` foram
+deduplicados pela combinação de PID, SQL, instante de conclusão e uso
+cumulativo, preservando o registro externo. Depois de remover `621` registros
+internos duplicados, `2.234` execuções atribuíram `43,430 s` de CPU de executor
+de aplicação:
+
+| família SQL | CPU de executor | participação |
+| --- | ---: | ---: |
+| transição PACS.002 | `20,247 s` | `46,62%` |
+| ACK de `notification_delivery` | `6,572 s` | `15,13%` |
+| insert de `notification_delivery` | `3,718 s` | `8,56%` |
+| insert da notification outbox | `3,065 s` | `7,06%` |
+| poll da notification outbox | `3,065 s` | `7,06%` |
+| publicação da notification outbox | `2,882 s` | `6,64%` |
+| insert PACS.008 | `2,150 s` | `4,95%` |
+| auditoria de pagamentos | `1,261 s` | `2,90%` |
+| claim de recovery | `0,043 s` | `0,10%` |
+
+O claim deixou de ser material. Sem ele, o restante do ciclo persistente de
+notificações somou `19,303 s`, ou `44,45%` da CPU medida: praticamente a mesma
+ordem da transição PACS.002, mas distribuído entre cinco statements.
+
+A transição PACS.002 foi uma consumidora real de CPU neste run, e não apenas
+uma vítima de lock ou I/O. Suas oito execuções concluídas durante a janela ativa
+somaram `20,247 s` de CPU e `52,154 s` transcorridos. Nas `183` amostras de
+atividade em que o query ID estava ativo, `182` estavam executáveis, nenhuma
+tinha blocking PID e apenas uma esperava `DataFileRead`. No snapshot completo,
+as `64` chamadas concluídas alteraram `12.299` rows; leitura e escrita físicas
+atribuídas ao statement somaram apenas `610,160 ms` e `13,883 ms`. O maior
+statement ativo consumiu `5,028 s` de CPU e levou `21,454 s`.
+
+O PostgreSQL permaneceu saturado, com `102,466%` de CPU média e, em média,
+`3,011` backends ativos e `2,247` executáveis. Kafka producer (`53,406%`), Kafka
+(`17,654%`), gateway (`15,610%`) e SPI (`14,313%`) ficaram abaixo do limite de
+CPU. Os executores de aplicação explicam `43,430 s` dos aproximadamente `61,5`
+CPU-seconds do container; parser, planner, commit, logging e processos de
+background não são atribuídos por essa coleta.
+
+O profiler perturbou fortemente o sistema e este bundle não é baseline de
+performance. No fast path sem `log_executor_stats`, a transição PACS.002 havia
+processado `74.767` rows em `332` chamadas e `20.697,584 ms` transcorridos. Com
+o profiler, processou apenas `12.299` rows em `64` chamadas e
+`97.468,658 ms`; o log do servidor cresceu aproximadamente `18,6 MB`. A geração
+também não qualificou, com mínimo rolling de `1.925 TPS`. Portanto a coleta
+prova quais executores consumiram CPU sob a condição instrumentada, mas não
+permite extrapolar diretamente seus throughputs para a execução normal.
+
+**Conclusão diagnóstica:** depois do fast path, não há um único statement de
+delivery substituindo o claim como gargalo. A CPU mensurada se divide entre a
+transição PACS.002 (`46,62%`) e o restante do ciclo de notificações (`44,45%`).
+A transição foi a maior família individual e deve ser investigada como próximo
+alvo; o `markPublished` isolado representa somente `6,64%` da CPU de executor e
+não deve ser priorizado apenas pelo seu tempo de parede.
+
+### Microbenchmark do update PACS.002 por outcome
+
+O update da transição foi comparado em três formas: o SQL vigente com três
+arrays, `unnest` e status por row; status constante por outcome com
+`payment_id = ANY(...)` e `RETURNING`; e a mesma forma sem `RETURNING`. O
+benchmark preservou a cardinalidade observada de `136.243` pagamentos em três
+tabelas temporárias idênticas e atualizou `350` pagamentos
+`WAITING_ACCEPTANCE` por amostra. Cada sessão alternou a ordem das variantes,
+descartou dez warmups e mediu trinta amostras com rollback.
+
+Uma tentativa preliminar com somente `350` rows nas tabelas scratch foi
+descartada: ela induzia sequential scan e não representava o plano da tabela
+real. Com a cardinalidade corrigida, o SQL vigente fez nested loop com `350`
+index scans pela chave primária. A forma por outcome usou bitmap index scan e
+bitmap heap scan. Três sessões independentes, incluindo uma com o
+`plan_cache_mode=auto` usado em produção, produziram:
+
+| sessão | SQL vigente | por outcome com retorno | por outcome sem retorno |
+| --- | ---: | ---: | ---: |
+| genérico 1 | `4,791 ms` | `3,289 ms` (`-31,35%`) | `2,967 ms` (`-38,08%`) |
+| genérico 2 | `6,584 ms` | `4,628 ms` (`-29,72%`) | `4,226 ms` (`-35,82%`) |
+| auto | `6,335 ms` | `4,444 ms` (`-29,86%`) | `4,078 ms` (`-35,64%`) |
+
+O ganho principal veio da retirada do `unnest`/join e do status variável por
+row. Remover o `RETURNING` acrescentou aproximadamente `8-10%` sobre o SQL já
+simplificado. O microbenchmark isola o executor e o acesso às rows; não mede o
+efeito end-to-end nem reduz por si só a mutação física, WAL ou necessidade de
+HOT updates.
+
+A variante experimental agrupou em Java os candidatos pelo status resultante e
+executou no máximo um update por outcome. Cada comando exigia que o número de
+rows alteradas fosse exatamente o número de candidatos. Somente então as rows
+já lidas e bloqueadas pela transação originavam deltas de saldo, auditoria e
+outbox; portanto a retirada do `RETURNING` não enfraqueceu a aquisição
+idempotente. Batches mistos continuaram separados em accepted e rejected.
+
+Os `31` testes de integração do adapter e os quatro testes concorrentes de
+saldo passaram. A suíte completa do SPI passou com `288` testes, sem falhas.
+
+### A/B end-to-end do update PACS.002 por outcome
+
+O A foi o último baseline mantido,
+`notification-direct-fast-path/20260819_163347`. O B autoritativo foi
+`pacs002-update-by-outcome-clean/20260819_202532`, produzido após recriar a
+stack e qualificar o smoke na primeira tentativa. Os snapshots de profile e
+execution plan são byte a byte idênticos. O B aceitou `134.999/134.999`
+originais e terminou sem outcome contraditório nem violação de replay; Kafka
+também estava quiescente na checagem imediata posterior.
+
+O mecanismo local esperado apareceu com clareza:
+
+| transição PACS.002 | A | B | variação |
+| --- | ---: | ---: | ---: |
+| chamadas | `332` | `399` | `+20,18%` |
+| rows | `74.767` | `67.311` | `-9,97%` |
+| rows por chamada | `225,20` | `168,70` | `-25,09%` |
+| tempo SQL acumulado | `20.697,584 ms` | `6.274,018 ms` | `-69,69%` |
+| tempo por row | `0,276828 ms` | `0,093209 ms` | `-66,33%` |
+| maior execução | `11.030,315 ms` | `185,378 ms` | `-98,32%` |
+
+O lock/read anterior à transição também caiu de `14.171,629 ms` para
+`7.834,628 ms`. Juntos, lock/read e update consumiram `34.869,213 ms` no A e
+`14.108,646 ms` no B, uma redução de `59,54%` no tempo SQL acumulado dessa
+parte do fluxo.
+
+O ganho isolado, porém, não virou ganho sistêmico:
+
+| evidência end-to-end | A | B | variação |
+| --- | ---: | ---: | ---: |
+| originais no ativo | `124.966` | `125.849` | `+0,71%` |
+| média oferecida | `2.082,767 TPS` | `2.097,483 TPS` | `+0,71%` |
+| outcomes observados | `84.826` | `75.458` | `-11,04%` |
+| outcomes ausentes | `50.172` | `59.541` | `+18,68%` |
+| PACS.002/s no ativo | `738,317` | `585,967` | `-20,63%` |
+| payer notifications/s no ativo | `696,617` | `670,717` | `-3,72%` |
+| latência p50 | `33.439,926 ms` | `35.468,961 ms` | `+6,07%` |
+| latência p95 | `56.429,372 ms` | `56.558,906 ms` | `+0,23%` |
+| latência p99 | `62.882,518 ms` | `60.114,454 ms` | `-4,40%` |
+
+Ambos os runs deixaram de comprovar o piso sustentado: mínimo rolling de
+`820 TPS` no A e `766 TPS` no B. O total e a média oferecida, entretanto,
+foram equivalentes, o B teve pico menor (`4.666` contra `4.895`) e todas as
+tentativas receberam HTTP 2xx. Assim, a regressão de conclusão não pode ser
+explicada por menor admissão de pagamentos originais.
+
+O PostgreSQL continuou saturado (`103,172% -> 102,779%` de CPU média ativa) e
+outros statements ficaram mais caros por row. Também houve fragmentação do
+trabalho: as chamadas da transição aumentaram e seu lote médio caiu. Esses
+fatos mostram para onde o custo foi deslocado, mas não provam isoladamente a
+causa da regressão. A conclusão necessária para este experimento é mais
+restrita: reduzir o custo local desse update não elevou a capacidade
+end-to-end do sistema.
+
+Uma primeira execução B completa,
+`pacs002-update-by-outcome/20260819_201426`, também havia produzido somente
+`67.772` outcomes. Uma repetição direta sobre a mesma stack foi rejeitada pelo
+load-tool ao receber uma notificação persistente do run anterior, embora o lag
+Kafka estivesse zerado. Essa repetição não entrou na comparação; ela apenas
+evidencia que lag Kafka zero não prova sozinho quiescência de deliveries já
+persistidas no gateway. O B autoritativo acima foi executado somente depois de
+novo reset completo.
+
+**Resultado do A/B: regressão end-to-end.** A otimização reduziu drasticamente
+o custo do statement, mas piorou o resultado sistêmico em uma stack limpa. A
+variante permanece implementada na working tree para permitir a investigação e
+a decisão explícita sobre o próximo passo; o resultado experimental, sozinho,
+não autoriza desfazer automaticamente o código. O microbenchmark permanece
+documentado como evidência de que esse statement isolado não é mais o gargalo
+dominante a ser atacado.
+
+### Localização post hoc da regressão observada
+
+Os artefatos existentes permitem localizar a divergência sem outro run. O
+trecho diretamente alterado ficou mais rápido também no end-to-end:
+
+| trecho correlacionado por payment ID | A p50 | B p50 | A p95 | B p95 |
+| --- | ---: | ---: | ---: | ---: |
+| HTTP original até PACS.008 no recebedor | `27.173,7 ms` | `28.606,7 ms` | `49.990,0 ms` | `57.529,8 ms` |
+| PACS.008 no recebedor até POST PACS.002 | `0,4 ms` | `0,6 ms` | `21,9 ms` | `26,9 ms` |
+| POST PACS.002 até primeira notificação final | `8.294,5 ms` | `5.903,3 ms` | `18.796,4 ms` | `9.988,5 ms` |
+
+Assim, o B reduziu o p95 do trecho de settlement/notificação final em `46,86%`.
+A perda ocorreu antes dele: o p95 até a notificação de aceite PACS.008 piorou
+`15,08%`, e somente `67.311` pagamentos chegaram a produzir PACS.002, contra
+`77.615` no A. Depois da notificação PACS.008, o load-tool iniciou o PACS.002
+em menos de `27 ms` no p95 de ambos os runs; essa fronteira não explica a
+diferença.
+
+A análise por coorte de início HTTP confirma onde o backlog cresceu:
+
+| coorte relativa ao início ativo | A com PACS.008 recebido | B com PACS.008 recebido |
+| --- | ---: | ---: |
+| `[0 s, 10 s)` | `13.499` | `15.542` |
+| `[10 s, 20 s)` | `22.477` | `21.139` |
+| `[20 s, 30 s)` | `16.000` | `14.163` |
+| `[30 s, 40 s)` | `12.382` | `6.585` |
+| `[40 s, 50 s)` | `3.720` | `2.371` |
+| `[50 s, 60 s)` | `1.513` | `192` |
+
+O novo update não ficou represado: suas `67.311` rows alteradas são exatamente
+a população de PACS.002 originais enviada no B. O lock/read viu `69.399` rows,
+incluindo os `2.088` replays. No A, o update antigo havia concluído `74.767`
+transições para `77.615` PACS.002 originais até o snapshot. Portanto a etapa
+alterada deixou de ser limitante; o B terminou com menos PACS.002 porque menos
+pagamentos chegaram até ela.
+
+O deslocamento aparece no trabalho compartilhado do PostgreSQL. Ele permaneceu
+ocupando aproximadamente uma CPU inteira nos dois runs, mas vários statements
+não alterados ficaram mais caros por row no B:
+
+| statement não alterado | A por row | B por row | variação |
+| --- | ---: | ---: | ---: |
+| insert do pagamento | `0,2383 ms` | `0,2531 ms` | `+6,21%` |
+| insert da outbox | `0,2619 ms` | `0,3028 ms` | `+15,62%` |
+| insert de auditoria | `0,1061 ms` | `0,1273 ms` | `+19,98%` |
+| insert de delivery | `0,3043 ms` | `0,3585 ms` | `+17,81%` |
+| persistência de ACK | `0,1752 ms` | `0,2236 ms` | `+27,63%` |
+| mark published | `0,1984 ms` | `0,2272 ms` | `+14,52%` |
+
+Não houve rollback ou deadlock. O B fez menos leituras físicas, menos trabalho
+de autovacuum e menos I/O total, portanto não há evidência de que lock ou volume
+de I/O produzido pelo novo update explique a regressão. Checkpoints atravessam
+os três runs: o primeiro B, que foi o pior, passou quase todo o warmup e o ativo
+sob um checkpoint de `117,6 s`; no B limpo o checkpoint começou `36,1 s` após o
+início ativo, contra `42,3 s` no A. Isso contribui para a variabilidade, mas não
+é explicação suficiente porque a curva B já se separava antes do checkpoint
+limpo começar.
+
+**Conclusão da investigação:** não houve uma inversão mágica do ganho da query.
+A variante acelerou o trecho que alterou. A regressão agregada foi determinada
+pela fronteira anterior de PACS.008/aceite e por um custo por row maior em todo
+o ciclo compartilhado de escrita enquanto o PostgreSQL estava saturado. Os
+artefatos não sustentam atribuir esse comportamento à nova query, nem permitem
+isolar uma única causa ambiental entre scheduling, checkpoint e dinâmica das
+filas. O estado correto da variante é: ganho local comprovado, ausência de
+regressão semântica e ganho end-to-end ainda não comprovado. O próximo tuning
+deve seguir o gargalo anterior observado, sem repetir este A/B apenas para
+revalidar os mesmos fatos.

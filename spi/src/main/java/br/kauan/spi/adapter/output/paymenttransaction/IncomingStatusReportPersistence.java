@@ -16,6 +16,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -72,28 +73,11 @@ class IncomingStatusReportPersistence {
             """;
 
     private static final String ACQUIRE_TRANSITIONS_SQL = """
-            WITH transitions AS (
-                SELECT *
-                FROM unnest(
-                    ?::int[],
-                    ?::text[],
-                    ?::text[]
-                ) AS t(ordinal, payment_id, resulting_status)
-            )
-            UPDATE payment_transaction_entity payment
-            SET status = transition.resulting_status,
+            UPDATE payment_transaction_entity
+            SET status = ?,
                 rejection_reason = NULL
-            FROM transitions transition
-            WHERE payment.payment_id = transition.payment_id
-              AND payment.status = ?
-            RETURNING
-                transition.ordinal,
-                payment.payment_id,
-                payment.status,
-                payment.amount_cents,
-                payment.sender_bank_code,
-                payment.receiver_bank_code,
-                payment.rejection_reason
+            WHERE payment_id = ANY (?::text[])
+              AND status = ?
             """;
 
     private static final String APPLY_BALANCE_DELTAS_SQL = """
@@ -359,50 +343,61 @@ class IncomingStatusReportPersistence {
             return List.of();
         }
 
-        Integer[] ordinals = new Integer[transitionCandidates.size()];
-        String[] paymentIds = new String[transitionCandidates.size()];
-        String[] resultingStatuses = new String[transitionCandidates.size()];
-        for (int index = 0; index < transitionCandidates.size(); index++) {
-            TransitionCandidate candidate = transitionCandidates.get(index);
-            ordinals[index] = candidate.payment().ordinal();
-            paymentIds[index] = candidate.payment().paymentId();
-            resultingStatuses[index] = candidate.resultingStatus().name();
+        Map<PaymentStatus, List<TransitionCandidate>> candidatesByResultingStatus =
+                new EnumMap<>(PaymentStatus.class);
+        for (TransitionCandidate candidate : transitionCandidates) {
+            candidatesByResultingStatus.computeIfAbsent(
+                    candidate.resultingStatus(),
+                    ignored -> new ArrayList<>()
+            ).add(candidate);
         }
 
-        Array ordinalArray = null;
+        List<AcquiredTransition> acquired = new ArrayList<>(transitionCandidates.size());
+        for (Map.Entry<PaymentStatus, List<TransitionCandidate>> entry
+                : candidatesByResultingStatus.entrySet()) {
+            List<TransitionCandidate> candidates = entry.getValue();
+            acquireTransitionsForStatus(connection, entry.getKey(), candidates);
+            for (TransitionCandidate candidate : candidates) {
+                LockedStatusReportRow payment = candidate.payment();
+                acquired.add(new AcquiredTransition(
+                        payment.ordinal(),
+                        payment.paymentId(),
+                        candidate.resultingStatus(),
+                        payment.amountCents(),
+                        payment.senderBankCode(),
+                        payment.receiverBankCode(),
+                        null
+                ));
+            }
+        }
+        acquired.sort((first, second) -> Integer.compare(first.ordinal(), second.ordinal()));
+        return acquired;
+    }
+
+    private void acquireTransitionsForStatus(
+            Connection connection,
+            PaymentStatus resultingStatus,
+            List<TransitionCandidate> transitionCandidates
+    ) throws SQLException {
+        String[] paymentIds = new String[transitionCandidates.size()];
+        for (int index = 0; index < transitionCandidates.size(); index++) {
+            paymentIds[index] = transitionCandidates.get(index).payment().paymentId();
+        }
+
         Array paymentIdArray = null;
-        Array resultingStatusArray = null;
         try {
-            ordinalArray = connection.createArrayOf("int4", ordinals);
             paymentIdArray = connection.createArrayOf("text", paymentIds);
-            resultingStatusArray = connection.createArrayOf("text", resultingStatuses);
             try (var statement = connection.prepareStatement(ACQUIRE_TRANSITIONS_SQL)) {
-                statement.setArray(1, ordinalArray);
+                statement.setString(1, resultingStatus.name());
                 statement.setArray(2, paymentIdArray);
-                statement.setArray(3, resultingStatusArray);
-                statement.setString(4, PaymentStatus.WAITING_ACCEPTANCE.name());
-                try (ResultSet resultSet = statement.executeQuery()) {
-                    List<AcquiredTransition> acquired = new ArrayList<>(transitionCandidates.size());
-                    while (resultSet.next()) {
-                        acquired.add(new AcquiredTransition(
-                                resultSet.getInt(1),
-                                resultSet.getString(2),
-                                PaymentStatus.valueOf(resultSet.getString(3)),
-                                resultSet.getLong(4),
-                                resultSet.getString(5),
-                                resultSet.getString(6),
-                                resultSet.getString(7)
-                        ));
-                    }
-                    if (acquired.size() != transitionCandidates.size()) {
-                        throw new IllegalStateException("Could not acquire every waiting payment transition");
-                    }
-                    acquired.sort((first, second) -> Integer.compare(first.ordinal(), second.ordinal()));
-                    return acquired;
+                statement.setString(3, PaymentStatus.WAITING_ACCEPTANCE.name());
+                int acquired = statement.executeUpdate();
+                if (acquired != transitionCandidates.size()) {
+                    throw new IllegalStateException("Could not acquire every waiting payment transition");
                 }
             }
         } finally {
-            free(ordinalArray, paymentIdArray, resultingStatusArray);
+            free(paymentIdArray);
         }
     }
 
