@@ -869,3 +869,68 @@ O progresso esperado ocorre nesta ordem:
 Assim, CPU saturada com backlog continua significando “otimizar custo”, não
 “adicionar consumers”. Nenhuma nova repetição sem uma intervenção de custo e
 nenhum run de 15 minutos estão autorizados.
+
+## Otimização do claim de notificações
+
+A intervenção `notification-claim-due-index/20260819_011815` manteve
+PACS.008/PACS.002 com um consumer, PostgreSQL com um vCPU, batch de claim em
+1.000, polling em 20 ms e o workload diagnóstico inalterado. O contrato de
+lease foi simplificado: `next_attempt_at` passou a representar também a
+expiração de `IN_FLIGHT`, `lease_until` foi removido e dois índices parciais
+passaram a conter somente `PENDING`, `RETRYABLE_FAILED` e `IN_FLIGHT`.
+
+O primeiro smoke de preparação terminou antes de gerar pagamentos porque um
+dos 100 health checks HTTP/2 excedeu cinco segundos enquanto o front door
+processava os handshakes em um único core. A checagem posterior encontrou zero
+payments, zero deliveries e Kafka quiescente. Na mesma stack limpa, já
+aquecida, a segunda tentativa qualificou `1.250/1.250` originais,
+`1.000/1.000` PACS.002 e `112/112` replays. Nenhum benchmark foi contado a
+partir da tentativa abortada.
+
+Contra `pacs008-concurrency-one-clean-repeat/20260818_232657`, o claim mudou
+assim:
+
+- chamadas: `953 -> 525`;
+- rows adquiridas: `98.987 -> 160.231`, com batch médio
+  `103,87 -> 305,20`;
+- tempo SQL total: `74.774,780 -> 73.029,230 ms`, ou
+  `0,755 -> 0,456 ms` por row;
+- máximo por chamada: `5.165,934 -> 1.005,805 ms`;
+- buffer hits por row: `42,53 -> 17,66`;
+- reads por row: `0,416 -> 0,088`;
+- WAL por row: `1.162 -> 1.118 bytes`.
+
+O `EXPLAIN` posterior escolheu `notification_delivery_claim_due_idx`, ordenado
+por `next_attempt_at`, seguido apenas de incremental sort para desempatar por
+`communication_id`. Portanto o claim deixou de ordenar o backlog completo. O
+índice por `(recipient_ispb, next_attempt_at)` permanece disponível para a
+forma complementar com poucos PSPs conectados.
+
+O ganho local também aumentou trabalho útil até o deadline:
+
+- pagamentos admitidos: `62.920 -> 81.221`;
+- outcomes observados: `33.866 -> 58.368`;
+- notificações recebidas pelo load-tool: `97.987 -> 159.231`;
+- latência HTTP PACS.008 p95/p99: `196,539 / 300,616 ms ->
+  167,515 / 283,825 ms`;
+- geração média/mínima/máxima: `2.069,2 / 1.160 / 4.158 TPS ->
+  2.026,283 / 1.736 / 2.984 TPS`.
+
+Todos os `135.000/135.000` originais e `8.602/8.602` replays iniciados
+receberam HTTP 2xx; não houve outcome contraditório nem violação de replay. O
+run continua inválido: faltaram `76.632` outcomes, o mínimo rolling ficou em
+`1.736 TPS` e a latência end-to-end permaneceu muito acima do SLA.
+
+O PostgreSQL continuou sendo o recurso limitante, com `100,386%` de CPU média
+na janela ativa. Backends ativos/executáveis subiram de `2,95 / 2,11` para
+`4,95 / 3,75`, coerente com mais trabalho downstream alcançando o mesmo core;
+isso não anula a redução substancial do custo do claim por row. Uma leitura
+posterior encontrou lag Kafka zero, mas ainda havia `88.361` deliveries
+`PENDING`, novamente confirmando que offsets drenados não representam
+conclusão end-to-end.
+
+**Decisão: KEEP.** A consulta e os índices simplificados reduzem trabalho por
+notificação, aumentam outcomes e melhoram o ingresso sem regressão funcional.
+Não alterar polling ou batch size neste mesmo experimento. O próximo passo deve
+escolher outra fronteira dominante do PostgreSQL a partir do novo perfil; nenhum
+run de 15 minutos está autorizado ainda.

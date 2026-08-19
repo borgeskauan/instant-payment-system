@@ -69,12 +69,8 @@ public class NotificationDeliveryRepository {
                 SELECT communication_id
                 FROM notification_delivery
                 WHERE recipient_ispb IN (:ispbs)
-                  AND delivery_status <> 'ACKED'
+                  AND delivery_status IN ('PENDING', 'RETRYABLE_FAILED', 'IN_FLIGHT')
                   AND next_attempt_at <= :now
-                  AND (
-                    delivery_status IN ('PENDING', 'RETRYABLE_FAILED')
-                    OR (delivery_status = 'IN_FLIGHT' AND lease_until <= :now)
-                  )
                 ORDER BY next_attempt_at, communication_id
                 LIMIT :limit
                 FOR UPDATE SKIP LOCKED
@@ -84,7 +80,6 @@ public class NotificationDeliveryRepository {
                 attempt_count = attempt_count + 1,
                 last_attempt_at = :now,
                 next_attempt_at = :leaseUntil,
-                lease_until = :leaseUntil,
                 last_error = NULL,
                 updated_at = :now
             FROM candidates
@@ -99,7 +94,6 @@ public class NotificationDeliveryRepository {
             UPDATE notification_delivery AS delivery
             SET delivery_status = 'ACKED',
                 acknowledged_at = ?,
-                lease_until = NULL,
                 updated_at = ?
             FROM unnest(?::text[], ?::text[])
                  AS ack(communication_id, recipient_ispb)
@@ -113,7 +107,6 @@ public class NotificationDeliveryRepository {
             UPDATE notification_delivery
             SET delivery_status = 'RETRYABLE_FAILED',
                 next_attempt_at = :nextAttemptAt,
-                lease_until = NULL,
                 last_error = :lastError,
                 updated_at = :now
             WHERE communication_id = :communicationId
