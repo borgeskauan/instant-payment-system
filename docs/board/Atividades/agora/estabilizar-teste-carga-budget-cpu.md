@@ -33,12 +33,17 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - Alterar uma variável relevante por vez e repetir o mesmo benchmark.
 - Manter uma intervenção somente quando houver melhora mensurável, sem regressão
   funcional nem deslocamento do gargalo que torne o resultado pior.
+- Enquanto houver backlog e trabalho pronto, não exigir queda imediata da CPU do
+  PostgreSQL como prova de otimização. Medir primeiro trabalho útil por unidade
+  de tempo, custo por row/pagamento, inclinação do backlog e conclusão
+  end-to-end; a CPU só ganha folga quando a capacidade ultrapassa a demanda.
 - Se a evidência for inconclusiva, adicionar apenas a instrumentação necessária
   e medir novamente antes de alterar a arquitetura.
 
 ## Workloads
 
-- Preparação por revisão/variante: `cd load-test &&
+- Enquanto não houver fronteira confiável de quiescência end-to-end, preparação
+  por execução medida: `cd load-test &&
   ./prepare-performance-environment.sh`. O comando recria volumes, sobe a stack,
   espera readiness e só libera o ambiente após um `mixed-outcomes-smoke`
   funcionalmente completo.
@@ -459,11 +464,11 @@ SLA final.
 - [ ] Sustentar o piso de 2.000 pagamentos originais em toda rolling window de
   um segundo, dentro do SLA e com outcomes/replays corretos.
 - [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência
-  de degradação progressiva e ambiente quiescente ao final segundo as heurísticas
-  observáveis atuais.
-- [ ] Executar múltiplos runs consecutivos após uma única preparação qualificada
-  do mesmo estado de código e verificar repetibilidade. Repetir a preparação ao
-  alterar a revisão/variante ou iniciar um novo baseline isolado.
+  de degradação progressiva e ambiente quiescente ao final. Lag Kafka zero não
+  basta enquanto outbox e deliveries persistidas puderem continuar pendentes.
+- [ ] Verificar repetibilidade com cada execução medida partindo de volumes
+  novos. Reutilizar uma única preparação entre runs somente depois de existir
+  uma fronteira confiável de quiescência ou limpeza end-to-end.
 - [ ] Atualizar o load-test para registrar automaticamente o perfil efetivo de
   CPU/memória quando isso ainda não estiver presente nos artefatos.
 - [ ] Documentar requests, limits e justificativa por serviço para Kubernetes.
@@ -741,3 +746,126 @@ princípio já validado para PACS.002: menos consumers, batches maiores e menos
 transações simultâneas. O resultado deve ser avaliado por throughput
 end-to-end, batches, backends ativos e cauda PACS.002; reduzir trabalho aceito
 ou a workload não é permitido.
+
+## Primeira medição PACS.008 com um consumer
+
+O diagnóstico `pacs008-concurrency-one/20260818_231033` alterou somente a
+concorrência do listener PACS.008 de oito para um. PACS.002 permaneceu com um
+consumer, `max.poll.records` permaneceu em 500, o PostgreSQL permaneceu com um
+vCPU e a workload externa continuou em 2.000 pagamentos originais por segundo.
+O ambiente foi recriado com volumes novos e o smoke de preparação qualificou
+`1.250/1.250` originais, `1.000/1.000` PACS.002 e `112/112` replays.
+
+Na execução medida, todos os `135.000/135.000` originais e `8.283/8.283`
+replays iniciados receberam HTTP 2xx. A redução de concorrência produziu os
+efeitos esperados dentro do PostgreSQL:
+
+- a admissão PACS.008 caiu de `1.963` para `237` chamadas e o batch médio
+  subiu de `48,893` para `352,903` rows;
+- as rejeições insufficient-funds caíram de `961` para `187` chamadas e o
+  batch médio subiu de `12,358` para `95,401` rows;
+- o tempo acumulado das rejeições caiu de `171.248,040 ms` para
+  `2.317,346 ms`, e o máximo de `6.902,461 ms` para `107,774 ms`;
+- a transição PACS.002 processou `36.625` rows em `11.575,256 ms`, contra
+  `2.536` rows em `86.519,779 ms`; seu máximo caiu de `59.199,949 ms` para
+  `4.285,863 ms`;
+- na janela ativa, a média de backends ativos caiu de `10,80` para `5,13`, e
+  a de backends ativos sem wait event de `6,79` para `4,11`;
+- a CPU do PostgreSQL permaneceu saturada e praticamente igual,
+  `103,919%` contra `103,301%`, mas realizou mais trabalho downstream;
+- outcomes observados até o deadline subiram de `9.403` para `40.778`, e o
+  gateway entregou `108.550` notificações ao load-tool, contra `58.186` no
+  controle.
+
+A medição também expôs o custo da serialização. Até o deadline, a admissão
+persistiu `83.638` pagamentos, contra `95.977` com oito consumers. O ingresso
+HTTP permaneceu correto, mas sua p95/p99 subiu de `46,166 / 94,183 ms` para
+`297,807 / 487,756 ms`. A geração ativa apresentou catch-up: média
+`2.077,583 TPS`, mínimo rolling de `486 TPS` e máximo de `3.949 TPS`, contra
+`2.000 / 1.958 / 2.056 TPS` no controle. Portanto, a forma temporal não foi
+equivalente e esta primeira medição não decide sozinha a configuração final.
+
+O resultado confirma a hipótese de over-concurrency: batches maiores removem
+convoy de CPU e aumentam fortemente a conclusão end-to-end, sem aliviar o
+PostgreSQL por redução de carga oferecida. Ainda assim, o relatório permanece
+inválido, com `94.222` outcomes ausentes e latência externa p95 de
+`64.790,617 ms`. Uma checagem posterior encontrou os três consumer groups com
+lag zero, o que comprova drenagem dos offsets, não conclusão dentro do SLA. A
+variante só deve ser mantida se preservar o ganho de batches/cauda em uma
+repetição com perfil temporal comparável. Nenhum run de 15 minutos foi
+executado.
+
+A tentativa aquecida
+`pacs008-concurrency-one-repeat/20260818_231809` foi descartada antes do report.
+Embora os consumer groups estivessem com lag zero antes do início, o gateway
+ainda possuía deliveries persistidas da execução anterior. O novo load-tool,
+cujos IDs começavam em `go-1787105914397003675`, recebeu uma PACS.008 antiga
+para `go-1787105461027121708-41113` e abortou corretamente porque não havia
+metadados desse pagamento no run corrente. A tentativa aceitou
+`134.999/134.999` originais e `6.749/6.749` replays antes de detectar a mistura,
+mas não constitui benchmark e não produziu `sla-report.json`.
+
+Essa falha confirma concretamente que lag Kafka zero não caracteriza ambiente
+end-to-end quiescente: outbox e `notification_delivery` podem continuar
+pendentes após os offsets terem sido consumidos. Com o isolamento atual, uma
+repetição válida exige ambiente novo; simplesmente executar outra vez sobre a
+mesma stack empilharia o backlog do run descartado. Automatizar uma fronteira
+de quiescência/limpeza end-to-end fica separado da decisão de performance desta
+variante.
+
+### Repetição limpa e decisão sobre um consumer
+
+A stack foi recriada novamente e o smoke qualificou na primeira tentativa. A
+repetição `pacs008-concurrency-one-clean-repeat/20260818_232657` confirmou os
+dois lados da primeira medição:
+
+- `135.000/135.000` pagamentos originais e `8.085/8.085` replays receberam
+  HTTP 2xx;
+- o batch médio da admissão PACS.008 permaneceu grande, com `301,053` rows por
+  chamada, e o de insufficient-funds com `89,291` rows por chamada;
+- a transição PACS.002 processou `37.335` rows, batch médio de `377,121`, tempo
+  acumulado de `64.607,189 ms` e máximo de `8.414,778 ms`; apesar da variação
+  contra a primeira tentativa, a cauda continuou muito abaixo dos
+  `59.199,949 ms` do controle;
+- outcomes observados ficaram em `33.866`, contra `9.403` com oito consumers,
+  e o load-tool recebeu `97.987` notificações, contra `58.186`;
+- o PostgreSQL permaneceu saturado (`104,067%` de CPU média), enquanto os
+  backends ativos médios caíram de `10,80` para `2,95` e os executáveis sem
+  wait event de `6,79` para `2,11`.
+
+O custo também se repetiu. Apenas `62.920` pagamentos foram admitidos até o
+deadline, contra `95.977` no controle e `83.638` na primeira variante. A
+geração voltou a apresentar catch-up, agora com média/mínimo/máximo rolling de
+`2.069,2 / 1.160 / 4.158 TPS`; a latência HTTP PACS.008 p95/p99 ficou em
+`196,542 / 300,766 ms`, ainda muito acima dos `46,166 / 94,183 ms` do controle.
+Os offsets Kafka chegaram posteriormente a zero, fora do experimento.
+
+Um consumer ainda não está aprovado como configuração final, pois não comprovou
+processamento end-to-end sustentado de 2.000 pagamentos por segundo. Ele passa,
+porém, a ser a baseline deliberada da próxima etapa de otimização: serializa a
+admissão PACS.008, forma batches substanciais e reduz o convoy que escondia o
+custo do trabalho executado no PostgreSQL.
+
+A próxima etapa não aumenta a concorrência para dois. Ela mantém PACS.008 e
+PACS.002 com um consumer, PostgreSQL com um vCPU e a workload externa inalterada
+enquanto reduz o custo por pagamento do pipeline persistente. Cada intervenção
+deve escolher uma única fronteira a partir de chamadas, rows, buffers, WAL,
+tempo por batch, outcomes concluídos e crescimento do backlog. Tempo acumulado
+sob saturação não basta sozinho para atribuir custo de CPU, pois uma query pode
+ser vítima da fila de execução.
+
+O progresso esperado ocorre nesta ordem:
+
+1. com backlog ainda presente e PostgreSQL próximo de 100%, aumentar rows e
+   outcomes concluídos por segundo e reduzir custo por pagamento;
+2. reduzir a inclinação do backlog até a capacidade alcançar a carga oferecida;
+3. observar folga de CPU somente quando a demanda deixar de manter trabalho
+   permanentemente pronto;
+4. aumentar a concorrência PACS.008 apenas se houver folga no PostgreSQL e o
+   listener único ainda acumular lag ou limitar a latência;
+5. manter um consumer se ele sustentar 2.000 pagamentos originais por segundo,
+   replays e outcomes dentro do SLA.
+
+Assim, CPU saturada com backlog continua significando “otimizar custo”, não
+“adicionar consumers”. Nenhuma nova repetição sem uma intervenção de custo e
+nenhum run de 15 minutos estão autorizados.
