@@ -1187,3 +1187,146 @@ proporcionais ao tamanho do lote, preserva o contrato funcional e produz ganho
 end-to-end mensurável sem reduzir a carga original admitida. O próximo trabalho
 deve partir novamente do perfil dominante do PostgreSQL após esta intervenção,
 em vez de continuar micro-otimizando o mesmo insert.
+
+### CPU do ciclo de notificações após o `unnest`
+
+O diagnóstico `notification-cycle-cpu-post-unnest/20260819_152958` repetiu a
+atribuição nativa de CPU depois da mudança do insert da outbox. A stack foi
+recriada e o smoke qualificou na primeira tentativa, com `1.250/1.250`
+pagamentos, `1.000/1.000` PACS.002 e `112/112` replays. O
+`log_executor_stats` permaneceu ativo somente durante uma execução de 60
+segundos e foi restaurado para `off`; `pg_stat_statements.track` também foi
+restaurado para `none`.
+
+Registros internos e externos dos statements com `RETURNING` foram
+deduplicados, preservando apenas a execução externa. Na janela ativa, `2.141`
+execuções atribuíram `42,006 s` de CPU de executor. O ciclo de notificações
+consumiu `32,110 s`, ou `76,44%` dessa CPU:
+
+| operação | CPU de executor | participação |
+| --- | ---: | ---: |
+| insert de `notification_delivery` | `7,696 s` | `18,32%` |
+| insert da notification outbox | `7,549 s` | `17,97%` |
+| claim de `notification_delivery` | `7,260 s` | `17,28%` |
+| ACK de delivery | `4,422 s` | `10,53%` |
+| marcação da outbox como publicada | `4,077 s` | `9,70%` |
+| poll da outbox | `1,106 s` | `2,63%` |
+
+O PostgreSQL permaneceu saturado, com `103,719%` de CPU média. Havia em média
+`4,611` backends ativos e `3,420` executáveis. O profiler adicionou I/O de log e
+perturbou a execução; por isso este run serve somente para atribuição, não como
+baseline de throughput ou SLA. Ainda assim, todos os `134.999/134.999`
+pagamentos iniciados receberam HTTP 2xx, não houve violações de replay nem
+outcomes contraditórios, e `63.669` outcomes foram observados até o deadline.
+
+O custo está distribuído pelo protocolo persistente, não concentrado em uma
+query isolada. Cada notificação mantém uma row de aproximadamente `650 B` na
+outbox e outra de `660 B` na delivery, com payload imutável de cerca de
+`430-440 B` em ambas. Insert da outbox, marcação como publicada, insert da
+delivery, claim e ACK geraram aproximadamente `5,4 KB` de WAL por notificação.
+As duas tabelas continuaram com zero HOT updates porque as transições alteram
+os índices parciais.
+
+A mudança anterior não pretendia reduzir a CPU do executor do insert: ela
+removeu construção de strings e parsing/planejamento, custos externos ao
+executor medido. O perfil atual confirma que o insert deixou de ter formatos
+dinâmicos, mas encontrou uma duplicação do mesmo mecanismo em
+`markPublished`: `393` chamadas atualizaram `224.082` rows usando `180`
+formatos de statement diferentes, acumularam `39.889,648 ms` de execução e
+`201.389.584` bytes de WAL.
+
+**Próxima hipótese:** substituir somente o `IN (?, ...)` dinâmico de
+`markPublished` por um statement estável com array/`unnest`, preservando estado,
+idempotência e transação. Esse A/B deve medir redução de formatos SQL,
+parser/planejador e custo end-to-end. Mesmo se mantida, a mudança remove apenas
+complexidade acidental; a sequência de cinco mutações e a duplicação do payload
+continuam sendo o limite estrutural a reavaliar depois.
+
+### Fast path persistido da entrega de notificações
+
+A hipótese de `markPublished` foi adiada após priorização por ROI. No diagnóstico
+anterior, todas as `177.705` notificações reclamadas haviam sido tentadas apenas
+uma vez: o claim estava no caminho obrigatório da primeira entrega, e não
+recuperando falhas. A intervenção removeu essa transição do caminho saudável sem
+remover a recuperação durável.
+
+O consumer Kafka agora obtém um snapshot dos PSPs conectados e faz um único
+insert transacional. Linhas novas para PSPs conectados entram como `IN_FLIGHT`,
+com tentativa e lease já registrados, e somente elas são devolvidas para envio
+após o commit. PSPs desconectados continuam entrando como `PENDING`; conflito em
+`communication_id` não devolve row nem cria novo dispatch. O payload enviado é
+o mesmo já presente no poll Kafka e não é relido do PostgreSQL.
+
+O envio foi isolado em um dispatcher compartilhado pelo fast path e pela
+recuperação. Ele preserva processamento sequencial dentro de cada destinatário,
+mantém o executor existente de oito threads e converte ausência de subscriber ou
+rejeição do executor em `RETRYABLE_FAILED`. O worker anterior ficou restrito a
+`PENDING`, falhas retryable e leases expirados. Seu polling no Compose passou de
+`20 ms` para `1 s`; lease de `30 s` e retry de `1 s` foram preservados. Nenhuma
+migração de banco foi necessária.
+
+Os testes cobrem lote misto conectado/desconectado, deduplicação, rollback,
+dispatch posterior à persistência, falha de envio, rejeição do executor,
+concorrência por destinatário e recuperação depois do lease. Uma mutation check
+que tornou o lease imediatamente elegível falhou no teste esperado. A suíte
+completa do notification-gateway passou com `75` testes.
+
+### A/B do fast path de notification delivery
+
+O preparador recriou a stack e qualificou o smoke na primeira tentativa:
+`1.250/1.250` pagamentos, `1.000/1.000` PACS.002 e `112/112` replays. O B
+`notification-direct-fast-path/20260819_163347` foi executado uma única vez e
+comparado com o A `outbox-unnest/20260819_140346`. Perfil e execution plan são
+byte a byte idênticos.
+
+O mecanismo esperado foi observado no run completo:
+
+| Evidência PostgreSQL | A | B |
+| --- | ---: | ---: |
+| chamadas do claim | `456` | `101` |
+| tempo SQL acumulado do claim | `81.592,684 ms` | `4.868,774 ms` |
+| WAL do claim | `224.429.886 B` | `5.853.480 B` |
+| rows inseridas em delivery | `214.616` | `227.299` |
+| custo do insert de delivery por row | `0,359237 ms` | `0,304287 ms` |
+
+As chamadas do claim caíram `77,85%`, seu tempo acumulado caiu `94,03%` e seu
+WAL caiu `97,39%`. As `101` chamadas restantes correspondem ao polling de
+recovery de um segundo. O `pg_stat_statements` registrou zero rows devolvidas
+pelo claim, embora tentativas de lock/recuperação ainda tenham gerado o pequeno
+WAL residual. O fast path processou mais deliveries e, mesmo registrando lease
+e tentativa no insert, reduziu o custo por row em `15,30%` por deixar de
+concorrer com o claim obrigatório.
+
+O PostgreSQL permaneceu saturado (`103,293% -> 103,172%` de CPU média ativa),
+mas converteu a capacidade liberada em mais trabalho útil:
+
+| Evidência end-to-end | A | B |
+| --- | ---: | ---: |
+| originais aceitos | `135.000` | `134.998` |
+| outcomes observados | `62.940` | `84.826` |
+| outcomes ausentes | `72.060` | `50.172` |
+| payer notifications/s no ativo | `472,900` | `696,617` |
+| latência end-to-end p95 | `63.706,364 ms` | `56.429,372 ms` |
+| latência end-to-end p99 | `67.485,210 ms` | `62.882,518 ms` |
+
+Os outcomes cresceram `34,77%`, os ausentes caíram `30,37%` e o p95 caiu
+`11,42%`. Todos os `134.998` originais iniciados receberam HTTP 2xx; não houve
+outcome contraditório nem violação de replay, e Kafka estava quiescente na
+checagem posterior.
+
+O B continua inválido para aprovação. O gerador iniciou `124.966` originais na
+janela ativa, com média `2.082,767 TPS`, mínimo rolling de `820` e pico de
+`4.895`; portanto houve catch-up temporal e o piso sustentado não foi provado.
+Essa diferença impede usar o run como validação final, mas não contradiz o A/B:
+o total original foi equivalente, toda tentativa foi aceita e a variante B
+produziu mais outcomes sob uma carga ativa mais concentrada.
+
+No fechamento dos streams, `500` deliveries de quatro PSPs foram marcadas como
+retryable porque o dispatch encontrou o subscriber já removido. Os logs não
+mostram desconexão desses PSPs antes do deadline; as rows permaneceram duráveis
+e recuperáveis, conforme o contrato at-least-once.
+
+**Decisão: KEEP.** A primeira entrega não depende mais de polling/claim, o custo
+esperado desapareceu e houve ganho end-to-end sem regressão semântica. O próximo
+diagnóstico deve reordenar o trabalho PostgreSQL remanescente; `markPublished`
+continua como cleanup possível, mas não foi incluído nesta intervenção.

@@ -18,14 +18,13 @@ import java.sql.ResultSet;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
-import java.util.function.Consumer;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -69,27 +68,35 @@ class NotificationDeliveryRepositoryTest {
         PreparedStatement statement = mock(PreparedStatement.class);
         Array textArray = mock(Array.class);
         Array payloadArray = mock(Array.class);
+        Array booleanArray = mock(Array.class);
+        ResultSet rows = mock(ResultSet.class);
 
         when(named.getJdbcTemplate()).thenReturn(jdbc);
-        doAnswer(invocation -> {
-            Consumer<TransactionStatus> callback = invocation.getArgument(0);
-            callback.accept(mock(TransactionStatus.class));
-            return null;
-        }).when(transaction).executeWithoutResult(any());
-        when(jdbc.execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any()))
+        when(transaction.execute(org.mockito.ArgumentMatchers
+                .<TransactionCallback<List<NotificationDelivery>>>any()))
                 .thenAnswer(invocation -> {
-                    ConnectionCallback<Integer> callback = invocation.getArgument(0);
+                    TransactionCallback<List<NotificationDelivery>> callback = invocation.getArgument(0);
+                    return callback.doInTransaction(mock(TransactionStatus.class));
+                });
+        when(jdbc.execute(org.mockito.ArgumentMatchers
+                .<ConnectionCallback<List<NotificationDelivery>>>any()))
+                .thenAnswer(invocation -> {
+                    ConnectionCallback<List<NotificationDelivery>> callback = invocation.getArgument(0);
                     return callback.doInConnection(connection);
                 });
         when(connection.createArrayOf(eq("text"), any(Object[].class))).thenReturn(textArray);
         when(connection.createArrayOf(eq("bytea"), any(Object[].class))).thenReturn(payloadArray);
+        when(connection.createArrayOf(eq("boolean"), any(Object[].class))).thenReturn(booleanArray);
         when(connection.prepareStatement(anyString())).thenReturn(statement);
-        when(statement.executeUpdate()).thenReturn(2);
+        when(statement.executeQuery()).thenReturn(rows);
+        when(rows.next()).thenReturn(true, false);
+        when(rows.getString("communication_id")).thenReturn("v1:first");
+        when(rows.getString("recipient_ispb")).thenReturn("20000001");
 
         NotificationDeliveryRepository repository =
                 new NotificationDeliveryRepository(named, transaction, Clock.systemUTC());
 
-        repository.saveAllIfAbsent(List.of(
+        List<NotificationDelivery> directDeliveries = repository.saveAllIfAbsent(List.of(
                 new IncomingNotification(
                         "v1:first",
                         "20000001",
@@ -108,10 +115,16 @@ class NotificationDeliveryRepositoryTest {
                         "v1",
                         new byte[]{3, 4}
                 )
-        ));
+        ), Set.of("20000001"), Duration.ofSeconds(30));
 
-        verify(transaction, times(1)).executeWithoutResult(any());
-        verify(jdbc, times(1)).execute(org.mockito.ArgumentMatchers.<ConnectionCallback<Integer>>any());
+        assertThat(directDeliveries).singleElement().satisfies(delivery -> {
+            assertThat(delivery.communicationId()).isEqualTo("v1:first");
+            assertThat(delivery.recipientIspb()).isEqualTo("20000001");
+            assertThat(delivery.payload()).containsExactly(1, 2);
+        });
+        verify(transaction, times(1)).execute(any());
+        verify(jdbc, times(1)).execute(org.mockito.ArgumentMatchers
+                .<ConnectionCallback<List<NotificationDelivery>>>any());
 
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(connection).prepareStatement(sql.capture());
@@ -119,12 +132,16 @@ class NotificationDeliveryRepositoryTest {
                 .contains("FROM unnest(")
                 .contains("?::text[]")
                 .contains("?::bytea[]")
-                .contains("ON CONFLICT (communication_id) DO NOTHING");
-        verify(statement, times(1)).executeUpdate();
+                .contains("?::boolean[]")
+                .contains("ON CONFLICT (communication_id) DO NOTHING")
+                .contains("WHERE delivery_status = 'IN_FLIGHT'");
+        verify(statement, times(1)).executeQuery();
         verify(connection, times(6)).createArrayOf(eq("text"), any(Object[].class));
         verify(connection, times(1)).createArrayOf(eq("bytea"), any(Object[].class));
+        verify(connection, times(1)).createArrayOf(eq("boolean"), any(Object[].class));
         verify(textArray, times(6)).free();
         verify(payloadArray).free();
+        verify(booleanArray).free();
     }
 
     @Test

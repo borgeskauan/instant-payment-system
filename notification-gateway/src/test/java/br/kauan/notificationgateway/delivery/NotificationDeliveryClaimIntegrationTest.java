@@ -85,6 +85,41 @@ class NotificationDeliveryClaimIntegrationTest {
     }
 
     @Test
+    void directDeliveryBecomesRecoverableOnlyAfterItsLeaseExpires() {
+        repository.saveAllIfAbsent(
+                List.of(new IncomingNotification(
+                        "v1:direct-crash",
+                        CONNECTED_ISPB,
+                        "SETTLED_NOTIFICATION",
+                        "E2E-direct-crash",
+                        "ACSC",
+                        "v1",
+                        "{}".getBytes(StandardCharsets.UTF_8)
+                )),
+                Set.of(CONNECTED_ISPB),
+                LEASE_DURATION
+        );
+
+        assertThat(repository.claimForLocalIspbs(
+                Set.of(CONNECTED_ISPB),
+                10,
+                LEASE_DURATION
+        )).isEmpty();
+
+        NotificationDeliveryRepository afterLease = new NotificationDeliveryRepository(
+                namedJdbcTemplate,
+                transactionTemplate,
+                Clock.fixed(NOW.plus(LEASE_DURATION).plusMillis(1), ZoneOffset.UTC)
+        );
+        assertThat(afterLease.claimForLocalIspbs(
+                Set.of(CONNECTED_ISPB),
+                10,
+                LEASE_DURATION
+        )).extracting(NotificationDelivery::communicationId)
+                .containsExactly("v1:direct-crash");
+    }
+
+    @Test
     void claimsOnlyDueNonAckedDeliveriesForConnectedRecipients() {
         save("v1:pending", CONNECTED_ISPB);
         save("v1:retry", CONNECTED_ISPB);
@@ -207,7 +242,7 @@ class NotificationDeliveryClaimIntegrationTest {
                 "ACSC",
                 "v1",
                 "{}".getBytes(StandardCharsets.UTF_8)
-        )));
+        )), Set.of(), LEASE_DURATION);
     }
 
     private void setState(String communicationId, String status, Instant nextAttemptAt) {

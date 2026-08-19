@@ -17,51 +17,70 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Repository
 public class NotificationDeliveryRepository {
 
     private static final String INSERT_ALL_SQL = """
-            INSERT INTO notification_delivery (
-                communication_id,
-                recipient_ispb,
-                event_type,
-                payment_id,
-                notification_status,
-                schema_version,
-                payload,
-                delivery_status,
-                next_attempt_at
+            WITH settings AS (
+                SELECT ?::timestamptz AS persisted_at,
+                       ?::timestamptz AS lease_until
+            ), inserted AS (
+                INSERT INTO notification_delivery (
+                    communication_id,
+                    recipient_ispb,
+                    event_type,
+                    payment_id,
+                    notification_status,
+                    schema_version,
+                    payload,
+                    delivery_status,
+                    attempt_count,
+                    next_attempt_at,
+                    last_attempt_at
+                )
+                SELECT
+                    incoming.communication_id,
+                    incoming.recipient_ispb,
+                    incoming.event_type,
+                    incoming.payment_id,
+                    incoming.notification_status,
+                    incoming.schema_version,
+                    incoming.payload,
+                    CASE WHEN incoming.direct_delivery THEN 'IN_FLIGHT' ELSE 'PENDING' END,
+                    CASE WHEN incoming.direct_delivery THEN 1 ELSE 0 END,
+                    CASE WHEN incoming.direct_delivery THEN settings.lease_until ELSE settings.persisted_at END,
+                    CASE WHEN incoming.direct_delivery THEN settings.persisted_at ELSE NULL END
+                FROM unnest(
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::text[],
+                    ?::bytea[],
+                    ?::boolean[]
+                ) AS incoming(
+                    communication_id,
+                    recipient_ispb,
+                    event_type,
+                    payment_id,
+                    notification_status,
+                    schema_version,
+                    payload,
+                    direct_delivery
+                )
+                CROSS JOIN settings
+                ON CONFLICT (communication_id) DO NOTHING
+                RETURNING communication_id, recipient_ispb, delivery_status
             )
-            SELECT
-                incoming.communication_id,
-                incoming.recipient_ispb,
-                incoming.event_type,
-                incoming.payment_id,
-                incoming.notification_status,
-                incoming.schema_version,
-                incoming.payload,
-                'PENDING',
-                ?
-            FROM unnest(
-                ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::bytea[]
-            ) AS incoming(
-                communication_id,
-                recipient_ispb,
-                event_type,
-                payment_id,
-                notification_status,
-                schema_version,
-                payload
-            )
-            ON CONFLICT (communication_id) DO NOTHING
+            SELECT communication_id, recipient_ispb
+            FROM inserted
+            WHERE delivery_status = 'IN_FLIGHT'
             """;
 
     private static final String CLAIM_SQL = """
@@ -135,13 +154,22 @@ public class NotificationDeliveryRepository {
         this.clock = clock;
     }
 
-    public void saveAllIfAbsent(List<IncomingNotification> notifications) {
+    public List<NotificationDelivery> saveAllIfAbsent(
+            List<IncomingNotification> notifications,
+            Set<String> connectedRecipients,
+            Duration leaseDuration
+    ) {
         if (notifications.isEmpty()) {
-            return;
+            return List.of();
         }
 
-        transactionTemplate.executeWithoutResult(ignored ->
-                jdbcTemplate.getJdbcTemplate().execute((ConnectionCallback<Integer>) connection -> {
+        Map<String, IncomingNotification> notificationsById = new HashMap<>();
+        for (IncomingNotification notification : notifications) {
+            notificationsById.putIfAbsent(notification.communicationId(), notification);
+        }
+
+        List<NotificationDelivery> insertedForDirectDelivery = transactionTemplate.execute(ignored ->
+                jdbcTemplate.getJdbcTemplate().execute((ConnectionCallback<List<NotificationDelivery>>) connection -> {
                     String[] communicationIds = new String[notifications.size()];
                     String[] recipientIspbs = new String[notifications.size()];
                     String[] eventTypes = new String[notifications.size()];
@@ -149,6 +177,7 @@ public class NotificationDeliveryRepository {
                     String[] notificationStatuses = new String[notifications.size()];
                     String[] schemaVersions = new String[notifications.size()];
                     byte[][] payloads = new byte[notifications.size()][];
+                    Boolean[] directDeliveryFlags = new Boolean[notifications.size()];
                     for (int index = 0; index < notifications.size(); index++) {
                         IncomingNotification notification = notifications.get(index);
                         communicationIds[index] = notification.communicationId();
@@ -158,6 +187,7 @@ public class NotificationDeliveryRepository {
                         notificationStatuses[index] = notification.status();
                         schemaVersions[index] = notification.schemaVersion();
                         payloads[index] = notification.payload();
+                        directDeliveryFlags[index] = connectedRecipients.contains(notification.recipientIspb());
                     }
 
                     Array communicationIdArray = null;
@@ -167,6 +197,7 @@ public class NotificationDeliveryRepository {
                     Array notificationStatusArray = null;
                     Array schemaVersionArray = null;
                     Array payloadArray = null;
+                    Array directDeliveryArray = null;
                     try {
                         communicationIdArray = connection.createArrayOf("text", communicationIds);
                         recipientIspbArray = connection.createArrayOf("text", recipientIspbs);
@@ -175,16 +206,32 @@ public class NotificationDeliveryRepository {
                         notificationStatusArray = connection.createArrayOf("text", notificationStatuses);
                         schemaVersionArray = connection.createArrayOf("text", schemaVersions);
                         payloadArray = connection.createArrayOf("bytea", payloads);
+                        directDeliveryArray = connection.createArrayOf("boolean", directDeliveryFlags);
                         try (PreparedStatement statement = connection.prepareStatement(INSERT_ALL_SQL)) {
-                            statement.setObject(1, timestamp(clock.instant()));
-                            statement.setArray(2, communicationIdArray);
-                            statement.setArray(3, recipientIspbArray);
-                            statement.setArray(4, eventTypeArray);
-                            statement.setArray(5, paymentIdArray);
-                            statement.setArray(6, notificationStatusArray);
-                            statement.setArray(7, schemaVersionArray);
-                            statement.setArray(8, payloadArray);
-                            return statement.executeUpdate();
+                            Instant now = clock.instant();
+                            statement.setObject(1, timestamp(now));
+                            statement.setObject(2, timestamp(now.plus(leaseDuration)));
+                            statement.setArray(3, communicationIdArray);
+                            statement.setArray(4, recipientIspbArray);
+                            statement.setArray(5, eventTypeArray);
+                            statement.setArray(6, paymentIdArray);
+                            statement.setArray(7, notificationStatusArray);
+                            statement.setArray(8, schemaVersionArray);
+                            statement.setArray(9, payloadArray);
+                            statement.setArray(10, directDeliveryArray);
+                            try (ResultSet rows = statement.executeQuery()) {
+                                List<NotificationDelivery> result = new java.util.ArrayList<>();
+                                while (rows.next()) {
+                                    String communicationId = rows.getString("communication_id");
+                                    IncomingNotification notification = notificationsById.get(communicationId);
+                                    result.add(new NotificationDelivery(
+                                            communicationId,
+                                            rows.getString("recipient_ispb"),
+                                            notification.payload()
+                                    ));
+                                }
+                                return List.copyOf(result);
+                            }
                         }
                     } finally {
                         free(
@@ -194,11 +241,13 @@ public class NotificationDeliveryRepository {
                                 paymentIdArray,
                                 notificationStatusArray,
                                 schemaVersionArray,
-                                payloadArray
+                                payloadArray,
+                                directDeliveryArray
                         );
                     }
                 })
         );
+        return insertedForDirectDelivery == null ? List.of() : insertedForDirectDelivery;
     }
 
     public List<NotificationDelivery> claimForLocalIspbs(

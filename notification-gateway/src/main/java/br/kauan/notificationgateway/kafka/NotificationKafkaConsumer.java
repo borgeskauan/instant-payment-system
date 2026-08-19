@@ -1,34 +1,52 @@
 package br.kauan.notificationgateway.kafka;
 
 import br.kauan.notificationgateway.delivery.IncomingNotification;
+import br.kauan.notificationgateway.delivery.NotificationDispatcher;
 import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
-import lombok.RequiredArgsConstructor;
+import br.kauan.notificationgateway.grpc.SubscriberRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Consumes every message from {@code psp-notifications} and records it as a
- * durable delivery. A separate worker sends pending deliveries to connected
- * gRPC subscribers and waits for ACKs.
+ * durable delivery. Newly inserted deliveries for locally connected PSPs are
+ * sent after the persistence transaction commits. A recovery worker handles
+ * disconnected recipients, send failures and expired leases.
  *
  * <p>The payload remains opaque. Routing and idempotency metadata come from
  * Kafka key/headers produced by the SPI.
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class NotificationKafkaConsumer {
 
     private static final String NOTIFICATIONS_TOPIC = "psp-notifications";
 
     private final NotificationDeliveryRepository deliveryRepository;
+    private final SubscriberRegistry subscriberRegistry;
+    private final NotificationDispatcher notificationDispatcher;
+    private final Duration leaseDuration;
+
+    public NotificationKafkaConsumer(
+            NotificationDeliveryRepository deliveryRepository,
+            SubscriberRegistry subscriberRegistry,
+            NotificationDispatcher notificationDispatcher,
+            @Value("${notification-gateway.delivery.lease-duration-ms:30000}") long leaseDurationMillis
+    ) {
+        this.deliveryRepository = deliveryRepository;
+        this.subscriberRegistry = subscriberRegistry;
+        this.notificationDispatcher = notificationDispatcher;
+        this.leaseDuration = Duration.ofMillis(leaseDurationMillis);
+    }
 
     @KafkaListener(
             topics = NOTIFICATIONS_TOPIC,
@@ -62,7 +80,14 @@ public class NotificationKafkaConsumer {
             notifications.add(notification);
         }
 
-        deliveryRepository.saveAllIfAbsent(notifications);
+        var directDeliveries = deliveryRepository.saveAllIfAbsent(
+                notifications,
+                subscriberRegistry.connectedIspbs(),
+                leaseDuration
+        );
+        if (!directDeliveries.isEmpty()) {
+            notificationDispatcher.dispatch(directDeliveries);
+        }
     }
 
     private String requiredHeader(ConsumerRecord<String, byte[]> record, String name) {

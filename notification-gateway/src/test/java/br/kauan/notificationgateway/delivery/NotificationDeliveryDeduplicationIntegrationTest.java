@@ -1,7 +1,5 @@
 package br.kauan.notificationgateway.delivery;
 
-import br.kauan.notificationgateway.kafka.NotificationKafkaConsumer;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,7 +14,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +39,7 @@ class NotificationDeliveryDeduplicationIntegrationTest {
 
     private static final String COMMUNICATION_ID = "v1:deduplication-integration";
     private static final byte[] PAYLOAD = "{\"status\":\"ACSC\"}".getBytes(StandardCharsets.UTF_8);
+    private static final Duration LEASE_DURATION = Duration.ofSeconds(30);
 
     @Autowired
     private NotificationDeliveryRepository repository;
@@ -53,9 +54,16 @@ class NotificationDeliveryDeduplicationIntegrationTest {
 
     @Test
     void duplicateKafkaPublicationsCreateOneLogicalDelivery() {
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository);
-
-        consumer.consume(List.of(notificationRecord(10L), notificationRecord(11L)));
+        List<NotificationDelivery> firstDispatch = repository.saveAllIfAbsent(
+                List.of(incomingDelivery(COMMUNICATION_ID, "20000001")),
+                Set.of("20000001"),
+                LEASE_DURATION
+        );
+        List<NotificationDelivery> replayDispatch = repository.saveAllIfAbsent(
+                List.of(incomingDelivery(COMMUNICATION_ID, "20000001")),
+                Set.of("20000001"),
+                LEASE_DURATION
+        );
 
         Integer deliveryCount = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM notification_delivery WHERE communication_id = ?",
@@ -73,22 +81,30 @@ class NotificationDeliveryDeduplicationIntegrationTest {
                 "SELECT delivery_status FROM notification_delivery WHERE communication_id = ?",
                 String.class,
                 COMMUNICATION_ID
-        )).isEqualTo(DeliveryStatus.PENDING.name());
+        )).isEqualTo(DeliveryStatus.IN_FLIGHT.name());
+        assertThat(firstDispatch).extracting(NotificationDelivery::communicationId)
+                .containsExactly(COMMUNICATION_ID);
+        assertThat(replayDispatch).isEmpty();
     }
 
     @Test
-    void oneKafkaPollPersistsEachDistinctNotification() {
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository);
+    void connectedRecipientsAreLeasedForDirectDispatchWhileDisconnectedRecipientsRemainPending() {
+        List<NotificationDelivery> directDispatches = repository.saveAllIfAbsent(
+                List.of(
+                        incomingDelivery("v1:connected", "20000001"),
+                        incomingDelivery("v1:disconnected", "20000002")
+                ),
+                Set.of("20000001"),
+                LEASE_DURATION
+        );
 
-        consumer.consume(List.of(
-                notificationRecord(10L, "v1:first", "E2E-1"),
-                notificationRecord(11L, "v1:second", "E2E-2")
-        ));
-
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM notification_delivery",
-                Integer.class
-        )).isEqualTo(2);
+        assertThat(directDispatches)
+                .extracting(NotificationDelivery::communicationId, NotificationDelivery::recipientIspb)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("v1:connected", "20000001"));
+        assertThat(deliveryStatus("v1:connected")).isEqualTo("IN_FLIGHT");
+        assertThat(attemptCount("v1:connected")).isOne();
+        assertThat(deliveryStatus("v1:disconnected")).isEqualTo("PENDING");
+        assertThat(attemptCount("v1:disconnected")).isZero();
     }
 
     @Test
@@ -96,7 +112,11 @@ class NotificationDeliveryDeduplicationIntegrationTest {
         IncomingNotification valid = incomingNotification("v1:valid", "20000001", "v1");
         IncomingNotification invalid = incomingNotification("v1:invalid", "20000001", null);
 
-        assertThatThrownBy(() -> repository.saveAllIfAbsent(List.of(valid, invalid)))
+        assertThatThrownBy(() -> repository.saveAllIfAbsent(
+                List.of(valid, invalid),
+                Set.of("20000001"),
+                LEASE_DURATION
+        ))
                 .isInstanceOf(DataAccessException.class);
 
         assertThat(jdbcTemplate.queryForObject(
@@ -108,11 +128,11 @@ class NotificationDeliveryDeduplicationIntegrationTest {
 
     @Test
     void bulkAcknowledgementUpdatesOnlyMatchingAuthenticatedPairs() {
-        repository.saveAllIfAbsent(List.of(
+        savePending(
                 incomingDelivery("v1:first", "20000001"),
                 incomingDelivery("v1:second", "20000002"),
                 incomingDelivery("v1:third", "20000003")
-        ));
+        );
 
         int updated = repository.acknowledgeAll(List.of(
                 new Acknowledgement("v1:first", "20000001"),
@@ -128,37 +148,13 @@ class NotificationDeliveryDeduplicationIntegrationTest {
 
     @Test
     void replayedBulkAcknowledgementDoesNotCreateAnotherTransition() {
-        repository.saveAllIfAbsent(List.of(incomingDelivery("v1:first", "20000001")));
+        savePending(incomingDelivery("v1:first", "20000001"));
         List<Acknowledgement> batch =
                 List.of(new Acknowledgement("v1:first", "20000001"));
 
         assertThat(repository.acknowledgeAll(batch)).isOne();
         assertThat(repository.acknowledgeAll(batch)).isZero();
         assertThat(deliveryStatus("v1:first")).isEqualTo("ACKED");
-    }
-
-    private ConsumerRecord<String, byte[]> notificationRecord(long offset) {
-        return notificationRecord(offset, COMMUNICATION_ID, "E2E-1");
-    }
-
-    private ConsumerRecord<String, byte[]> notificationRecord(
-            long offset,
-            String communicationId,
-            String paymentId
-    ) {
-        ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
-                "psp-notifications",
-                0,
-                offset,
-                "20000001",
-                PAYLOAD
-        );
-        record.headers().add("notification.communication-id", bytes(communicationId));
-        record.headers().add("notification.event-type", bytes("SETTLED_NOTIFICATION"));
-        record.headers().add("notification.payment-id", bytes(paymentId));
-        record.headers().add("notification.status", bytes("ACSC"));
-        record.headers().add("notification.schema-version", bytes("v1"));
-        return record;
     }
 
     private IncomingNotification incomingDelivery(
@@ -192,7 +188,16 @@ class NotificationDeliveryDeduplicationIntegrationTest {
         );
     }
 
-    private byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+    private int attemptCount(String communicationId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT attempt_count FROM notification_delivery WHERE communication_id = ?",
+                Integer.class,
+                communicationId
+        );
     }
+
+    private void savePending(IncomingNotification... notifications) {
+        repository.saveAllIfAbsent(List.of(notifications), Set.of(), LEASE_DURATION);
+    }
+
 }
