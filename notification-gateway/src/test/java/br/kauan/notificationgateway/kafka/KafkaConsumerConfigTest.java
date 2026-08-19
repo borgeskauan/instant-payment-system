@@ -21,14 +21,14 @@ class KafkaConsumerConfigTest {
             );
 
     @Test
-    void defaultsNotificationListenerConcurrencyToTwo() {
+    void defaultsNotificationListenerConcurrencyToOne() {
         contextRunner.run(context -> {
             var factory = context.getBean(
                     "notificationKafkaListenerContainerFactory",
                     ConcurrentKafkaListenerContainerFactory.class
             );
 
-            assertThat(ReflectionTestUtils.getField(factory, "concurrency")).isEqualTo(2);
+            assertThat(ReflectionTestUtils.getField(factory, "concurrency")).isEqualTo(1);
         });
     }
 

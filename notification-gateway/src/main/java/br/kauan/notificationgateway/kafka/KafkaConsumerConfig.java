@@ -29,7 +29,7 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.auto-offset-reset:earliest}")
     private String autoOffsetReset;
 
-    @Value("${notification-gateway.kafka.listener-concurrency:2}")
+    @Value("${notification-gateway.kafka.listener-concurrency:1}")
     private int listenerConcurrency;
 
     @Bean
