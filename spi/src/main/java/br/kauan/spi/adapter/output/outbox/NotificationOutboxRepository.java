@@ -2,9 +2,13 @@ package br.kauan.spi.adapter.output.outbox;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Array;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +17,54 @@ import java.util.List;
 public class NotificationOutboxRepository {
 
     private static final int MAX_ERROR_LENGTH = 1_000;
+
+    private static final String INSERT_ALL_SQL = """
+            INSERT INTO notification_outbox (
+                communication_id,
+                recipient_ispb,
+                event_type,
+                payment_id,
+                notification_status,
+                schema_version,
+                payload,
+                publication_status,
+                attempt_count,
+                next_attempt_at,
+                created_at,
+                updated_at
+            )
+            SELECT
+                incoming.communication_id,
+                incoming.recipient_ispb,
+                incoming.event_type,
+                incoming.payment_id,
+                incoming.notification_status,
+                incoming.schema_version,
+                incoming.payload,
+                'PENDING',
+                0,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            FROM unnest(
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::text[],
+                ?::bytea[]
+            ) AS incoming(
+                communication_id,
+                recipient_ispb,
+                event_type,
+                payment_id,
+                notification_status,
+                schema_version,
+                payload
+            )
+            ON CONFLICT (communication_id) DO NOTHING
+            """;
 
     private static final String FIND_PENDING_SQL = """
             SELECT
@@ -42,40 +94,62 @@ public class NotificationOutboxRepository {
             return;
         }
 
-        StringBuilder sql = new StringBuilder("""
-                INSERT INTO notification_outbox (
-                    communication_id,
-                    recipient_ispb,
-                    event_type,
-                    payment_id,
-                    notification_status,
-                    schema_version,
-                    payload,
-                    publication_status,
-                    attempt_count,
-                    next_attempt_at,
-                    created_at,
-                    updated_at
-                ) VALUES
-                """);
-        List<Object> parameters = new ArrayList<>(notifications.size() * 7);
-        for (int index = 0; index < notifications.size(); index++) {
-            if (index > 0) {
-                sql.append(",\n");
+        jdbcTemplate.execute((ConnectionCallback<Integer>) connection -> {
+            String[] communicationIds = new String[notifications.size()];
+            String[] recipientIspbs = new String[notifications.size()];
+            String[] eventTypes = new String[notifications.size()];
+            String[] paymentIds = new String[notifications.size()];
+            String[] notificationStatuses = new String[notifications.size()];
+            String[] schemaVersions = new String[notifications.size()];
+            byte[][] payloads = new byte[notifications.size()][];
+            for (int index = 0; index < notifications.size(); index++) {
+                NotificationPublication notification = notifications.get(index);
+                communicationIds[index] = notification.communicationId();
+                recipientIspbs[index] = notification.recipientIspb();
+                eventTypes[index] = notification.eventType();
+                paymentIds[index] = notification.paymentId();
+                notificationStatuses[index] = notification.status();
+                schemaVersions[index] = notification.schemaVersion();
+                payloads[index] = notification.payload();
             }
-            sql.append("(?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
-            NotificationPublication notification = notifications.get(index);
-            parameters.add(notification.communicationId());
-            parameters.add(notification.recipientIspb());
-            parameters.add(notification.eventType());
-            parameters.add(notification.paymentId());
-            parameters.add(notification.status());
-            parameters.add(notification.schemaVersion());
-            parameters.add(notification.payload());
-        }
-        sql.append("\nON CONFLICT (communication_id) DO NOTHING");
 
-        jdbcTemplate.update(sql.toString(), parameters.toArray());
+            Array communicationIdArray = null;
+            Array recipientIspbArray = null;
+            Array eventTypeArray = null;
+            Array paymentIdArray = null;
+            Array notificationStatusArray = null;
+            Array schemaVersionArray = null;
+            Array payloadArray = null;
+            try {
+                communicationIdArray = connection.createArrayOf("text", communicationIds);
+                recipientIspbArray = connection.createArrayOf("text", recipientIspbs);
+                eventTypeArray = connection.createArrayOf("text", eventTypes);
+                paymentIdArray = connection.createArrayOf("text", paymentIds);
+                notificationStatusArray = connection.createArrayOf("text", notificationStatuses);
+                schemaVersionArray = connection.createArrayOf("text", schemaVersions);
+                payloadArray = connection.createArrayOf("bytea", payloads);
+                try (PreparedStatement statement = connection.prepareStatement(INSERT_ALL_SQL)) {
+                    statement.setArray(1, communicationIdArray);
+                    statement.setArray(2, recipientIspbArray);
+                    statement.setArray(3, eventTypeArray);
+                    statement.setArray(4, paymentIdArray);
+                    statement.setArray(5, notificationStatusArray);
+                    statement.setArray(6, schemaVersionArray);
+                    statement.setArray(7, payloadArray);
+                    return statement.executeUpdate();
+                }
+            } finally {
+                free(
+                        communicationIdArray,
+                        recipientIspbArray,
+                        eventTypeArray,
+                        paymentIdArray,
+                        notificationStatusArray,
+                        schemaVersionArray,
+                        payloadArray
+                );
+            }
+        });
     }
 
     public List<NotificationPublication> findPending(int limit) {
@@ -151,6 +225,14 @@ public class NotificationOutboxRepository {
 
     private String placeholders(int count) {
         return String.join(", ", java.util.Collections.nCopies(count, "?"));
+    }
+
+    private void free(Array... arrays) throws SQLException {
+        for (Array array : arrays) {
+            if (array != null) {
+                array.free();
+            }
+        }
     }
 
     private String truncate(String error) {

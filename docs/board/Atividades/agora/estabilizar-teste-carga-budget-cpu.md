@@ -934,3 +934,256 @@ notificação, aumentam outcomes e melhoram o ingresso sem regressão funcional.
 Não alterar polling ou batch size neste mesmo experimento. O próximo passo deve
 escolher outra fronteira dominante do PostgreSQL a partir do novo perfil; nenhum
 run de 15 minutos está autorizado ainda.
+
+## Persistência de notificações com um consumer
+
+A intervenção `notification-persistence-concurrency-one/20260819_013847`
+reduziu somente a concorrência Kafka do notification-gateway de dois consumers
+para um. O workload, os recursos, o batch máximo, o SPI e as demais
+configurações permaneceram inalterados.
+
+Contra `notification-claim-due-index/20260819_011815`, a persistência em
+`notification_delivery` mudou assim:
+
+- chamadas: `1.634 -> 722`;
+- rows por chamada: `109,442 -> 214,443`;
+- tempo por row: `0,542 -> 0,215 ms`;
+- máximo por chamada: `590,392 -> 285,224 ms`;
+- CPU média do notification-gateway: `24,980% -> 13,571%`.
+
+O PostgreSQL permaneceu saturado em um core (`103,565%` de CPU média). A
+quantidade de pagamentos admitidos subiu de `81.221` para `96.340`, mas o
+trabalho adicional avançou até a fronteira PACS.002 e o número de outcomes
+observados caiu de `58.368` para `43.848`. Isso não caracteriza regressão do
+insert local: a variante removeu execuções e reduziu aproximadamente 60% do
+custo SQL por delivery, enquanto expôs a próxima fronteira limitada pelo mesmo
+core.
+
+Todos os `134.999/134.999` originais e `8.574/8.574` replays receberam HTTP
+2xx, sem outcome contraditório nem violação de replay. O run permaneceu
+inválido, com mínimo rolling de `1.967 TPS`, `91.151` outcomes ausentes e
+latência end-to-end p95/p99 de `84.295,718 / 86.584,256 ms`.
+
+**Decisão: KEEP.** Um consumer forma lotes maiores e reduz o custo da
+persistência de delivery sem limitar o ingresso. Voltar a dois consumers apenas
+reduziria artificialmente o trabalho que alcança as etapas posteriores.
+
+## Diagnóstico da transição PACS.002 ACCEPTED
+
+No mesmo run, a transição
+`WAITING_ACCEPTANCE -> ACCEPTED_AND_SETTLED` foi a consulta individual mais
+cara do PostgreSQL:
+
+- `91` chamadas e `31.366` rows, batch médio de `344,681`;
+- `79.515,158 ms` acumulados, média de `873,793 ms` e máximo de
+  `18.673,779 ms`;
+- apenas `385,099 ms` de leitura física e `10,567 ms` de escrita física;
+- `220` amostras ativas sem wait event, nenhuma com blocking PID, e uma amostra
+  em `ClientRead`;
+- nos instantes em que a query estava ativa havia em média `2,534` backends
+  ativos e `1,991` executáveis sem wait event, concorrendo por um container
+  limitado a um vCPU.
+
+A leitura e o lock prévios dos mesmos pagamentos também ocorreram `91` vezes,
+mas acumularam somente `3.507,201 ms`, média de `38,541 ms`. Portanto essa etapa
+não explica os `79,5 s` atribuídos ao update.
+
+Para separar custo intrínseco de espera por CPU, o update foi reproduzido com
+`350` pagamentos `WAITING_ACCEPTANCE` enquanto o ambiente estava quiescente,
+dentro de `BEGIN`/`ROLLBACK`. O `EXPLAIN (ANALYZE, BUFFERS, WAL)` concluiu em
+`43,574 ms`; aproximadamente `39 ms` pertenciam exclusivamente à seleção
+artificial dos fixtures. O `Function Scan` sobre `unnest`, os `350` index scans
+pela chave primária e o update consumiram aproximadamente `4 ms`. Não houve
+sequential scan no caminho real do update.
+
+O teste quiescente gerou `392` registros de WAL e `203.305` bytes, incluindo
+`29` full-page images, mas esse volume não produziu latência relevante. As
+estatísticas acumuladas da tabela mostram `96.726` updates, dos quais `37.981`
+foram HOT (`39,27%`), zero tuplas mortas após dois autovacuums, heap de `33 MB`
+e apenas o índice primário, com aproximadamente `9,7 MB`. A proporção de HOT
+updates pode representar amplificação secundária, mas não explica uma operação
+que custa poucos milissegundos sem competição.
+
+**Conclusão diagnóstica:** o update PACS.002 não é intrinsecamente lento com o
+batch observado. Seu tempo sob workload é tempo de parede acumulado enquanto o
+backend permanece executável e disputa o único core do PostgreSQL com as demais
+transações. O PACS.002 é a principal vítima individual dessa fila de CPU, não
+uma evidência de plano ruim, row lock, storage I/O ou bloat dominante. O bundle
+de 60 segundos já continha statements, activity, I/O, CPU e JFR; por isso não
+foi executado outro workload idêntico somente para repetir a mesma coleta.
+
+### CPU real por família SQL
+
+O diagnóstico `pacs002-executor-cpu-diagnostic/20260819_125200` ativou
+temporariamente o `log_executor_stats` nativo do PostgreSQL, executou uma única
+carga de 60 segundos e restaurou a configuração para `off` imediatamente após
+o run. O primeiro smoke de preparação expirou durante o prewarm HTTP/2, antes
+de gerar tráfego. Na mesma stack limpa e já aquecida, o smoke manual qualificou
+`1.250/1.250` originais, todos os outcomes e `112/112` replays.
+
+O profiler produziu `7.898` entradas e aproximadamente `41 MB` de log. Queries
+`UPDATE ... RETURNING` emitiram um registro para o executor interno e outro
+registro externo cumulativo. A agregação preservou somente o registro externo;
+como controle, as `1.000` entradas de ACK resultaram exatamente nas `500`
+chamadas registradas pelo `pg_stat_statements`.
+
+Na janela ativa, `1.977` execuções deduplicadas atribuíram `42,750 s` de CPU de
+executor (`user + system`):
+
+| família SQL | CPU | participação da CPU medida |
+| --- | ---: | ---: |
+| persistência em `notification_delivery` | `7,575 s` | `17,72%` |
+| claim de `notification_delivery` | `7,350 s` | `17,19%` |
+| insert da notification outbox | `7,200 s` | `16,84%` |
+| insert PACS.008 | `4,905 s` | `11,47%` |
+| ACK de delivery | `4,310 s` | `10,08%` |
+| publicação da notification outbox | `3,970 s` | `9,29%` |
+| auditoria de pagamentos | `2,974 s` | `6,96%` |
+| lock/leitura PACS.002 | `1,531 s` | `3,58%` |
+| poll da notification outbox | `1,392 s` | `3,26%` |
+| update da transição PACS.002 | `1,228 s` | `2,87%` |
+
+O ciclo de outbox/delivery somou `31,796 s`, ou `74,38%` da CPU atribuída aos
+executores. Já lock, transição e operações de saldo diretamente associadas ao
+PACS.002 somaram `2,836 s`, ou `6,63%`. Auditoria e outbox são compartilhadas
+por diferentes resultados de negócio e não podem ser atribuídas integralmente
+ao accepted apenas pelo texto SQL.
+
+O update PACS.002 consumiu em média `23,173 ms` de CPU e `119,914 ms` de tempo
+transcorrido por chamada. Portanto somente aproximadamente um quinto do tempo
+observado correspondeu a CPU do próprio executor. As `53` amostras do lock e
+as `53` transições da janela preservaram batches grandes; nenhuma amostra da
+transição teve blocking PID.
+
+O PostgreSQL permaneceu limitado a um core, com `103,144%` de CPU média. O
+profiler não cobre parser, planner, commit, processos de background nem seu
+próprio custo de formatação/escrita do log; por isso os `42,750 s` não devem ser
+interpretados como toda a CPU do container. Ele também perturbou o experimento:
+o log cresceu `41 MB`, havia em média `4,095` backends executáveis, e a geração
+rolling variou de `1.119` a `3.744 TPS`. Este run serve somente para atribuição
+diagnóstica, não para comparação de throughput ou SLA.
+
+**Conclusão revisada:** o ranking por tempo transcorrido superestimava o papel
+do update PACS.002. A transição é afetada pela saturação, mas não é consumidora
+dominante de CPU. O trabalho dominante mensurado está distribuído no ciclo de
+outbox e delivery de notificações. Qualquer próxima intervenção deve partir da
+CPU por família, e não do `total_exec_time` isolado do `pg_stat_statements`.
+
+### Investigação do ciclo de notificações
+
+Uma notificação concluída atravessa hoje cinco mutações PostgreSQL: insert da
+outbox, marcação da outbox como publicada, insert da delivery, claim da delivery
+e ACK. A agregação de todos os `queryid` preservados — sem o limite de 50 rows do
+artefato CSV — caracterizou o trabalho da execução completa assim:
+
+| operação | chamadas | rows | rows/chamada | tempo/row | WAL/row |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| insert da outbox | `610` | `173.594` | `284,580` | `0,383518 ms` | `1.149 B` |
+| publicação da outbox | `337` | `172.115` | `510,727` | `0,237188 ms` | `893 B` |
+| insert da delivery | `668` | `171.404` | `256,593` | `0,428209 ms` | `1.124 B` |
+| claim da delivery | `552` | `153.439` | `277,969` | `0,510846 ms` | `1.131 B` |
+| ACK da delivery | `500` | `151.441` | `302,882` | `0,303146 ms` | `897 B` |
+
+Esses números abrangem warmup, ativo e drain e servem para caracterizar custo
+unitário; a participação de CPU continua sendo a medição da janela ativa da
+seção anterior. Uma notificação que percorre as cinco etapas gera, na ordem de
+grandeza observada, aproximadamente `5,2 KB` de WAL somente nesse ciclo.
+
+Batching pequeno não é a explicação dominante. No insert da outbox, `84%` das
+rows estavam em lotes de pelo menos `250`; na publicação eram `96%`. As médias
+das demais operações também ficaram entre `256` e `303` rows por chamada.
+
+O custo é amplificado pela representação persistida. As rows amostradas têm em
+média `666 B` na outbox e `686 B` na delivery, dos quais aproximadamente
+`452-471 B` são o payload imutável. A stack, já após continuar drenando trabalho,
+registrava `243.283` inserts e `243.283` updates na outbox, além de `243.283`
+inserts e `312.380` updates na delivery, com zero HOT update nas duas tabelas.
+Isso é estrutural: a publicação altera o predicado do índice parcial da outbox;
+o claim altera `next_attempt_at` nos índices de delivery; e o ACK remove a row
+dos mesmos índices. Cada transição, portanto, cria nova versão de heap e trabalho
+de índice, carregando junto o payload que não mudou.
+
+Há também uma parcela acidental e menor, mas diretamente atacável. O insert da
+outbox constrói `VALUES` dinamicamente, com até `7.000` bind parameters para um
+lote de `1.000`. O PostgreSQL reteve `316` formatos de statement para apenas
+`610` chamadas; o SQL médio tinha `36.024` caracteres e o máximo `121.203`.
+No JFR do SPI, `29` amostras em `AbstractStringBuilder` e `12` no parser JDBC —
+`41` das `474` amostras de execução — pertenciam especificamente a
+`NotificationOutboxRepository.insertAll`. O insert de delivery já demonstra o
+padrão estável equivalente com arrays e `unnest`.
+
+**Hipótese para o próximo experimento:** substituir somente o `VALUES` dinâmico
+do insert da outbox por um statement fixo com arrays e `unnest`, preservando a
+transação, `ON CONFLICT`, payload e tamanho dos lotes. Essa mudança remove
+construção, parsing e planejamento proporcionais ao tamanho do SQL sem alterar
+o contrato de durabilidade. Ela deve ser avaliada isoladamente antes de qualquer
+mudança estrutural em retenção, payload ou estados de delivery. O run com
+`log_executor_stats` não é baseline de performance para esse A/B por causa da
+perturbação já documentada.
+
+A intervenção foi implementada no `NotificationOutboxRepository`: lotes de
+qualquer tamanho agora usam o mesmo statement e sete arrays JDBC. O teste
+focado protege a estabilidade do SQL entre tamanhos de lote e a liberação dos
+arrays; os testes com PostgreSQL real preservam bytes, status nulo,
+idempotência e rollback.
+
+### A/B do insert estável da notification outbox
+
+O B `outbox-unnest/20260819_140346` foi executado uma única vez, após o
+preparador qualificar na primeira tentativa os `1.250/1.250` pagamentos do
+smoke, seus `1.000/1.000` PACS.002 e todos os replays. O A comparável é
+`notification-persistence-concurrency-one/20260819_013847`; os snapshots de
+perfil e execution plan dos dois bundles são byte a byte iguais. A única
+mudança no caminho medido foi o insert da outbox com SQL fixo, arrays e
+`unnest`.
+
+O mecanismo mudou conforme a hipótese:
+
+- o snapshot B contém um único `queryid` para o insert, com `811` chamadas e
+  `216.025` rows; o top 50 do A já continha pelo menos `20` variantes, embora
+  não permita reconstruir todas as variantes dinâmicas daquele run;
+- no JFR comparável, as amostras que continham
+  `NotificationOutboxRepository.insertAll` caíram de `40/202` para `11/344`
+  amostras de execução (`19,80% -> 3,20%`);
+- dentro desse caminho, as `10` amostras de `AbstractStringBuilder` e as `6`
+  do parser JDBC observadas no A caíram a zero no B;
+- o PostgreSQL continuou saturado no mesmo nível durante a janela ativa
+  (`103,565% -> 103,293%` de CPU média). A intervenção reduz custo por trabalho,
+  mas ainda não cria folga porque a stack usa a capacidade liberada para
+  avançar mais notificações.
+
+Esse avanço apareceu no resultado end-to-end:
+
+| Evidência | A | B |
+| --- | ---: | ---: |
+| pagamentos originais aceitos | `134.999` | `135.000` |
+| outcomes observados até o deadline | `43.848` | `62.940` |
+| outcomes ausentes | `91.151` | `72.060` |
+| payer notifications/s no ativo | `125,933` | `472,900` |
+| latência end-to-end p95 | `84.295,718 ms` | `63.706,364 ms` |
+| latência end-to-end p99 | `86.584,256 ms` | `67.485,210 ms` |
+
+Os outcomes cresceram `43,54%` e o p95 caiu `24,43%`. O trabalho adicional
+também elevou a CPU média de SPI e gateway; isso é coerente com mais mensagens
+atravessando o pipeline, não com a transferência do custo removido para esses
+componentes.
+
+O ganho por cenário não foi uniforme: happy-path passou de `25.154` para
+`46.371` outcomes, enquanto insufficient-funds caiu de `18.694` para `16.569`
+antes do deadline. O teste não oferece fairness temporal por cenário e ambos
+compartilham o mesmo ciclo de notificação saturado. Essa redistribuição deve ser
+preservada como ressalva do A/B, mas não constitui regressão semântica: não
+houve outcome contraditório, os `135.000/135.000` originais receberam HTTP 2xx
+e os replays PACS.008 e PACS.002 tiveram zero violações. A checagem posterior
+encontrou Kafka quiescente.
+
+Os dois runs permanecem inválidos para aprovação: o B teve mínimo rolling de
+`1.960 TPS` e ainda encerrou com `72.060` outcomes ausentes e latência muito
+acima do SLA. Portanto esta mudança não encerra a estabilização nem autoriza o
+run de 15 minutos.
+
+**Decisão: KEEP.** O statement estável remove a construção e o parsing
+proporcionais ao tamanho do lote, preserva o contrato funcional e produz ganho
+end-to-end mensurável sem reduzir a carga original admitida. O próximo trabalho
+deve partir novamente do perfil dominante do PostgreSQL após esta intervenção,
+em vez de continuar micro-otimizando o mesmo insert.
