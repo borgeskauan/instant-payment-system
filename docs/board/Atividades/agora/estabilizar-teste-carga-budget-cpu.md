@@ -37,8 +37,8 @@ duas stacks compartilhando o mesmo PostgreSQL.
   PostgreSQL como prova de otimização. Medir primeiro trabalho útil por unidade
   de tempo, custo por row/pagamento, inclinação do backlog e conclusão
   end-to-end; a CPU só ganha folga quando a capacidade ultrapassa a demanda.
-- Se a evidência for inconclusiva, adicionar apenas a instrumentação necessária
-  e medir novamente antes de alterar a arquitetura.
+- Se a evidência não separar as hipóteses, adicionar apenas a instrumentação
+  necessária e medir novamente antes de alterar a arquitetura.
 
 ## Workloads
 
@@ -400,8 +400,8 @@ depois, todas ficaram aproximadamente `3,9 s` além desse deadline artificial.
 Não houve replay ausente cujo instante agendado ainda coubesse no deadline, e os
 50 PACS.002 originais receberam HTTP 2xx.
 
-Portanto, o resultado correto é **batching promissor, mas inconclusivo até a
-correção da fronteira temporal**. O run B preservou ACSC e RJCT/AM04, melhorou
+O batching mostrou ganhos locais e end-to-end, mas a fronteira temporal precisa
+ser corrigida antes de uma nova comparação. O run B preservou ACSC e RJCT/AM04, melhorou
 PACS.002, notificações e outcomes, reduziu chamadas em 99,0%, tempo por row em
 66,6% e commits globais em 87,4%, além de eliminar os waits ativos de WAL do
 ACK. Ainda assim, não se fará outro A/B nem run de 15 minutos nesta correção. A
@@ -929,8 +929,8 @@ posterior encontrou lag Kafka zero, mas ainda havia `88.361` deliveries
 `PENDING`, novamente confirmando que offsets drenados não representam
 conclusão end-to-end.
 
-**Decisão: KEEP.** A consulta e os índices simplificados reduzem trabalho por
-notificação, aumentam outcomes e melhoram o ingresso sem regressão funcional.
+A consulta e os índices simplificados foram mantidos porque reduzem trabalho
+por notificação, aumentam outcomes e melhoram o ingresso sem regressão funcional.
 Não alterar polling ou batch size neste mesmo experimento. O próximo passo deve
 escolher outra fronteira dominante do PostgreSQL a partir do novo perfil; nenhum
 run de 15 minutos está autorizado ainda.
@@ -964,7 +964,7 @@ Todos os `134.999/134.999` originais e `8.574/8.574` replays receberam HTTP
 inválido, com mínimo rolling de `1.967 TPS`, `91.151` outcomes ausentes e
 latência end-to-end p95/p99 de `84.295,718 / 86.584,256 ms`.
 
-**Decisão: KEEP.** Um consumer forma lotes maiores e reduz o custo da
+Um consumer foi mantido porque forma lotes maiores e reduz o custo da
 persistência de delivery sem limitar o ingresso. Voltar a dois consumers apenas
 reduziria artificialmente o trabalho que alcança as etapas posteriores.
 
@@ -1182,7 +1182,7 @@ Os dois runs permanecem inválidos para aprovação: o B teve mínimo rolling de
 acima do SLA. Portanto esta mudança não encerra a estabilização nem autoriza o
 run de 15 minutos.
 
-**Decisão: KEEP.** O statement estável remove a construção e o parsing
+O statement estável foi mantido porque remove a construção e o parsing
 proporcionais ao tamanho do lote, preserva o contrato funcional e produz ganho
 end-to-end mensurável sem reduzir a carga original admitida. O próximo trabalho
 deve partir novamente do perfil dominante do PostgreSQL após esta intervenção,
@@ -1326,8 +1326,8 @@ retryable porque o dispatch encontrou o subscriber já removido. Os logs não
 mostram desconexão desses PSPs antes do deadline; as rows permaneceram duráveis
 e recuperáveis, conforme o contrato at-least-once.
 
-**Decisão: KEEP.** A primeira entrega não depende mais de polling/claim, o custo
-esperado desapareceu e houve ganho end-to-end sem regressão semântica. O próximo
+A primeira entrega sem polling/claim foi mantida porque o custo esperado
+desapareceu e houve ganho end-to-end sem regressão semântica. O próximo
 diagnóstico deve reordenar o trabalho PostgreSQL remanescente; `markPublished`
 continua como cleanup possível, mas não foi incluído nesta intervenção.
 
@@ -1644,7 +1644,207 @@ O resultado end-to-end foi misto:
 O PostgreSQL continuou saturado, e o run ainda não provou o piso sustentado nem
 o SLA. A redução de polling é real e não houve regressão semântica, mas este
 único diagnóstico curto não prova ganho de capacidade: houve menos PACS.002,
-enquanto outcomes totais e latências ficaram próximos ou melhores. **Decisão:
-manter a simplificação implementada, mas classificar o efeito de performance
-end-to-end como inconclusivo.** Ela não encerra a estabilização e não autoriza
-atribuir ganho de throughput ao fast path.
+enquanto outcomes totais e latências ficaram próximos ou melhores. A
+simplificação foi mantida pelo ganho estrutural, mas este diagnóstico isolado
+não permite atribuir ganho de throughput ao fast path e não encerra a
+estabilização.
+
+### Spike de compactação terminal das notificações
+
+Foi avaliada, sem alteração do código de produção, a hipótese de remover o
+`payload` quando uma outbox vira `PUBLISHED` e uma delivery vira `ACKED`. O
+objetivo do spike não era retenção: era verificar se escrever uma versão MVCC
+terminal menor liberaria CPU do PostgreSQL para o restante do pipeline.
+
+O PostgreSQL estava ocioso antes da medição. A base real continha `256.707`
+outboxes `PUBLISHED` e `256.707` deliveries, das quais `196.077` estavam
+`ACKED`. Outbox e delivery ocupavam, respectivamente, `336 MB` e `264 MB`. As
+rows terminais preservavam payload médio de `446 B` na outbox e `381 B` na
+delivery.
+
+O benchmark criou tabelas logadas scratch com `120.000` rows, mesmos índices e
+payloads reais. Comparou o update vigente com a mesma operação acrescentando
+somente `payload = NULL`. Foram usados batches de `200` ACKs e `300`
+publicações, com dois warmups e trinta amostras válidas por variante. A ordem A/B
+foi alternada sobre os mesmos IDs. Tempo, ticks de CPU do backend e avanço de
+WAL foram medidos dentro de cada operação; o relógio de CPU tinha resolução de
+`10 ms`, portanto diferenças pequenas nessa coluna não são conclusivas.
+
+| operação | variante | rows/s | tempo/row | CPU/row | WAL/row | row terminal |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| ACK delivery | atual | `58.771,67` | `0,017015 ms` | `0,016667 ms` | `844,80 B` | `603,11 B` |
+| ACK delivery | compacta | `60.106,99` | `0,016637 ms` | `0,018333 ms` | `456,40 B` | `220,76 B` |
+| publicação outbox | atual | `25.006,11` | `0,039990 ms` | `0,040000 ms` | `904,83 B` | `662,45 B` |
+| publicação outbox | compacta | `26.123,53` | `0,038280 ms` | `0,036667 ms` | `448,10 B` | `212,63 B` |
+
+A compactação reduziu o WAL por row em `45,98%` no ACK e `50,48%` na
+publicação, além de reduzir a representação terminal em aproximadamente
+`63-68%`. O efeito sobre capacidade de execução, porém, ficou muito abaixo do
+limiar de `20%` definido antes da medição: throughput subiu apenas `2,27%` no
+ACK e `4,47%` na publicação. A CPU amostrada não mostrou redução no ACK e caiu
+somente `8,33%` na publicação, diferença pequena diante da granularidade do
+contador.
+
+**Decisão:** não compactar payloads nesta estabilização e não executar A/B
+end-to-end. A hipótese oferece benefício relevante de WAL, retenção e
+autovacuum para trabalho futuro, mas não demonstrou liberação suficiente do
+PostgreSQL para justificar agora a perda ou reformulação da evidência técnica
+de auditoria. O schema scratch foi removido e as contagens das tabelas de
+produção permaneceram inalteradas.
+
+### Spike de `fillfactor` e HOT update dos pagamentos
+
+A tabela real mostrou uma oportunidade independente do contrato de negócio. Em
+`87.479` updates de `payment_transaction_entity`, somente `18.988` foram HOT
+(`21,71%`), enquanto `68.491` criaram a nova versão em outra página. A tabela
+possui somente a primary key como índice e PACS.002 altera `status` e
+`rejection_reason`; portanto a transição é elegível para HOT, mas o
+`fillfactor=100` deixa pouco espaço na página original.
+
+O spike usou três tabelas logadas scratch com schema, constraint e índice reais,
+variando somente `fillfactor=100`, `70` e `50`. Cada variante recebeu os mesmos
+`120.000` pagamentos pelo insert set-based vigente, em batches de `500` e ordem
+rotativa. Em seguida, `96.000` pagamentos (`80%`) passaram pelo lock/leitura e
+update de PACS.002 em batches de `200`, novamente alternando a ordem. Foram
+excluídos cinco batches de warmup em cada operação. Autovacuum ficou desligado
+somente nas tabelas scratch para não alterar a comparação durante a medição.
+Os ticks de CPU do próprio backend foram agregados sobre todos os batches, com
+resolução de `10 ms`.
+
+| operação | fillfactor | rows/s | tempo/row | CPU/row | WAL/row |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| insert | `100` | `42.067,52` | `0,023771 ms` | `0,022809 ms` | `358,59 B` |
+| insert | `70` | `41.574,25` | `0,024053 ms` | `0,024170 ms` | `358,59 B` |
+| insert | `50` | `40.750,94` | `0,024539 ms` | `0,025106 ms` | `358,59 B` |
+| transição | `100` | `59.115,15` | `0,016916 ms` | `0,017789 ms` | `447,68 B` |
+| transição | `70` | `63.646,43` | `0,015712 ms` | `0,016000 ms` | `340,18 B` |
+| transição | `50` | `88.516,60` | `0,011297 ms` | `0,012737 ms` | `177,07 B` |
+
+O resultado físico explica a diferença:
+
+| fillfactor | HOT updates | nova página | HOT ratio | heap final | índice final |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| `100` | `5.147` | `90.853` | `5,36%` | `38 MB` | `10 MB` |
+| `70` | `45.105` | `50.895` | `46,98%` | `45 MB` | `10 MB` |
+| `50` | `96.000` | `0` | `100%` | `45 MB` | `5.848 kB` |
+
+No recorte executado, com um insert para todo pagamento e a transição
+`ACCEPTED` para `80%`, o ciclo medido mudou assim contra `fillfactor=100`:
+
+| variante | pagamentos/s | tempo/pagamento | CPU/pagamento | WAL/pagamento | variação de throughput |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `100` | `26.703,56` | `0,037448 ms` | `0,037191 ms` | `720,54 B` | baseline |
+| `70` | `27.206,06` | `0,036757 ms` | `0,037106 ms` | `633,63 B` | `+1,88%` |
+| `50` | `29.697,11` | `0,033673 ms` | `0,035404 ms` | `501,75 B` | `+11,21%` |
+
+`fillfactor=50` aumentou em `49,74%` o throughput da transição. O insert ficou
+`3,13%` mais lento, mas o ciclo combinado ainda reduziu tempo em `10,08%`, CPU
+em `4,81%` e WAL em `30,36%`. O custo de espaço líquido foi pequeno: depois das
+transições, heap mais índice ocuparam aproximadamente `51 MB`, contra `48 MB`
+no baseline, pois os updates não-HOT também ampliam o índice e a heap.
+
+Esse recorte subestima a frequência de update do workload completo. Os `20%`
+de insufficient-funds também são inseridos em `WAITING_ACCEPTANCE` e
+atualizados, na mesma transação de ingresso, para `REJECTED`. Assim, quando o
+pipeline termina, cada pagamento original tende a produzir um insert e uma
+transição de status: happy-path no PACS.002 e insufficient-funds ainda no
+PACS.008. O spike isolou a forma `ACCEPTED`; não mediu separadamente o SQL de
+rejeição e, por isso, os `11,21%` não devem ser tratados como estimativa exata
+do workload misto. A omissão não enfraquece a seleção de `fillfactor=50` para o
+A/B end-to-end, onde as duas formas serão exercitadas.
+
+**Resultado do spike:** `fillfactor=70` não oferece ganho suficiente;
+`fillfactor=50` é candidato positivo para um A/B end-to-end isolado. A
+estatística real já possui HOT ratio maior que o baseline scratch por efeito de
+layout e vacuum, então o ganho sistêmico não deve ser extrapolado diretamente
+dos `11,21%`. Nenhuma tabela operacional ou código de produção foi alterado; o
+schema scratch foi removido.
+
+### A/B end-to-end de `fillfactor=50`
+
+O candidato foi implementado experimentalmente em uma migração que define
+`fillfactor=50` em `payment_transaction_entity`, protegido por um teste de
+integração que lê `pg_class.reloptions`. A suíte completa passou com `202`
+testes do SPI, além dos testes Go, dos `17` scripts shell, da sintaxe Bash e da
+validação do Compose.
+
+O ambiente foi recriado com volumes limpos. A migração foi aplicada antes da
+criação das rows e o smoke qualificou na primeira tentativa com `1.250/1.250`
+originais, `1.000/1.000` PACS.002 e `112/112` replays. Antes da medição foram
+confirmados `{fillfactor=50}` e contadores zerados para a tabela. A única
+execução B1 está em `payment-fillfactor-50/20260819_233034`; o baseline A é
+`notification-outbox-post-commit-fast-path/20260819_215520`. Os snapshots de
+profile e execution plan são byte a byte idênticos entre A e B1.
+
+A propriedade física esperada foi confirmada:
+
+| evidência PostgreSQL | A, `fillfactor=100` | B1, `fillfactor=50` | variação B1/A |
+| --- | ---: | ---: | ---: |
+| HOT updates da tabela | `18.988/87.479` (`21,71%`) | `84.282/84.282` (`100%`) | mecanismo confirmado |
+| insert, tempo/row | `0,154779 ms` | `0,225299 ms` | `+45,56%` |
+| lock/leitura PACS.002, tempo/row | `0,263696 ms` | `0,084041 ms` | `-68,13%` |
+| update `ACCEPTED`, tempo/row | `0,380564 ms` | `0,040710 ms` | `-89,30%` |
+| update `REJECTED`, tempo/row | `0,542669 ms` | `0,026350 ms` | `-95,14%` |
+| update `ACCEPTED`, WAL/row | `302,41 B` | `117,09 B` | `-61,28%` |
+| update `REJECTED`, WAL/row | `381,06 B` | `198,23 B` | `-47,98%` |
+
+O custo acumulado das cinco formas SQL associadas ao pagamento caiu `69,48%`,
+embora com quantidades de rows próximas, enquanto o insert isolado ficou mais
+caro. Ao final, a tabela ocupava aproximadamente `50,7 MB` de heap e `8,4 MB`
+de índice. Portanto o efeito local não é uma extrapolação do spike: o A/B
+confirmou HOT updates e redução forte do trabalho de transição no workload
+real.
+
+O resultado end-to-end, porém, foi misto:
+
+| evidência | A | B1 | variação B1/A |
+| --- | ---: | ---: | ---: |
+| originais iniciados no ativo | `122.054` | `128.267` | `+5,09%` |
+| mínimo rolling de 1 s | `1.148 TPS` | `549 TPS` | `-52,18%` |
+| PACS.002 iniciados | `59.229` | `57.307` | `-3,25%` |
+| outcomes observados | `74.441` | `70.980` | `-4,65%` |
+| outcomes ausentes ao deadline | `60.558` | `64.020` | `+5,72%` |
+| latência p50 | `33.362,641 ms` | `30.710,621 ms` | `-7,95%` |
+| latência p95 | `56.433,477 ms` | `60.624,810 ms` | `+7,43%` |
+| latência p99 | `58.963,240 ms` | `61.254,092 ms` | `+3,89%` |
+| CPU média do PostgreSQL | `102,284%` | `103,478%` | `+1,17%` relativo |
+
+A B1 aceitou `135.000/135.000` originais por HTTP, não produziu outcome
+contraditório nem violação de replay e preservou todos os artefatos. Ainda
+assim, como A e B1 permaneceram inválidos para o piso sustentado e o SLA, essa
+execução isolada não autorizou manter nem descartar o candidato.
+
+Após a B1, o mecanismo local e um indicador de capacidade haviam melhorado,
+mas métricas principais também regrediram mais de `5%`. Esses resultados mistos
+motivaram a autorização de uma única repetição limpa.
+
+Na preparação da repetição, a primeira stack parou antes de gerar qualquer
+pagamento porque um prewarm HTTP/2 expirou no `/health`; ela não entrou na
+comparação. Uma nova stack limpa qualificou o smoke na primeira tentativa com
+as mesmas contagens da preparação anterior e Kafka quiescente. A B2 está em
+`payment-fillfactor-50-repeat/20260819_234548`; profile e execution plan são
+idênticos aos de A e B1. Ela aceitou `135.000/135.000` originais por HTTP,
+`8.716/8.716` replays, sem outcome contraditório nem violação de replay.
+
+O mecanismo local se repetiu: os `85.049` updates foram `100%` HOT. Contra A,
+o tempo por row do lock/leitura caiu `65,95%`, o update `ACCEPTED` caiu
+`89,49%` e o `REJECTED` caiu `93,87%`; o insert ficou `46,99%` mais caro. O WAL
+por row das duas transições caiu, respectivamente, `61,28%` e `47,95%`.
+
+| evidência end-to-end | A | B1 | B2 | variação B2/A |
+| --- | ---: | ---: | ---: | ---: |
+| originais iniciados no ativo | `122.054` | `128.267` | `127.179` | `+4,20%` |
+| mínimo rolling de 1 s | `1.148 TPS` | `549 TPS` | `590 TPS` | `-48,61%` |
+| PACS.002 iniciados | `59.229` | `57.307` | `59.097` | `-0,22%` |
+| outcomes observados | `74.441` | `70.980` | `73.374` | `-1,43%` |
+| outcomes ausentes ao deadline | `60.558` | `64.020` | `61.626` | `+1,76%` |
+| latência p50 | `33.362,641 ms` | `30.710,621 ms` | `31.556,975 ms` | `-5,41%` |
+| latência p95 | `56.433,477 ms` | `60.624,810 ms` | `62.580,814 ms` | `+10,89%` |
+| latência p99 | `58.963,240 ms` | `61.254,092 ms` | `63.341,054 ms` | `+7,42%` |
+| CPU média do PostgreSQL | `102,284%` | `103,478%` | `102,325%` | `+0,04%` relativo |
+
+**Estado para decisão:** a B2 confirmou o ganho físico e a pequena melhora de
+capacidade média, mas também repetiu a perda do mínimo rolling e tornou maior a
+regressão de p95; p99 também ultrapassou `5%`. A migração e o teste
+experimentais permanecem no working tree até decisão explícita; os bundles de
+A, B1 e B2 permanecem preservados.

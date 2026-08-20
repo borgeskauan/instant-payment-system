@@ -37,8 +37,8 @@ RJCT/AM04, após corrigir somente uma expectativa legada do qualificador: um
 pagamento rejeitado por saldo no ingresso não inicia um PACS.002 do recebedor.
 
 A única medição curta B foi
-`reservation-balance-diagnostic/20260816_221950`. A decisão predefinida foi
-**DISCARD**:
+`reservation-balance-diagnostic/20260816_221950`. A arquitetura não foi adotada
+por causa das seguintes evidências:
 
 - PACS.002 happy-path ativos aceitos caíram de `32.611` no A para `28.393` no B
   (`-12,9%`);
@@ -66,7 +66,7 @@ nativos maiores que um segundo no saldo (`10 → 0`), reduziu a máxima da query
 de lock de `28.904,898` para `91,820 ms`, zerou o status lag e elevou as
 transições aplicadas de `7.640` para `23.470`.
 
-Mesmo assim, a configuração também foi **DISCARD**. O hash das dez hot keys e
+Mesmo assim, a configuração também não foi mantida. O hash das dez hot keys e
 a atribuição das oito partições aos três consumers distribuíram o tópico de
 pagamentos em `51,46% / 37,03% / 11,51%`. O lag imediato de pagamentos subiu
 para `75.619`, PACS.002 ativos aceitos caíram de `28.393` para `18.474`, o piso
@@ -85,8 +85,8 @@ os waits do saldo continuaram ausentes, mas o run
 `reservation-balance-kafka-concurrency-eight-diagnostic/20260818_001442`
 entrou em ciclo de timeout e handshake no ingresso: PACS.008 ativos 2xx caíram
 de `132.783` para `693`, violações de replay subiram de `37` para `426`
-e o kafka-producer ficou em `98,312%` de CPU média. A configuração também é
-**DISCARD** e não autoriza merge ou run longo. A afinidade continua validada
+e o kafka-producer ficou em `98,312%` de CPU média. A configuração não foi
+mantida e não autoriza merge ou run longo. A afinidade continua validada
 como proteção local do settlement; a próxima hipótese deve atacar a fronteira
 HTTP/Kafka observada sem facilitar o hot-pair workload.
 
