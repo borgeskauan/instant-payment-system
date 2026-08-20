@@ -22,53 +22,15 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/payload"
 )
 
-func TestLoadRateUsesHalfTargetDuringWarmup(t *testing.T) {
-	targetRate := 2000
-	warmup := 30 * time.Second
-
-	if got := loadRateForElapsed(0, warmup, targetRate); got != 1000 {
-		t.Fatalf("loadRateForElapsed during warmup = %d, want 1000", got)
-	}
-	if got := loadRateForElapsed(29*time.Second, warmup, targetRate); got != 1000 {
-		t.Fatalf("loadRateForElapsed before warmup end = %d, want 1000", got)
-	}
-	if got := loadRateForElapsed(30*time.Second, warmup, targetRate); got != 2000 {
-		t.Fatalf("loadRateForElapsed after warmup = %d, want 2000", got)
+func TestWarmupRateUsesHalfTarget(t *testing.T) {
+	if got := warmupRate(2_000); got != 1_000 {
+		t.Fatalf("warmup rate = %d, want 1000", got)
 	}
 }
 
-func TestLoadRateWarmupNeverDropsBelowOnePerSecond(t *testing.T) {
-	if got := loadRateForElapsed(0, 30*time.Second, 1); got != 1 {
-		t.Fatalf("loadRateForElapsed with target rate 1 = %d, want 1", got)
-	}
-}
-
-func TestLoadRateUsesScheduledCursorWhenGeneratorIsBehind(t *testing.T) {
-	start := time.Unix(100, 0)
-	scheduledAt := start.Add(10 * time.Second)
-
-	if got := loadRateForScheduledTime(scheduledAt, start, time.Minute, 2_000); got != 1_000 {
-		t.Fatalf("load rate for delayed warmup cursor = %d, want 1000", got)
-	}
-}
-
-func TestDelayedCursorDoesNotCreateAdditionalScheduledTransfers(t *testing.T) {
-	start := time.Unix(100, 0)
-	next := start.Add(time.Second)
-	end := start.Add(4 * time.Second)
-	generated := 0
-
-	for next.Before(end) {
-		rate := loadRateForScheduledTime(next, start, 2*time.Second, 4)
-		next = next.Add(time.Second / time.Duration(rate))
-		generated++
-	}
-
-	// The delayed cursor has two remaining warmup positions at 2/s followed
-	// by eight active positions at 4/s. Applying the active rate
-	// retroactively would incorrectly produce twelve positions.
-	if generated != 10 {
-		t.Fatalf("scheduled transfers after delay = %d, want 10", generated)
+func TestWarmupRateNeverDropsBelowOnePerSecond(t *testing.T) {
+	if got := warmupRate(1); got != 1 {
+		t.Fatalf("warmup rate = %d, want 1", got)
 	}
 }
 
@@ -148,17 +110,70 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 	}
 }
 
-func TestOriginalStartWindowIsSemiOpen(t *testing.T) {
-	start := time.Unix(100, 0)
-	end := start.Add(time.Second)
-	if !canStartOriginal(start, end) {
-		t.Fatal("generation start was excluded")
+func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
+	planner, err := newWorkloadPlanner(mixedPlannerScenarios())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !canStartOriginal(end.Add(-time.Nanosecond), end) {
-		t.Fatal("instant before generation end was excluded")
+	selector, err := newReplaySelector(0.10)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if canStartOriginal(end, end) || canStartOriginal(end.Add(time.Nanosecond), end) {
-		t.Fatal("generation end was not exclusive")
+	var payloadsBuilt atomic.Int64
+	s := &simulator{
+		cfg:                   Config{Scenarios: mixedPlannerScenarios()},
+		runID:                 "deadline-test",
+		originalPlanner:       planner,
+		pacs008ReplaySelector: selector,
+		transferScenarios:     make(map[string]string),
+		buildPacs008Func: func(string, string, string, int64) []byte {
+			payloadsBuilt.Add(1)
+			return []byte("must not be built")
+		},
+	}
+
+	jobs := make(chan originalSlot, 1)
+	jobs <- originalSlot{
+		createdAt: time.Now().Add(-time.Second).UnixNano(),
+		deadline:  time.Now().Add(-time.Nanosecond),
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	workers.Add(1)
+	s.transferWorker(context.Background(), &workers, jobs)
+
+	if payloadsBuilt.Load() != 0 {
+		t.Fatalf("payloads built = %d, want 0", payloadsBuilt.Load())
+	}
+	if s.started.Load() != 0 {
+		t.Fatalf("started originals = %d, want 0", s.started.Load())
+	}
+	if len(s.transferScenarios) != 0 {
+		t.Fatalf("transfer scenarios = %#v, want none", s.transferScenarios)
+	}
+
+	job, _, ok := s.claimOriginal(originalSlot{createdAt: time.Now().UnixNano(), deadline: time.Now().Add(time.Second)})
+	if !ok {
+		t.Fatal("first valid slot was not claimed")
+	}
+	if want := ids.TransactionID("deadline-test", 0); job.ID != want {
+		t.Fatalf("first valid transaction ID = %q, want %q", job.ID, want)
+	}
+	expectedSelector, err := newReplaySelector(0.10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := expectedSelector.Next(); job.ReplaySelected != want {
+		t.Fatalf("first valid replay selection = %t, want %t", job.ReplaySelected, want)
+	}
+	for index := 1; index < config.ScenarioSelectionBlockSize; index++ {
+		job, _, ok = s.claimOriginal(originalSlot{createdAt: time.Now().UnixNano(), deadline: time.Now().Add(time.Second)})
+		if !ok {
+			t.Fatalf("valid slot %d was not claimed", index)
+		}
+		if want := expectedSelector.Next(); job.ReplaySelected != want {
+			t.Fatalf("valid replay selection %d = %t, want %t", index, job.ReplaySelected, want)
+		}
 	}
 }
 

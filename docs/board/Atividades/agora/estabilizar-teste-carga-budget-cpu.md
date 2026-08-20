@@ -1843,8 +1843,82 @@ por row das duas transições caiu, respectivamente, `61,28%` e `47,95%`.
 | latência p99 | `58.963,240 ms` | `61.254,092 ms` | `63.341,054 ms` | `+7,42%` |
 | CPU média do PostgreSQL | `102,284%` | `103,478%` | `102,325%` | `+0,04%` relativo |
 
-**Estado para decisão:** a B2 confirmou o ganho físico e a pequena melhora de
-capacidade média, mas também repetiu a perda do mínimo rolling e tornou maior a
-regressão de p95; p99 também ultrapassou `5%`. A migração e o teste
-experimentais permanecem no working tree até decisão explícita; os bundles de
-A, B1 e B2 permanecem preservados.
+As duas execuções B confirmaram o mecanismo físico, mas a comparação
+end-to-end não permite decidir sobre o candidato. O baseline iniciou `122.054`
+originais no ativo, enquanto B1 iniciou `128.267` e B2, `127.179`. A diferença
+veio de trabalho atrasado no warmup: A carregou `2.055` posições para o ativo,
+B1 carregou `8.267` e B2, `7.179`. O mínimo menor e o máximo maior são as duas
+faces desse mesmo fenômeno: workers bloqueados reduzem os inícios e, quando são
+liberados, o scheduler recupera a dívida em rajadas.
+
+Assim, o A/B atual continua provando que `fillfactor=50` produz `100%` de HOT
+updates, reduz drasticamente o custo e o WAL das transições e encarece o insert
+em aproximadamente `47%`. Ele não separa, porém, o efeito sistêmico desse
+trade-off do efeito de uma workload ativa mais concentrada e maior nos runs B.
+A migração e o teste experimentais permanecem na branch até decisão explícita;
+os bundles de A, B1 e B2 permanecem preservados.
+
+### No-carry-over implementado — novo A/B de `fillfactor` pendente
+
+O gerador deixou de recuperar posições temporais perdidas. Um pagamento
+planejado que ainda não iniciou não é um pagamento real do cliente; se sua
+oportunidade temporal expirar, ele deixa de existir sem criar payload, seleção
+de replay, evento CSV ou POST HTTP. A ausência continua aparecendo no
+pós-processamento como piso rolling abaixo de `target_tps`, portanto um pico
+posterior nunca compensa a falha.
+
+O contrato da mudança é:
+
+1. dívida do warmup nunca atravessa `activeStart`;
+2. dívida criada dentro do ativo não é recuperada em janelas posteriores;
+3. cada posição aceita no máximo `10 ms` de atraso; ao perceber posições mais
+   antigas, o scheduler calcula diretamente a primeira posição ainda válida,
+   sem iterar uma a uma nem executar catch-up além dessa tolerância;
+4. o descarte ocorre antes de qualquer efeito observável associado ao
+   pagamento;
+5. picos naturais acima de `target_tps` continuam permitidos, mas não podem ser
+   produzidos para pagar posições perdidas;
+6. `RequestStartedAtNS` permanece a fonte do report, e qualquer janela rolling
+   contínua de um segundo abaixo de `target_tps` invalida a comprovação do piso;
+7. em uma execução válida não há posições perdidas, portanto o no-carry-over
+   não reduz a workload que aprova o contrato.
+
+A implementação mantém warmup e ativo como fases semiabertas independentes,
+usa um canal sem buffer entre scheduler e workers e somente materializa ID,
+cenário, valor e seleção de replay dentro do worker, depois de uma segunda
+checagem do deadline. Os profiles, os artefatos e o contrato do
+`sla-report.json` não mudaram. Testes unitários cobrem a cadência sem drift,
+o salto sobre um atraso de `49 s`, a fronteira de fase e a ausência de efeitos
+para slots expirados; a suíte Go completa passou após a mudança.
+
+O diagnóstico curto
+`load-test/results/no-carry-over-diagnostic/20260820_004213` confirmou o
+envelope temporal: foram iniciados `14.933 / 15.000` originais no warmup e
+`119.754 / 120.000` no ativo, nenhum fora da janela, com mínimo/máximo rolling
+de `1.932 / 2.019 TPS`. Portanto as posições perdidas não atravessaram a
+fronteira nem produziram a rajada de compensação observada anteriormente. A
+execução não gerou `sla-report.json` porque, ao abrir as streams, recebeu uma
+notificação residual do run de `23:46` (`go-1787193977...`), diferente do
+prefixo atual (`go-1787197357...`); o simulador recusou corretamente criar um
+PACS.002 sem metadata da execução corrente. Essa contaminação impede usar o
+run como qualificação funcional, mas não altera a evidência temporal obtida
+dos PACS.008 do prefixo atual.
+
+Com essa correção, executar um novo A/B em stacks limpas e com o mesmo
+profile, execution plan, código e procedimento:
+
+1. A com `payment_transaction_entity` em `fillfactor=100`;
+2. B com `payment_transaction_entity` em `fillfactor=50`;
+3. confirmar `reloptions`, estatísticas zeradas, smoke qualificado e hashes dos
+   inputs antes de cada medição;
+4. comparar a workload temporal realmente iniciada, o ingresso PACS.008, a
+   transição PACS.002, outcomes, latência e CPU do PostgreSQL;
+5. comparar separadamente custo/row, CPU/row e WAL/row do insert, do
+   lock/leitura e dos updates, além do HOT ratio;
+6. tomar a decisão sobre `fillfactor=50` somente depois dessa comparação.
+
+Se o novo A/B mostrar que o insert virou o trabalho dominante ou reduziu a
+capacidade de PACS.008 mais do que os HOT updates beneficiaram o ciclo completo,
+`fillfactor=70` passa a ser o próximo candidato de equilíbrio. Ele não deve ser
+testado antecipadamente: primeiro é necessário obter a comparação limpa entre
+o layout padrão e o candidato já caracterizado.

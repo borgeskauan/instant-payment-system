@@ -75,6 +75,7 @@ type simulator struct {
 	replayMu                   sync.Mutex
 	statusStartMu              sync.Mutex
 	pacs002SelectorMu          sync.Mutex
+	originalMu                 sync.Mutex
 	statusQueuedMu             sync.Mutex
 	transferScenariosMu        sync.RWMutex
 	runErrorMu                 sync.Mutex
@@ -87,6 +88,9 @@ type simulator struct {
 	statusQueuedIDs            map[string]struct{}
 	transferScenarios          map[string]string
 	pacs002ReplaySelector      *replaySelector
+	pacs008ReplaySelector      *replaySelector
+	originalPlanner            *workloadPlanner
+	nextOriginalSequence       uint64
 	generationEndedAt          time.Time
 	replayDeadlineAt           time.Time
 	started                    atomic.Uint64
@@ -200,6 +204,8 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		statusQueuedIDs:            make(map[string]struct{}),
 		transferScenarios:          make(map[string]string),
 		pacs002ReplaySelector:      pacs002ReplaySelector,
+		pacs008ReplaySelector:      selector,
+		originalPlanner:            planner,
 		openNotificationStreamFunc: dependencies.openNotificationStream,
 	}
 	s.sendPacs002Func = s.sendPacs002
@@ -272,7 +278,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	var statusWorkers sync.WaitGroup
 	s.startStatusWorkers(experimentCtx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
-	jobs := make(chan transferJob, cfg.TargetTxRate*2)
+	jobs := make(chan originalSlot)
 	var workers sync.WaitGroup
 	workerCount := workerCountForTargetRate(cfg.TargetTxRate)
 	if cfg.Warmup > 0 {
@@ -285,7 +291,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		go s.transferWorker(experimentCtx, &workers, jobs)
 	}
 
-	s.generate(experimentCtx, jobs, planner, selector, windowDocument.Window)
+	s.generate(experimentCtx, jobs, windowDocument.Window)
 	close(jobs)
 	logPhase("load generation finished; waiting for in-flight HTTP requests")
 	workers.Wait()
@@ -396,31 +402,42 @@ func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 	return pairs
 }
 
-func (s *simulator) generate(ctx context.Context, jobs chan<- transferJob, planner *workloadPlanner, selector *replaySelector, window runwindow.Window) {
-	start := window.GenerationStartedAt
-	next := start
-	for seq := uint64(0); ; seq++ {
-		if !waitUntil(ctx, next, window.GenerationEndedAt) {
+func (s *simulator) generate(ctx context.Context, jobs chan<- originalSlot, window runwindow.Window) {
+	if window.GenerationStartedAt.Before(window.ActiveStartedAt) {
+		s.generateOriginalPhase(ctx, jobs, window.GenerationStartedAt, window.ActiveStartedAt, warmupRate(s.cfg.TargetTxRate))
+	}
+	s.generateOriginalPhase(ctx, jobs, window.ActiveStartedAt, window.GenerationEndedAt, s.cfg.TargetTxRate)
+}
+
+func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- originalSlot, phaseStart, phaseEnd time.Time, rate int) {
+	slotCount := originalPhaseSlotCount(rate, phaseEnd.Sub(phaseStart))
+	for index := uint64(0); index < slotCount; index++ {
+		firstValid := firstUnexpiredOriginalSlot(phaseStart, rate, time.Now(), originalStartTolerance)
+		if firstValid > index {
+			index = firstValid
+			if index >= slotCount {
+				return
+			}
+		}
+
+		scheduledAt := originalSlotScheduledAt(phaseStart, rate, index)
+		if !waitUntil(ctx, scheduledAt, phaseEnd) {
 			return
 		}
-		now := time.Now()
-		if !canStartOriginal(now, window.GenerationEndedAt) {
-			return
-		}
-		rate := loadRateForScheduledTime(next, start, s.cfg.Warmup, s.cfg.TargetTxRate)
-		next = next.Add(time.Second / time.Duration(rate))
-
-		job := s.transferJobForSequence(seq, planner.Next())
-		if selector != nil {
-			job.ReplaySelected = selector.Next()
+		deadline := originalSlotDeadline(scheduledAt, phaseEnd, originalStartTolerance)
+		if !originalSlotCanStart(time.Now(), deadline) {
+			continue
 		}
 
+		timer := time.NewTimer(time.Until(deadline))
+		slot := originalSlot{createdAt: time.Now().UnixNano(), deadline: deadline}
 		select {
-		case jobs <- job:
+		case jobs <- slot:
+			stopTimer(timer)
 		case <-ctx.Done():
+			stopTimer(timer)
 			return
-		case <-time.After(time.Until(window.GenerationEndedAt)):
-			return
+		case <-timer.C:
 		}
 	}
 }
@@ -443,29 +460,18 @@ func waitUntil(ctx context.Context, target time.Time, end time.Time) bool {
 	}
 }
 
-func canStartOriginal(now time.Time, generationEnd time.Time) bool {
-	return now.Before(generationEnd)
+func (s *simulator) transferJobForSequence(seq uint64, planned plannedTransfer) transferJob {
+	return s.transferJobForSequenceCreatedAt(seq, planned, time.Now().UnixNano())
 }
 
-func (s *simulator) transferJobForSequence(seq uint64, planned plannedTransfer) transferJob {
+func (s *simulator) transferJobForSequenceCreatedAt(seq uint64, planned plannedTransfer, createdAt int64) transferJob {
 	return transferJob{
 		ID:           ids.TransactionID(s.runID, seq),
 		Pair:         planned.Pair,
-		Created:      time.Now().UnixNano(),
+		Created:      createdAt,
 		Amount:       planned.Amount,
 		ScenarioName: planned.ScenarioName,
 	}
-}
-
-func loadRateForElapsed(elapsed time.Duration, warmup time.Duration, targetRate int) int {
-	if warmup <= 0 || elapsed >= warmup {
-		return targetRate
-	}
-	return warmupRate(targetRate)
-}
-
-func loadRateForScheduledTime(scheduledAt, generationStart time.Time, warmup time.Duration, targetRate int) int {
-	return loadRateForElapsed(scheduledAt.Sub(generationStart), warmup, targetRate)
 }
 
 func warmupRate(targetRate int) int {
@@ -476,30 +482,53 @@ func warmupRate(targetRate int) int {
 	return rate
 }
 
-func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan transferJob) {
+func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan originalSlot) {
 	defer wg.Done()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case job, ok := <-jobs:
+		case slot, ok := <-jobs:
 			if !ok {
 				return
 			}
-			if s.generationEndedAt.IsZero() || canStartOriginal(time.Now(), s.generationEndedAt) {
-				s.sendPacs008(ctx, job)
+			job, startedAt, claimed := s.claimOriginal(slot)
+			if claimed {
+				s.sendPacs008At(ctx, job, startedAt)
 			}
 		}
 	}
 }
 
+func (s *simulator) claimOriginal(slot originalSlot) (transferJob, time.Time, bool) {
+	if !originalSlotCanStart(time.Now(), slot.deadline) {
+		return transferJob{}, time.Time{}, false
+	}
+	s.originalMu.Lock()
+	defer s.originalMu.Unlock()
+	startedAt := time.Now()
+	if !originalSlotCanStart(startedAt, slot.deadline) {
+		return transferJob{}, time.Time{}, false
+	}
+	planned := s.originalPlanner.Next()
+	job := s.transferJobForSequenceCreatedAt(s.nextOriginalSequence, planned, slot.createdAt)
+	s.nextOriginalSequence++
+	if s.pacs008ReplaySelector != nil {
+		job.ReplaySelected = s.pacs008ReplaySelector.Next()
+	}
+	return job, startedAt, true
+}
+
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {
+	s.sendPacs008At(ctx, job, time.Now())
+}
+
+func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedAtTime time.Time) {
 	buildPayload := payload.Pacs008
 	if s.buildPacs008Func != nil {
 		buildPayload = s.buildPacs008Func
 	}
 	body := buildPayload(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
-	startedAtTime := time.Now()
 	startedAt := startedAtTime.UnixNano()
 	if job.ReplaySelected {
 		if s.replayScheduler == nil || s.cfg.Replay.Pacs008 == nil {
