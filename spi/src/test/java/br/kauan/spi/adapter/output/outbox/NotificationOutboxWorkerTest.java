@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,6 +24,49 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class NotificationOutboxWorkerTest {
+
+    @Test
+    void committedBatchPublishesWithoutReadingTheOutboxAgain() {
+        NotificationOutboxRepository repository = mock(NotificationOutboxRepository.class);
+        NotificationPublisher publisher = mock(NotificationPublisher.class);
+        NotificationPublication notification = notification("E2E-DIRECT");
+        when(publisher.publish(notification))
+                .thenReturn(CompletableFuture.completedFuture(sendResult(0)));
+        NotificationOutboxWorker worker = worker(repository, publisher);
+
+        worker.publishCommitted(new NotificationOutboxBatchReady(List.of(notification)));
+
+        verify(repository, never()).findPending(any(Integer.class));
+        verify(repository).markPublished(List.of(notification.communicationId()));
+        verify(repository, never()).scheduleRetry(any(), any());
+    }
+
+    @Test
+    void recoveryWaitsUntilCommittedBatchPublicationFinishes() throws Exception {
+        NotificationOutboxRepository repository = mock(NotificationOutboxRepository.class);
+        NotificationPublisher publisher = mock(NotificationPublisher.class);
+        NotificationPublication committed = notification("E2E-DIRECT-SERIALIZED");
+        CompletableFuture<SendResult<String, byte[]>> committedSend = new CompletableFuture<>();
+        CountDownLatch recoveryRead = new CountDownLatch(1);
+        when(publisher.publish(committed)).thenReturn(committedSend);
+        when(repository.findPending(1_000)).thenAnswer(invocation -> {
+            recoveryRead.countDown();
+            return List.of();
+        });
+        NotificationOutboxWorker worker = worker(repository, publisher);
+
+        CompletableFuture<Void> direct = CompletableFuture.runAsync(
+                () -> worker.publishCommitted(new NotificationOutboxBatchReady(List.of(committed)))
+        );
+        waitUntilBothSendsStarted(publisher, 1);
+        CompletableFuture<Void> recovery = CompletableFuture.runAsync(worker::publishPending);
+
+        assertThat(recoveryRead.await(100, TimeUnit.MILLISECONDS)).isFalse();
+        committedSend.complete(sendResult(0));
+        direct.get(2, TimeUnit.SECONDS);
+        recovery.get(2, TimeUnit.SECONDS);
+        assertThat(recoveryRead.getCount()).isZero();
+    }
 
     @Test
     void startsEverySendBeforeWaitingAndMarksRowsOnlyAfterBrokerConfirmation() throws Exception {
@@ -139,11 +183,15 @@ class NotificationOutboxWorkerTest {
     }
 
     private void waitUntilBothSendsStarted(NotificationPublisher publisher) throws InterruptedException {
+        waitUntilBothSendsStarted(publisher, 2);
+    }
+
+    private void waitUntilBothSendsStarted(NotificationPublisher publisher, int expected) throws InterruptedException {
         AssertionError lastFailure = null;
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (System.nanoTime() < deadline) {
             try {
-                verify(publisher, times(2)).publish(any());
+                verify(publisher, times(expected)).publish(any());
                 return;
             } catch (AssertionError failure) {
                 lastFailure = failure;

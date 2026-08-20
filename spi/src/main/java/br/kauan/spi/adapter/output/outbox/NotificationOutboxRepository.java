@@ -2,16 +2,22 @@ package br.kauan.spi.adapter.output.outbox;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Array;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Repository
 public class NotificationOutboxRepository {
@@ -43,7 +49,7 @@ public class NotificationOutboxRepository {
                 incoming.payload,
                 'PENDING',
                 0,
-                CURRENT_TIMESTAMP,
+                clock_timestamp() + (? * INTERVAL '1 millisecond'),
                 CURRENT_TIMESTAMP,
                 CURRENT_TIMESTAMP
             FROM unnest(
@@ -64,6 +70,7 @@ public class NotificationOutboxRepository {
                 payload
             )
             ON CONFLICT (communication_id) DO NOTHING
+            RETURNING communication_id
             """;
 
     private static final String FIND_PENDING_SQL = """
@@ -83,18 +90,23 @@ public class NotificationOutboxRepository {
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final Duration initialRecoveryDelay;
 
     @Autowired
-    public NotificationOutboxRepository(JdbcTemplate jdbcTemplate) {
+    public NotificationOutboxRepository(
+            JdbcTemplate jdbcTemplate,
+            @Value("${spi.notification-outbox.retry-delay}") Duration initialRecoveryDelay
+    ) {
         this.jdbcTemplate = jdbcTemplate;
+        this.initialRecoveryDelay = initialRecoveryDelay;
     }
 
-    public void insertAll(List<NotificationPublication> notifications) {
+    public List<NotificationPublication> insertAll(List<NotificationPublication> notifications) {
         if (notifications.isEmpty()) {
-            return;
+            return List.of();
         }
 
-        jdbcTemplate.execute((ConnectionCallback<Integer>) connection -> {
+        return jdbcTemplate.execute((ConnectionCallback<List<NotificationPublication>>) connection -> {
             String[] communicationIds = new String[notifications.size()];
             String[] recipientIspbs = new String[notifications.size()];
             String[] eventTypes = new String[notifications.size()];
@@ -129,14 +141,27 @@ public class NotificationOutboxRepository {
                 schemaVersionArray = connection.createArrayOf("text", schemaVersions);
                 payloadArray = connection.createArrayOf("bytea", payloads);
                 try (PreparedStatement statement = connection.prepareStatement(INSERT_ALL_SQL)) {
-                    statement.setArray(1, communicationIdArray);
-                    statement.setArray(2, recipientIspbArray);
-                    statement.setArray(3, eventTypeArray);
-                    statement.setArray(4, paymentIdArray);
-                    statement.setArray(5, notificationStatusArray);
-                    statement.setArray(6, schemaVersionArray);
-                    statement.setArray(7, payloadArray);
-                    return statement.executeUpdate();
+                    statement.setLong(1, initialRecoveryDelay.toMillis());
+                    statement.setArray(2, communicationIdArray);
+                    statement.setArray(3, recipientIspbArray);
+                    statement.setArray(4, eventTypeArray);
+                    statement.setArray(5, paymentIdArray);
+                    statement.setArray(6, notificationStatusArray);
+                    statement.setArray(7, schemaVersionArray);
+                    statement.setArray(8, payloadArray);
+                    Set<String> insertedIds = new LinkedHashSet<>();
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        while (resultSet.next()) {
+                            insertedIds.add(resultSet.getString("communication_id"));
+                        }
+                    }
+                    List<NotificationPublication> inserted = new ArrayList<>(insertedIds.size());
+                    for (NotificationPublication notification : notifications) {
+                        if (insertedIds.remove(notification.communicationId())) {
+                            inserted.add(notification);
+                        }
+                    }
+                    return List.copyOf(inserted);
                 }
             } finally {
                 free(
@@ -172,6 +197,7 @@ public class NotificationOutboxRepository {
         );
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int markPublished(List<String> communicationIds) {
         if (communicationIds.isEmpty()) {
             return 0;
@@ -192,6 +218,7 @@ public class NotificationOutboxRepository {
         return jdbcTemplate.update(sql, parameters.toArray());
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int scheduleRetry(List<NotificationPublicationFailure> failures, Duration retryDelay) {
         if (failures.isEmpty()) {
             return 0;

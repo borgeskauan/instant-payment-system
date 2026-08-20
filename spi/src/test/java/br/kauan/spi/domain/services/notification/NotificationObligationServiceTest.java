@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.adapter.output.outbox.NotificationOutboxBatchReady;
 import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
@@ -13,6 +14,7 @@ import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFact
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.nio.charset.StandardCharsets;
@@ -26,6 +28,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class NotificationObligationServiceTest {
 
@@ -142,11 +145,42 @@ class NotificationObligationServiceTest {
         ))).isSameAs(databaseFailure);
     }
 
+    @Test
+    void publishesOnlyNewlyInsertedObligationsForAfterCommitDelivery() {
+        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        NotificationObligationService service = service(outboxRepository, eventPublisher);
+        when(outboxRepository.insertAll(anyList())).thenAnswer(invocation -> {
+            List<NotificationPublication> requested = invocation.getArgument(0);
+            return List.of(requested.getLast());
+        });
+
+        service.storeAcceptanceObligations(List.of(
+                payment("E2E-REPLAY", "10000001", "20000001"),
+                payment("E2E-NEW", "10000002", "20000002")
+        ));
+
+        ArgumentCaptor<NotificationOutboxBatchReady> event =
+                ArgumentCaptor.forClass(NotificationOutboxBatchReady.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().notifications())
+                .extracting(NotificationPublication::paymentId)
+                .containsExactly("E2E-NEW");
+    }
+
     private NotificationObligationService service(NotificationOutboxRepository outboxRepository) {
+        return service(outboxRepository, mock(ApplicationEventPublisher.class));
+    }
+
+    private NotificationObligationService service(
+            NotificationOutboxRepository outboxRepository,
+            ApplicationEventPublisher eventPublisher
+    ) {
         return new NotificationObligationService(
                 new NotificationPayloadFactory(),
                 new NotificationContentSerializer(new ObjectMapper().findAndRegisterModules()),
-                outboxRepository
+                outboxRepository,
+                eventPublisher
         );
     }
 

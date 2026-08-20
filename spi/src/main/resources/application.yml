@@ -35,7 +35,7 @@ spi:
   default-initial-balance: 1_000_000_000
   notification-outbox:
     batch-size: 1000
-    fixed-delay: 20ms
+    fixed-delay: 1s
     retry-delay: 1s
   kafka:
     payment-request-listener-concurrency: 3

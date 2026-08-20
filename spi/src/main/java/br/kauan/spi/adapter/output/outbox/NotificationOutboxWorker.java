@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,6 +24,7 @@ public class NotificationOutboxWorker {
     private final NotificationPublisher notificationPublisher;
     private final int batchSize;
     private final Duration retryDelay;
+    private final Object publicationMonitor = new Object();
 
     public NotificationOutboxWorker(
             NotificationOutboxRepository outboxRepository,
@@ -37,7 +40,27 @@ public class NotificationOutboxWorker {
 
     @Scheduled(fixedDelayString = "${spi.notification-outbox.fixed-delay}")
     public void publishPending() {
-        List<NotificationPublication> notifications = outboxRepository.findPending(batchSize);
+        synchronized (publicationMonitor) {
+            publish(outboxRepository.findPending(batchSize));
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void publishCommitted(NotificationOutboxBatchReady batch) {
+        try {
+            synchronized (publicationMonitor) {
+                publish(batch.notifications());
+            }
+        } catch (RuntimeException failure) {
+            log.error(
+                    "Unexpected failure in committed notification fast path; rows remain pending. rows={}",
+                    batch.notifications().size(),
+                    failure
+            );
+        }
+    }
+
+    private void publish(List<NotificationPublication> notifications) {
         if (notifications.isEmpty()) {
             return;
         }

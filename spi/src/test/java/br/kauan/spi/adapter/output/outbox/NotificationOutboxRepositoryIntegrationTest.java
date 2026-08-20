@@ -3,6 +3,7 @@ package br.kauan.spi.adapter.output.outbox;
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,7 +11,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -18,14 +18,12 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest
-@Transactional
 class NotificationOutboxRepositoryIntegrationTest {
 
     @MockitoBean
@@ -38,6 +36,7 @@ class NotificationOutboxRepositoryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
+    @AfterEach
     void cleanFixtureRows() {
         jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id LIKE 'E2E-OUTBOX-%'");
     }
@@ -47,8 +46,13 @@ class NotificationOutboxRepositoryIntegrationTest {
         NotificationPublication first = notification("E2E-OUTBOX-1", "original");
         NotificationPublication second = notification("E2E-OUTBOX-2", "second");
 
-        repository.insertAll(List.of(first, second));
-        repository.insertAll(List.of(notification("E2E-OUTBOX-1", "replayed")));
+        List<NotificationPublication> inserted = repository.insertAll(List.of(first, second));
+        List<NotificationPublication> replayed = repository.insertAll(List.of(
+                notification("E2E-OUTBOX-1", "replayed")
+        ));
+
+        assertThat(inserted).containsExactly(first, second);
+        assertThat(replayed).isEmpty();
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM notification_outbox WHERE payment_id LIKE 'E2E-OUTBOX-%'",
@@ -62,9 +66,32 @@ class NotificationOutboxRepositoryIntegrationTest {
     }
 
     @Test
+    void newRowsWaitForTheConfiguredDelayBeforeRecoveryCanClaimThem() {
+        NotificationPublication notification = notification("E2E-OUTBOX-DELAY", "payload");
+
+        repository.insertAll(List.of(notification));
+
+        assertThat(repository.findPending(1_000))
+                .extracting(NotificationPublication::communicationId)
+                .doesNotContain(notification.communicationId());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT next_attempt_at > clock_timestamp() FROM notification_outbox WHERE communication_id = ?",
+                Boolean.class,
+                notification.communicationId()
+        )).isTrue();
+
+        makeRecoveryEligible(notification.communicationId());
+
+        assertThat(repository.findPending(1_000))
+                .extracting(NotificationPublication::communicationId)
+                .contains(notification.communicationId());
+    }
+
+    @Test
     void concurrentSelectionsMaySeeTheSamePendingRowAndPublishedIsTerminal() {
         NotificationPublication notification = notification("E2E-OUTBOX-CONCURRENT", "payload");
         repository.insertAll(List.of(notification));
+        makeRecoveryEligible(notification.communicationId());
 
         List<NotificationPublication> firstWorkerSelection = repository.findPending(1_000);
         List<NotificationPublication> secondWorkerSelection = repository.findPending(1_000);
@@ -104,13 +131,14 @@ class NotificationOutboxRepositoryIntegrationTest {
                         """,
                 Double.class,
                 notification.communicationId()
-        )).isCloseTo(1.0, within(0.001));
+        )).isBetween(0.8, 1.0);
     }
 
     @Test
     void newWorkerPublishesPendingRowLeftByPreviousWorker() {
         NotificationPublication notification = notification("E2E-OUTBOX-RESTART", "durable-payload");
         repository.insertAll(List.of(notification));
+        makeRecoveryEligible(notification.communicationId());
 
         NotificationPublisher unavailablePublisher = mock(NotificationPublisher.class);
         when(unavailablePublisher.publish(any(NotificationPublication.class)))
@@ -153,6 +181,14 @@ class NotificationOutboxRepositoryIntegrationTest {
                         resultSet.getString(3),
                         resultSet.getBoolean(4)
                 ),
+                communicationId
+        );
+    }
+
+    private void makeRecoveryEligible(String communicationId) {
+        jdbcTemplate.update(
+                "UPDATE notification_outbox SET next_attempt_at = clock_timestamp() - INTERVAL '1 second' "
+                        + "WHERE communication_id = ?",
                 communicationId
         );
     }

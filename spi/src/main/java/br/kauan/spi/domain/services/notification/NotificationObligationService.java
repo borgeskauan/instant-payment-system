@@ -1,6 +1,7 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.adapter.output.outbox.NotificationOutboxBatchReady;
 import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
@@ -10,6 +11,7 @@ import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -28,15 +30,18 @@ public class NotificationObligationService {
     private final NotificationPayloadFactory payloadFactory;
     private final NotificationContentSerializer contentSerializer;
     private final NotificationOutboxRepository outboxRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public NotificationObligationService(
             NotificationPayloadFactory payloadFactory,
             NotificationContentSerializer contentSerializer,
-            NotificationOutboxRepository outboxRepository
+            NotificationOutboxRepository outboxRepository,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.payloadFactory = payloadFactory;
         this.contentSerializer = contentSerializer;
         this.outboxRepository = outboxRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     public void storeAcceptanceObligations(List<PaymentTransactionCommand> paymentTransactions) {
@@ -60,7 +65,7 @@ public class NotificationObligationService {
             ));
         }
 
-        outboxRepository.insertAll(obligations);
+        store(obligations);
         log.debug("Acceptance notification obligations stored. payments={}", paymentTransactions.size());
     }
 
@@ -105,7 +110,7 @@ public class NotificationObligationService {
             ));
         }
 
-        outboxRepository.insertAll(obligations);
+        store(obligations);
         log.debug(
                 "Status notification obligations stored. settled={}, rejected={}",
                 settledPayments.size(),
@@ -134,6 +139,13 @@ public class NotificationObligationService {
                 paymentTransaction.getPaymentId(),
                 notificationStatus(paymentStatus)
         );
+    }
+
+    private void store(List<NotificationPublication> obligations) {
+        List<NotificationPublication> inserted = outboxRepository.insertAll(obligations);
+        if (!inserted.isEmpty()) {
+            eventPublisher.publishEvent(new NotificationOutboxBatchReady(inserted));
+        }
     }
 
     private List<Reason> notificationReasons(PaymentRejectionReason rejectionReason) {

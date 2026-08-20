@@ -1575,3 +1575,76 @@ filas. O estado correto da variante é: ganho local comprovado, ausência de
 regressão semântica e ganho end-to-end ainda não comprovado. O próximo tuning
 deve seguir o gargalo anterior observado, sem repetir este A/B apenas para
 revalidar os mesmos fatos.
+
+### Fast path pós-commit da notification outbox do SPI
+
+A publicação inicial deixou de depender do polling da outbox. O insert em lote
+agora usa `RETURNING communication_id` e devolve somente as obrigações realmente
+criadas por aquela transação; replays idempotentes não entram no fast path. Um
+evento interno síncrono, associado à transação, publica esse lote somente em
+`AFTER_COMMIT`. Rollback não publica nada, e uma falha depois do commit não é
+propagada como se a transação financeira tivesse falhado: a row `PENDING`
+permanece durável para recovery.
+
+O fast path e o recovery reutilizam o mesmo worker e o mesmo monitor, sem fila,
+executor ou lifecycle adicional. Os envios Kafka do lote são iniciados antes
+da espera pelas confirmações. `markPublished` e `scheduleRetry` executam em
+transações `REQUIRES_NEW`, pois o callback já ocorre depois do commit original.
+Rows novas recebem `next_attempt_at = clock_timestamp() + 1s`, usando o mesmo
+`retry-delay` existente, e o polling de recovery mudou de `20ms` para `1s`.
+Assim, o recovery não disputa imediatamente uma row que o fast path acabou de
+receber.
+
+Os testes protegem retorno somente das rows inseridas, ausência de evento para
+replay, evento somente após commit, ausência de publicação no rollback,
+persistência do estado pós-publicação em nova transação, serialização entre
+fast path e recovery e elegibilidade tardia para recovery. A suíte completa do
+SPI passou com `296` testes, sem falhas.
+
+O ambiente foi recriado e o smoke qualificou na primeira tentativa com
+`1.250/1.250` originais, `1.000/1.000` PACS.002 e `112/112` replays. O
+diagnóstico único está em
+`notification-outbox-post-commit-fast-path/20260819_215520`; o comparável é
+`pacs002-update-by-outcome-clean/20260819_202532`. Profile e execution plan são
+idênticos. A execução nova aceitou `134.999/134.999` originais, não teve outcome
+contraditório nem violação de replay, terminou com Kafka quiescente e, na
+checagem posterior, todas as `256.707` rows da outbox acumuladas pelo smoke e
+pelo diagnóstico estavam `PUBLISHED`.
+
+O mecanismo local esperado foi confirmado:
+
+| trabalho da outbox | anterior | fast path | variação |
+| --- | ---: | ---: | ---: |
+| polls | `914` | `111` | `-87,86%` |
+| rows devolvidas pelo poll | `237.223` | `0` | `-100%` |
+| tempo acumulado do poll | `12.969,524 ms` | `805,566 ms` | `-93,79%` |
+| rows por insert | `219,25` | `272,79` | `+24,42%` |
+| tempo do insert por row | `0,3028 ms` | `0,1530 ms` | `-49,47%` |
+
+O `pg_stat_statements` exporta somente as cinquenta queries mais caras. Como o
+`markPublished` ainda gera uma forma SQL distinta para cada cardinalidade do
+`IN`, a soma das formas visíveis não representa todas as chamadas e não foi
+usada como total. Estruturalmente, o fast path troca o mark de lotes de recovery
+de até `1.000` rows por um mark para cada lote de negócio efetivamente inserido;
+portanto a redução do poll não significa eliminação de todo o custo pós-commit.
+
+O resultado end-to-end foi misto:
+
+| evidência | anterior | fast path | variação |
+| --- | ---: | ---: | ---: |
+| originais iniciados no ativo | `125.849` | `122.054` | `-3,02%` |
+| mínimo rolling de 1 s | `766 TPS` | `1.148 TPS` | `+49,87%` |
+| PACS.002 iniciados | `67.311` | `59.229` | `-12,01%` |
+| outcomes observados | `75.458` | `74.441` | `-1,35%` |
+| latência p50 | `35.468,961 ms` | `33.362,641 ms` | `-5,94%` |
+| latência p95 | `56.558,906 ms` | `56.433,477 ms` | `-0,22%` |
+| latência p99 | `60.114,454 ms` | `58.963,240 ms` | `-1,92%` |
+| CPU média do PostgreSQL | `102,779%` | `102,284%` | `-0,48%` |
+
+O PostgreSQL continuou saturado, e o run ainda não provou o piso sustentado nem
+o SLA. A redução de polling é real e não houve regressão semântica, mas este
+único diagnóstico curto não prova ganho de capacidade: houve menos PACS.002,
+enquanto outcomes totais e latências ficaram próximos ou melhores. **Decisão:
+manter a simplificação implementada, mas classificar o efeito de performance
+end-to-end como inconclusivo.** Ela não encerra a estabilização e não autoriza
+atribuir ganho de throughput ao fast path.
