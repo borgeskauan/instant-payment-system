@@ -2485,3 +2485,58 @@ foram concluídos.
 
 O resultado foi adotado nos profiles diagnóstico e oficial de 15 minutos:
 `1.500 TPS / 120 s / 120 s`.
+
+#### Repetição A/B da Fase 1 com a fronteira de warmup corrigida
+
+O A/B da projeção mínima foi repetido depois da correção do load-tool. O A foi
+reconstruído a partir de `16481ac` com o diretório `load-test` de `a6fc683`,
+preservando a persistência larga e aplicando exatamente o scheduler, warmup e
+gate atuais. O B usou `a6fc683`, com `delivery_index`, buffer recente e fallback
+SQL. Cada variante recebeu volumes novos, os mesmos recursos e o profile
+`mixed-outcomes-2k-diagnostic`.
+
+Os bundles analisados são:
+
+- A: `phase1-ab-a-wide-current-loadtool/20260821_174152`;
+- B: `phase1-ab-b-delivery-index-current-loadtool/20260821_175001`.
+
+A primeira tentativa B terminou no prewarm HTTP/2 antes de criar qualquer
+pagamento. A única repetição permitida foi feita na mesma stack, sem nova
+preparação. Os dois runs medidos terminaram com relatório inválido para SLA,
+mas produziram bundles completos e analisáveis.
+
+| sinal | A — delivery larga | B — índice mínimo |
+| --- | ---: | ---: |
+| gate após a geração do warmup | `87,415 s` | `60,896 s` |
+| pagamentos ativos iniciados | `119.743` | `119.634` |
+| TPS ativo médio / mínimo / máximo rolling | `1.995,717 / 1.944 / 2.019` | `1.993,900 / 1.840 / 2.019` |
+| PACS.002 ativo | `481,400 TPS` | `529,733 TPS` |
+| notificações ativas | `596,517 TPS` | `645,517 TPS` |
+| outcomes finais / pagamentos iniciados | `211.869 / 272.155` (`77,849%`) | `207.546 / 265.790` (`78,086%`) |
+| outcomes ausentes | `60.286` | `58.231` |
+| latência p50 / p95 / p99 | `34,463 / 55,269 / 58,673 s` | `31,979 / 54,591 / 55,765 s` |
+| CPU média PostgreSQL no ativo | `101,903%` | `102,775%` |
+| CPU média Gateway no ativo | `18,633%` | `18,474%` |
+| SQL de persistência/leitura do Gateway | `203,292 s` | `66,967 s` |
+| WAL desse caminho | `659,459 MB` | `337,973 MB` |
+| SQL das 50 queries exportadas | `559,765 s` | `380,971 s` |
+| WAL das 50 queries exportadas | `1.965,480 MB` | `1.539,995 MB` |
+
+O objetivo direto da Fase 1 foi confirmado. Mesmo processando somente `1,93%`
+menos notificações, o índice mínimo reduziu em `67,06%` o tempo SQL do caminho
+de persistência/leitura do Gateway e em `48,75%` seu WAL. No conjunto das 50
+queries exportadas, as reduções foram `31,94%` de tempo e `21,65%` de WAL. A
+CPU do PostgreSQL continuou saturada porque o trabalho liberado foi consumido
+por mais progresso útil: PACS.002 ativo cresceu `10,04%`, notificações ativas
+`8,21%`, a proporção de outcomes concluídos aumentou `0,238 pp` e p50/p99
+caíram `7,21% / 4,96%`.
+
+O piso de `2.000 TPS` ainda não foi provado. O B teve uma queda concentrada por
+volta do segundo ativo `26`: o bucket fixo daquele segundo iniciou `1.870`
+pagamentos, enquanto a média ativa ficou apenas `0,09%` abaixo do A e o máximo
+rolling foi idêntico. Não houve carry-over nem HTTP diferente de `200` na
+janela ativa. O JFR também registrou mais compilação ativa no B (`1,334 / 2,087
+/ 1,588 s` em Producer/SPI/Gateway) que no A (`0,374 / 1,216 / 1,103 s`), o que
+impede atribuir essa queda isolada ao novo schema. O A/B sustenta manter a Fase
+1 pelo ganho direto e pelo progresso end-to-end, mas não qualifica capacidade
+nem SLA.
