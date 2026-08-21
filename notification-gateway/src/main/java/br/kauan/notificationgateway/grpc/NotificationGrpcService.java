@@ -1,7 +1,7 @@
 package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.delivery.NotificationDelivery;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
@@ -22,18 +22,18 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
 
     static final int PULL_BATCH_LIMIT = 15;
 
-    private final NotificationDeliveryRepository repository;
+    private final NotificationDeliveryReader reader;
     private final PullRequestCoordinator coordinator;
     private final DeliveryCursorCodec cursorCodec;
     private final Duration longPollTimeout;
 
     public NotificationGrpcService(
-            NotificationDeliveryRepository repository,
+            NotificationDeliveryReader reader,
             PullRequestCoordinator coordinator,
             DeliveryCursorCodec cursorCodec,
             @Value("${notification-gateway.pull.long-poll-timeout-ms:30000}") long longPollTimeoutMillis
     ) {
-        this.repository = repository;
+        this.reader = reader;
         this.coordinator = coordinator;
         this.cursorCodec = cursorCodec;
         this.longPollTimeout = Duration.ofMillis(longPollTimeoutMillis);
@@ -57,11 +57,11 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
                 serverObserver.setOnCancelHandler(session::signal);
             }
 
-            List<NotificationDelivery> deliveries = repository.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
+            List<NotificationDelivery> deliveries = reader.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
             if (deliveries.isEmpty() && !isCancelled(responseObserver)) {
                 session.await(longPollTimeout);
                 if (!isCancelled(responseObserver)) {
-                    deliveries = repository.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
+                    deliveries = reader.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
                 }
             }
             if (isCancelled(responseObserver)) {

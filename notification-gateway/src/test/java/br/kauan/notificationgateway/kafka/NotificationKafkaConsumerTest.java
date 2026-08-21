@@ -1,8 +1,7 @@
 package br.kauan.notificationgateway.kafka;
 
 import br.kauan.notificationgateway.delivery.IncomingNotification;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
-import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
+import br.kauan.notificationgateway.delivery.NotificationIndexingService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.Test;
@@ -10,35 +9,28 @@ import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class NotificationKafkaConsumerTest {
 
     @Test
-    void persistsWholeKafkaPollThenSignalsOnlyRecipientsWithNewRows() {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository, coordinator);
+    void decodesTheWholeKafkaPollBeforeEnsuringItsNotificationsAreIndexed() {
+        NotificationIndexingService indexingService = mock(NotificationIndexingService.class);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(indexingService);
         ConsumerRecord<String, byte[]> first = record(10, "20000001", "v1:first", "E2E-1", "ACSC", "first");
         ConsumerRecord<String, byte[]> second = record(11, "20000002", "v1:second", "E2E-2", "RJCT", "second");
-        when(repository.saveAllIfAbsent(org.mockito.ArgumentMatchers.anyList()))
-                .thenReturn(Set.of("20000001"));
 
         consumer.consume(List.of(first, second));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<IncomingNotification>> notifications = ArgumentCaptor.forClass(List.class);
-        var order = inOrder(repository, coordinator);
-        order.verify(repository).saveAllIfAbsent(notifications.capture());
-        order.verify(coordinator).signal(Set.of("20000001"));
+        verify(indexingService).ensureIndexed(notifications.capture());
         assertThat(notifications.getValue()).extracting(
                 IncomingNotification::communicationId,
                 IncomingNotification::recipientIspb,
@@ -52,16 +44,15 @@ class NotificationKafkaConsumerTest {
 
     @Test
     void malformedRecordPreventsAnyPersistenceOrSignal() {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository, coordinator);
+        NotificationIndexingService indexingService = mock(NotificationIndexingService.class);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(indexingService);
         ConsumerRecord<String, byte[]> invalid = record(10, "20000001", "v1:first", "E2E-1", "ACSC", "first");
         invalid.headers().remove("notification.schema-version");
 
         assertThatThrownBy(() -> consumer.consume(List.of(invalid)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Missing Kafka header: notification.schema-version");
-        verifyNoInteractions(repository, coordinator);
+        verifyNoInteractions(indexingService);
     }
 
     private ConsumerRecord<String, byte[]> record(

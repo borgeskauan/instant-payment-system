@@ -2075,10 +2075,11 @@ qualificação depois que a atribuição deixar de ser necessária.
 
 O candidato estrutural implementado substitui integralmente a metade
 Gateway → PSP do reliable push por pull unary sobre a conexão gRPC HTTP/2/mTLS
-já existente. A outbox do SPI e a persistência inicial de
-`notification_delivery` permanecem. Saem do Gateway o ACK individual,
-`ACKED`, `IN_FLIGHT`, lease, claim, worker de recovery, retry ativo e todos os
-índices/configurações exclusivos desse lifecycle.
+já existente. A outbox confiável do SPI permanece. A persistência larga de
+`notification_delivery` foi posteriormente substituída pelo `delivery_index`
+mínimo da Fase 1 híbrida. Saem do Gateway o ACK individual, `ACKED`,
+`IN_FLIGHT`, lease, claim, worker de recovery, retry ativo e todos os
+índices/configurações exclusivos desse lifecycle push.
 
 Cada PSP mantém um fluxo lógico e apresenta o último cursor que processou
 duravelmente. `PullNotifications` recebe somente esse cursor. O Gateway
@@ -2090,10 +2091,10 @@ causa redelivery do lote e preserva at-least-once. Um segundo pull simultâneo
 do mesmo PSP é rejeitado.
 
 O cursor usa `delivery_position` própria do Gateway, não partition/offset do
-Kafka. Uma sequence global fornece a posição e um advisory lock transacional
-serializa a alocação/commit dos batches Kafka, impedindo que uma row com posição
-menor apareça depois de uma fronteira já emitida. A migração exige
-`notification_delivery` vazia; não há compatibilidade com backlog push.
+Kafka. A posição agora é consecutiva dentro do fluxo de cada PSP. Um advisory
+lock transacional por ISPB serializa somente alocações concorrentes do mesmo
+destinatário; PSPs diferentes permanecem independentes. A migração exige
+`notification_delivery` vazia; não há compatibilidade com backlog anterior.
 
 O profile não contém configuração de tamanho de pull nem versionamento próprio.
 O limite `15` pertence ao protocolo do Gateway. O `sla-report.json` registra,
@@ -2177,3 +2178,80 @@ perfil de diagnóstico `500` e o de `1` foram removidos; seus bundles permanecem
 somente como evidência histórica que fundamenta esta decisão.
 `PullNotifications` não aceita tamanho de lote, profiles não o configuram e o
 Gateway sempre limita a resposta a `15` notificações.
+
+### Fase 1 híbrida — projeção mínima e buffer recente
+
+A Fase 1 preservou o publisher confiável da `notification_outbox`, seus estados
+`PENDING/PUBLISHED`, retry e publicação Kafka com `acks=all`. Kafka ainda faz
+parte da correctness neste checkpoint. No Gateway, a cópia larga do payload foi
+substituída por:
+
+```text
+delivery_index
+  communication_id      PK
+  recipient_ispb
+  delivery_position     posição local ao PSP
+
+UNIQUE (recipient_ispb, delivery_position)
+```
+
+O consumer decodifica o poll completo e chama uma única operação de indexação.
+Ela deduplica `communication_id`, rejeita associação divergente de destinatário,
+adquire locks por PSP em ordem determinística, atribui posições somente às
+notificações novas e faz um bulk insert estreito. Replays não consomem posição.
+Depois do commit, as novas posições e seus payloads Kafka entram numa janela
+efêmera ordenada de até `150` itens por PSP, e long polls afetados são
+sinalizados.
+
+O Pull usa RAM somente quando ela contém uma sequência contígua começando em
+`cursor + 1`. Em gap, restart ou cursor anterior à janela, responde diretamente
+com `delivery_index JOIN notification_outbox ORDER BY delivery_position LIMIT
+15`; não existe lifecycle separado de reidratação. A migração recusa substituir
+uma `notification_delivery` não vazia e preserva seus dados em caso de erro.
+
+O primeiro diagnóstico expôs uma implementação acidentalmente cara da leitura
+da última posição. `MAX(delivery_position) GROUP BY recipient_ispb` escolheu
+`Parallel Seq Scan`; para 20 PSPs, o `EXPLAIN ANALYZE` mediu cerca de `41 ms`.
+A forma final usa um lookup lateral por PSP, com `Index Only Scan Backward` em
+`delivery_index_recipient_position_key`, e mediu aproximadamente `1,3 ms` no
+mesmo estado. No run anterior à correção, as variantes de `MAX` acumularam
+`25,872 s`; no bundle final, o lookup indexado acumulou `1,038 s`.
+
+O smoke qualificado foi
+`environment-setup-20260821_015557-2578183-attempt-1/20260821_015733`: iniciou
+os `1.250` pagamentos planejados, observou todos os outcomes esperados, não
+registrou contradições nem violações de replay e deixou Kafka quiescente.
+
+O checkpoint B final é
+`delivery-index-phase1-indexed-tail/20260821_015925`, comparado ao baseline pull
+15 `pull-batch-15-clean/20260820_233923`:
+
+| sinal | baseline largo | Fase 1 final |
+| --- | ---: | ---: |
+| pagamentos ativos iniciados | `119.851` | `117.168` |
+| TPS ativo médio / mínimo rolling | `1.997,517 / 1.944` | `1.952,800 / 983` |
+| outcomes finais observados | `100.404` | `94.198` |
+| latência p50 / p95 / p99 | `25,729 / 49,251 / 50,993 s` | `33,331 / 47,106 / 55,494 s` |
+| CPU média PostgreSQL no ativo | `100,19%` | `102,99%` |
+| CPU média Gateway no ativo | `23,66%` | `40,22%` |
+| insert largo / insert do índice | `51,259 s` | `13,728 s` |
+| WAL do insert de delivery | `289,593 MB` | `130,251 MB` |
+| SELECT do Pull / fallback join | `12,334 s` | `4,855 s` |
+| lookup de ID + última posição | — | `2,774 + 1,038 s` |
+
+Somando o trabalho SQL diretamente pertencente à persistência e leitura do
+Gateway, o recorte caiu de aproximadamente `63,593 s` para `22,396 s`
+(`-64,8%`). O WAL do insert caiu cerca de `55,0%`, apesar de a Fase 1 processar
+`254.131` índices contra `271.900` deliveries do baseline. Não apareceu
+`INSERT INTO notification_delivery`; o caminho novo foi efetivamente
+exercitado.
+
+Isso comprova a remoção do custo específico pretendido, mas não comprova a
+capacidade de `2.000 TPS`: o PostgreSQL permaneceu saturado, a
+`notification_outbox` continuou dominante e o run teve `33.252` outcomes
+ausentes no deadline. Não houve outcome contraditório, replay inválido,
+PACS.002 sem HTTP 2xx ou lote de Pull acima de `15`. A piora do mínimo rolling,
+do p50/p99 e da CPU de aplicação impede inferir ganho end-to-end a partir desta
+única amostra. A implementação não é revertida nem promovida automaticamente;
+a decisão arquitetural permanece com a revisão do usuário, e as próximas fases
+não devem começar antes desse checkpoint ser aceito.

@@ -28,24 +28,18 @@ class NotificationDeliveryPullSchemaIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void schemaContainsOnlyPullDeliveryState() {
+    void schemaContainsOnlyTheMinimalDeliveryIndex() {
         List<String> columns = jdbcTemplate.queryForList("""
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
-                  AND table_name = 'notification_delivery'
+                  AND table_name = 'delivery_index'
                 ORDER BY ordinal_position
                 """, String.class);
 
         assertThat(columns).containsExactly(
                 "communication_id",
                 "recipient_ispb",
-                "event_type",
-                "payment_id",
-                "notification_status",
-                "schema_version",
-                "payload",
-                "created_at",
                 "delivery_position"
         );
 
@@ -53,13 +47,20 @@ class NotificationDeliveryPullSchemaIntegrationTest {
                 SELECT indexname
                 FROM pg_indexes
                 WHERE schemaname = 'public'
-                  AND tablename = 'notification_delivery'
+                  AND tablename = 'delivery_index'
                 ORDER BY indexname
                 """, String.class);
 
         assertThat(indexes).containsExactly(
-                "notification_delivery_pkey",
-                "notification_delivery_recipient_position_idx"
+                "delivery_index_pkey",
+                "delivery_index_recipient_position_key"
         );
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'notification_delivery'
+                """, Integer.class)).isZero();
     }
 }

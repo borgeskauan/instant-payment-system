@@ -1,8 +1,7 @@
 package br.kauan.notificationgateway.kafka;
 
 import br.kauan.notificationgateway.delivery.IncomingNotification;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
-import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
+import br.kauan.notificationgateway.delivery.NotificationIndexingService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
@@ -14,9 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Consumes every message from {@code psp-notifications} and records it as a
- * durable delivery. After the persistence transaction commits, any pending
- * long-poll for a recipient with newly inserted work is signalled.
+ * Consumes every message from {@code psp-notifications} and records its durable
+ * position in the recipient's delivery flow. After the index transaction
+ * commits, newly indexed payloads are buffered and any pending long-poll for
+ * an affected recipient is signalled.
  *
  * <p>The payload remains opaque. Routing and idempotency metadata come from
  * Kafka key/headers produced by the SPI.
@@ -27,15 +27,10 @@ public class NotificationKafkaConsumer {
 
     private static final String NOTIFICATIONS_TOPIC = "psp-notifications";
 
-    private final NotificationDeliveryRepository deliveryRepository;
-    private final PullRequestCoordinator pullRequestCoordinator;
+    private final NotificationIndexingService indexingService;
 
-    public NotificationKafkaConsumer(
-            NotificationDeliveryRepository deliveryRepository,
-            PullRequestCoordinator pullRequestCoordinator
-    ) {
-        this.deliveryRepository = deliveryRepository;
-        this.pullRequestCoordinator = pullRequestCoordinator;
+    public NotificationKafkaConsumer(NotificationIndexingService indexingService) {
+        this.indexingService = indexingService;
     }
 
     @KafkaListener(
@@ -61,7 +56,7 @@ public class NotificationKafkaConsumer {
                     record.value()
             );
             log.debug(
-                    "Persisting notification delivery. communicationId={}, ispb={}, partition={}, offset={}",
+                    "Indexing notification delivery. communicationId={}, ispb={}, partition={}, offset={}",
                     notification.communicationId(),
                     ispb,
                     record.partition(),
@@ -70,7 +65,7 @@ public class NotificationKafkaConsumer {
             notifications.add(notification);
         }
 
-        pullRequestCoordinator.signal(deliveryRepository.saveAllIfAbsent(notifications));
+        indexingService.ensureIndexed(notifications);
     }
 
     private String requiredHeader(ConsumerRecord<String, byte[]> record, String name) {

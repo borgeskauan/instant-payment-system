@@ -1,7 +1,7 @@
 package br.kauan.notificationgateway.grpc;
 
 import br.kauan.notificationgateway.delivery.NotificationDelivery;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
@@ -27,10 +27,10 @@ class NotificationGrpcServiceTest {
 
     @Test
     void returnsOnlyTheAuthenticatedPspPageAndIssuesCursorAtItsLastPosition() throws Exception {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        NotificationGrpcService service = service(repository, codec, 1);
-        when(repository.findAfter("20000001", 0, 15)).thenReturn(List.of(
+        NotificationGrpcService service = service(reader, codec, 1);
+        when(reader.findAfter("20000001", 0, 15)).thenReturn(List.of(
                 delivery(12, "v1:first", "first"),
                 delivery(18, "v1:second", "second")
         ));
@@ -45,16 +45,16 @@ class NotificationGrpcServiceTest {
                 .containsExactly("first", "second");
         assertThat(codec.decodePosition(observer.response.getNextCursor(), "20000001"))
                 .isEqualTo(18);
-        verify(repository).findAfter("20000001", 0, 15);
+        verify(reader).findAfter("20000001", 0, 15);
     }
 
     @Test
     void emptyLongPollReturnsTheSameCursor() throws Exception {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        NotificationGrpcService service = service(repository, codec, 1);
+        NotificationGrpcService service = service(reader, codec, 1);
         String cursor = codec.encode("20000001", 20);
-        when(repository.findAfter("20000001", 20, 15)).thenReturn(List.of());
+        when(reader.findAfter("20000001", 20, 15)).thenReturn(List.of());
         CapturingObserver observer = new CapturingObserver();
 
         authenticatedCall(service, PullRequest.newBuilder()
@@ -63,14 +63,14 @@ class NotificationGrpcServiceTest {
 
         assertThat(observer.response.getNotificationsCount()).isZero();
         assertThat(observer.response.getNextCursor()).isEqualTo(cursor);
-        verify(repository, org.mockito.Mockito.times(2)).findAfter("20000001", 20, 15);
+        verify(reader, org.mockito.Mockito.times(2)).findAfter("20000001", 20, 15);
     }
 
     @Test
     void rejectsInvalidCursor() throws Exception {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        NotificationGrpcService service = service(repository, codec, 1);
+        NotificationGrpcService service = service(reader, codec, 1);
         CapturingObserver invalidCursor = new CapturingObserver();
 
         authenticatedCall(service, PullRequest.newBuilder()
@@ -84,7 +84,7 @@ class NotificationGrpcServiceTest {
     @Test
     void missingAuthenticatedPspIsRejected() {
         NotificationGrpcService service = service(
-                mock(NotificationDeliveryRepository.class),
+                mock(NotificationDeliveryReader.class),
                 new DeliveryCursorCodec(SECRET),
                 1
         );
@@ -98,9 +98,9 @@ class NotificationGrpcServiceTest {
 
     @Test
     void releasesPullAdmissionBeforePublishingResponseToTheClient() throws Exception {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        NotificationGrpcService service = service(repository, new DeliveryCursorCodec(SECRET), 1);
-        when(repository.findAfter("20000001", 0, 15))
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        NotificationGrpcService service = service(reader, new DeliveryCursorCodec(SECRET), 1);
+        when(reader.findAfter("20000001", 0, 15))
                 .thenReturn(List.of(delivery(1, "v1:first", "first")));
         CapturingObserver nextPull = new CapturingObserver();
         StreamObserver<PullResponse> immediateRepull = new StreamObserver<>() {
@@ -133,12 +133,12 @@ class NotificationGrpcServiceTest {
     }
 
     private NotificationGrpcService service(
-            NotificationDeliveryRepository repository,
+            NotificationDeliveryReader reader,
             DeliveryCursorCodec codec,
             long timeoutMillis
     ) {
         return new NotificationGrpcService(
-                repository,
+                reader,
                 new PullRequestCoordinator(),
                 codec,
                 timeoutMillis
