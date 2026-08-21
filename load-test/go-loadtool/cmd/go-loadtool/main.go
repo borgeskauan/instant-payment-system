@@ -66,12 +66,14 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 }
 
 type profileValidation struct {
-	Profile       string                      `json:"profile"`
-	WarmupSeconds int64                       `json:"warmupSeconds"`
-	ActiveSeconds int64                       `json:"activeSeconds"`
-	DrainSeconds  int64                       `json:"drainSeconds"`
-	Replay        profileValidationReplay     `json:"replay"`
-	Scenarios     []profileValidationScenario `json:"scenarios"`
+	Profile                        string                      `json:"profile"`
+	WarmupTargetTxRate             int                         `json:"warmupTargetTxRate"`
+	WarmupSeconds                  int64                       `json:"warmupSeconds"`
+	WarmupCompletionTimeoutSeconds int64                       `json:"warmupCompletionTimeoutSeconds"`
+	ActiveSeconds                  int64                       `json:"activeSeconds"`
+	DrainSeconds                   int64                       `json:"drainSeconds"`
+	Replay                         profileValidationReplay     `json:"replay"`
+	Scenarios                      []profileValidationScenario `json:"scenarios"`
 }
 
 type profileValidationReplay struct {
@@ -169,11 +171,13 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 		return profileValidation{}, fmt.Errorf("derive provisioning for profile %q: %w", runtimeCfg.Name, err)
 	}
 	validation := profileValidation{
-		Profile:       runtimeCfg.Name,
-		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
-		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
-		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),
-		Scenarios:     make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
+		Profile:                        runtimeCfg.Name,
+		WarmupTargetTxRate:             runtimeCfg.Load.Warmup.TargetTxRate,
+		WarmupSeconds:                  int64(runtimeCfg.Load.Warmup.Duration.Seconds()),
+		WarmupCompletionTimeoutSeconds: int64(runtimeCfg.Load.Warmup.CompletionTimeout.Seconds()),
+		ActiveSeconds:                  int64(runtimeCfg.Load.Duration.Seconds()),
+		DrainSeconds:                   int64(runtimeCfg.Load.Drain.Seconds()),
+		Scenarios:                      make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
 	}
 	if runtimeCfg.Replay.Pacs008 != nil {
 		validation.Replay.Pacs008 = &profileValidationPacs008Replay{

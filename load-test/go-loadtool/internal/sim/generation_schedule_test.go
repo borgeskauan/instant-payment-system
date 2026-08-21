@@ -71,7 +71,7 @@ func TestOriginalPhaseDoesNotQueueSlotPastItsDeadline(t *testing.T) {
 	done := make(chan struct{})
 	s := &simulator{}
 	go func() {
-		s.generateOriginalPhase(context.Background(), jobs, phaseStart, phaseEnd, 1)
+		s.generateOriginalPhase(context.Background(), jobs, phaseStart, phaseEnd, 1, nil)
 		close(done)
 	}()
 

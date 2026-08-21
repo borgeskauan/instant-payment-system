@@ -42,19 +42,21 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 ## Workloads
 
-- Enquanto não houver fronteira confiável de quiescência end-to-end, preparação
-  por execução medida: `cd load-test &&
-  ./prepare-performance-environment.sh`. O comando recria volumes, sobe a stack,
-  espera readiness e só libera o ambiente após um `mixed-outcomes-smoke`
-  funcionalmente completo.
+- Para um baseline isolado, executar `cd load-test &&
+  ./prepare-performance-environment.sh`. O comando recria volumes, sobe a stack
+  e espera readiness; ele não gera tráfego nem tenta inferir quiescência interna.
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
+- Os profiles oficial de 15 minutos e diagnóstico usam warmup explícito de
+  `1.500 TPS` por `120 s`, com timeout de conclusão de `120 s`. O ativo só
+  começa depois que as obrigações de warmup observáveis pelo load-tool terminam.
 - Meta: pelo menos 2.000 pagamentos originais iniciados em toda rolling window
   de um segundo integralmente contida nos 15 minutos ativos.
 - Replays: 5% de `pacs.008` e 5% de `pacs.002`, sempre como carga adicional.
 - Mix funcional: 80% happy-path (`ACSC`) e 20% insufficient-funds
   (`RJCT/AM04`), preservando a distribuição hot-pair.
-- `mixed-outcomes-smoke` permanece a checagem funcional rápida.
+- `mixed-outcomes-smoke` permanece disponível como checagem funcional rápida,
+  mas não é executado automaticamente pelo preparador.
 - `uniform-smoke` permanece o controle happy-path e não substitui o workload
   oficial.
 
@@ -65,9 +67,9 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - [ ] Delimitar quais serviços compõem o budget de 3 vCPUs por stack e quais
   recursos são compartilhados ou pertencem ao gerador de carga.
 - [ ] Executar `prepare-performance-environment.sh` antes do baseline; não
-  iniciar o run longo se readiness, smoke ou quiescência falhar.
-- [ ] Confirmar que o preparador qualificou os 1.250 pagamentos e os outcomes
-  externos do `mixed-outcomes-smoke` antes do run longo.
+  iniciar o run longo se o reset, a subida da stack ou a readiness falhar.
+- [ ] Confirmar no próprio run que o gate concluiu todas as obrigações
+  observáveis do warmup antes de abrir a janela ativa.
 - [ ] Rodar `mixed-outcomes-2k-15m` sem alterar a implementação atual.
 - [ ] Preservar os artefatos mesmo quando a geração, throughput ou SLA não
   atingirem a meta.
@@ -87,9 +89,10 @@ duas stacks compartilhando o mesmo PostgreSQL.
 ### Experimento diagnóstico atual
 
 Usar `mixed-outcomes-2k-diagnostic` para reproduzir o atraso do ingresso
-PACS.008 sem repetir o run de 15 minutos: 2.000 TPS, 15 segundos de warmup, 60
-segundos ativos e 30 segundos de drain. Mix, participantes, funding e replays de
-5% permanecem idênticos a `mixed-outcomes-2k-15m`.
+PACS.008 sem repetir o run de 15 minutos: warmup de 1.500 TPS por 120 segundos,
+gate de conclusão de até 120 segundos, 2.000 TPS por 60 segundos ativos e 30
+segundos de drain. Mix, participantes, funding e replays de 5% permanecem
+idênticos a `mixed-outcomes-2k-15m`.
 
 JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Além dos
 artefatos já existentes, o bundle inclui:
@@ -2253,5 +2256,232 @@ ausentes no deadline. Não houve outcome contraditório, replay inválido,
 PACS.002 sem HTTP 2xx ou lote de Pull acima de `15`. A piora do mínimo rolling,
 do p50/p99 e da CPU de aplicação impede inferir ganho end-to-end a partir desta
 única amostra. A implementação não é revertida nem promovida automaticamente;
-a decisão arquitetural permanece com a revisão do usuário, e as próximas fases
-não devem começar antes desse checkpoint ser aceito.
+a decisão arquitetural permanece com a revisão do usuário.
+
+### Fronteira determinística entre warmup e ativo
+
+A comparação da Fase 1 revelou que o preparador e o início do run misturavam
+três responsabilidades diferentes: readiness, aquecimento e inferência de
+quiescência. O contrato vigente passa a ser menor e observável pelo próprio
+load-tool:
+
+```text
+reset/build/readiness
+        ↓
+warmup na taxa/duração declaradas pelo profile
+        ↓
+esperar trabalho observável do warmup (máximo 120 s)
+        ↓
+active 2.000 TPS
+```
+
+O preparador somente recria a stack e espera readiness. Foram removidos o smoke
+automático, retries e qualificador do smoke, sleeps fixos e verificações de lag
+Kafka usadas como heurística de quiescência. O load-tool não promete que não
+existe trabalho interno residual: ele garante somente que não abre o ativo
+enquanto ainda existe uma obrigação de warmup que ele próprio criou e consegue
+observar.
+
+O gate usa um contador de fase pequeno, integrado ao lifecycle já existente.
+PACS.008 original, outcome final esperado, replay PACS.008 selecionado,
+PACS.002 original e replay PACS.002 selecionado pertencem à fase. Continuações
+são registradas antes de concluir a ação que as originou; assim o contador não
+pode chegar transitoriamente a zero antes de um replay futuro já selecionado.
+Duplicatas at-least-once não criam uma nova obrigação lógica e um outcome
+contraditório falha o gate.
+
+`run-window.json` registra `warmup_ended_at` e o `active_started_at` real. A
+validade de performance continua restrita à janela ativa e a correção continua
+avaliada no run inteiro. Os profiles declaram explicitamente taxa, duração e
+timeout de conclusão do warmup; não existe mais a regra implícita `target / 2`.
+Os profiles `mixed-outcomes-2k-15m` e `mixed-outcomes-2k-diagnostic` usam
+`1.500 TPS / 120 s / 120 s`, configuração validada pelo critério de aquecimento
+com JFR.
+
+A validação do aquecimento foi concluída com o warmup de `1.500 TPS / 120 s` e
+gate de até `120 s`; a Fase 2 da migração híbrida pode prosseguir. Para cada JVM,
+o critério usado foi limitar a compilação na janela ativa à referência
+estabilizada mais `max(20% da referência, 1 s por minuto ativo)`. Essa validação
+não qualifica capacidade, throughput nem SLA end-to-end.
+
+#### Validação do primeiro parâmetro de warmup
+
+A stack foi recriada uma vez e duas execuções idênticas foram realizadas sem
+reset entre elas:
+
+- primeira JVM: `warmup-gate-first/20260821_035238`;
+- referência estabilizada: `warmup-gate-stabilized/20260821_035613`.
+
+O gate concluiu corretamente nas duas execuções. Na primeira, a geração de
+warmup terminou às `03:54:00` e o ativo começou às `03:54:10`; na segunda, os
+instantes foram `03:57:28` e `03:57:55`. Portanto nenhum ativo começou enquanto
+o load-tool ainda possuía obrigações observáveis da própria fase.
+
+As duas execuções aceitaram todos os POSTs e replays iniciados, sem outcome
+contraditório, violação de replay ou lote Pull acima de `15`. Elas não
+qualificaram capacidade/SLA. A primeira obteve mínimo rolling de `1.947 TPS` e
+deixou `10.161` outcomes ausentes; a segunda obteve `1.961 TPS` e deixou
+`35.675` ausentes. O segundo resultado também demonstra a limitação consciente
+do contrato: concluir as obrigações observáveis do warmup corrente não prova
+ausência de trabalho interno residual na stack.
+
+O delta de `totalTimeSpent` dos snapshots `jdk.CompilerStatistics` que
+delimitam cada janela ativa foi:
+
+| JVM | primeira | estabilizada | limite aceito | resultado |
+| --- | ---: | ---: | ---: | --- |
+| Kafka Producer | `3,500 s` | `0,155 s` | `1,155 s` | falhou |
+| SPI | `2,702 s` | `1,073 s` | `2,073 s` | falhou |
+| Notification Gateway | `3,597 s` | `0,920 s` | `1,920 s` | falhou |
+
+Eventos individuais longos de `jdk.Compilation` corroboraram a diferença. A
+primeira janela somou `1,738 / 0,732 / 1,836 s` para Producer, SPI e Gateway;
+a estabilizada somou `0 / 0,289 / 0,114 s`.
+
+Conclusão: a implementação da fronteira é válida, mas a hipótese específica
+`60 s @ 1.000 TPS aquece suficientemente` foi rejeitada. O mecanismo permanece;
+os parâmetros precisam de uma nova decisão e validação antes de retomar a Fase
+2 híbrida.
+
+#### Tentativa com 120 segundos
+
+Somente o profile `mixed-outcomes-2k-diagnostic` foi alterado para
+`1.000 TPS / 120 s`; active, drain, workload e recursos permaneceram iguais. A
+primeira tentativa após a recriação da stack parou antes de gerar pagamentos
+porque um dos 100 GETs do prewarm HTTP/2 excedeu o timeout de cinco segundos.
+A primeira execução funcional seguinte foi
+`warmup120-first/20260821_131459`.
+
+O warmup terminou às `13:17:21` e suas obrigações observáveis fecharam em
+aproximadamente `29 s`, antes do timeout de `30 s`. Um POST do warmup concluiu
+com HTTP `0`, mas recebeu depois o outcome final esperado. Isso expôs e corrigiu
+uma inconsistência do gate: conclusão HTTP não-2xx permanece registrada como
+violação do run, mas não encerra o gate antes do outcome; outcome ausente ainda
+mantém a obrigação pendente e outcome contraditório ainda falha imediatamente.
+
+A janela ativa iniciou `119.741` pagamentos, com mínimo rolling de `1.938 TPS`.
+O run não qualificou SLA/capacidade e terminou com `49.190` outcomes ausentes.
+Mesmo assim, a janela ativa e os JFRs ficaram completos. Comparando-a com a
+referência estabilizada já existente `warmup-gate-stabilized/20260821_035613`,
+que possui a mesma carga ativa, os deltas de `jdk.CompilerStatistics` foram:
+
+| JVM | 120 s | referência estabilizada | limite aceito | resultado |
+| --- | ---: | ---: | ---: | --- |
+| Kafka Producer | `2,330 s` | `0,155 s` | `1,155 s` | falhou |
+| SPI | `1,925 s` | `1,073 s` | `2,073 s` | passou |
+| Notification Gateway | `2,938 s` | `0,920 s` | `1,920 s` | falhou |
+
+Em relação à primeira execução com 60 segundos, 120 segundos reduziram a
+compilação ativa de Producer/SPI/Gateway em aproximadamente `33% / 29% / 18%`,
+mas não estabilizaram Producer e Gateway. O recorte temporal reforça que apenas
+estender a duração em `1.000 TPS` tem retorno decrescente: no último intervalo
+de 30 segundos do warmup, as JVMs gastaram `0,389 / 2,226 / 2,720 s` compilando;
+durante o gate, `0,158 / 2,611 / 0,890 s`; ao subir o ativo para `2.000 TPS`, o
+custo voltou a `2,330 / 1,925 / 2,938 s`.
+
+A tentativa idêntica seguinte,
+`warmup120-stabilized/20260821_131936`, não abriu o active: após o run anterior,
+somente `45.799` dos `115.811` pagamentos de warmup tinham outcome final quando
+o gate atingiu `30 s`. Portanto ela não é usada como referência nem repetida
+automaticamente. O dado disponível indica que o problema restante está mais
+ligado à mudança de intensidade de `1k` para `2k` e à capacidade insuficiente
+da stack do que a simplesmente acrescentar mais tempo em `1k`. O valor de
+`120 s` não é propagado aos outros profiles sem nova decisão.
+
+#### Tentativa com 2.000 TPS por 120 segundos
+
+Para testar a hipótese de que a mudança de intensidade disparava compilação no
+active, somente a taxa de warmup do profile diagnóstico foi elevada de
+`1.000` para `2.000 TPS`. Duração de `120 s`, active de `2.000 TPS / 60 s`,
+drain, workload e recursos permaneceram iguais. A stack e seus volumes foram
+recriados antes da única execução `warmup2k120-first/20260821_133043`.
+
+O experimento não chegou à janela ativa. Das `240.000` posições planejadas no
+warmup, `178.401` pagamentos originais foram iniciados e `61.599` expiraram sem
+carry-over. Todos os POSTs iniciados retornaram HTTP `200`, mas apenas `109.879`
+pagamentos possuíam outcome final quando o gate atingiu seu timeout de `30 s`;
+restaram `68.522` obrigações de outcome pendentes. O run encerrou com código de
+erro e, corretamente, não produziu `run-window.json` nem relatório de SLA.
+
+Sem janela ativa, não existe comparação válida contra o critério de compilação.
+Como diagnóstico secundário, usando o primeiro timestamp gerado apenas para
+recortar o JFR, a compilação nos últimos 30 segundos do warmup foi
+`0,544 / 4,324 / 2,038 s` em Producer/SPI/Gateway; no gate foi
+`0 / 1,032 / 1,036 s`. O dado mostra que a taxa maior exercitou o JIT, mas não
+resolve a condição mais importante: a stack atual não conclui a própria carga
+de warmup de `2.000 TPS` dentro do envelope temporal e do timeout configurado.
+
+Não houve repetição automática nem alteração do timeout naquela tentativa. O
+profile oficial de 15 minutos continuou inalterado; a tentativa seguinte
+avaliou separadamente um timeout maior somente no diagnóstico.
+
+#### Gate de 120 segundos com warmup de 2.000 TPS
+
+O timeout de conclusão do profile diagnóstico foi elevado isoladamente de
+`30 s` para `120 s`, preservando warmup, active, drain, workload e recursos. A
+stack e seus volumes foram recriados antes da única execução
+`warmup2k120-gate120/20260821_134207`.
+
+A geração do warmup terminou às `13:44:32.293` e o active começou às
+`13:46:02.780`: o gate levou `90,487 s` para fechar todas as obrigações
+observáveis. Portanto um limite de `90 s` teria expirado por aproximadamente
+`0,487 s`; `120 s` forneceu margem sem adicionar espera fixa, pois o gate abriu
+assim que o contador chegou a zero.
+
+Com warmup e active na mesma taxa de `2.000 TPS`, a compilação na janela ativa
+caiu para:
+
+| JVM | 2k/120s + gate | referência estabilizada | limite aceito | resultado |
+| --- | ---: | ---: | ---: | --- |
+| Kafka Producer | `1,246 s` | `0,155 s` | `1,155 s` | falhou por `0,091 s` |
+| SPI | `1,213 s` | `1,073 s` | `2,073 s` | passou |
+| Notification Gateway | `1,175 s` | `0,920 s` | `1,920 s` | passou |
+
+Isso confirma que remover a mudança de intensidade entre warmup e active reduz
+materialmente a compilação ativa: em relação a `1k/120s`, Producer/SPI/Gateway
+caíram de `2,330 / 1,925 / 2,938 s` para `1,246 / 1,213 / 1,175 s`. O Producer
+ficou marginalmente acima do critério predefinido; não há promoção automática.
+
+O run ainda não qualificou capacidade/SLA. A janela ativa iniciou `119.842`
+pagamentos, com mínimo rolling de `1.914 TPS`, e terminou com `45.225` outcomes
+ausentes. Todos os `316.874` POSTs originais iniciados e os `25.506` replays
+foram aceitos, sem outcome contraditório nem violação de replay. O profile
+oficial continuou inalterado; uma tentativa posterior avaliou reduzir somente a
+taxa do warmup diagnóstico.
+
+#### Warmup de 1.500 TPS por 120 segundos
+
+Para verificar se menos pressão preservaria o aquecimento com menor backlog, a
+taxa do warmup diagnóstico foi reduzida isoladamente de `2.000` para
+`1.500 TPS`. Duração e timeout de `120 s`, active de `2.000 TPS / 60 s`, drain,
+workload e recursos permaneceram iguais. A stack e seus volumes foram recriados
+antes da medição `warmup1500-120-gate120-first/20260821_170624`.
+
+A primeira tentativa parou antes de qualquer pagamento porque um GET do prewarm
+HTTP/2 excedeu cinco segundos. A medição foi iniciada uma vez na mesma stack;
+portanto a única exposição anterior foi o prewarm incompleto do endpoint de
+health. Esse segundo prewarm concluiu em três segundos.
+
+O gate fechou em `74,516 s`, redução de `15,970 s` em relação aos `90,487 s` do
+warmup de `2.000 TPS`. Foram iniciados `129.872` pagamentos no warmup; `71`
+POSTs concluíram com HTTP `0`, mas seus outcomes esperados chegaram antes da
+abertura do active. Não houve falha HTTP na janela ativa.
+
+As três JVMs atenderam ao critério predefinido de compilação ativa:
+
+| JVM | warmup 1,5k | warmup 2k | referência estabilizada | limite aceito | resultado |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Kafka Producer | `0,518 s` | `1,246 s` | `0,155 s` | `1,155 s` | passou |
+| SPI | `1,131 s` | `1,213 s` | `1,073 s` | `2,073 s` | passou |
+| Notification Gateway | `1,802 s` | `1,175 s` | `0,920 s` | `1,920 s` | passou |
+
+O warmup de `1.500 TPS` preservou o aquecimento necessário pelo critério do JFR
+e abriu o active mais cedo. Isso não representa ganho end-to-end: o mínimo
+rolling foi `1.933 TPS` e restaram `59.342` outcomes no deadline, contra
+`1.914 TPS` e `45.225` outcomes no experimento de `2.000 TPS`. O sampler de
+containers também encerrou com uma amostra parcial, fazendo o runner público
+sair com código operacional `2`; load-tool, relatório, JFRs e demais artefatos
+foram concluídos.
+
+O resultado foi adotado nos profiles diagnóstico e oficial de 15 minutos:
+`1.500 TPS / 120 s / 120 s`.

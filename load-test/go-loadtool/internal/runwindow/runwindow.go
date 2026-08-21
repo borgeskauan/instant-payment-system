@@ -23,19 +23,20 @@ type Profile struct {
 
 type Window struct {
 	GenerationStartedAt time.Time `json:"generation_started_at"`
+	WarmupEndedAt       time.Time `json:"warmup_ended_at"`
 	ActiveStartedAt     time.Time `json:"active_started_at"`
 	GenerationEndedAt   time.Time `json:"generation_ended_at"`
 	ReplayDeadlineAt    time.Time `json:"replay_deadline_at"`
 }
 
-func New(profileName string, started time.Time, warmup, duration, drain time.Duration, replay config.Replay) Document {
-	activeStarted := started.Add(warmup)
+func New(profileName string, started, warmupEnded, activeStarted time.Time, duration, drain time.Duration, replay config.Replay) Document {
 	generationEnded := activeStarted.Add(duration)
 	return Document{
 		SchemaVersion: SchemaVersion,
 		Profile:       Profile{Name: profileName},
 		Window: Window{
 			GenerationStartedAt: started,
+			WarmupEndedAt:       warmupEnded,
 			ActiveStartedAt:     activeStarted,
 			GenerationEndedAt:   generationEnded,
 			ReplayDeadlineAt:    generationEnded.Add(drain),
@@ -83,8 +84,11 @@ func Validate(document Document, profileName string, warmup, duration, drain tim
 		return fmt.Errorf("run window profile is %q, want %q", document.Profile.Name, profileName)
 	}
 	w := document.Window
-	if w.GenerationStartedAt.IsZero() || !w.ActiveStartedAt.Equal(w.GenerationStartedAt.Add(warmup)) {
-		return fmt.Errorf("run window active_started_at is inconsistent with warmup")
+	if w.GenerationStartedAt.IsZero() || !w.WarmupEndedAt.Equal(w.GenerationStartedAt.Add(warmup)) {
+		return fmt.Errorf("run window warmup_ended_at is inconsistent with warmup")
+	}
+	if w.ActiveStartedAt.Before(w.WarmupEndedAt) {
+		return fmt.Errorf("run window active_started_at precedes warmup_ended_at")
 	}
 	if !w.GenerationEndedAt.Equal(w.ActiveStartedAt.Add(duration)) {
 		return fmt.Errorf("run window generation_ended_at is inconsistent with duration")

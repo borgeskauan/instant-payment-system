@@ -5,7 +5,6 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-${REPOSITORY_ROOT}/scripts/provision-funds.sh}"
-readonly KAFKA_QUIESCENCE_SCRIPT="${KAFKA_QUIESCENCE_SCRIPT:-${SCRIPT_DIR}/check-kafka-quiescence.sh}"
 
 RUN_DIR=""
 EXECUTION_PLAN=""
@@ -36,10 +35,6 @@ resolve_execution_plan() {
     fi
     if [[ ! -x "$PROVISION_FUNDS_SCRIPT" ]]; then
         echo "Fund provisioning adapter does not exist or is not executable: $PROVISION_FUNDS_SCRIPT" >&2
-        return 1
-    fi
-    if [[ ! -x "$KAFKA_QUIESCENCE_SCRIPT" ]]; then
-        echo "Kafka quiescence adapter does not exist or is not executable: $KAFKA_QUIESCENCE_SCRIPT" >&2
         return 1
     fi
 }
@@ -153,10 +148,6 @@ main() {
     parse_args "$@"
     resolve_execution_plan
     load_provisioning_records
-
-    echo "Checking initial Kafka lag"
-    "$KAFKA_QUIESCENCE_SCRIPT"
-    echo "Initial Kafka lag is zero"
 
     echo "Provisioning funds from execution-plan.json"
     provision_profile_funding

@@ -16,6 +16,7 @@ type replayJob struct {
 	endpoint     string
 	body         []byte
 	dueAt        time.Time
+	tracker      *phaseTracker
 }
 
 type replayJobHeap []replayJob

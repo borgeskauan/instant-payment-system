@@ -60,9 +60,15 @@ type NotificationGatewayConnection struct {
 
 type Load struct {
 	TargetTxRate int
-	Warmup       time.Duration
+	Warmup       Warmup
 	Duration     time.Duration
 	Drain        time.Duration
+}
+
+type Warmup struct {
+	TargetTxRate      int
+	Duration          time.Duration
+	CompletionTimeout time.Duration
 }
 
 type Replay struct {
@@ -157,10 +163,16 @@ type fileNotificationGatewayConnection struct {
 }
 
 type fileLoad struct {
-	TargetTxRate int    `json:"targetTxRate"`
-	Warmup       string `json:"warmup"`
-	Duration     string `json:"duration"`
-	Drain        string `json:"drain"`
+	TargetTxRate int        `json:"targetTxRate"`
+	Warmup       fileWarmup `json:"warmup"`
+	Duration     string     `json:"duration"`
+	Drain        string     `json:"drain"`
+}
+
+type fileWarmup struct {
+	TargetTxRate      int    `json:"targetTxRate"`
+	Duration          string `json:"duration"`
+	CompletionTimeout string `json:"completionTimeout"`
 }
 
 type fileReplay struct {
@@ -291,7 +303,11 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			return Runtime{}, malformedProfile(name, required.field, errors.New("must be a non-empty string"))
 		}
 	}
-	warmup, err := parseWholeSecondDuration(name, "load.warmup", file.Load.Warmup, true)
+	warmupDuration, err := parseWholeSecondDuration(name, "load.warmup.duration", file.Load.Warmup.Duration, false)
+	if err != nil {
+		return Runtime{}, err
+	}
+	warmupCompletionTimeout, err := parseWholeSecondDuration(name, "load.warmup.completionTimeout", file.Load.Warmup.CompletionTimeout, false)
 	if err != nil {
 		return Runtime{}, err
 	}
@@ -305,6 +321,9 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	}
 	if file.Load.TargetTxRate <= 0 {
 		return Runtime{}, malformedProfile(name, "load.targetTxRate", errors.New("must be positive"))
+	}
+	if file.Load.Warmup.TargetTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.warmup.targetTxRate", errors.New("must be positive"))
 	}
 	replay, err := decodeReplay(name, file.Replay)
 	if err != nil {
@@ -371,9 +390,13 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 		},
 		Load: Load{
 			TargetTxRate: file.Load.TargetTxRate,
-			Warmup:       warmup,
-			Duration:     duration,
-			Drain:        drain,
+			Warmup: Warmup{
+				TargetTxRate:      file.Load.Warmup.TargetTxRate,
+				Duration:          warmupDuration,
+				CompletionTimeout: warmupCompletionTimeout,
+			},
+			Duration: duration,
+			Drain:    drain,
 		},
 		Replay:    replay,
 		Scenarios: scenarios,

@@ -43,7 +43,9 @@ fi
 cat <<'JSON'
 {
   "profile": "mixed-outcomes-smoke",
-  "warmupSeconds": 60,
+  "warmupTargetTxRate": 50,
+  "warmupSeconds": 5,
+  "warmupCompletionTimeoutSeconds": 30,
   "activeSeconds": 60,
   "drainSeconds": 30,
   "replay": {
@@ -132,7 +134,7 @@ LOADTOOL_BUILD_DIR="$tmp_dir"
 LOADTOOL_BIN="$tmp_dir/validating-loadtool"
 validate_profile_with_loadtool
 
-if [[ "$PROFILE_WARMUP_SECONDS" != 60 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
+if [[ "$PROFILE_WARMUP_TARGET_TX_RATE" != 50 || "$PROFILE_WARMUP_SECONDS" != 5 || "$PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS" != 30 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi

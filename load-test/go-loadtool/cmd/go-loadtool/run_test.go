@@ -243,7 +243,9 @@ func TestRunCommandLoadsRunProfileBeforeCreatingOutputs(t *testing.T) {
 }
 
 func writeMinimalRunArtifacts(cfg sim.Config) error {
-	document := runwindow.New(cfg.ProfileName, time.Now(), cfg.Warmup, cfg.Duration, cfg.Drain, cfg.Replay)
+	started := time.Now()
+	warmupEnded := started.Add(cfg.Warmup.Duration)
+	document := runwindow.New(cfg.ProfileName, started, warmupEnded, warmupEnded, cfg.Duration, cfg.Drain, cfg.Replay)
 	if err := runwindow.Write(cfg.RunWindowPath, document); err != nil {
 		return err
 	}

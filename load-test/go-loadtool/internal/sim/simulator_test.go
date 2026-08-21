@@ -23,22 +23,11 @@ import (
 	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 )
 
-func TestWarmupRateUsesHalfTarget(t *testing.T) {
-	if got := warmupRate(2_000); got != 1_000 {
-		t.Fatalf("warmup rate = %d, want 1000", got)
-	}
-}
-
-func TestWarmupRateNeverDropsBelowOnePerSecond(t *testing.T) {
-	if got := warmupRate(1); got != 1 {
-		t.Fatalf("warmup rate = %d, want 1", got)
-	}
-}
-
 func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run")
 	err := Run(Config{
 		TargetTxRate: math.MaxInt/4 + 1,
+		Warmup:       config.Warmup{TargetTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
 		Duration:     time.Second,
 		Scenarios:    mixedPlannerScenarios(),
 		OutputDir:    outputDir,
@@ -67,6 +56,7 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 		ProfileName:   "prewarm-failure-test",
 		BaseURL:       "https://localhost:8001",
 		TargetTxRate:  1,
+		Warmup:        config.Warmup{TargetTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
 		Duration:      time.Second,
 		Scenarios:     mixedPlannerScenarios(),
 		OutputDir:     outputDir,
@@ -133,15 +123,24 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 		},
 	}
 
+	tracker := newPhaseTracker()
+	if err := tracker.Add(); err != nil {
+		t.Fatal(err)
+	}
+	tracker.CloseGeneration()
 	jobs := make(chan originalSlot, 1)
 	jobs <- originalSlot{
 		createdAt: time.Now().Add(-time.Second).UnixNano(),
 		deadline:  time.Now().Add(-time.Nanosecond),
+		tracker:   tracker,
 	}
 	close(jobs)
 	var workers sync.WaitGroup
 	workers.Add(1)
 	s.transferWorker(context.Background(), &workers, jobs)
+	if err := tracker.Wait(context.Background()); err != nil {
+		t.Fatalf("expired slot left warmup work pending: %v", err)
+	}
 
 	if payloadsBuilt.Load() != 0 {
 		t.Fatalf("payloads built = %d, want 0", payloadsBuilt.Load())
@@ -175,6 +174,53 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 		if want := expectedSelector.Next(); job.ReplaySelected != want {
 			t.Fatalf("valid replay selection %d = %t, want %t", index, job.ReplaySelected, want)
 		}
+	}
+}
+
+func TestWarmupHTTPFailureDoesNotFailGateWhenExpectedOutcomeArrives(t *testing.T) {
+	startWriter, err := events.NewStartWriter(filepath.Join(t.TempDir(), "starts.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := startWriter.Close(); err != nil {
+			t.Errorf("close start writer: %v", err)
+		}
+	}()
+
+	tracker := newPhaseTracker()
+	if err := tracker.Add(); err != nil {
+		t.Fatal(err)
+	}
+	tracker.CloseGeneration()
+	s := &simulator{
+		cfg: configForOutcomeTest("ACSC", nil),
+		httpClients: map[string]*http.Client{
+			"10000001": {Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("request timeout")
+			})},
+		},
+		startWriter:       startWriter,
+		transferScenarios: make(map[string]string),
+		transferPayers:    make(map[string]string),
+		transferTrackers:  make(map[string]*phaseTracker),
+		completedOutcomes: make(map[string]struct{}),
+		buildPacs008Func: func(string, string, string, int64) []byte {
+			return []byte("pacs.008")
+		},
+	}
+	job := transferJob{
+		ID:           "tx-1",
+		Pair:         ids.Pair{Payer: "10000001", Receiver: "20000001"},
+		ScenarioName: "happy-path",
+		tracker:      tracker,
+	}
+
+	s.sendPacs008At(context.Background(), job, time.Now())
+	s.observeWarmupOutcome("tx-1", "10000001", "ACSC", nil)
+
+	if err := tracker.Wait(context.Background()); err != nil {
+		t.Fatalf("warmup gate failed after the expected outcome: %v", err)
 	}
 }
 

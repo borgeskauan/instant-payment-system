@@ -27,7 +27,11 @@ const testProfile = `{
   },
   "load": {
     "targetTxRate": 1234,
-    "warmup": "10s",
+    "warmup": {
+      "targetTxRate": 617,
+      "duration": "10s",
+      "completionTimeout": "30s"
+    },
     "duration": "45s",
     "drain": "12s"
   },
@@ -100,7 +104,7 @@ func TestLoadProfileReadsRuntimeSettingsWithoutSchemaVersion(t *testing.T) {
 	if cfg.Connections.NotificationGateway.Address != "127.0.0.1:9090" {
 		t.Fatalf("gateway Address = %q", cfg.Connections.NotificationGateway.Address)
 	}
-	if cfg.Load.TargetTxRate != 1234 || cfg.Load.Warmup != 10*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
+	if cfg.Load.TargetTxRate != 1234 || cfg.Load.Warmup.TargetTxRate != 617 || cfg.Load.Warmup.Duration != 10*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
 		t.Fatalf("Load = %#v", cfg.Load)
 	}
 	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
@@ -166,7 +170,7 @@ func TestUniformSmokePreservesBaselineWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Load.TargetTxRate != 2000 || cfg.Load.Warmup != time.Minute || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
+	if cfg.Load.TargetTxRate != 2000 || cfg.Load.Warmup.TargetTxRate != 1000 || cfg.Load.Warmup.Duration != time.Minute || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
 		t.Fatalf("uniform-smoke Load = %#v", cfg.Load)
 	}
 	scenario := cfg.Scenarios[0]
@@ -328,6 +332,21 @@ func TestLoadProfileRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadProfileRejectsLegacyStringWarmup(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(testProfile, `"warmup": {
+      "targetTxRate": 617,
+      "duration": "10s",
+      "completionTimeout": "30s"
+    }`, `"warmup": "10s"`, 1)
+	writeProfile(t, dir, "legacy-warmup", content)
+
+	_, err := loadProfileFromDir(dir, "legacy-warmup")
+	if err == nil || !strings.Contains(err.Error(), "load.warmup") {
+		t.Fatalf("error = %v, want legacy warmup contract rejection", err)
+	}
+}
+
 func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -336,6 +355,9 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		wantMessage string
 	}{
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
+		{name: "warmup rate", old: `"targetTxRate": 617`, new: `"targetTxRate": 0`, wantMessage: "load.warmup.targetTxRate"},
+		{name: "warmup duration", old: `"duration": "10s"`, new: `"duration": "0s"`, wantMessage: "load.warmup.duration"},
+		{name: "warmup completion timeout", old: `"completionTimeout": "30s"`, new: `"completionTimeout": "0s"`, wantMessage: "load.warmup.completionTimeout"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
 		{name: "drain shorter than replay delay", old: `"drain": "12s"`, new: `"drain": "10s"`, wantMessage: "at least the largest replay delay"},
 		{name: "replay share zero", old: `"share": 0.25`, new: `"share": 0`, wantMessage: "replay.pacs008.share"},
@@ -395,7 +417,7 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Load.TargetTxRate != 100 || cfg.Load.Warmup != 5*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
+	if cfg.Load.TargetTxRate != 100 || cfg.Load.Warmup.TargetTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
 		t.Fatalf("mixed load = %#v", cfg.Load)
 	}
 	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "happy-path" || cfg.Scenarios[1].Name != "insufficient-funds" {
@@ -435,7 +457,7 @@ func TestMixedOutcomesLongProfileDefinesStabilizationWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if long.Load.TargetTxRate != 2000 || long.Load.Warmup != time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
+	if long.Load.TargetTxRate != 2000 || long.Load.Warmup.TargetTxRate != 1500 || long.Load.Warmup.Duration != 2*time.Minute || long.Load.Warmup.CompletionTimeout != 2*time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
 		t.Fatalf("mixed-outcomes-2k-15m Load = %#v", long.Load)
 	}
 	if !reflect.DeepEqual(long.Replay, smoke.Replay) {
@@ -461,7 +483,9 @@ func TestMixedOutcomesDiagnosticProfileDefinesShortInvestigationWorkload(t *test
 	}
 
 	if diagnostic.Load.TargetTxRate != 2000 ||
-		diagnostic.Load.Warmup != 15*time.Second ||
+		diagnostic.Load.Warmup.TargetTxRate != 1500 ||
+		diagnostic.Load.Warmup.Duration != 2*time.Minute ||
+		diagnostic.Load.Warmup.CompletionTimeout != 2*time.Minute ||
 		diagnostic.Load.Duration != time.Minute ||
 		diagnostic.Load.Drain != 30*time.Second {
 		t.Fatalf("mixed-outcomes-2k-diagnostic Load = %#v", diagnostic.Load)

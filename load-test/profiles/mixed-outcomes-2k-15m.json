@@ -16,7 +16,11 @@
   },
   "load": {
     "targetTxRate": 2000,
-    "warmup": "1m",
+    "warmup": {
+      "targetTxRate": 1500,
+      "duration": "2m",
+      "completionTimeout": "2m"
+    },
     "duration": "15m",
     "drain": "30s"
   },

@@ -5,8 +5,8 @@ Kafka, PostgreSQL e entrega de notificações aos PSPs.
 
 ## Quick start
 
-Os comandos exigem Docker com Compose. Prepare uma stack limpa, aquecida e
-validada funcionalmente:
+Os comandos exigem Docker com Compose. Prepare uma stack limpa e aguarde a
+readiness dos serviços:
 
 ```bash
 cd load-test
@@ -14,8 +14,8 @@ cd load-test
 ```
 
 O comando remove os volumes do PostgreSQL e Kafka, preserva imagens e build
-cache e deixa a stack em execução. Repita-o depois de alterar o código ou antes
-de iniciar um novo baseline isolado.
+cache e deixa a stack em execução. Ele não gera tráfego. Repita-o depois de
+alterar o código ou antes de iniciar um novo baseline isolado.
 
 Para conferir os containers, a partir da raiz do repositório:
 
@@ -40,6 +40,12 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-1
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
+
+Cada run de performance só abre a janela ativa depois que todo o trabalho de
+warmup observável pelo load-tool termina. Os perfis oficial de 15 minutos e
+diagnóstico usam 1.500 pagamentos/s durante 120 segundos, com gate de conclusão
+de até 120 segundos. O gate não tenta inferir quiescência interna por lag Kafka
+ou por sleeps fixos.
 
 O protocolo de pull retorna até `15` notificações por chamada; o tamanho não é
 configurável pelo PSP nem pelo profile. O relatório registra a distribuição dos

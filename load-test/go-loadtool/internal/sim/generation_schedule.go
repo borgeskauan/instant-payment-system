@@ -10,6 +10,7 @@ const originalStartTolerance = 10 * time.Millisecond
 type originalSlot struct {
 	createdAt int64
 	deadline  time.Time
+	tracker   *phaseTracker
 }
 
 func originalSlotScheduledAt(phaseStart time.Time, rate int, index uint64) time.Time {

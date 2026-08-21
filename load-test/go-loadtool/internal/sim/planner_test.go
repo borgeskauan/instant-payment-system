@@ -139,12 +139,22 @@ func TestPlannerKeepsScenarioLocalPairAndAmountSequences(t *testing.T) {
 }
 
 func TestMaximumGeneratedTransfersExcludesFinalBoundaryTransfer(t *testing.T) {
-	got, err := maximumGeneratedTransfers(100, 5*time.Second, 10*time.Second)
+	got, err := maximumGeneratedTransfers(50, 5*time.Second, 100, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != 1250 {
 		t.Fatalf("maximumGeneratedTransfers = %d, want 1250", got)
+	}
+}
+
+func TestMaximumGeneratedTransfersUsesExplicitWarmupRate(t *testing.T) {
+	got, err := maximumGeneratedTransfers(40, 5*time.Second, 100, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1200 {
+		t.Fatalf("maximumGeneratedTransfers = %d, want 1200", got)
 	}
 }
 
@@ -185,14 +195,14 @@ func TestPacs008AndPacs002ReplaySelectorsUseDistinctDomains(t *testing.T) {
 }
 
 func TestMaximumGeneratedTransfersRejectsCountMultiplicationOverflow(t *testing.T) {
-	_, err := maximumGeneratedTransfers(1<<60, 0, 16*time.Second)
+	_, err := maximumGeneratedTransfers(1, time.Second, 1<<60, 16*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "too many transfers") {
 		t.Fatalf("maximumGeneratedTransfers error = %v, want too many transfers", err)
 	}
 }
 
 func TestMaximumGeneratedTransfersRejectsRateThatOverflowsQueueCapacity(t *testing.T) {
-	_, err := maximumGeneratedTransfers(math.MaxInt/4+1, 0, time.Second)
+	_, err := maximumGeneratedTransfers(1, time.Second, math.MaxInt/4+1, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
 		t.Fatalf("maximumGeneratedTransfers error = %v, want rate is too large", err)
 	}
@@ -201,9 +211,13 @@ func TestMaximumGeneratedTransfersRejectsRateThatOverflowsQueueCapacity(t *testi
 func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	cfg := Config{
 		TargetTxRate: 100,
-		Warmup:       5 * time.Second,
-		Duration:     10 * time.Second,
-		Scenarios:    mixedPlannerScenarios(),
+		Warmup: config.Warmup{
+			TargetTxRate:      50,
+			Duration:          5 * time.Second,
+			CompletionTimeout: 30 * time.Second,
+		},
+		Duration:  10 * time.Second,
+		Scenarios: mixedPlannerScenarios(),
 	}
 	plan, err := DeriveProvisioning(cfg)
 	if err != nil {
@@ -229,7 +243,7 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transferCount, err := maximumGeneratedTransfers(cfg.TargetTxRate, cfg.Warmup, cfg.Duration)
+	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.TargetTxRate, cfg.Duration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +263,7 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 }
 
 func TestDerivedProvisioningDoesNotDependOnScenarioName(t *testing.T) {
-	first := Config{TargetTxRate: 100, Warmup: 5 * time.Second, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
+	first := Config{TargetTxRate: 100, Warmup: config.Warmup{TargetTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
 	first.Scenarios[0].Share = 1
 	second := first
 	second.Scenarios = append([]config.Scenario(nil), first.Scenarios...)

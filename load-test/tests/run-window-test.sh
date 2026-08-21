@@ -27,6 +27,7 @@ cat > "$tmp_dir/run-window.json" <<'JSON'
   "profile": {"name": "uniform-smoke"},
   "window": {
     "generation_started_at": "2026-06-20T20:06:15.123456789-03:00",
+    "warmup_ended_at": "2026-06-20T20:06:16.023456789-03:00",
     "active_started_at": "2026-06-20T20:06:16.123456789-03:00",
     "generation_ended_at": "2026-06-20T20:21:16.123456789-03:00",
     "replay_deadline_at": "2026-06-20T20:21:46.123456789-03:00"
@@ -60,6 +61,7 @@ assert data["artifacts"] == {
 }
 assert data["window"]["run_started_at"] == "2026-06-20T20:05:46-03:00"
 assert data["window"]["generation_started_at"] == "2026-06-20T20:06:15.123456789-03:00"
+assert data["window"]["warmup_ended_at"] == "2026-06-20T20:06:16.023456789-03:00"
 assert data["window"]["active_started_at"] == "2026-06-20T20:06:16.123456789-03:00"
 assert data["window"]["generation_ended_at"] == "2026-06-20T20:21:16.123456789-03:00"
 assert data["window"]["replay_deadline_at"] == "2026-06-20T20:21:46.123456789-03:00"

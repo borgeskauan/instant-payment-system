@@ -128,14 +128,14 @@ func (random *splitMix64) next() uint64 {
 	return value ^ (value >> 31)
 }
 
-func maximumGeneratedTransfers(targetTxRate int, warmup time.Duration, duration time.Duration) (uint64, error) {
-	if targetTxRate <= 0 || warmup < 0 || duration <= 0 || warmup%time.Second != 0 || duration%time.Second != 0 {
+func maximumGeneratedTransfers(warmupRate int, warmup time.Duration, targetTxRate int, duration time.Duration) (uint64, error) {
+	if warmupRate <= 0 || targetTxRate <= 0 || warmup <= 0 || duration <= 0 || warmup%time.Second != 0 || duration%time.Second != 0 {
 		return 0, fmt.Errorf("load window must use a positive rate and whole seconds")
 	}
-	if targetTxRate > math.MaxInt/4 {
+	if warmupRate > math.MaxInt/4 || targetTxRate > math.MaxInt/4 {
 		return 0, fmt.Errorf("load window rate is too large to size simulator queues safely")
 	}
-	warmupCount, ok := checkedUint64Product(uint64(warmupRate(targetTxRate)), uint64(warmup/time.Second))
+	warmupCount, ok := checkedUint64Product(uint64(warmupRate), uint64(warmup/time.Second))
 	if !ok {
 		return 0, fmt.Errorf("load window generates too many transfers")
 	}
@@ -157,7 +157,7 @@ func checkedUint64Product(left, right uint64) (uint64, bool) {
 }
 
 func DeriveProvisioning(cfg Config) ([]ProvisioningScenario, error) {
-	transferCount, err := maximumGeneratedTransfers(cfg.TargetTxRate, cfg.Warmup, cfg.Duration)
+	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.TargetTxRate, cfg.Duration)
 	if err != nil {
 		return nil, err
 	}
