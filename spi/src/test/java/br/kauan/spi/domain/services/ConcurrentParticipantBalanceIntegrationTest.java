@@ -1,6 +1,6 @@
 package br.kauan.spi.domain.services;
 
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
@@ -38,7 +38,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
     private static final String PAYMENT_ID_PREFIX = "E2E-CONCURRENT-BALANCE-";
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private PaymentTransactionProcessorUseCase processor;
@@ -50,7 +50,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
-        jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
         jdbcTemplate.update(
                 "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
@@ -219,7 +219,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
 
     private int outboxCount(String paymentId, String eventType) {
         return count(
-                "SELECT COUNT(*) FROM notification_outbox WHERE payment_id = ? AND event_type = ?",
+                "SELECT COUNT(*) FROM outbound_notification WHERE payment_id = ? AND event_type = ?",
                 paymentId,
                 eventType
         );
@@ -229,7 +229,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
         return count(
                 """
                         SELECT COUNT(*)
-                        FROM notification_outbox
+                        FROM outbound_notification
                         WHERE payment_id = ?
                           AND event_type IN ('SETTLED_NOTIFICATION', 'REJECTED_NOTIFICATION')
                         """,

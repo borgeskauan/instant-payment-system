@@ -51,12 +51,12 @@ class DeliveryIndexRepositoryIntegrationTest {
     void resetTables() {
         jdbcTemplate.update("TRUNCATE delivery_index");
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS notification_outbox (
+                CREATE TABLE IF NOT EXISTS outbound_notification (
                     communication_id TEXT PRIMARY KEY,
                     payload BYTEA NOT NULL
                 )
                 """);
-        jdbcTemplate.update("TRUNCATE notification_outbox");
+        jdbcTemplate.update("TRUNCATE outbound_notification");
     }
 
     @Test
@@ -140,9 +140,9 @@ class DeliveryIndexRepositoryIntegrationTest {
                 incoming("v1:other", "20000002", "kafka-other"),
                 incoming("v1:second", "20000001", "kafka-second")
         ));
-        storeOutbox("v1:first", "canonical-first");
-        storeOutbox("v1:other", "canonical-other");
-        storeOutbox("v1:second", "canonical-second");
+        storeOutboundNotification("v1:first", "canonical-first");
+        storeOutboundNotification("v1:other", "canonical-other");
+        storeOutboundNotification("v1:second", "canonical-second");
 
         List<NotificationDelivery> firstPage = repository.findAfter("20000001", 0, 1);
         List<NotificationDelivery> secondPage = repository.findAfter(
@@ -235,9 +235,9 @@ class DeliveryIndexRepositoryIntegrationTest {
         });
     }
 
-    private void storeOutbox(String communicationId, String payload) {
+    private void storeOutboundNotification(String communicationId, String payload) {
         jdbcTemplate.update(
-                "INSERT INTO notification_outbox (communication_id, payload) VALUES (?, ?)",
+                "INSERT INTO outbound_notification (communication_id, payload) VALUES (?, ?)",
                 communicationId,
                 bytes(payload)
         );

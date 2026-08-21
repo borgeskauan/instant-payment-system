@@ -43,7 +43,7 @@ class NotificationReconciliationRepositoryIntegrationTest {
     void resetTables() {
         jdbcTemplate.update("TRUNCATE delivery_index");
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS notification_outbox (
+                CREATE TABLE IF NOT EXISTS outbound_notification (
                     communication_id TEXT PRIMARY KEY,
                     recipient_ispb TEXT NOT NULL,
                     event_type TEXT NOT NULL,
@@ -51,18 +51,17 @@ class NotificationReconciliationRepositoryIntegrationTest {
                     notification_status TEXT,
                     schema_version TEXT NOT NULL,
                     payload BYTEA NOT NULL,
-                    publication_status TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """);
-        jdbcTemplate.update("TRUNCATE notification_outbox");
+        jdbcTemplate.update("TRUNCATE outbound_notification");
     }
 
     @Test
-    void returnsOnlyCanonicalOutboxRowsWithoutADeliveryIndex() {
-        storeOutbox("v1:first", "20000001", "ACSC", "PENDING", "first");
-        storeOutbox("v1:published", "20000002", "RJCT", "PUBLISHED", "published");
-        storeOutbox("v1:indexed", "20000001", "RJCT", "PUBLISHED", "indexed");
+    void returnsOnlyCanonicalNotificationsWithoutADeliveryIndex() {
+        storeOutboundNotification("v1:first", "20000001", "ACSC", "first");
+        storeOutboundNotification("v1:published", "20000002", "RJCT", "published");
+        storeOutboundNotification("v1:indexed", "20000001", "RJCT", "indexed");
         jdbcTemplate.update("""
                 INSERT INTO delivery_index (communication_id, recipient_ispb, delivery_position)
                 VALUES ('v1:indexed', '20000001', 1)
@@ -89,9 +88,9 @@ class NotificationReconciliationRepositoryIntegrationTest {
 
     @Test
     void pagesByCommunicationIdWithoutPersistingAReconciliationCursor() {
-        storeOutbox("v1:c", "20000001", "ACSC", "PENDING", "c");
-        storeOutbox("v1:a", "20000001", "ACSC", "PENDING", "a");
-        storeOutbox("v1:b", "20000001", "ACSC", "PENDING", "b");
+        storeOutboundNotification("v1:c", "20000001", "ACSC", "c");
+        storeOutboundNotification("v1:a", "20000001", "ACSC", "a");
+        storeOutboundNotification("v1:b", "20000001", "ACSC", "b");
 
         List<IncomingNotification> firstPage = repository.findUnindexedAfter("", 2);
         List<IncomingNotification> secondPage = repository.findUnindexedAfter(
@@ -110,30 +109,29 @@ class NotificationReconciliationRepositoryIntegrationTest {
 
     @Test
     void nonPositiveLimitReturnsNoRows() {
-        storeOutbox("v1:first", "20000001", "ACSC", "PENDING", "first");
+        storeOutboundNotification("v1:first", "20000001", "ACSC", "first");
 
         assertThat(repository.findUnindexedAfter("", 0)).isEmpty();
     }
 
     @Test
     void leavesRecentRowsForTheKafkaFastPath() {
-        storeOutbox("v1:old", "20000001", "ACSC", "PENDING", "old");
-        storeRecentOutbox("v1:recent", "20000001", "ACSC", "PENDING", "recent");
+        storeOutboundNotification("v1:old", "20000001", "ACSC", "old");
+        storeRecentOutboundNotification("v1:recent", "20000001", "ACSC", "recent");
 
         assertThat(repository.findUnindexedAfter("", 1_000))
                 .extracting(IncomingNotification::communicationId)
                 .containsExactly("v1:old");
     }
 
-    private void storeOutbox(
+    private void storeOutboundNotification(
             String communicationId,
             String recipientIspb,
             String status,
-            String publicationStatus,
             String payload
     ) {
         jdbcTemplate.update("""
-                INSERT INTO notification_outbox (
+                INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
                     event_type,
@@ -141,29 +139,26 @@ class NotificationReconciliationRepositoryIntegrationTest {
                     notification_status,
                     schema_version,
                     payload,
-                    publication_status,
                     created_at
                 )
-                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
                 """,
                 communicationId,
                 recipientIspb,
                 "E2E-" + communicationId,
                 status,
-                bytes(payload),
-                publicationStatus
+                bytes(payload)
         );
     }
 
-    private void storeRecentOutbox(
+    private void storeRecentOutboundNotification(
             String communicationId,
             String recipientIspb,
             String status,
-            String publicationStatus,
             String payload
     ) {
         jdbcTemplate.update("""
-                INSERT INTO notification_outbox (
+                INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
                     event_type,
@@ -171,17 +166,15 @@ class NotificationReconciliationRepositoryIntegrationTest {
                     notification_status,
                     schema_version,
                     payload,
-                    publication_status,
                     created_at
                 )
-                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, CURRENT_TIMESTAMP)
                 """,
                 communicationId,
                 recipientIspb,
                 "E2E-" + communicationId,
                 status,
-                bytes(payload),
-                publicationStatus
+                bytes(payload)
         );
     }
 

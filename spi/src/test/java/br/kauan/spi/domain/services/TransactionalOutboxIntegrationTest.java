@@ -1,6 +1,6 @@
 package br.kauan.spi.domain.services;
 
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
@@ -31,7 +31,7 @@ class TransactionalOutboxIntegrationTest {
     private static final String RECEIVER_ISPB = "72222222";
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private PaymentTransactionProcessorUseCase processor;
@@ -43,7 +43,7 @@ class TransactionalOutboxIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
-        jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update(
                 "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
@@ -73,7 +73,7 @@ class TransactionalOutboxIntegrationTest {
                 null
         ));
         assertThat(outboxRows(payment.getPaymentId()))
-                .containsExactly(new OutboxRow("ACCEPTANCE_REQUEST", RECEIVER_ISPB, null, "PENDING"));
+                .containsExactly(new OutboundNotificationRow("ACCEPTANCE_REQUEST", RECEIVER_ISPB, null));
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
     }
 
@@ -101,7 +101,7 @@ class TransactionalOutboxIntegrationTest {
                 "INSUFFICIENT_FUNDS"
         ));
         assertThat(outboxRows(payment.getPaymentId()))
-                .containsExactly(new OutboxRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT", "PENDING"));
+                .containsExactly(new OutboundNotificationRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT"));
         assertThat(outboxPayload(payment.getPaymentId()))
                 .contains("\"TxSts\":\"RJCT\"")
                 .contains("\"Cd\":\"AM04\"");
@@ -132,7 +132,7 @@ class TransactionalOutboxIntegrationTest {
                 null
         ));
         assertThat(outboxRows(payment.getPaymentId()))
-                .containsExactly(new OutboxRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT", "PENDING"));
+                .containsExactly(new OutboundNotificationRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT"));
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
     }
@@ -178,8 +178,8 @@ class TransactionalOutboxIntegrationTest {
         );
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
-                        new OutboxRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC", "PENDING"),
-                        new OutboxRow("SETTLED_NOTIFICATION", RECEIVER_ISPB, "ACCC", "PENDING")
+                        new OutboundNotificationRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC"),
+                        new OutboundNotificationRow("SETTLED_NOTIFICATION", RECEIVER_ISPB, "ACCC")
                 );
     }
 
@@ -224,8 +224,8 @@ class TransactionalOutboxIntegrationTest {
         );
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
-                        new OutboxRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC", "PENDING"),
-                        new OutboxRow("SETTLED_NOTIFICATION", RECEIVER_ISPB, "ACCC", "PENDING")
+                        new OutboundNotificationRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC"),
+                        new OutboundNotificationRow("SETTLED_NOTIFICATION", RECEIVER_ISPB, "ACCC")
                 );
     }
 
@@ -241,7 +241,7 @@ class TransactionalOutboxIntegrationTest {
         assertThat(outboxCount(payment.getPaymentId())).isEqualTo(1);
         assertThat(auditRows(payment.getPaymentId())).hasSize(1);
 
-        jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id = ?", payment.getPaymentId());
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id = ?", payment.getPaymentId());
         processor.processTransactions(request);
 
         assertThat(outboxCount(payment.getPaymentId())).isZero();
@@ -267,19 +267,18 @@ class TransactionalOutboxIntegrationTest {
         );
     }
 
-    private List<OutboxRow> outboxRows(String paymentId) {
+    private List<OutboundNotificationRow> outboxRows(String paymentId) {
         return jdbcTemplate.query(
                 """
-                        SELECT event_type, recipient_ispb, notification_status, publication_status
-                        FROM notification_outbox
+                        SELECT event_type, recipient_ispb, notification_status
+                        FROM outbound_notification
                         WHERE payment_id = ?
                         ORDER BY recipient_ispb
                         """,
-                (resultSet, rowNumber) -> new OutboxRow(
+                (resultSet, rowNumber) -> new OutboundNotificationRow(
                         resultSet.getString(1),
                         resultSet.getString(2),
-                        resultSet.getString(3),
-                        resultSet.getString(4)
+                        resultSet.getString(3)
                 ),
                 paymentId
         );
@@ -318,7 +317,7 @@ class TransactionalOutboxIntegrationTest {
 
     private int outboxCount(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM notification_outbox WHERE payment_id = ?",
+                "SELECT count(*) FROM outbound_notification WHERE payment_id = ?",
                 Integer.class,
                 paymentId
         );
@@ -342,7 +341,7 @@ class TransactionalOutboxIntegrationTest {
 
     private String outboxPayload(String paymentId) {
         byte[] payload = jdbcTemplate.queryForObject(
-                "SELECT payload FROM notification_outbox WHERE payment_id = ?",
+                "SELECT payload FROM outbound_notification WHERE payment_id = ?",
                 byte[].class,
                 paymentId
         );
@@ -415,11 +414,10 @@ class TransactionalOutboxIntegrationTest {
                 .build();
     }
 
-    private record OutboxRow(
+    private record OutboundNotificationRow(
             String eventType,
             String recipientIspb,
-            String notificationStatus,
-            String publicationStatus
+            String notificationStatus
     ) {
     }
 

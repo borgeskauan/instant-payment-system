@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
@@ -38,7 +38,7 @@ import static org.assertj.core.groups.Tuple.tuple;
 class JpaAdapterIntegrationTest {
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private JpaAdapter adapter;

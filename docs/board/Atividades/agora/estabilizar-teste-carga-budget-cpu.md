@@ -2589,3 +2589,70 @@ inválido para SLA, com `54.419` outcomes ausentes e p50/p95/p99 de
 `24,377 / 53,867 / 56,746 s`. Comparado ao baseline da Fase 1, houve mais
 progresso útil e menor p50, mas esta execução isolada não atribui essa diferença
 ao reconciler nem qualifica a capacidade de `2.000 TPS`.
+
+### Fase 3 híbrida — notificação imutável e Kafka best effort
+
+A Fase 3 remove do SPI o lifecycle de publicação que deixou de participar da
+correctness depois da introdução do reconciler. A tabela
+`notification_outbox` foi migrada para `outbound_notification`, preservando
+somente a identidade, o destinatário, os metadados, o payload imutável e o
+instante de criação. Foram removidos `publication_status`, `attempt_count`,
+`next_attempt_at`, `last_error`, `published_at`, `updated_at`, constraints e o
+índice de pendências associados exclusivamente a `PENDING/PUBLISHED`.
+
+O insert da notificação continua na mesma transação financeira e retorna apenas
+as rows realmente novas. Depois do commit, o SPI inicia uma publicação Kafka
+assíncrona para cada uma delas e não espera o ACK do broker. Falha síncrona,
+falha futura ou crash não altera a row, não abre retry no SPI e não muda o
+resultado financeiro já commitado; o reconciler de um minuto passa a ser o
+caminho durável que converge qualquer notificação sem `delivery_index`. Kafka
+permanece como fast path de baixa latência para alimentar o buffer do Gateway.
+
+O Gateway passou a consultar e reconciliar diretamente
+`outbound_notification`. O protocolo Pull, o limite de 15, o cursor por PSP, o
+índice mínimo, o buffer em memória e o fallback SQL permanecem inalterados. A
+migração é coordenada para o MVP: não existe dual-read, dual-write ou suporte a
+rolling upgrade entre os dois schemas.
+
+O smoke funcional
+`phase3-outbound-notification-smoke/20260821_193636` concluiu os `1.250` POSTs,
+os `1.000` PACS.002 e as `3.250` notificações sem outcome ausente ou
+contraditório, sem violação de replay/Pull e com latência máxima de `358,573
+ms`. O relatório foi inválido exclusivamente porque o rolling mínimo observado
+foi `99 TPS` para o piso de `100 TPS`; esse gate não foi relaxado para acomodar
+o smoke.
+
+O primeiro início do diagnóstico falhou ainda no prewarm HTTP/2, antes de gerar
+qualquer pagamento. A repetição na mesma stack já aquecida produziu o bundle
+`phase3-outbound-notification/20260821_193949`. Todos os `261.871` pagamentos
+originais tiveram HTTP aceito, sem outcome contraditório e sem violação de
+replay ou Pull. O run não qualificou capacidade nem SLA: iniciou `119.473`
+pagamentos ativos (`1.991,217 TPS` médio, rolling mínimo/máximo `1.878 / 2.020`),
+teve `49` PACS.002 sem HTTP aceito, terminou com `23.598` outcomes ausentes e
+p50/p95/p99 de `22,973 / 44,071 / 49,001 s`.
+
+A comparação informativa com a Fase 2
+`phase2-reconciler-grace-clean/20260821_185040` confirmou o efeito local da
+mudança. O update de publicação caiu de `427` chamadas, `27,703 s` de SQL,
+`181.978` rows e `152.467.009 B` de WAL para zero. O WAL das 50 queries
+exportadas caiu `10,461%` (`1.590.643.301 B → 1.424.244.110 B`), apesar de mais
+trabalho útil atravessar o pipeline. O insert imutável gravou `19,216%` menos
+WAL por row que o insert antigo, embora seu tempo SQL por row tenha sido
+`3,806%` maior nesta execução; ele passou a ser a query dominante e não deve
+ser confundido com o custo removido do lifecycle.
+
+O progresso end-to-end também aumentou: PACS.002 ativo cresceu `30,794%`,
+notificações ao pagador `27,604%`, outcomes concluídos `9,662%` e a proporção
+concluída no deadline passou de `79,971%` para `90,989%`. Outcomes ausentes
+caíram `56,636%`; p50/p95/p99/max caíram respectivamente `5,759% / 18,186% /
+13,650% / 13,614%`. O PostgreSQL continuou saturado durante o active
+(`102,983%` médio contra `101,622%` na Fase 2), e o tempo SQL agregado aumentou
+porque o sistema conseguiu executar mais trabalho downstream.
+
+Após o run, PostgreSQL continha exatamente `646.065` rows em
+`outbound_notification` e `646.065` em `delivery_index`, com zero notificação
+sem índice e zero índice sem fonte. O perfil SQL não contém
+`publication_status`, update de `outbound_notification` nem consulta ao schema
+antigo. Isso comprova a remoção do lifecycle e a convergência final, mas o piso
+sustentado de `2.000 TPS` e o SLA de um segundo permanecem abertos para o
+trabalho de estabilização.

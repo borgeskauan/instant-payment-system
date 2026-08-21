@@ -56,10 +56,10 @@ public class DeliveryIndexRepository {
                 index.delivery_position,
                 index.communication_id,
                 index.recipient_ispb,
-                outbox.payload
+                notification.payload
             FROM delivery_index AS index
-            JOIN notification_outbox AS outbox
-              ON outbox.communication_id = index.communication_id
+            JOIN outbound_notification AS notification
+              ON notification.communication_id = index.communication_id
             WHERE index.recipient_ispb = ?
               AND index.delivery_position > ?
             ORDER BY index.delivery_position

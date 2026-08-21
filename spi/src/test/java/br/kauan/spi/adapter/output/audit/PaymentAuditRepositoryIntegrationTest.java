@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.audit;
 
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.services.audit.PaymentAuditEvent;
 import br.kauan.spi.domain.services.audit.PaymentAuditEventType;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PaymentAuditRepositoryIntegrationTest {
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private PaymentAuditRepository repository;

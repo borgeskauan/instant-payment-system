@@ -1,8 +1,8 @@
 package br.kauan.spi.domain.services;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
@@ -45,7 +45,7 @@ class TransactionalOutboxRollbackIntegrationTest {
     private static final String RECEIVER_ISPB = "82222222";
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private PaymentTransactionProcessorUseCase processor;
@@ -54,7 +54,7 @@ class TransactionalOutboxRollbackIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
-    private NotificationOutboxRepository outboxRepository;
+    private OutboundNotificationRepository outboundNotificationRepository;
 
     @MockitoBean
     private PaymentAuditRepository auditRepository;
@@ -65,7 +65,7 @@ class TransactionalOutboxRollbackIntegrationTest {
     @BeforeEach
     void prepareFixture() {
         cleanFixtures();
-        reset(auditRepository, outboxRepository, contentSerializer);
+        reset(auditRepository, outboundNotificationRepository, contentSerializer);
         when(contentSerializer.serialize(any()))
                 .thenReturn("{}".getBytes(StandardCharsets.UTF_8));
     }
@@ -94,7 +94,7 @@ class TransactionalOutboxRollbackIntegrationTest {
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
@@ -110,7 +110,7 @@ class TransactionalOutboxRollbackIntegrationTest {
                 .isSameAs(databaseFailure);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
@@ -129,7 +129,7 @@ class TransactionalOutboxRollbackIntegrationTest {
 
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
@@ -149,7 +149,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
@@ -158,7 +158,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         insertFunds(SENDER_ISPB, "1000.00");
         insertFunds(RECEIVER_ISPB, "500.00");
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isInstanceOf(DataIntegrityViolationException.class);
@@ -173,7 +173,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         insertFunds(SENDER_ISPB, "0.00");
         insertFunds(RECEIVER_ISPB, "500.00");
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isInstanceOf(DataIntegrityViolationException.class);
@@ -195,7 +195,7 @@ class TransactionalOutboxRollbackIntegrationTest {
                 .isInstanceOf(NotificationException.class);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
@@ -205,7 +205,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         insertFunds(RECEIVER_ISPB, "500.00");
         DataAccessResourceFailureException databaseFailure =
                 new DataAccessResourceFailureException("database unavailable");
-        doThrow(databaseFailure).when(outboxRepository).insertAll(anyList());
+        doThrow(databaseFailure).when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isSameAs(databaseFailure);
@@ -220,7 +220,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         insertFunds(RECEIVER_ISPB, "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
@@ -238,7 +238,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         insertFunds(RECEIVER_ISPB, "500.00");
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),

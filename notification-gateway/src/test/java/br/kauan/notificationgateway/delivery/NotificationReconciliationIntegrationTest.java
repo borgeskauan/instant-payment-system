@@ -64,7 +64,7 @@ class NotificationReconciliationIntegrationTest {
     void resetTables() {
         jdbcTemplate.update("TRUNCATE delivery_index");
         jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS notification_outbox (
+                CREATE TABLE IF NOT EXISTS outbound_notification (
                     communication_id TEXT PRIMARY KEY,
                     recipient_ispb TEXT NOT NULL,
                     event_type TEXT NOT NULL,
@@ -72,19 +72,17 @@ class NotificationReconciliationIntegrationTest {
                     notification_status TEXT,
                     schema_version TEXT NOT NULL,
                     payload BYTEA NOT NULL,
-                    publication_status TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """);
-        jdbcTemplate.update("TRUNCATE notification_outbox");
+        jdbcTemplate.update("TRUNCATE outbound_notification");
     }
 
     @Test
-    void durableOutboxIsDeliveredWithoutAnyKafkaPublication() {
-        IncomingNotification notification = storeOutbox(
+    void durableNotificationIsDeliveredWithoutAnyKafkaPublication() {
+        IncomingNotification notification = storeOutboundNotification(
                 "v1:without-kafka",
                 "20000001",
-                "PENDING",
                 "canonical-payload"
         );
 
@@ -101,10 +99,9 @@ class NotificationReconciliationIntegrationTest {
 
     @Test
     void aNewReconcilerRecoversOutboxRowsAfterRestartWithEmptyMemory() {
-        IncomingNotification notification = storeOutbox(
+        IncomingNotification notification = storeOutboundNotification(
                 "v1:after-restart",
                 "20000001",
-                "PUBLISHED",
                 "restart-payload"
         );
 
@@ -125,10 +122,9 @@ class NotificationReconciliationIntegrationTest {
     @Test
     void kafkaFastPathAndReconcilerCreateOneLogicalPosition() {
         assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
-            IncomingNotification notification = storeOutbox(
+            IncomingNotification notification = storeOutboundNotification(
                     "v1:concurrent",
                     "20000001",
-                    "PUBLISHED",
                     "same-payload"
             );
             CountDownLatch start = new CountDownLatch(1);
@@ -163,10 +159,9 @@ class NotificationReconciliationIntegrationTest {
         return new NotificationReconciler(reconciliationRepository, indexingService, 1_000);
     }
 
-    private IncomingNotification storeOutbox(
+    private IncomingNotification storeOutboundNotification(
             String communicationId,
             String recipientIspb,
-            String publicationStatus,
             String payload
     ) {
         IncomingNotification notification = new IncomingNotification(
@@ -179,7 +174,7 @@ class NotificationReconciliationIntegrationTest {
                 payload.getBytes(StandardCharsets.UTF_8)
         );
         jdbcTemplate.update("""
-                INSERT INTO notification_outbox (
+                INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
                     event_type,
@@ -187,10 +182,9 @@ class NotificationReconciliationIntegrationTest {
                     notification_status,
                     schema_version,
                     payload,
-                    publication_status,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
                 """,
                 notification.communicationId(),
                 notification.recipientIspb(),
@@ -198,8 +192,7 @@ class NotificationReconciliationIntegrationTest {
                 notification.paymentId(),
                 notification.status(),
                 notification.schemaVersion(),
-                notification.payload(),
-                publicationStatus
+                notification.payload()
         );
         return notification;
     }

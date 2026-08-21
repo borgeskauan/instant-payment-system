@@ -1,8 +1,8 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxBatchReady;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
@@ -33,26 +33,26 @@ import static org.mockito.Mockito.when;
 class NotificationObligationServiceTest {
 
     @Test
-    void emptyInputsDoNotTouchTheOutbox() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
-        NotificationObligationService service = service(outboxRepository);
+    void emptyInputsDoNotStoreOutboundNotifications() {
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        NotificationObligationService service = service(repository);
 
         service.storeAcceptanceObligations(List.of());
         service.storeStatusObligations(List.of(), List.of());
 
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(repository);
     }
 
     @Test
     void acceptanceRequestsBecomeOneReceiverObligationPerPaymentInOneBulkInsert() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
-        NotificationObligationService service = service(outboxRepository);
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        NotificationObligationService service = service(repository);
         PaymentTransactionCommand first = payment("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand second = payment("E2E-2", "10000002", "20000002");
 
         service.storeAcceptanceObligations(List.of(first, second));
 
-        List<NotificationPublication> obligations = capturedObligations(outboxRepository);
+        List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations)
                 .extracting(
                         NotificationPublication::recipientIspb,
@@ -79,14 +79,14 @@ class NotificationObligationServiceTest {
 
     @Test
     void settledAndRejectedPaymentsBecomeOneCombinedBulkInsert() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
-        NotificationObligationService service = service(outboxRepository);
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        NotificationObligationService service = service(repository);
         PaymentTransactionCommand settled = payment("E2E-SETTLED", "10000001", "20000001");
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000002", "20000002");
 
         service.storeStatusObligations(List.of(settled), List.of(new PaymentRejection(rejected, null)));
 
-        List<NotificationPublication> obligations = capturedObligations(outboxRepository);
+        List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations)
                 .extracting(
                         NotificationPublication::recipientIspb,
@@ -108,8 +108,8 @@ class NotificationObligationServiceTest {
 
     @Test
     void insufficientFundsRejectionUsesAm04InThePayerRjctObligation() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
-        NotificationObligationService service = service(outboxRepository);
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        NotificationObligationService service = service(repository);
         PaymentTransactionCommand rejected = payment("E2E-INSUFFICIENT", "10000001", "20000001");
 
         service.storeStatusObligations(
@@ -117,7 +117,7 @@ class NotificationObligationServiceTest {
                 List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
         );
 
-        List<NotificationPublication> obligations = capturedObligations(outboxRepository);
+        List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations)
                 .extracting(
                         NotificationPublication::recipientIspb,
@@ -134,11 +134,11 @@ class NotificationObligationServiceTest {
 
     @Test
     void databaseResourceFailurePropagatesWithoutNotificationWrapper() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
-        NotificationObligationService service = service(outboxRepository);
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        NotificationObligationService service = service(repository);
         DataAccessResourceFailureException databaseFailure =
                 new DataAccessResourceFailureException("database unavailable");
-        doThrow(databaseFailure).when(outboxRepository).insertAll(anyList());
+        doThrow(databaseFailure).when(repository).insertAll(anyList());
 
         assertThatThrownBy(() -> service.storeAcceptanceObligations(List.of(
                 payment("E2E-1", "10000001", "20000001")
@@ -147,10 +147,10 @@ class NotificationObligationServiceTest {
 
     @Test
     void publishesOnlyNewlyInsertedObligationsForAfterCommitDelivery() {
-        NotificationOutboxRepository outboxRepository = mock(NotificationOutboxRepository.class);
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-        NotificationObligationService service = service(outboxRepository, eventPublisher);
-        when(outboxRepository.insertAll(anyList())).thenAnswer(invocation -> {
+        NotificationObligationService service = service(repository, eventPublisher);
+        when(repository.insertAll(anyList())).thenAnswer(invocation -> {
             List<NotificationPublication> requested = invocation.getArgument(0);
             return List.of(requested.getLast());
         });
@@ -160,33 +160,33 @@ class NotificationObligationServiceTest {
                 payment("E2E-NEW", "10000002", "20000002")
         ));
 
-        ArgumentCaptor<NotificationOutboxBatchReady> event =
-                ArgumentCaptor.forClass(NotificationOutboxBatchReady.class);
+        ArgumentCaptor<OutboundNotificationBatchReady> event =
+                ArgumentCaptor.forClass(OutboundNotificationBatchReady.class);
         verify(eventPublisher).publishEvent(event.capture());
         assertThat(event.getValue().notifications())
                 .extracting(NotificationPublication::paymentId)
                 .containsExactly("E2E-NEW");
     }
 
-    private NotificationObligationService service(NotificationOutboxRepository outboxRepository) {
-        return service(outboxRepository, mock(ApplicationEventPublisher.class));
+    private NotificationObligationService service(OutboundNotificationRepository repository) {
+        return service(repository, mock(ApplicationEventPublisher.class));
     }
 
     private NotificationObligationService service(
-            NotificationOutboxRepository outboxRepository,
+            OutboundNotificationRepository repository,
             ApplicationEventPublisher eventPublisher
     ) {
         return new NotificationObligationService(
                 new NotificationPayloadFactory(),
                 new NotificationContentSerializer(new ObjectMapper().findAndRegisterModules()),
-                outboxRepository,
+                repository,
                 eventPublisher
         );
     }
 
-    private List<NotificationPublication> capturedObligations(NotificationOutboxRepository outboxRepository) {
+    private List<NotificationPublication> capturedObligations(OutboundNotificationRepository repository) {
         ArgumentCaptor<List<NotificationPublication>> captor = ArgumentCaptor.forClass(List.class);
-        verify(outboxRepository).insertAll(captor.capture());
+        verify(repository).insertAll(captor.capture());
         return captor.getValue();
     }
 

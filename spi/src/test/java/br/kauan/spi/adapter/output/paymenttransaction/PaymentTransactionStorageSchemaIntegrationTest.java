@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PaymentTransactionStorageSchemaIntegrationTest {
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

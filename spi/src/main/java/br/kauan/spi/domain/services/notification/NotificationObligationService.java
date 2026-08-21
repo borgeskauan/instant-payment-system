@@ -1,8 +1,8 @@
 package br.kauan.spi.domain.services.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxBatchReady;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
@@ -29,18 +29,18 @@ public class NotificationObligationService {
 
     private final NotificationPayloadFactory payloadFactory;
     private final NotificationContentSerializer contentSerializer;
-    private final NotificationOutboxRepository outboxRepository;
+    private final OutboundNotificationRepository outboundNotificationRepository;
     private final ApplicationEventPublisher eventPublisher;
 
     public NotificationObligationService(
             NotificationPayloadFactory payloadFactory,
             NotificationContentSerializer contentSerializer,
-            NotificationOutboxRepository outboxRepository,
+            OutboundNotificationRepository outboundNotificationRepository,
             ApplicationEventPublisher eventPublisher
     ) {
         this.payloadFactory = payloadFactory;
         this.contentSerializer = contentSerializer;
-        this.outboxRepository = outboxRepository;
+        this.outboundNotificationRepository = outboundNotificationRepository;
         this.eventPublisher = eventPublisher;
     }
 
@@ -142,9 +142,9 @@ public class NotificationObligationService {
     }
 
     private void store(List<NotificationPublication> obligations) {
-        List<NotificationPublication> inserted = outboxRepository.insertAll(obligations);
+        List<NotificationPublication> inserted = outboundNotificationRepository.insertAll(obligations);
         if (!inserted.isEmpty()) {
-            eventPublisher.publishEvent(new NotificationOutboxBatchReady(inserted));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
         }
     }
 

@@ -10,22 +10,22 @@ public class NotificationReconciliationRepository {
 
     private static final String FIND_UNINDEXED_AFTER_SQL = """
             SELECT
-                outbox.communication_id,
-                outbox.recipient_ispb,
-                outbox.event_type,
-                outbox.payment_id,
-                outbox.notification_status,
-                outbox.schema_version,
-                outbox.payload
-            FROM notification_outbox AS outbox
-            WHERE outbox.communication_id > ?
-              AND outbox.created_at <= CURRENT_TIMESTAMP - INTERVAL '1 minute'
+                notification.communication_id,
+                notification.recipient_ispb,
+                notification.event_type,
+                notification.payment_id,
+                notification.notification_status,
+                notification.schema_version,
+                notification.payload
+            FROM outbound_notification AS notification
+            WHERE notification.communication_id > ?
+              AND notification.created_at <= CURRENT_TIMESTAMP - INTERVAL '1 minute'
               AND NOT EXISTS (
                   SELECT 1
                   FROM delivery_index AS index
-                  WHERE index.communication_id = outbox.communication_id
+                  WHERE index.communication_id = notification.communication_id
               )
-            ORDER BY outbox.communication_id
+            ORDER BY notification.communication_id
             LIMIT ?
             """;
 

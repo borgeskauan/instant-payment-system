@@ -15,15 +15,15 @@ Migrar a entrega de notificações para uma arquitetura híbrida na qual:
 - um reconciler garante que toda notificação durável receba uma posição, mesmo
   quando o fast path falhar.
 
-A migração será feita em três fases. Kafka permanece ativo durante toda a
-transição, e cada mecanismo antigo só será removido depois que seu substituto
-estiver funcionalmente comprovado.
+A migração foi dividida em três fases. Kafka permaneceu ativo durante toda a
+transição, e cada mecanismo antigo só foi removido depois que seu substituto
+estava funcionalmente comprovado. A Fase 3 representa o estado atual.
 
 ## Motivação
 
-O modelo atual já oferece Pull unary, cursor autenticado por PSP e entrega
-at-least-once, mas mantém duas cópias duráveis da notificação completa e ainda
-trata a publicação no Kafka como parte da correctness:
+O modelo anterior já oferecia Pull unary, cursor autenticado por PSP e entrega
+at-least-once, mas mantinha duas cópias duráveis da notificação completa e ainda
+tratava a publicação no Kafka como parte da correctness:
 
 ```text
 SPI transaction
@@ -39,9 +39,9 @@ notification_delivery completa
 SELECT no PostgreSQL a cada Pull
 ```
 
-Além da duplicação do payload, o modelo mantém o lifecycle
-`PENDING → PUBLISHED`, atualiza individualmente as notificações publicadas e
-serializa globalmente a alocação de posições no Gateway.
+Além da duplicação do payload, o modelo mantinha o lifecycle
+`PENDING → PUBLISHED`, atualizava individualmente as notificações publicadas e
+serializava globalmente a alocação de posições no Gateway.
 
 Os diagnósticos de performance que motivaram a mudança observaram, numa
 execução representativa:
@@ -255,13 +255,12 @@ PSP sem backlog, com cursor antigo ou após restart ainda pode consultar o banco
 
 ### Reconciler
 
-O reconciler procura notificações existentes sem posição. Durante a Fase 2 a
-fonte ainda se chama `notification_outbox`; na Fase 3 ela será simplificada
-para `outbound_notification`:
+O reconciler procura notificações existentes sem posição na fonte imutável
+`outbound_notification`:
 
 ```sql
 SELECT notification.*
-FROM notification_outbox AS notification
+FROM outbound_notification AS notification
 WHERE notification.communication_id > :cycleCursor
   AND notification.created_at <= CURRENT_TIMESTAMP - INTERVAL '1 minute'
   AND NOT EXISTS (
@@ -412,6 +411,10 @@ A fase termina somente quando for possível afirmar:
 
 Remover o lifecycle de publicação que perdeu sua responsabilidade de
 correctness.
+
+**Estado: implementada.** O schema, o caminho depois do commit e as consultas
+do Gateway já usam o modelo abaixo; o checkpoint de performance é registrado
+separadamente no diário da tarefa de estabilização.
 
 `notification_outbox` torna-se `outbound_notification`, mantendo o conteúdo
 durável e removendo:

@@ -1,4 +1,4 @@
-package br.kauan.spi.adapter.output.outbox;
+package br.kauan.spi.adapter.output.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
@@ -26,16 +26,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = "spi.notification-outbox.fixed-delay=1h")
-class NotificationOutboxFastPathIntegrationTest {
+@SpringBootTest
+class OutboundNotificationFastPathIntegrationTest {
 
-    private static final String PAYMENT_PREFIX = "E2E-OUTBOX-FAST-PATH-";
+    private static final String PAYMENT_PREFIX = "E2E-OUTBOUND-FAST-PATH-";
 
     @MockitoBean
     private NotificationPublisher notificationPublisher;
 
     @Autowired
-    private NotificationOutboxRepository repository;
+    private OutboundNotificationRepository repository;
 
     @Autowired
     private ApplicationEventPublisher eventPublisher;
@@ -57,7 +57,7 @@ class NotificationOutboxFastPathIntegrationTest {
 
     @AfterEach
     void cleanFixtureRows() {
-        jdbcTemplate.update("DELETE FROM notification_outbox WHERE payment_id LIKE ?", PAYMENT_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE ?", PAYMENT_PREFIX + "%");
     }
 
     @Test
@@ -66,14 +66,14 @@ class NotificationOutboxFastPathIntegrationTest {
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new NotificationOutboxBatchReady(inserted));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
 
             verifyNoInteractions(notificationPublisher);
-            assertThat(publicationStatus(notification.communicationId())).isEqualTo("PENDING");
+            assertThat(storedRows(notification.communicationId())).isOne();
         });
 
         verify(notificationPublisher).publish(notification);
-        assertThat(publicationStatus(notification.communicationId())).isEqualTo("PUBLISHED");
+        assertThat(storedRows(notification.communicationId())).isOne();
     }
 
     @Test
@@ -82,54 +82,38 @@ class NotificationOutboxFastPathIntegrationTest {
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new NotificationOutboxBatchReady(inserted));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
             status.setRollbackOnly();
         });
 
         verifyNoInteractions(notificationPublisher);
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM notification_outbox WHERE communication_id = ?",
-                Integer.class,
-                notification.communicationId()
-        )).isZero();
+        assertThat(storedRows(notification.communicationId())).isZero();
     }
 
     @Test
-    void failedPostCommitPublicationLeavesTheCommittedRowPendingForRecovery() {
+    void failedBestEffortPublicationLeavesTheCommittedRowUnchangedForReconciliation() {
         NotificationPublication notification = notification(PAYMENT_PREFIX + "PUBLICATION-FAILURE");
         when(notificationPublisher.publish(notification))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker unavailable")));
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
             List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new NotificationOutboxBatchReady(inserted));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
         });
 
         verify(notificationPublisher).publish(notification);
-        assertThat(outboxState(notification.communicationId()))
-                .isEqualTo(new OutboxState("PENDING", 1, "java.lang.IllegalStateException: broker unavailable"));
+        assertThat(storedRows(notification.communicationId())).isOne();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT payload FROM outbound_notification WHERE communication_id = ?",
+                byte[].class,
+                notification.communicationId()
+        )).isEqualTo(notification.payload());
     }
 
-    private String publicationStatus(String communicationId) {
+    private int storedRows(String communicationId) {
         return jdbcTemplate.queryForObject(
-                "SELECT publication_status FROM notification_outbox WHERE communication_id = ?",
-                String.class,
-                communicationId
-        );
-    }
-
-    private OutboxState outboxState(String communicationId) {
-        return jdbcTemplate.queryForObject(
-                """
-                        SELECT publication_status, attempt_count, last_error
-                        FROM notification_outbox
-                        WHERE communication_id = ?
-                        """,
-                (resultSet, rowNumber) -> new OutboxState(
-                        resultSet.getString(1),
-                        resultSet.getInt(2),
-                        resultSet.getString(3)
-                ),
+                "SELECT count(*) FROM outbound_notification WHERE communication_id = ?",
+                Integer.class,
                 communicationId
         );
     }
@@ -142,8 +126,5 @@ class NotificationOutboxFastPathIntegrationTest {
                 paymentId,
                 null
         );
-    }
-
-    private record OutboxState(String publicationStatus, int attemptCount, String lastError) {
     }
 }
