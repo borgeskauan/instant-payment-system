@@ -11,7 +11,6 @@ import (
 
 const testProfile = `{
   "name": "PROFILE_NAME",
-  "schemaVersion": 3,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://127.0.0.1:8001",
@@ -80,7 +79,7 @@ const testProfile = `{
   }
 }`
 
-func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
+func TestLoadProfileReadsRuntimeSettingsWithoutSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
 	writeProfile(t, dir, "explicit-profile", testProfile)
 
@@ -89,9 +88,6 @@ func TestLoadProfileReadsVersionedRuntimeSettings(t *testing.T) {
 		t.Fatalf("loadProfileFromDir returned error: %v", err)
 	}
 
-	if cfg.SchemaVersion != 3 {
-		t.Fatalf("SchemaVersion = %d", cfg.SchemaVersion)
-	}
 	if cfg.Name != "explicit-profile" {
 		t.Fatalf("Name = %q, want explicit-profile", cfg.Name)
 	}
@@ -304,7 +300,7 @@ func TestLoadRunProfileReadsEmbeddedIdentityAndRuntimeSettings(t *testing.T) {
 
 func TestLoadRunProfileRejectsMalformedContract(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profile.json")
-	writeRawProfile(t, path, `{"name":"run-profile","schemaVersion":3,"unexpected":true}`)
+	writeRawProfile(t, path, `{"name":"run-profile","unexpected":true}`)
 
 	_, err := LoadRunProfile(path)
 	if err == nil || !strings.Contains(err.Error(), `run profile at`) || !strings.Contains(err.Error(), `unknown field "unexpected"`) {
@@ -323,7 +319,7 @@ func TestLoadRunProfileRejectsMissingFile(t *testing.T) {
 
 func TestLoadProfileRejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
-	content := strings.Replace(testProfile, `"schemaVersion": 3,`, `"schemaVersion": 3, "unexpected": true,`, 1)
+	content := strings.Replace(testProfile, `"name": "PROFILE_NAME",`, `"name": "PROFILE_NAME", "unexpected": true,`, 1)
 	writeProfile(t, dir, "unknown-field", content)
 
 	_, err := loadProfileFromDir(dir, "unknown-field")
@@ -339,7 +335,6 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		new         string
 		wantMessage string
 	}{
-		{name: "schema version", old: `"schemaVersion": 3`, new: `"schemaVersion": 4`, wantMessage: "schemaVersion"},
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
 		{name: "drain shorter than replay delay", old: `"drain": "12s"`, new: `"drain": "10s"`, wantMessage: "at least the largest replay delay"},

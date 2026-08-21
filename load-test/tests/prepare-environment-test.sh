@@ -82,7 +82,6 @@ write_valid_plan() {
     cat > "$tmp_dir/run/inputs/execution-plan.json" <<'JSON'
 {
   "profile": "mixed-outcomes-smoke",
-  "schemaVersion": 3,
   "warmupSeconds": 5,
   "activeSeconds": 10,
   "drainSeconds": 10,

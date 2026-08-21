@@ -28,7 +28,6 @@ readonly OPERATIONAL_FAILURE_EXIT=2
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
-PROFILE_SCHEMA_VERSION=""
 PROFILE_WARMUP_SECONDS=""
 PROFILE_ACTIVE_SECONDS=""
 PROFILE_DRAIN_SECONDS=""
@@ -229,8 +228,6 @@ try:
         raise ValueError("root must be a JSON object")
     if profile.get("name") != name:
         raise ValueError(f"name must be '{name}'")
-    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 3:
-        raise ValueError("schemaVersion must be 3")
 except (OSError, json.JSONDecodeError, ValueError) as error:
     raise SystemExit(f"Profile '{name}' failed shallow validation: {error}")
 PY
@@ -279,7 +276,6 @@ pacs002_replay = data.get("replay", {}).get("pacs002")
 print("\t".join([
     "metadata",
     data["profile"],
-    str(data["schemaVersion"]),
     str(data["warmupSeconds"]),
     str(data["activeSeconds"]),
     str(data["drainSeconds"]),
@@ -306,7 +302,7 @@ PY
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
-    IFS=$'\t' read -r record_kind returned_profile PROFILE_SCHEMA_VERSION PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
+    IFS=$'\t' read -r record_kind returned_profile PROFILE_WARMUP_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
     if [[ "$record_kind" != metadata || "$returned_profile" != "$PROFILE_NAME" ]]; then
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
@@ -332,7 +328,7 @@ PY
         PROFILE_SCENARIO_HOT_PAIR_COUNTS+=("$hot_pair_count")
         PROFILE_SCENARIO_COLD_PAIR_COUNTS+=("$cold_pair_count")
     done
-    log_phase "profile validated: name=${PROFILE_NAME} schema=${PROFILE_SCHEMA_VERSION} scenarios=${#PROFILE_SCENARIO_NAMES[@]}"
+    log_phase "profile validated: name=${PROFILE_NAME} scenarios=${#PROFILE_SCENARIO_NAMES[@]}"
 }
 
 start_spi_trace() {

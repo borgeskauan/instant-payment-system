@@ -67,7 +67,6 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 
 type profileValidation struct {
 	Profile       string                      `json:"profile"`
-	SchemaVersion int                         `json:"schemaVersion"`
 	WarmupSeconds int64                       `json:"warmupSeconds"`
 	ActiveSeconds int64                       `json:"activeSeconds"`
 	DrainSeconds  int64                       `json:"drainSeconds"`
@@ -171,7 +170,6 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 	}
 	validation := profileValidation{
 		Profile:       runtimeCfg.Name,
-		SchemaVersion: runtimeCfg.SchemaVersion,
 		WarmupSeconds: int64(runtimeCfg.Load.Warmup.Seconds()),
 		ActiveSeconds: int64(runtimeCfg.Load.Duration.Seconds()),
 		DrainSeconds:  int64(runtimeCfg.Load.Drain.Seconds()),

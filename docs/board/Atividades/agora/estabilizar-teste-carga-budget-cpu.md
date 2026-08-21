@@ -2095,7 +2095,7 @@ serializa a alocação/commit dos batches Kafka, impedindo que uma row com posi�
 menor apareça depois de uma fronteira já emitida. A migração exige
 `notification_delivery` vazia; não há compatibilidade com backlog push.
 
-O profile passou ao contrato v3 e não contém configuração de tamanho de pull.
+O profile não contém configuração de tamanho de pull nem versionamento próprio.
 O limite `10` pertence ao protocolo do Gateway. O `sla-report.json` registra,
 somente na janela ativa, a distribuição real de lotes não vazios (`count`,
 `mean`, `p50`, `p95`, `max`), mantendo

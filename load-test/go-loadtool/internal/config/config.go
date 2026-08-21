@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	SchemaVersion               = 3
 	DefaultProfile              = "uniform-smoke"
 	ExpectedHTTP2xx             = "2xx"
 	DeliveryAtLeastOnce         = "at-least-once"
@@ -32,13 +31,12 @@ var contractNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var pacsCodePattern = regexp.MustCompile(`^[A-Z0-9]{4}$`)
 
 type Runtime struct {
-	Name          string
-	SchemaVersion int
-	Connections   Connections
-	Load          Load
-	Replay        Replay
-	Scenarios     []Scenario
-	Reporting     Reporting
+	Name        string
+	Connections Connections
+	Load        Load
+	Replay      Replay
+	Scenarios   []Scenario
+	Reporting   Reporting
 }
 
 type Connections struct {
@@ -131,13 +129,12 @@ type Reporting struct {
 }
 
 type fileConfig struct {
-	Name          string          `json:"name"`
-	SchemaVersion int             `json:"schemaVersion"`
-	Connections   fileConnections `json:"connections"`
-	Load          fileLoad        `json:"load"`
-	Replay        fileReplay      `json:"replay"`
-	Scenarios     []fileScenario  `json:"scenarios"`
-	Reporting     fileReporting   `json:"reporting"`
+	Name        string          `json:"name"`
+	Connections fileConnections `json:"connections"`
+	Load        fileLoad        `json:"load"`
+	Replay      fileReplay      `json:"replay"`
+	Scenarios   []fileScenario  `json:"scenarios"`
+	Reporting   fileReporting   `json:"reporting"`
 }
 
 type fileConnections struct {
@@ -279,9 +276,6 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if file.Name != name {
 		return Runtime{}, malformedProfile(name, "name", fmt.Errorf("name %q does not match selected profile %q", file.Name, name))
 	}
-	if file.SchemaVersion != SchemaVersion {
-		return Runtime{}, malformedProfile(name, "schemaVersion", fmt.Errorf("must be %d", SchemaVersion))
-	}
 	for _, required := range []struct {
 		field string
 		value string
@@ -360,8 +354,7 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	}
 
 	return Runtime{
-		Name:          file.Name,
-		SchemaVersion: file.SchemaVersion,
+		Name: file.Name,
 		Connections: Connections{
 			CentralTransfer: CentralTransferConnection{
 				BaseURL:        file.Connections.CentralTransfer.BaseURL,

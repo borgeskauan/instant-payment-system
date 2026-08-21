@@ -1,6 +1,5 @@
 {
   "name": "mixed-outcomes-2k-15m",
-  "schemaVersion": 3,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8001",

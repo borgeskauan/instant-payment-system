@@ -1,6 +1,5 @@
 {
   "name": "uniform-smoke",
-  "schemaVersion": 3,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8001",
