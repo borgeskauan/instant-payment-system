@@ -255,20 +255,48 @@ PSP sem backlog, com cursor antigo ou após restart ainda pode consultar o banco
 
 ### Reconciler
 
-O reconciler procura notificações existentes sem posição:
+O reconciler procura notificações existentes sem posição. Durante a Fase 2 a
+fonte ainda se chama `notification_outbox`; na Fase 3 ela será simplificada
+para `outbound_notification`:
 
 ```sql
 SELECT notification.*
-FROM outbound_notification AS notification
-LEFT JOIN delivery_index AS index
-  ON index.communication_id = notification.communication_id
-WHERE index.communication_id IS NULL;
+FROM notification_outbox AS notification
+WHERE notification.communication_id > :cycleCursor
+  AND notification.created_at <= CURRENT_TIMESTAMP - INTERVAL '1 minute'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM delivery_index AS index
+      WHERE index.communication_id = notification.communication_id
+  )
+ORDER BY notification.communication_id
+LIMIT 1000;
 ```
 
 Os resultados passam pela mesma `ensureIndexed` usada pelo Kafka. O reconciler
 não publica no Kafka e não mantém um segundo lifecycle de retry. Sua execução é
 idempotente: concorrência com o Kafka pode repetir a tentativa física, mas
 produz exatamente um índice lógico.
+
+No MVP, a varredura começa no startup e volta a ocorrer um minuto depois do fim
+do ciclo anterior. O cursor acima existe somente em memória durante um ciclo,
+para paginar sem recomeçar a busca a cada lote; todo novo ciclo volta ao início.
+Falhas de um PSP não impedem os demais e são reconsideradas no ciclo seguinte.
+Uma notificação só é elegível depois de completar um minuto. Essa janela deixa
+o fast path Kafka terminar o trabalho normal antes que uma ausência transitória
+seja tratada como falha; por isso a recuperação ocorre entre um e dois minutos
+depois da criação, conforme a posição relativa ao próximo ciclo.
+
+Esta escolha é deliberada. Kafka cobre o caminho saudável, portanto a
+reconciliação deve normalmente encontrar zero rows e existe apenas para o
+failure path raro. Aceitamos maior latência e um scan histórico pouco frequente
+para não introduzir worklist, watermark ou outro lifecycle persistente. Uma
+medição com aproximadamente `600 mil` rows já indexadas mostrou que provar a
+ausência de lacunas exige varrer as duas relações. No diagnóstico limpo da Fase
+2, quatro scans sem resultado consumiram `14,741 s` de SQL wall-time no total
+(`3,685 s` em média e `8,418 s` no máximo). Esse custo já é visível e deve
+continuar sendo observado; worklist ou batch watermark permanecem uma mudança
+posterior, não antecipada no MVP.
 
 ## Fase 1: projeção mínima e RAM
 
@@ -334,7 +362,9 @@ reconciler novo
 
 Kafka continua no fast path. O reconciler encontra qualquer row de
 `notification_outbox` sem `delivery_index`, indexa e alimenta o buffer após o
-commit.
+commit. Ele não filtra por `publication_status`: tanto uma row `PENDING` que
+nunca chegou ao Kafka quanto uma row `PUBLISHED` que não chegou a confirmar o
+índice precisam convergir.
 
 ### Checkpoint da fase 2
 

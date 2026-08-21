@@ -60,7 +60,7 @@ The SPI outbox and Gateway index protect different boundaries:
 | Confirmed financial fact to Kafka publication | SPI `notification_outbox` | `PUBLISHED`: Kafka broker confirmed the send with `acks=all` |
 | Kafka consumption to PSP processing | Gateway `delivery_index` + PSP cursor | PSP durably retained the last Gateway-issued cursor it fully processed |
 
-SPI `PUBLISHED` is broker confirmation only. The Gateway does not persist PSP progress in the hot path; the PSP is authoritative for the last cursor it processed, while the Gateway is authoritative for whether that opaque cursor was genuinely issued for the authenticated PSP.
+SPI `PUBLISHED` is broker confirmation only. Once per minute, the Gateway also reconciles any `notification_outbox` row older than one minute that has no `delivery_index`, regardless of publication status. The age boundary prevents an ordinary in-flight Kafka event from being mistaken for a recovery candidate. Kafka therefore remains the normal low-latency path, while PostgreSQL is sufficient for eventual indexing after a rare publication or Gateway failure. The Gateway does not persist PSP progress in the hot path; the PSP is authoritative for the last cursor it processed, while the Gateway is authoritative for whether that opaque cursor was genuinely issued for the authenticated PSP.
 
 ## Transactional Financial, Audit, and Outbox Write Path
 

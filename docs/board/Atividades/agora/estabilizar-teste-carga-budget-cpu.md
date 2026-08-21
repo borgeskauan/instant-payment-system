@@ -2540,3 +2540,52 @@ janela ativa. O JFR também registrou mais compilação ativa no B (`1,334 / 2,0
 impede atribuir essa queda isolada ao novo schema. O A/B sustenta manter a Fase
 1 pelo ganho direto e pelo progresso end-to-end, mas não qualifica capacidade
 nem SLA.
+
+### Fase 2 híbrida — reconciler independente do Kafka
+
+A Fase 2 adiciona ao Notification Gateway uma varredura de
+`notification_outbox` sem `delivery_index`. Os resultados usam a mesma
+`ensureIndexed` do consumer Kafka; advisory lock, deduplicação por
+`communication_id`, alocação de posição por PSP, buffer e sinalização de Pull
+permanecem compartilhados pelos dois caminhos. O publisher confiável e todo o
+lifecycle `PENDING/PUBLISHED` do SPI continuam inalterados nesta fase.
+
+O reconciler não filtra por status de publicação. Isso cobre tanto o commit que
+nunca chegou ao Kafka quanto o evento publicado que não completou a indexação.
+Ele executa no startup e depois com `fixedDelay` de um minuto, pagina por
+`communication_id` em lotes de `1.000` e reinicia o scan do começo em cada
+ciclo. Somente rows com pelo menos um minuto são elegíveis, para que uma
+ausência transitória entre o commit da outbox e o consumo Kafka não concorra
+com o fast path. Falhas são isoladas por PSP; uma falha global encerra somente
+o ciclo corrente.
+
+Não foi adicionada worklist nem watermark persistente. Na base usada para
+planejar a mudança, com cerca de `600 mil` rows nas duas tabelas, o anti-join
+histórico levou aproximadamente `1,46 s` buscando apenas IDs e `3,23 s`
+projetando o payload completo. O MVP aceita esse custo uma vez por minuto e a
+maior latência do failure path porque Kafka deve cobrir a operação normal. O
+diagnóstico precisa registrar separadamente custo e rows da query; crescimento
+material no futuro justifica reavaliar worklist ou batch watermark.
+
+Os testes automatizados cobrem a janela que deixa rows recentes no fast path,
+outbox durável sem nenhuma publicação Kafka,
+restart com memória vazia, rows `PENDING` e `PUBLISHED`, paginação sem cursor
+durável, falha parcial por PSP e corrida Kafka/reconciler produzindo exatamente
+um índice e uma posição.
+
+O primeiro diagnóstico limpo, antes da janela de idade, mostrou por que essa
+fronteira é necessária: o reconciler tomou `953` lacunas transitórias do Kafka
+(`489 + 117 + 347`) como candidatos de recovery. Após exigir um minuto de
+idade, o run limpo
+`phase2-reconciler-grace-clean/20260821_185040` registrou zero recovery, zero
+lacuna ao final (`620.201` outbox e `620.201` índices) e nenhuma violação de
+replay ou Pull. As quatro varreduras saudáveis retornaram zero rows, mas ainda
+consumiram `14,741 s` de SQL wall-time (`3,685 s` médio, `8,418 s` máximo),
+confirmando que o custo histórico precisa permanecer visível.
+
+O mesmo run iniciou `119.920` pagamentos ativos (`1.998,667 TPS` médio,
+rolling mínimo/máximo `1.945 / 2.020`), concluiu `217.280` outcomes e terminou
+inválido para SLA, com `54.419` outcomes ausentes e p50/p95/p99 de
+`24,377 / 53,867 / 56,746 s`. Comparado ao baseline da Fase 1, houve mais
+progresso útil e menor p50, mas esta execução isolada não atribui essa diferença
+ao reconciler nem qualifica a capacidade de `2.000 TPS`.

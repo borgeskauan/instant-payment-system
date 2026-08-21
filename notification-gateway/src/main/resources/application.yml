@@ -36,6 +36,9 @@ grpc:
 notification-gateway:
   kafka:
     listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:1}
+  reconciliation:
+    batch-size: ${NOTIFICATION_GATEWAY_RECONCILIATION_BATCH_SIZE:1000}
+    fixed-delay: ${NOTIFICATION_GATEWAY_RECONCILIATION_FIXED_DELAY:1m}
   pull:
     cursor-secret: ${NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET:local-development-cursor-secret-change-me}
     long-poll-timeout-ms: ${NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS:30000}
