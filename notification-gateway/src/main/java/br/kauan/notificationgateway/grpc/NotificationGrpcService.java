@@ -20,7 +20,7 @@ import java.util.List;
 @GrpcService
 public class NotificationGrpcService extends NotificationGatewayGrpc.NotificationGatewayImplBase {
 
-    static final int PULL_BATCH_LIMIT = 10;
+    static final int PULL_BATCH_LIMIT = 15;
 
     private final NotificationDeliveryRepository repository;
     private final PullRequestCoordinator coordinator;

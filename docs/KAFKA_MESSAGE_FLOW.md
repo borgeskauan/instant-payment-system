@@ -49,7 +49,7 @@ flowchart LR
 
 PSPs do not consume Kafka directly. They submit messages to `kafka-producer` over mTLS HTTPS and pull SPI notifications from `notification-gateway` through unary gRPC calls over a persistent HTTP/2/mTLS connection.
 
-Each PSP maintains one logical pull flow. A request carries only the last cursor processed durably by that PSP. When backlog is available, the Gateway immediately returns the next 10 notifications at most, in stable order, plus an opaque HMAC-authenticated `nextCursor`; when the backlog is empty, the existing long poll waits for new work or its timeout. The fixed limit of 10 is part of the protocol rather than a client or profile setting. The PSP advances its durable cursor only after processing the complete response; presenting an older cursor redelivers the corresponding rows and therefore provides at-least-once delivery without individual ACK writes, leases, or an active redelivery scheduler.
+Each PSP maintains one logical pull flow. A request carries only the last cursor processed durably by that PSP. When backlog is available, the Gateway immediately returns the next 15 notifications at most, in stable order, plus an opaque HMAC-authenticated `nextCursor`; when the backlog is empty, the existing long poll waits for new work or its timeout. The fixed limit of 15 is part of the protocol rather than a client or profile setting. The PSP advances its durable cursor only after processing the complete response; presenting an older cursor redelivers the corresponding rows and therefore provides at-least-once delivery without individual ACK writes, leases, or an active redelivery scheduler.
 
 The SPI outbox and gateway delivery table protect different boundaries:
 

@@ -12,14 +12,14 @@ func TestSummarizeNotificationPullUsesOnlyNonEmptyBatchesForDistribution(t *test
 	snapshot := pullmetrics.Snapshot{EmptyResponses: 3}
 	snapshot.Batches[1] = 1
 	snapshot.Batches[2] = 2
-	snapshot.Batches[10] = 1
+	snapshot.Batches[15] = 1
 
 	summary := summarizeNotificationPull(snapshot)
 
 	if summary.Batches.Count != 4 || summary.Batches.EmptyResponses != 3 {
 		t.Fatalf("notification pull metadata = %#v", summary)
 	}
-	if summary.Batches.Mean != 3.75 || summary.Batches.P50 != 2 || summary.Batches.P95 != 10 || summary.Batches.Max != 10 {
+	if summary.Batches.Mean != 5 || summary.Batches.P50 != 2 || summary.Batches.P95 != 15 || summary.Batches.Max != 15 {
 		t.Fatalf("notification pull distribution = %#v", summary.Batches)
 	}
 	if summary.Violations != 0 {

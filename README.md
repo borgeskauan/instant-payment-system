@@ -41,7 +41,7 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
 
-O protocolo de pull retorna até `10` notificações por chamada; o tamanho não é
+O protocolo de pull retorna até `15` notificações por chamada; o tamanho não é
 configurável pelo PSP nem pelo profile. O relatório registra a distribuição dos
 lotes efetivamente recebidos.
 

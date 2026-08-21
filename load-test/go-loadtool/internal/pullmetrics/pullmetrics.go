@@ -2,7 +2,7 @@ package pullmetrics
 
 import "sync/atomic"
 
-const MaximumBatch = 10
+const MaximumBatch = 15
 
 type Snapshot struct {
 	EmptyResponses       uint64

@@ -2083,7 +2083,7 @@ já existente. A outbox do SPI e a persistência inicial de
 Cada PSP mantém um fluxo lógico e apresenta o último cursor que processou
 duravelmente. `PullNotifications` recebe somente esse cursor. O Gateway
 autentica o PSP pelo certificado, valida o cursor opaco HMAC vinculado ao ISPB
-e devolve imediatamente até `10` rows posteriores disponíveis mais o próximo
+e devolve imediatamente até `15` rows posteriores disponíveis mais o próximo
 cursor. Se não houver backlog, o long poll vigente espera trabalho novo ou seu
 timeout. O PSP só avança depois de processar o lote inteiro; cursor antigo
 causa redelivery do lote e preserva at-least-once. Um segundo pull simultâneo
@@ -2096,13 +2096,14 @@ menor apareça depois de uma fronteira já emitida. A migração exige
 `notification_delivery` vazia; não há compatibilidade com backlog push.
 
 O profile não contém configuração de tamanho de pull nem versionamento próprio.
-O limite `10` pertence ao protocolo do Gateway. O `sla-report.json` registra,
+O limite `15` pertence ao protocolo do Gateway. O `sla-report.json` registra,
 somente na janela ativa, a distribuição real de lotes não vazios (`count`,
 `mean`, `p50`, `p95`, `max`), mantendo
 `empty_responses` separado. Observar lote acima do máximo configurado invalida
 o run; o tamanho dos batches não é SLA de negócio.
 
-O diagnóstico executou uma medição curta e limpa para cada valor `1/10/500`,
+O diagnóstico executou uma medição curta e limpa para cada valor
+`1/10/15/20/500`,
 mantendo workload e recursos, e comparou com o baseline push
 `payment-fillfactor-50-no-carry/20260820_010212`, registrando os batches reais,
 CPU/SQL/WAL do PostgreSQL, outcomes e cauda. Nenhum resultado deve remover ou
@@ -2127,47 +2128,52 @@ bundles medidos são:
 
 - `pull-batch-1-clean/20260820_214150`;
 - `pull-batch-10-clean/20260820_214831`;
+- `pull-batch-15-clean/20260820_233923`;
+- `pull-batch-20-clean/20260820_233046`;
 - `pull-batch-500-clean/20260820_215410`.
 
-| sinal | push anterior | pull 1 | pull 10 | pull 500 |
-| --- | ---: | ---: | ---: | ---: |
-| mínimo rolling TPS | `868` | `1.027` | `1.903` | `229` |
-| pagamentos ativos iniciados | `112.429` | `116.364` | `119.752` | `106.951` |
-| outcomes finais observados | `70.014` | `42.966` | `92.721` | `89.453` |
-| batch real médio | — | `1,000` | `8,523` | `22,571` |
-| batch real p95 / máximo | — | `1 / 1` | `10 / 10` | `115 / 446` |
-| CPU média Gateway no ativo | `40,34%` | `60,01%` | `31,82%` | `36,25%` |
-| CPU média PostgreSQL no ativo | `102,60%` | `103,02%` | `101,66%` | `101,65%` |
-| tempo SQL das 50 queries exportadas | `227,588 s` | `229,460 s` | `192,302 s` | `180,863 s` |
+| sinal | push anterior | pull 1 | pull 10 | pull 15 | pull 20 | pull 500 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| mínimo rolling TPS | `868` | `1.027` | `1.903` | `1.944` | `1.158` | `229` |
+| pagamentos ativos iniciados | `112.429` | `116.364` | `119.752` | `119.851` | `116.442` | `106.951` |
+| outcomes finais observados | `70.014` | `42.966` | `92.721` | `100.404` | `101.618` | `89.453` |
+| batch real médio | — | `1,000` | `8,523` | `11,506` | `13,265` | `22,571` |
+| batch real p95 / máximo | — | `1 / 1` | `10 / 10` | `15 / 15` | `20 / 20` | `115 / 446` |
+| CPU média Gateway no ativo | `40,34%` | `60,01%` | `31,82%` | `23,66%` | `33,72%` | `36,25%` |
+| CPU média PostgreSQL no ativo | `102,60%` | `103,02%` | `101,66%` | `100,19%` | `102,92%` | `101,65%` |
+| tempo SQL das 50 queries exportadas | `227,588 s` | `229,460 s` | `192,302 s` | `184,818 s` | `170,831 s` | `180,863 s` |
 
 O batch `1` confirmou o pior caso de overhead: o SELECT de pull fez `119.300`
 chamadas, consumiu `43,245 s` e devolveu `115.551` rows. Com batch `10`, foram
-`40.913` chamadas, `17,018 s` e `247.488` rows. Com batch `500`, foram
-`18.865` chamadas, `9,257 s` e `234.149` rows. O batch `10` foi o melhor
-equilíbrio observado entre batching real e preservação da workload. O batch
-`500` reduziu o custo do read path, mas coincidiu com grandes lotes processados
-em rajada pelo mesmo loadtool e com perda severa de slots no gerador; este run
-não prova capacidade superior apesar da menor cauda entre os pulls.
+`40.913` chamadas, `17,018 s` e `247.488` rows. Com batch `15`, foram `37.218`
+chamadas, `12,334 s` e `268.055` rows; com `20`, `33.178` chamadas, `11,714 s`
+e `264.473` rows. Com batch `500`, foram `18.865` chamadas, `9,257 s` e
+`234.149` rows. O batch `15` foi o melhor equilíbrio observado entre batching
+real e preservação da workload. `20` reduziu um pouco mais o read path e
+concluiu mais outcomes, mas degradou a geração para `1.158` TPS mínimos e
+elevou a CPU do Kafka Producer para `72,79%`. O batch `500` acentuou a perda de
+slots com grandes lotes processados em rajada pelo mesmo loadtool; nenhum dos
+dois prova capacidade superior apesar da menor cauda observada.
 
 No baseline push, a persistência de ACK consumiu `37,094 s`, escreveu
 `154,623 MB` de WAL e alterou `182.208` rows; o recovery sem trabalho consumiu
-mais `3,470 s`. Ambos desapareceram. No pull `10`, o read path substituto
-consumiu `17,018 s` e zero WAL. O WAL total exportado não caiu porque essa
-variante concluiu e persistiu muito mais trabalho (`249.387` deliveries contra
+mais `3,470 s`. Ambos desapareceram. No pull `15`, o read path substituto
+consumiu `12,334 s` e zero WAL. O WAL total exportado não caiu porque essa
+variante concluiu e persistiu muito mais trabalho (`271.900` deliveries contra
 `182.466` no push), portanto a comparação correta precisa considerar trabalho
 útil, e não apenas bytes absolutos.
 
-Nenhuma variante provou `2.000 TPS` sustentados nem os SLAs finais. Pull `10`
-chegou mais perto do envelope e observou mais outcomes, mas ainda teve `41.981`
-outcomes ausentes no deadline e três PACS.002 sem HTTP 2xx. Não houve outcome
-contraditório, replay inválido ou batch acima do configurado.
+Nenhuma variante provou `2.000 TPS` sustentados nem os SLAs finais. Pull `15`
+chegou mais perto do envelope, com `1.944` TPS mínimos e `100.404` outcomes,
+mas ainda teve `34.304` outcomes ausentes no deadline. Não houve outcome
+contraditório, replay inválido, PACS.002 sem HTTP 2xx ou batch acima do limite.
 
-Com base nesses resultados, `10` foi escolhido como limite fixo do protocolo,
+Com base nesses resultados, `15` foi escolhido como limite fixo do protocolo,
 e não como default configurável. Ele apresentou o melhor equilíbrio observado:
-preservou melhor a workload (`1.903` TPS mínimos), produziu mais outcomes
-(`92.721`) e reduziu o trabalho SQL frente ao push, sem o overhead por chamada
-do batch `1` nem as rajadas e a perda severa de slots observadas com `500`. O
+preservou melhor a workload (`1.944` TPS mínimos), produziu `100.404` outcomes,
+reduziu o p99 de `60,045 s` para `50,993 s` frente ao batch `10` e diminuiu o
+trabalho SQL do pull, sem a perda de slots observada com `20` e `500`. O
 perfil de diagnóstico `500` e o de `1` foram removidos; seus bundles permanecem
 somente como evidência histórica que fundamenta esta decisão.
 `PullNotifications` não aceita tamanho de lote, profiles não o configuram e o
-Gateway sempre limita a resposta a `10` notificações.
+Gateway sempre limita a resposta a `15` notificações.
