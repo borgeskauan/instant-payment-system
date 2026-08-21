@@ -1,6 +1,6 @@
 {
   "name": "mixed-outcomes-2k-diagnostic",
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8001",

@@ -19,14 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NotificationGateway_StreamNotifications_FullMethodName = "/notification.NotificationGateway/StreamNotifications"
+	NotificationGateway_PullNotifications_FullMethodName = "/notification.NotificationGateway/PullNotifications"
 )
 
 // NotificationGatewayClient is the client API for NotificationGateway service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NotificationGatewayClient interface {
-	StreamNotifications(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientMessage, Notification], error)
+	PullNotifications(ctx context.Context, in *PullRequest, opts ...grpc.CallOption) (*PullResponse, error)
 }
 
 type notificationGatewayClient struct {
@@ -37,24 +37,21 @@ func NewNotificationGatewayClient(cc grpc.ClientConnInterface) NotificationGatew
 	return &notificationGatewayClient{cc}
 }
 
-func (c *notificationGatewayClient) StreamNotifications(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientMessage, Notification], error) {
+func (c *notificationGatewayClient) PullNotifications(ctx context.Context, in *PullRequest, opts ...grpc.CallOption) (*PullResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &NotificationGateway_ServiceDesc.Streams[0], NotificationGateway_StreamNotifications_FullMethodName, cOpts...)
+	out := new(PullResponse)
+	err := c.cc.Invoke(ctx, NotificationGateway_PullNotifications_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ClientMessage, Notification]{ClientStream: stream}
-	return x, nil
+	return out, nil
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NotificationGateway_StreamNotificationsClient = grpc.BidiStreamingClient[ClientMessage, Notification]
 
 // NotificationGatewayServer is the server API for NotificationGateway service.
 // All implementations must embed UnimplementedNotificationGatewayServer
 // for forward compatibility.
 type NotificationGatewayServer interface {
-	StreamNotifications(grpc.BidiStreamingServer[ClientMessage, Notification]) error
+	PullNotifications(context.Context, *PullRequest) (*PullResponse, error)
 	mustEmbedUnimplementedNotificationGatewayServer()
 }
 
@@ -65,8 +62,8 @@ type NotificationGatewayServer interface {
 // pointer dereference when methods are called.
 type UnimplementedNotificationGatewayServer struct{}
 
-func (UnimplementedNotificationGatewayServer) StreamNotifications(grpc.BidiStreamingServer[ClientMessage, Notification]) error {
-	return status.Error(codes.Unimplemented, "method StreamNotifications not implemented")
+func (UnimplementedNotificationGatewayServer) PullNotifications(context.Context, *PullRequest) (*PullResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PullNotifications not implemented")
 }
 func (UnimplementedNotificationGatewayServer) mustEmbedUnimplementedNotificationGatewayServer() {}
 func (UnimplementedNotificationGatewayServer) testEmbeddedByValue()                             {}
@@ -89,12 +86,23 @@ func RegisterNotificationGatewayServer(s grpc.ServiceRegistrar, srv Notification
 	s.RegisterService(&NotificationGateway_ServiceDesc, srv)
 }
 
-func _NotificationGateway_StreamNotifications_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(NotificationGatewayServer).StreamNotifications(&grpc.GenericServerStream[ClientMessage, Notification]{ServerStream: stream})
+func _NotificationGateway_PullNotifications_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PullRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NotificationGatewayServer).PullNotifications(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NotificationGateway_PullNotifications_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NotificationGatewayServer).PullNotifications(ctx, req.(*PullRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NotificationGateway_StreamNotificationsServer = grpc.BidiStreamingServer[ClientMessage, Notification]
 
 // NotificationGateway_ServiceDesc is the grpc.ServiceDesc for NotificationGateway service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -102,14 +110,12 @@ type NotificationGateway_StreamNotificationsServer = grpc.BidiStreamingServer[Cl
 var NotificationGateway_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "notification.NotificationGateway",
 	HandlerType: (*NotificationGatewayServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams: []grpc.StreamDesc{
+	Methods: []grpc.MethodDesc{
 		{
-			StreamName:    "StreamNotifications",
-			Handler:       _NotificationGateway_StreamNotifications_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
+			MethodName: "PullNotifications",
+			Handler:    _NotificationGateway_PullNotifications_Handler,
 		},
 	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "proto/notification.proto",
 }

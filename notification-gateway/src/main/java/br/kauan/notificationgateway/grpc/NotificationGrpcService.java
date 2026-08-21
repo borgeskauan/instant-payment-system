@@ -1,98 +1,105 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.delivery.Acknowledgement;
-import br.kauan.notificationgateway.delivery.AcknowledgementBatcher;
-import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
-import br.kauan.notificationgateway.grpc.proto.ClientMessage;
+import br.kauan.notificationgateway.delivery.NotificationDelivery;
+import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
+import br.kauan.notificationgateway.grpc.proto.PullRequest;
+import br.kauan.notificationgateway.grpc.proto.PullResponse;
+import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
+import com.google.protobuf.ByteString;
+import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
-import io.grpc.Status;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
+import org.springframework.beans.factory.annotation.Value;
 
-/**
- * gRPC server implementation — exposes a bidirectional stream to external consumers.
- *
- * <p>When a client calls {@code StreamNotifications}, this service:
- * <ol>
- *   <li>Registers the response stream by the ISPB authenticated from the client certificate.
- *   <li>Keeps the stream open indefinitely (never calls {@code onCompleted}).
- *   <li>Marks deliveries ACKED when the client sends {@code Ack}.
- *   <li>Cleans up the observer from the registry when the client cancels/disconnects.
- * </ol>
- */
-@Slf4j
+import java.time.Duration;
+import java.util.List;
+
 @GrpcService
-@RequiredArgsConstructor
 public class NotificationGrpcService extends NotificationGatewayGrpc.NotificationGatewayImplBase {
 
-    private final SubscriberRegistry subscriberRegistry;
-    private final AcknowledgementBatcher acknowledgementBatcher;
+    static final int PULL_BATCH_LIMIT = 10;
+
+    private final NotificationDeliveryRepository repository;
+    private final PullRequestCoordinator coordinator;
+    private final DeliveryCursorCodec cursorCodec;
+    private final Duration longPollTimeout;
+
+    public NotificationGrpcService(
+            NotificationDeliveryRepository repository,
+            PullRequestCoordinator coordinator,
+            DeliveryCursorCodec cursorCodec,
+            @Value("${notification-gateway.pull.long-poll-timeout-ms:30000}") long longPollTimeoutMillis
+    ) {
+        this.repository = repository;
+        this.coordinator = coordinator;
+        this.cursorCodec = cursorCodec;
+        this.longPollTimeout = Duration.ofMillis(longPollTimeoutMillis);
+    }
 
     @Override
-    public StreamObserver<ClientMessage> streamNotifications(StreamObserver<Notification> responseObserver) {
-        String authenticatedIspb = AuthenticatedPspContext.requireAuthenticatedIspb();
-        log.info("Client connected for notifications — ISPB: {}", authenticatedIspb);
-        subscriberRegistry.register(authenticatedIspb, responseObserver);
-
-        if (responseObserver instanceof ServerCallStreamObserver<Notification> serverObserver) {
-            serverObserver.setOnCancelHandler(() -> {
-                log.info("Client cancelled stream — ISPB: {} (isCancelled: {})",
-                        authenticatedIspb, serverObserver.isCancelled());
-                subscriberRegistry.unregister(authenticatedIspb, responseObserver);
-            });
+    public void pullNotifications(PullRequest request, StreamObserver<PullResponse> responseObserver) {
+        String recipientIspb = AuthenticatedPspContext.requireAuthenticatedIspb();
+        long position;
+        try {
+            position = cursorCodec.decodePosition(request.getCursor(), recipientIspb);
+        } catch (InvalidDeliveryCursorException invalidCursor) {
+            responseObserver.onError(Status.INVALID_ARGUMENT
+                    .withDescription(invalidCursor.getMessage())
+                    .asRuntimeException());
+            return;
         }
 
-        return new StreamObserver<>() {
-            @Override
-            public void onNext(ClientMessage message) {
-                if (message.hasAck()) {
-                    String deliveryId = message.getAck().getDeliveryId();
-                    if (!deliveryId.isBlank()) {
-                        try {
-                            boolean enqueued = acknowledgementBatcher.enqueue(
-                                    new Acknowledgement(deliveryId, authenticatedIspb)
-                            );
-                            if (!enqueued) {
-                                fail(Status.UNAVAILABLE, "acknowledgement persistence is stopping");
-                            }
-                        } catch (InterruptedException interrupted) {
-                            Thread.currentThread().interrupt();
-                            fail(Status.UNAVAILABLE, "acknowledgement enqueue interrupted");
-                        }
-                    }
-                    return;
-                }
-
-                fail(Status.INVALID_ARGUMENT, "message must contain ack");
+        try (PullRequestCoordinator.Session session = coordinator.begin(recipientIspb)) {
+            if (responseObserver instanceof ServerCallStreamObserver<PullResponse> serverObserver) {
+                serverObserver.setOnCancelHandler(session::signal);
             }
 
-            @Override
-            public void onError(Throwable throwable) {
-                unregister();
-            }
-
-            @Override
-            public void onCompleted() {
-                if (unregister()) {
-                    responseObserver.onCompleted();
+            List<NotificationDelivery> deliveries = repository.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
+            if (deliveries.isEmpty() && !isCancelled(responseObserver)) {
+                session.await(longPollTimeout);
+                if (!isCancelled(responseObserver)) {
+                    deliveries = repository.findAfter(recipientIspb, position, PULL_BATCH_LIMIT);
                 }
             }
-
-            private boolean unregister() {
-                return subscriberRegistry.unregister(authenticatedIspb, responseObserver);
+            if (isCancelled(responseObserver)) {
+                return;
             }
 
-            private void fail(Status status, String description) {
-                if (unregister()) {
-                    responseObserver.onError(status
-                            .withDescription(description)
-                            .asRuntimeException());
-                }
+            PullResponse.Builder response = PullResponse.newBuilder();
+            for (NotificationDelivery delivery : deliveries) {
+                response.addNotifications(Notification.newBuilder()
+                        .setPayload(ByteString.copyFrom(delivery.payload())));
             }
-        };
+            if (deliveries.isEmpty()) {
+                response.setNextCursor(request.getCursor());
+            } else {
+                response.setNextCursor(cursorCodec.encode(
+                        recipientIspb,
+                        deliveries.getLast().deliveryPosition()
+                ));
+            }
+            // Admission belongs to the request, not to delivery of the response.
+            // Release it before the client can observe the response and repull.
+            session.close();
+            responseObserver.onNext(response.build());
+            responseObserver.onCompleted();
+        } catch (PullRequestCoordinator.ConcurrentPullException concurrentPull) {
+            responseObserver.onError(Status.FAILED_PRECONDITION
+                    .withDescription("only one pull may be active per PSP")
+                    .asRuntimeException());
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            responseObserver.onError(Status.UNAVAILABLE
+                    .withDescription("notification pull interrupted")
+                    .asRuntimeException());
+        }
+    }
+
+    private boolean isCancelled(StreamObserver<PullResponse> observer) {
+        return observer instanceof ServerCallStreamObserver<PullResponse> serverObserver
+                && serverObserver.isCancelled();
     }
 }

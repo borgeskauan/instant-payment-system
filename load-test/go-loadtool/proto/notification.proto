@@ -5,20 +5,18 @@ option go_package = "instant-payment-system/load-test/go-loadtool/internal/gen/n
 package notification;
 
 service NotificationGateway {
-  rpc StreamNotifications(stream ClientMessage) returns (stream Notification);
+  rpc PullNotifications(PullRequest) returns (PullResponse);
 }
 
-message ClientMessage {
-  oneof message {
-    Ack ack = 1;
-  }
+message PullRequest {
+  string cursor = 1;
 }
 
-message Ack {
-  string delivery_id = 1;
+message PullResponse {
+  repeated Notification notifications = 1;
+  string next_cursor = 2;
 }
 
 message Notification {
-  string delivery_id = 1;
-  bytes payload = 2;
+  bytes payload = 1;
 }

@@ -13,6 +13,7 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 	"instant-payment-system/load-test/go-loadtool/internal/runbundle"
 	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
@@ -45,6 +46,9 @@ func TestParseRunConfigUsesRunProfileAndFixedBundlePaths(t *testing.T) {
 	}
 	if command.runtime.Name != "run-profile" || command.runtime.Load.TargetTxRate != 321 {
 		t.Fatalf("runtime profile/options = %#v", command.runtime)
+	}
+	if command.simulator.PullMetrics == nil {
+		t.Fatalf("simulator notification pull = %#v", command.simulator)
 	}
 }
 
@@ -106,7 +110,7 @@ func TestExecuteRunPreparesSimulatesReportsAndPublishesInOrder(t *testing.T) {
 			order = append(order, "simulate")
 			return nil
 		},
-		renderReport: func(layout runbundle.Layout, runtimeCfg config.Runtime, output io.Writer) error {
+		renderReport: func(layout runbundle.Layout, runtimeCfg config.Runtime, pullSnapshot pullmetrics.Snapshot, output io.Writer) error {
 			if layout.Root != runDir || runtimeCfg.Name != "run-profile" {
 				t.Fatalf("report input = %#v / %#v", layout, runtimeCfg)
 			}
@@ -146,7 +150,7 @@ func TestExecuteRunDoesNotReportAfterSimulationFailure(t *testing.T) {
 	err := executeRun([]string{"--run-dir", runDir}, runDependencies{
 		loadProfile: func(string) (config.Runtime, error) { return runtimeCfg, nil },
 		simulate:    func(sim.Config) error { return wantErr },
-		renderReport: func(runbundle.Layout, config.Runtime, io.Writer) error {
+		renderReport: func(runbundle.Layout, config.Runtime, pullmetrics.Snapshot, io.Writer) error {
 			renderCalled = true
 			return nil
 		},
@@ -176,7 +180,7 @@ func TestExecuteRunDoesNotPublishAfterReportFailure(t *testing.T) {
 	err := executeRun([]string{"--run-dir", runDir}, runDependencies{
 		loadProfile: func(string) (config.Runtime, error) { return runtimeCfg, nil },
 		simulate:    func(sim.Config) error { return nil },
-		renderReport: func(runbundle.Layout, config.Runtime, io.Writer) error {
+		renderReport: func(runbundle.Layout, config.Runtime, pullmetrics.Snapshot, io.Writer) error {
 			return wantErr
 		},
 		stdout: &stdout,

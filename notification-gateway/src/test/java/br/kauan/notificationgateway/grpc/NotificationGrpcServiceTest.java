@@ -1,11 +1,9 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.delivery.Acknowledgement;
-import br.kauan.notificationgateway.delivery.AcknowledgementBatcher;
 import br.kauan.notificationgateway.delivery.NotificationDelivery;
-import br.kauan.notificationgateway.grpc.proto.Ack;
-import br.kauan.notificationgateway.grpc.proto.ClientMessage;
-import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.grpc.proto.PullRequest;
+import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
 import io.grpc.Context;
 import io.grpc.Status;
@@ -13,240 +11,180 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class NotificationGrpcServiceTest {
 
+    private static final byte[] SECRET =
+            "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+
     @Test
-    void authenticatedIspbRegistersStreamDispatchesNotificationAndEnqueuesAck() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        CapturingObserver responseObserver = new CapturingObserver();
-        when(batcher.enqueue(new Acknowledgement("v1:delivery", "20000001"))).thenReturn(true);
-
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-
-        boolean sent = registry.dispatch(new NotificationDelivery(
-                "v1:delivery",
-                "20000001",
-                "payload".getBytes()
+    void returnsOnlyTheAuthenticatedPspPageAndIssuesCursorAtItsLastPosition() throws Exception {
+        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(repository, codec, 1);
+        when(repository.findAfter("20000001", 0, 10)).thenReturn(List.of(
+                delivery(12, "v1:first", "first"),
+                delivery(18, "v1:second", "second")
         ));
-        requestObserver.onNext(ClientMessage.newBuilder()
-                .setAck(Ack.newBuilder().setDeliveryId("v1:delivery"))
-                .build());
+        CapturingObserver observer = new CapturingObserver();
 
-        assertThat(sent).isTrue();
-        assertThat(responseObserver.notification.getDeliveryId()).isEqualTo("v1:delivery");
-        assertThat(responseObserver.notification.getPayload().toByteArray()).isEqualTo("payload".getBytes());
-        assertThat(responseObserver.error).isNull();
-        verify(batcher).enqueue(new Acknowledgement("v1:delivery", "20000001"));
+        authenticatedCall(service, PullRequest.newBuilder().build(), observer);
+
+        assertThat(observer.error).isNull();
+        assertThat(observer.completed).isTrue();
+        assertThat(observer.response.getNotificationsList())
+                .extracting(notification -> notification.getPayload().toStringUtf8())
+                .containsExactly("first", "second");
+        assertThat(codec.decodePosition(observer.response.getNextCursor(), "20000001"))
+                .isEqualTo(18);
+        verify(repository).findAfter("20000001", 0, 10);
     }
 
     @Test
-    void blankDeliveryIdKeepsStreamOpenWithoutEnqueueing() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        CapturingObserver responseObserver = new CapturingObserver();
+    void emptyLongPollReturnsTheSameCursor() throws Exception {
+        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(repository, codec, 1);
+        String cursor = codec.encode("20000001", 20);
+        when(repository.findAfter("20000001", 20, 10)).thenReturn(List.of());
+        CapturingObserver observer = new CapturingObserver();
 
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-        requestObserver.onNext(ClientMessage.newBuilder()
-                .setAck(Ack.newBuilder().setDeliveryId("   "))
-                .build());
+        authenticatedCall(service, PullRequest.newBuilder()
+                .setCursor(cursor)
+                .build(), observer);
 
-        boolean sent = registry.dispatch(new NotificationDelivery(
-                "v1:delivery",
-                "20000001",
-                "payload".getBytes()
-        ));
-
-        assertThat(sent).isTrue();
-        assertThat(responseObserver.error).isNull();
-        assertThat(responseObserver.completed).isFalse();
-        verifyNoInteractions(batcher);
+        assertThat(observer.response.getNotificationsCount()).isZero();
+        assertThat(observer.response.getNextCursor()).isEqualTo(cursor);
+        verify(repository, org.mockito.Mockito.times(2)).findAfter("20000001", 20, 10);
     }
 
     @Test
-    void batcherRejectingAckUnregistersStreamAndRespondsUnavailable() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        CapturingObserver responseObserver = new CapturingObserver();
-        when(batcher.enqueue(new Acknowledgement("v1:delivery", "20000001"))).thenReturn(false);
+    void rejectsInvalidCursor() throws Exception {
+        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(repository, codec, 1);
+        CapturingObserver invalidCursor = new CapturingObserver();
 
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-        requestObserver.onNext(ack("v1:delivery"));
+        authenticatedCall(service, PullRequest.newBuilder()
+                .setCursor("tampered")
+                .build(), invalidCursor);
 
-        assertThat(Status.fromThrowable(responseObserver.error).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-        assertThat(registry.dispatch(new NotificationDelivery("v1:delivery", "20000001", "payload".getBytes())))
-                .isFalse();
-        verify(batcher).enqueue(new Acknowledgement("v1:delivery", "20000001"));
+        assertThat(Status.fromThrowable(invalidCursor.error).getCode())
+                .isEqualTo(Status.Code.INVALID_ARGUMENT);
     }
 
     @Test
-    void interruptedEnqueueRestoresInterruptUnregistersStreamAndRespondsUnavailable() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        CapturingObserver responseObserver = new CapturingObserver();
-        doThrow(new InterruptedException("shutdown"))
-                .when(batcher).enqueue(new Acknowledgement("v1:delivery", "20000001"));
+    void missingAuthenticatedPspIsRejected() {
+        NotificationGrpcService service = service(
+                mock(NotificationDeliveryRepository.class),
+                new DeliveryCursorCodec(SECRET),
+                1
+        );
 
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-        try {
-            requestObserver.onNext(ack("v1:delivery"));
-
-            assertThat(Status.fromThrowable(responseObserver.error).getCode()).isEqualTo(Status.Code.UNAVAILABLE);
-            assertThat(Thread.currentThread().isInterrupted()).isTrue();
-            assertThat(registry.dispatch(new NotificationDelivery("v1:delivery", "20000001", "payload".getBytes())))
-                    .isFalse();
-            verify(batcher).enqueue(new Acknowledgement("v1:delivery", "20000001"));
-        } finally {
-            Thread.interrupted();
-        }
-    }
-
-    @Test
-    void messageWithoutAckUnregistersStreamAndRespondsInvalidArgument() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        CapturingObserver responseObserver = new CapturingObserver();
-
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-        requestObserver.onNext(ClientMessage.getDefaultInstance());
-
-        assertThat(Status.fromThrowable(responseObserver.error).getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
-        assertThat(registry.dispatch(new NotificationDelivery("v1:delivery", "20000001", "payload".getBytes())))
-                .isFalse();
-        verifyNoInteractions(batcher);
-    }
-
-    @Test
-    void terminalErrorWaitsForAnInProgressNotificationAndOccursOnlyOnce() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-        BlockingTerminalObserver responseObserver = new BlockingTerminalObserver();
-        StreamObserver<ClientMessage> requestObserver = authenticatedStream(service, responseObserver);
-        var executor = Executors.newFixedThreadPool(2);
-
-        try {
-            var dispatch = executor.submit(() -> registry.dispatch(
-                    new NotificationDelivery("v1:delivery", "20000001", "payload".getBytes())
-            ));
-            assertThat(responseObserver.onNextStarted.await(1, TimeUnit.SECONDS)).isTrue();
-
-            var invalidMessage = executor.submit(() -> requestObserver.onNext(ClientMessage.getDefaultInstance()));
-            assertThat(responseObserver.terminal.await(50, TimeUnit.MILLISECONDS)).isFalse();
-
-            responseObserver.releaseOnNext.countDown();
-            assertThat(dispatch.get(1, TimeUnit.SECONDS)).isTrue();
-            invalidMessage.get(1, TimeUnit.SECONDS);
-            requestObserver.onNext(ClientMessage.getDefaultInstance());
-
-            assertThat(responseObserver.terminal.await(1, TimeUnit.SECONDS)).isTrue();
-            assertThat(responseObserver.terminalCalls.get()).isEqualTo(1);
-            assertThat(responseObserver.onNextAfterTerminal.get()).isZero();
-        } finally {
-            responseObserver.releaseOnNext.countDown();
-            executor.shutdownNow();
-            assertThat(executor.awaitTermination(1, TimeUnit.SECONDS)).isTrue();
-        }
-    }
-
-    @Test
-    void missingAuthenticatedIspbRejectsStream() {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        AcknowledgementBatcher batcher = mock(AcknowledgementBatcher.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, batcher);
-
-        assertThatThrownBy(() -> service.streamNotifications(new CapturingObserver()))
-                .isInstanceOf(StatusRuntimeException.class)
+        assertThatThrownBy(() -> service.pullNotifications(
+                PullRequest.newBuilder().build(),
+                new CapturingObserver()
+        )).isInstanceOf(StatusRuntimeException.class)
                 .hasMessageContaining("authenticated PSP ISPB is required");
     }
 
-    private StreamObserver<ClientMessage> authenticatedStream(
+    @Test
+    void releasesPullAdmissionBeforePublishingResponseToTheClient() throws Exception {
+        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
+        NotificationGrpcService service = service(repository, new DeliveryCursorCodec(SECRET), 1);
+        when(repository.findAfter("20000001", 0, 10))
+                .thenReturn(List.of(delivery(1, "v1:first", "first")));
+        CapturingObserver nextPull = new CapturingObserver();
+        StreamObserver<PullResponse> immediateRepull = new StreamObserver<>() {
+            @Override
+            public void onNext(PullResponse ignored) {
+                service.pullNotifications(
+                        PullRequest.newBuilder().build(),
+                        nextPull
+                );
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                throw new AssertionError(throwable);
+            }
+
+            @Override
+            public void onCompleted() {
+            }
+        };
+
+        authenticatedCall(
+                service,
+                PullRequest.newBuilder().build(),
+                immediateRepull
+        );
+
+        assertThat(nextPull.error).isNull();
+        assertThat(nextPull.completed).isTrue();
+    }
+
+    private NotificationGrpcService service(
+            NotificationDeliveryRepository repository,
+            DeliveryCursorCodec codec,
+            long timeoutMillis
+    ) {
+        return new NotificationGrpcService(
+                repository,
+                new PullRequestCoordinator(),
+                codec,
+                timeoutMillis
+        );
+    }
+
+    private void authenticatedCall(
             NotificationGrpcService service,
-            StreamObserver<Notification> responseObserver
+            PullRequest request,
+            StreamObserver<PullResponse> observer
     ) throws Exception {
-        return Context.current()
+        Context.current()
                 .withValue(AuthenticatedPspContext.AUTHENTICATED_ISPB, "20000001")
-                .call(() -> service.streamNotifications(responseObserver));
+                .call(() -> {
+                    service.pullNotifications(request, observer);
+                    return null;
+                });
     }
 
-    private ClientMessage ack(String deliveryId) {
-        return ClientMessage.newBuilder()
-                .setAck(Ack.newBuilder().setDeliveryId(deliveryId))
-                .build();
+    private NotificationDelivery delivery(long position, String id, String payload) {
+        return new NotificationDelivery(
+                position,
+                id,
+                "20000001",
+                payload.getBytes(StandardCharsets.UTF_8)
+        );
     }
 
-    private static final class CapturingObserver implements StreamObserver<Notification> {
-
-        private Notification notification;
+    private static final class CapturingObserver implements StreamObserver<PullResponse> {
+        private PullResponse response;
         private Throwable error;
         private boolean completed;
 
         @Override
-        public void onNext(Notification value) {
-            this.notification = value;
+        public void onNext(PullResponse value) {
+            response = value;
         }
 
         @Override
         public void onError(Throwable throwable) {
-            this.error = throwable;
+            error = throwable;
         }
 
         @Override
         public void onCompleted() {
-            this.completed = true;
-        }
-    }
-
-    private static final class BlockingTerminalObserver implements StreamObserver<Notification> {
-
-        private final CountDownLatch onNextStarted = new CountDownLatch(1);
-        private final CountDownLatch releaseOnNext = new CountDownLatch(1);
-        private final CountDownLatch terminal = new CountDownLatch(1);
-        private final AtomicInteger terminalCalls = new AtomicInteger();
-        private final AtomicInteger onNextAfterTerminal = new AtomicInteger();
-
-        @Override
-        public void onNext(Notification value) {
-            if (terminalCalls.get() > 0) {
-                onNextAfterTerminal.incrementAndGet();
-            }
-            onNextStarted.countDown();
-            try {
-                releaseOnNext.await();
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError(interrupted);
-            }
-        }
-
-        @Override
-        public void onError(Throwable throwable) {
-            terminalCalls.incrementAndGet();
-            terminal.countDown();
-        }
-
-        @Override
-        public void onCompleted() {
-            terminalCalls.incrementAndGet();
-            terminal.countDown();
+            completed = true;
         }
     }
 }

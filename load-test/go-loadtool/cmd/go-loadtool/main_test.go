@@ -51,7 +51,7 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if loadedProfile != "custom-validation" || validation.Profile != "custom-validation" {
 		t.Fatalf("loaded/output profile = %q/%q", loadedProfile, validation.Profile)
 	}
-	if validation.SchemaVersion != 1 || validation.WarmupSeconds != 12 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
+	if validation.SchemaVersion != 3 || validation.WarmupSeconds != 12 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
 		t.Fatalf("validation window = %#v", validation)
 	}
 	if validation.Replay.Pacs008 == nil || validation.Replay.Pacs008.Share != 0.25 || validation.Replay.Pacs008.DelaySeconds != 7 {
@@ -88,6 +88,9 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), `"pairNumberStart"`) {
 		t.Fatalf("normalized execution plan omits pairNumberStart: %s", encoded)
+	}
+	if strings.Contains(string(encoded), `"notificationPull"`) {
+		t.Fatalf("normalized execution plan exposes fixed pull protocol details: %s", encoded)
 	}
 }
 
@@ -146,7 +149,7 @@ func TestValidateProfileReturnsSelectedProfileLoadError(t *testing.T) {
 func commandTestRuntime() config.Runtime {
 	return config.Runtime{
 		Name:          "test-profile",
-		SchemaVersion: 1,
+		SchemaVersion: 3,
 		Connections: config.Connections{
 			CentralTransfer: config.CentralTransferConnection{
 				BaseURL:        "https://profile-central:8001",

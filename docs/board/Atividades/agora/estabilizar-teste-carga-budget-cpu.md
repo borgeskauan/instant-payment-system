@@ -1858,7 +1858,7 @@ trade-off do efeito de uma workload ativa mais concentrada e maior nos runs B.
 A migração e o teste experimentais permanecem na branch até decisão explícita;
 os bundles de A, B1 e B2 permanecem preservados.
 
-### No-carry-over implementado — novo A/B de `fillfactor` pendente
+### No-carry-over implementado — novo A/B de `fillfactor` concluído
 
 O gerador deixou de recuperar posições temporais perdidas. Um pagamento
 planejado que ainda não iniciou não é um pagamento real do cliente; se sua
@@ -1904,21 +1904,270 @@ PACS.002 sem metadata da execução corrente. Essa contaminação impede usar o
 run como qualificação funcional, mas não altera a evidência temporal obtida
 dos PACS.008 do prefixo atual.
 
-Com essa correção, executar um novo A/B em stacks limpas e com o mesmo
+Com essa correção, o novo A/B foi executado em stacks limpas e com o mesmo
 profile, execution plan, código e procedimento:
 
-1. A com `payment_transaction_entity` em `fillfactor=100`;
-2. B com `payment_transaction_entity` em `fillfactor=50`;
-3. confirmar `reloptions`, estatísticas zeradas, smoke qualificado e hashes dos
-   inputs antes de cada medição;
-4. comparar a workload temporal realmente iniciada, o ingresso PACS.008, a
-   transição PACS.002, outcomes, latência e CPU do PostgreSQL;
-5. comparar separadamente custo/row, CPU/row e WAL/row do insert, do
-   lock/leitura e dos updates, além do HOT ratio;
-6. tomar a decisão sobre `fillfactor=50` somente depois dessa comparação.
+1. A, `payment-fillfactor-100-no-carry/20260820_005539`, usou
+   `payment_transaction_entity` em `fillfactor=100`;
+2. B, `payment-fillfactor-50-no-carry/20260820_010212`, usou a migração da
+   branch com `fillfactor=50`;
+3. cada variante foi recriada com volumes limpos, qualificou o smoke na
+   primeira tentativa com `1.250/1.250` originais, teve `reloptions`
+   confirmado e iniciou a medição com os contadores da tabela zerados;
+4. os snapshots do profile possuem o mesmo SHA-256
+   `64b14f9379a0044e90a202dcd815107301cfd16d340667cd16a3adc369f2b700`;
+5. os execution plans possuem o mesmo SHA-256
+   `5648781b7b99d582ac1ab9fba89d3c78421f31533d70d5bb36cc7be2c631500d`;
+6. antes de A, o diff de código continha somente a troca temporária de
+   `fillfactor` e sua expectativa de teste; antes de B, a working tree já havia
+   retornado exatamente ao commit da branch.
 
-Se o novo A/B mostrar que o insert virou o trabalho dominante ou reduziu a
-capacidade de PACS.008 mais do que os HOT updates beneficiaram o ciclo completo,
-`fillfactor=70` passa a ser o próximo candidato de equilíbrio. Ele não deve ser
-testado antecipadamente: primeiro é necessário obter a comparação limpa entre
-o layout padrão e o candidato já caracterizado.
+O no-carry-over removeu a distorção que invalidou a comparação anterior. A e B
+não iniciaram pagamentos fora da janela, e o máximo rolling permaneceu junto
+ao envelope de `2.000 TPS`, em vez dos picos de `3.672–5.749 TPS` causados por
+catch-up:
+
+| workload observado | A, `fillfactor=100` | B, `fillfactor=50` | variação B/A |
+| --- | ---: | ---: | ---: |
+| originais iniciados no run | `116.777` | `120.830` | `+3,47%` |
+| originais iniciados no ativo | `109.713` | `112.429` | `+2,48%` |
+| TPS médio no ativo | `1.828,550` | `1.873,817` | `+2,48%` |
+| mínimo rolling de 1 s | `529 TPS` | `868 TPS` | `+64,08%` |
+| máximo rolling de 1 s | `2.020 TPS` | `2.019 TPS` | `-0,05%` |
+| PACS.002 iniciados | `55.231` | `56.780` | `+2,80%` |
+
+Ambas as variantes aceitaram por HTTP todos os originais efetivamente
+iniciados, não produziram outcome contraditório nem violação de replay. Nenhuma
+comprovou ainda o piso sustentado ou o SLA. B iniciou mais trabalho, mas a
+quantidade de outcomes concluídos até o deadline permaneceu praticamente
+constante:
+
+| resultado end-to-end | A, `fillfactor=100` | B, `fillfactor=50` | variação B/A |
+| --- | ---: | ---: | ---: |
+| outcomes correspondentes | `70.025` | `70.014` | `-0,02%` |
+| outcomes ausentes | `46.752` | `50.816` | `+8,69%` |
+| latência p50 | `28.141,829 ms` | `30.006,050 ms` | `+6,62%` |
+| latência p95 | `52.056,242 ms` | `50.716,451 ms` | `-2,57%` |
+| latência p99 | `55.387,357 ms` | `52.198,466 ms` | `-5,76%` |
+| CPU média do PostgreSQL no ativo | `103,538%` | `102,600%` | `-0,91%` relativo |
+
+O mecanismo local voltou a aparecer sem depender da workload temporal. A
+terminou com `17.966/78.588` updates HOT (`22,86%`); B, com
+`79.539/79.539` (`100%`). Ao final da medição, heap mais índices ocupavam
+`32,27 MiB` em A e `47,43 MiB` em B (`+46,98%`), o custo de espaço esperado ao
+reservar metade de cada página. O custo por row registrado por
+`pg_stat_statements` foi:
+
+| forma SQL | A, tempo/row | B, tempo/row | variação | A, WAL/row | B, WAL/row | variação |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| insert do pagamento | `0,212872 ms` | `0,243023 ms` | `+14,16%` | `400,30 B` | `386,11 B` | `-3,54%` |
+| lock/leitura PACS.002 | `0,267311 ms` | `0,289313 ms` | `+8,23%` | `73,51 B` | `82,57 B` | `+12,32%` |
+| update `ACCEPTED` | `0,074484 ms` | `0,047132 ms` | `-36,72%` | `295,70 B` | `117,18 B` | `-60,37%` |
+| update `REJECTED` | `0,100552 ms` | `0,027084 ms` | `-73,06%` | `371,01 B` | `198,30 B` | `-46,55%` |
+
+Não há atribuição de CPU por statement neste A/B: habilitar novamente
+`log_executor_stats` mudaria a instrumentação entre a comparação e os runs
+anteriores. A evidência disponível separa tempo de parede e WAL por row e usa a
+CPU do container PostgreSQL para o efeito agregado.
+
+O resultado separa os efeitos do candidato. `fillfactor=50` reduz de forma
+forte o custo e o WAL das transições, ao preço de um insert e de uma
+lock/leitura mais caros. No sistema completo, ele permitiu iniciar `2,48%` mais
+originais no ativo e melhorou o piso observado sem criar pico de compensação,
+mas não aumentou a quantidade de outcomes concluídos dentro do experimento. O
+PostgreSQL permaneceu saturado nas duas variantes, e o trabalho dominante
+continuou no ciclo de outbox/delivery/ACK, não nos updates de status que o
+fillfactor otimiza.
+
+Portanto o A/B agora é comparável e expõe um trade-off real, mas não transforma
+`fillfactor=50` na solução do throughput end-to-end. A decisão de manter a
+migração, voltar ao layout padrão ou medir `fillfactor=70` permanece explícita
+para a revisão do usuário; nenhuma dessas ações deve ser automatizada a partir
+dos resultados.
+
+### Gargalo após o A/B de `fillfactor`: ciclo persistente de notificações
+
+A investigação usou o B
+`payment-fillfactor-50-no-carry/20260820_010212`, sem nova execução. A CPU média
+do PostgreSQL no ativo foi `102,600%`. Das `366` amostras com backend de
+aplicação ativo, `271` (`74,04%`) estavam executáveis, sem wait event; esperas
+por lock foram residuais. As esperas de I/O também não explicam o limite: mesmo
+nas quatro operações persistentes de notificação, a fração do tempo SQL
+atribuída a leitura ou escrita de blocos ficou entre aproximadamente `7,8%` e
+`19,6%`. O servidor está predominantemente consumindo o único core disponível,
+e não esperando um lock ou o storage.
+
+No caminho saudável vigente, cada obrigação lógica atravessa quatro mutações
+duráveis no mesmo PostgreSQL:
+
+1. o SPI insere a outbox na mesma transação de pagamento e auditoria;
+2. depois do commit e do ACK do Kafka, o SPI muda a outbox de `PENDING` para
+   `PUBLISHED` em uma transação nova;
+3. o gateway consome o Kafka e insere a delivery como `IN_FLIGHT` antes do
+   primeiro envio gRPC;
+4. o ACK do PSP muda a delivery para `ACKED` em batch.
+
+O fast path já retirou o claim do caminho normal. No B, as `102` chamadas do
+recovery não devolveram nenhuma row; portanto o claim não voltou a ser o
+gargalo. As quatro mutações acima preservam duas fronteiras reais de falha:
+outbox antes do Kafka e delivery antes do gRPC. Remover uma delas não é uma
+otimização local: exige redefinir o contrato de recuperação.
+
+O custo visível no snapshot de `pg_stat_statements` foi:
+
+| operação | chamadas visíveis | rows | rows/chamada | tempo/row | WAL/row |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| insert da outbox | `719` | `189.187` | `263,14` | `0,238513 ms` | `1.070,8 B` |
+| publicação da outbox | `179` | `74.150` | `414,25` | `0,200157 ms` | `841,1 B` |
+| insert da delivery | `1.276` | `182.466` | `143,00` | `0,295106 ms` | `1.150,3 B` |
+| ACK da delivery | `1.007` | `182.208` | `180,94` | `0,203580 ms` | `848,6 B` |
+
+A publicação da outbox está subcontada: seu `IN (?, ...)` produz uma query
+distinta para cada cardinalidade, e somente `38` dessas formas couberam entre
+as cinquenta queries exportadas. Os `74.150` rows visíveis não representam as
+`189.187` obrigações inseridas. Esse formato também força construção, parsing e
+planejamento de SQL proporcionais ao lote. É complexidade acidental; a mesma
+operação pode usar um statement fixo com array sem mudar estado, transação ou
+idempotência.
+
+Mesmo usando somente o custo unitário visível, uma notificação concluída gera
+aproximadamente `3,9 KB` de WAL nas quatro etapas. As tabelas observadas depois
+do run tinham payload médio de cerca de `438 B` armazenado duas vezes, uma row
+de aproximadamente `656-659 B` em cada fronteira e zero HOT updates. A mudança
+para `PUBLISHED` remove a row do índice parcial da outbox; a mudança para
+`ACKED` a remove dos dois índices parciais da delivery. Portanto ambas precisam
+manter índices e criar novas versões de heap mesmo sem alterar o payload.
+
+O dimensionamento mostra por que o custo distribuído é dominante. No workload
+80/20, um happy path cria uma solicitação de aceite e duas notificações finais;
+insufficient funds cria uma rejeição. A média é, portanto, `2,6` notificações
+lógicas por pagamento. Provar `2.000` pagamentos/s exige sustentar cerca de
+`5.200` notificações/s, equivalentes a aproximadamente `20.800` mutações de row
+por segundo apenas neste protocolo persistente, além de pagamento, saldo e
+auditoria.
+
+As próximas hipóteses ficam separadas por alcance e ROI:
+
+1. **Remover primeiro a complexidade acidental de `markPublished`:** trocar o
+   `IN` dinâmico por um statement fixo com array. É a menor mudança e torna a
+   telemetria completa em um único query ID, mas não reduz as quatro mutações
+   nem seu WAL por row; o ganho esperado é limitado a parser, planner e
+   construção do SQL.
+2. **Medir batching antes de ajustar configuração:** delivery e ACK ficaram em
+   `143` e `181` rows por chamada, abaixo dos limites de `500`. Um
+   microbenchmark deve medir o custo por row nas cardinalidades observada e
+   máxima antes de aumentar `fetch.min.bytes`, espera do Kafka ou intervalo do
+   ACK. Essa opção preserva o modelo, mas troca latência por menos transações e
+   não elimina a amplificação por row.
+3. **Só então avaliar mudança estrutural:** reduzir estado terminal, payload
+   duplicado ou manutenção de índices pode atacar WAL e heap, porém precisa
+   preservar outbox atômica, delivery durável, deduplicação e redelivery até
+   ACK. O spike anterior de `payload = NULL` reduziu WAL em cerca de `46-50%`,
+   mas aumentou throughput somente `2-4%`; sozinho, ele não é o próximo alvo de
+   maior ROI.
+
+O sampler de `pg_stat_activity` acumulou aproximadamente `12,678 s`, ou `5,57%`
+do tempo das cinquenta queries exportadas. Ele foi igual nas variantes do A/B
+e não cria o gargalo funcional, mas deve ser desligado numa futura execução de
+qualificação depois que a atribuição deixar de ser necessária.
+
+### Intervenção vigente: delivery pull com cursor do PSP
+
+O candidato estrutural implementado substitui integralmente a metade
+Gateway → PSP do reliable push por pull unary sobre a conexão gRPC HTTP/2/mTLS
+já existente. A outbox do SPI e a persistência inicial de
+`notification_delivery` permanecem. Saem do Gateway o ACK individual,
+`ACKED`, `IN_FLIGHT`, lease, claim, worker de recovery, retry ativo e todos os
+índices/configurações exclusivos desse lifecycle.
+
+Cada PSP mantém um fluxo lógico e apresenta o último cursor que processou
+duravelmente. `PullNotifications` recebe somente esse cursor. O Gateway
+autentica o PSP pelo certificado, valida o cursor opaco HMAC vinculado ao ISPB
+e devolve imediatamente até `10` rows posteriores disponíveis mais o próximo
+cursor. Se não houver backlog, o long poll vigente espera trabalho novo ou seu
+timeout. O PSP só avança depois de processar o lote inteiro; cursor antigo
+causa redelivery do lote e preserva at-least-once. Um segundo pull simultâneo
+do mesmo PSP é rejeitado.
+
+O cursor usa `delivery_position` própria do Gateway, não partition/offset do
+Kafka. Uma sequence global fornece a posição e um advisory lock transacional
+serializa a alocação/commit dos batches Kafka, impedindo que uma row com posição
+menor apareça depois de uma fronteira já emitida. A migração exige
+`notification_delivery` vazia; não há compatibilidade com backlog push.
+
+O profile passou ao contrato v3 e não contém configuração de tamanho de pull.
+O limite `10` pertence ao protocolo do Gateway. O `sla-report.json` registra,
+somente na janela ativa, a distribuição real de lotes não vazios (`count`,
+`mean`, `p50`, `p95`, `max`), mantendo
+`empty_responses` separado. Observar lote acima do máximo configurado invalida
+o run; o tamanho dos batches não é SLA de negócio.
+
+O diagnóstico executou uma medição curta e limpa para cada valor `1/10/500`,
+mantendo workload e recursos, e comparou com o baseline push
+`payment-fillfactor-50-no-carry/20260820_010212`, registrando os batches reais,
+CPU/SQL/WAL do PostgreSQL, outcomes e cauda. Nenhum resultado deve remover ou
+reverter automaticamente a implementação: a decisão final permanece com a
+revisão do usuário.
+
+O primeiro diagnóstico revelou uma diferença importante entre o mock e um PSP
+real: o simulador não persiste cursor entre processos, enquanto a preparação
+deixa o smoke no backlog durável. O loadtool agora inicia no cursor vazio,
+avança normalmente por essas rows e ignora somente notificações cujos
+`EndToEndId` não pertencem à execução corrente. Não há truncate nem consulta
+direta ao banco. O smoke de regressão
+`pull-backlog-regression-smoke/20260820_213710` processou o backlog anterior e
+ainda concluiu o run corrente com `1.250/1.250` pagamentos, `1.000/1.000`
+PACS.002 e `3.250` notificações correlacionadas, sem erro de cursor ou pull
+concorrente.
+
+### Diagnóstico curto do tamanho de lote do pull
+
+Cada variante foi executada após recriar os volumes e qualificar o smoke. Os
+bundles medidos são:
+
+- `pull-batch-1-clean/20260820_214150`;
+- `pull-batch-10-clean/20260820_214831`;
+- `pull-batch-500-clean/20260820_215410`.
+
+| sinal | push anterior | pull 1 | pull 10 | pull 500 |
+| --- | ---: | ---: | ---: | ---: |
+| mínimo rolling TPS | `868` | `1.027` | `1.903` | `229` |
+| pagamentos ativos iniciados | `112.429` | `116.364` | `119.752` | `106.951` |
+| outcomes finais observados | `70.014` | `42.966` | `92.721` | `89.453` |
+| batch real médio | — | `1,000` | `8,523` | `22,571` |
+| batch real p95 / máximo | — | `1 / 1` | `10 / 10` | `115 / 446` |
+| CPU média Gateway no ativo | `40,34%` | `60,01%` | `31,82%` | `36,25%` |
+| CPU média PostgreSQL no ativo | `102,60%` | `103,02%` | `101,66%` | `101,65%` |
+| tempo SQL das 50 queries exportadas | `227,588 s` | `229,460 s` | `192,302 s` | `180,863 s` |
+
+O batch `1` confirmou o pior caso de overhead: o SELECT de pull fez `119.300`
+chamadas, consumiu `43,245 s` e devolveu `115.551` rows. Com batch `10`, foram
+`40.913` chamadas, `17,018 s` e `247.488` rows. Com batch `500`, foram
+`18.865` chamadas, `9,257 s` e `234.149` rows. O batch `10` foi o melhor
+equilíbrio observado entre batching real e preservação da workload. O batch
+`500` reduziu o custo do read path, mas coincidiu com grandes lotes processados
+em rajada pelo mesmo loadtool e com perda severa de slots no gerador; este run
+não prova capacidade superior apesar da menor cauda entre os pulls.
+
+No baseline push, a persistência de ACK consumiu `37,094 s`, escreveu
+`154,623 MB` de WAL e alterou `182.208` rows; o recovery sem trabalho consumiu
+mais `3,470 s`. Ambos desapareceram. No pull `10`, o read path substituto
+consumiu `17,018 s` e zero WAL. O WAL total exportado não caiu porque essa
+variante concluiu e persistiu muito mais trabalho (`249.387` deliveries contra
+`182.466` no push), portanto a comparação correta precisa considerar trabalho
+útil, e não apenas bytes absolutos.
+
+Nenhuma variante provou `2.000 TPS` sustentados nem os SLAs finais. Pull `10`
+chegou mais perto do envelope e observou mais outcomes, mas ainda teve `41.981`
+outcomes ausentes no deadline e três PACS.002 sem HTTP 2xx. Não houve outcome
+contraditório, replay inválido ou batch acima do configurado.
+
+Com base nesses resultados, `10` foi escolhido como limite fixo do protocolo,
+e não como default configurável. Ele apresentou o melhor equilíbrio observado:
+preservou melhor a workload (`1.903` TPS mínimos), produziu mais outcomes
+(`92.721`) e reduziu o trabalho SQL frente ao push, sem o overhead por chamada
+do batch `1` nem as rajadas e a perda severa de slots observadas com `500`. O
+perfil de diagnóstico `500` e o de `1` foram removidos; seus bundles permanecem
+somente como evidência histórica que fundamenta esta decisão.
+`PullNotifications` não aceita tamanho de lote, profiles não o configuram e o
+Gateway sempre limita a resposta a `10` notificações.

@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 	"instant-payment-system/load-test/go-loadtool/internal/report"
 	"instant-payment-system/load-test/go-loadtool/internal/runbundle"
 	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
@@ -25,7 +26,7 @@ type runConfig struct {
 type runDependencies struct {
 	loadProfile  runProfileLoader
 	simulate     func(sim.Config) error
-	renderReport func(runbundle.Layout, config.Runtime, io.Writer) error
+	renderReport func(runbundle.Layout, config.Runtime, pullmetrics.Snapshot, io.Writer) error
 	stdout       io.Writer
 }
 
@@ -51,7 +52,12 @@ func executeRun(args []string, dependencies runDependencies) error {
 	}
 
 	var output bytes.Buffer
-	if err := dependencies.renderReport(command.layout, command.runtime, &output); err != nil {
+	if err := dependencies.renderReport(
+		command.layout,
+		command.runtime,
+		command.simulator.PullMetrics.Snapshot(),
+		&output,
+	); err != nil {
 		return fmt.Errorf("render run report: %w", err)
 	}
 	if err := command.layout.WriteReportAtomically(output.Bytes()); err != nil {
@@ -104,7 +110,7 @@ func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, err
 	}, nil
 }
 
-func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output io.Writer) error {
+func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, pullSnapshot pullmetrics.Snapshot, output io.Writer) error {
 	document, err := runwindow.Read(layout.RunWindow)
 	if err != nil {
 		return err
@@ -122,6 +128,7 @@ func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, output 
 		return err
 	}
 	options.Window = window
+	options.NotificationPull = pullSnapshot
 	return report.Print(layout.Pacs008Starts, layout.Notifications, layout.Pacs002Starts, layout.Replays, options, output)
 }
 

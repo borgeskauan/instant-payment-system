@@ -3,7 +3,6 @@ package sim
 import (
 	"context"
 	"errors"
-	"io"
 	"math"
 	"net/http"
 	"os"
@@ -14,12 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
 	"instant-payment-system/load-test/go-loadtool/internal/ids"
 	"instant-payment-system/load-test/go-loadtool/internal/payload"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 )
 
 func TestWarmupRateUsesHalfTarget(t *testing.T) {
@@ -74,7 +75,7 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 		newHTTPClients: func(Config, []ids.Pair) (map[string]*http.Client, error) {
 			return map[string]*http.Client{"10000001": client}, nil
 		},
-		openNotificationStream: func(context.Context, string) (notificationStreamClient, func() error, error) {
+		openNotificationPull: func(context.Context, string) (notificationPullClient, func() error, error) {
 			notificationStreamCalls.Add(1)
 			return nil, nil, errors.New("notification stream must not open")
 		},
@@ -352,7 +353,7 @@ func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
 	}
 }
 
-func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
+func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -362,41 +363,47 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stream := newFakeNotificationStream()
-	s := &simulator{eventWriter: writer}
+	client := newFakeNotificationPullClient()
+	now := time.Now()
+	s := &simulator{
+		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
+		eventWriter:       writer,
+		activeStartedAt:   now.Add(-time.Second),
+		generationEndedAt: now.Add(time.Second),
+		transferScenarios: map[string]string{"tx-1": "happy-path"},
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go s.consumeNotificationStream(ctx, &wg, notificationStreamSession{
+	go s.consumeNotificationPull(ctx, &wg, notificationPullSession{
 		ispb:         "20000001",
 		receiverRole: false,
-		stream:       stream,
+		client:       client,
 	})
 
 	select {
-	case msg := <-stream.sent:
-		t.Fatalf("unexpected client message before notification: %#v", msg)
-	case <-time.After(20 * time.Millisecond):
+	case request := <-client.requests:
+		if request.GetCursor() != "" {
+			t.Fatalf("first pull request = %#v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first pull")
 	}
 
-	stream.received <- &notificationpb.Notification{
-		DeliveryId: "delivery-1",
-		Payload:    payload.Pacs002("tx-1"),
+	client.responses <- &notificationpb.PullResponse{
+		Notifications: []*notificationpb.Notification{{Payload: payload.Pacs002("tx-1")}},
+		NextCursor:    "cursor-1",
 	}
 
 	select {
-	case msg := <-stream.sent:
-		if msg.GetAck() == nil {
-			t.Fatalf("client message has no ack: %#v", msg)
-		}
-		if got := msg.GetAck().GetDeliveryId(); got != "delivery-1" {
-			t.Fatalf("ack delivery id = %q", got)
+	case request := <-client.requests:
+		if request.GetCursor() != "cursor-1" {
+			t.Fatalf("next pull cursor = %q, want cursor-1", request.GetCursor())
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for ack")
+		t.Fatal("timed out waiting for next pull")
 	}
 
 	cancel()
-	close(stream.received)
 	wg.Wait()
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -408,16 +415,67 @@ func TestNotificationStreamDoesNotSubscribeAndAcksDelivery(t *testing.T) {
 	if len(rows) != 1 || rows[0].EndToEndID != "tx-1" || rows[0].StatusCode != "ACSP" || len(rows[0].ReasonCodes) != 0 {
 		t.Fatalf("notification rows = %#v", rows)
 	}
+	metrics := s.cfg.PullMetrics.Snapshot()
+	if metrics.Batches[1] != 1 || metrics.EmptyResponses != 0 {
+		t.Fatalf("pull metrics = %#v", metrics)
+	}
 }
 
-func TestOpenNotificationStreamsClosesAlreadyOpenedSessionsOnFailure(t *testing.T) {
+func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
+	eventsPath := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := events.NewNotificationWriter(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &simulator{
+		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
+		eventWriter:       writer,
+		statusQueuedIDs:   make(map[string]struct{}),
+		transferScenarios: make(map[string]string),
+	}
+
+	err = s.processNotificationPull(
+		context.Background(),
+		notificationPullSession{ispb: "20000001", receiverRole: true},
+		&notificationpb.PullResponse{
+			Notifications: []*notificationpb.Notification{{
+				Payload: payload.Pacs008("earlier-run", "10000001", "20000001", 100),
+			}},
+			NextCursor: "earlier-cursor",
+		},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runErr := s.currentRunError(); runErr != nil {
+		t.Fatalf("run error = %v, want historical notification ignored", runErr)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := events.ReadNotifications(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 || s.notifications.Load() != 0 || s.statusJobsQueued.Load() != 0 {
+		t.Fatalf(
+			"historical effects: rows=%d notifications=%d status_jobs=%d",
+			len(rows),
+			s.notifications.Load(),
+			s.statusJobsQueued.Load(),
+		)
+	}
+}
+
+func TestOpenNotificationPullsClosesAlreadyOpenedSessionsOnFailure(t *testing.T) {
 	var closed atomic.Int64
 	openCount := 0
 	s := &simulator{
-		openNotificationStreamFunc: func(context.Context, string) (notificationStreamClient, func() error, error) {
+		openNotificationPullFunc: func(context.Context, string) (notificationPullClient, func() error, error) {
 			openCount++
 			if openCount == 1 {
-				return newFakeNotificationStream(), func() error {
+				return newFakeNotificationPullClient(), func() error {
 					closed.Add(1)
 					return nil
 				}, nil
@@ -426,7 +484,7 @@ func TestOpenNotificationStreamsClosesAlreadyOpenedSessionsOnFailure(t *testing.
 		},
 	}
 
-	_, err := s.openNotificationStreams(context.Background(), []ids.Pair{
+	_, err := s.openNotificationPulls(context.Background(), []ids.Pair{
 		{Payer: "10000001", Receiver: "20000001"},
 	})
 
@@ -465,33 +523,34 @@ func TestWaitForGrpcReadyConnectsAndWaitsUntilReady(t *testing.T) {
 	}
 }
 
-type fakeNotificationStream struct {
-	received chan *notificationpb.Notification
-	sent     chan *notificationpb.ClientMessage
+type fakeNotificationPullClient struct {
+	requests  chan *notificationpb.PullRequest
+	responses chan *notificationpb.PullResponse
 }
 
-func newFakeNotificationStream() *fakeNotificationStream {
-	return &fakeNotificationStream{
-		received: make(chan *notificationpb.Notification, 1),
-		sent:     make(chan *notificationpb.ClientMessage, 1),
+func newFakeNotificationPullClient() *fakeNotificationPullClient {
+	return &fakeNotificationPullClient{
+		requests:  make(chan *notificationpb.PullRequest, 2),
+		responses: make(chan *notificationpb.PullResponse, 1),
 	}
 }
 
-func (f *fakeNotificationStream) Send(message *notificationpb.ClientMessage) error {
-	f.sent <- message
-	return nil
-}
-
-func (f *fakeNotificationStream) Recv() (*notificationpb.Notification, error) {
-	message, ok := <-f.received
-	if !ok {
-		return nil, io.EOF
+func (f *fakeNotificationPullClient) PullNotifications(
+	ctx context.Context,
+	request *notificationpb.PullRequest,
+	_ ...grpc.CallOption,
+) (*notificationpb.PullResponse, error) {
+	select {
+	case f.requests <- request:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return message, nil
-}
-
-func (f *fakeNotificationStream) CloseSend() error {
-	return nil
+	select {
+	case response := <-f.responses:
+		return response, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 type fakeGrpcReadyConn struct {

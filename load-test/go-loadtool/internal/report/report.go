@@ -10,15 +10,31 @@ import (
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 )
 
 type Summary struct {
-	Valid       bool               `json:"valid"`
-	Generation  GenerationSummary  `json:"generation"`
-	Scenarios   []ScenarioSummary  `json:"scenarios"`
-	Replays     ReplaySummary      `json:"replays"`
-	Performance PerformanceSummary `json:"performance"`
+	Valid            bool                    `json:"valid"`
+	Generation       GenerationSummary       `json:"generation"`
+	Scenarios        []ScenarioSummary       `json:"scenarios"`
+	Replays          ReplaySummary           `json:"replays"`
+	NotificationPull NotificationPullSummary `json:"notification_pull"`
+	Performance      PerformanceSummary      `json:"performance"`
+}
+
+type NotificationPullSummary struct {
+	Batches    NotificationPullBatchSummary `json:"batches"`
+	Violations int                          `json:"violations"`
+}
+
+type NotificationPullBatchSummary struct {
+	Count          int     `json:"count"`
+	EmptyResponses int     `json:"empty_responses"`
+	Mean           float64 `json:"mean"`
+	P50            int     `json:"p50"`
+	P95            int     `json:"p95"`
+	Max            int     `json:"max"`
 }
 
 type ReplaySummary struct {
@@ -104,12 +120,13 @@ type LatencySummary struct {
 }
 
 type Options struct {
-	SLAThresholdMs int64
-	TargetTxRate   int
-	Duration       time.Duration
-	Replay         config.Replay
-	Scenarios      []config.Scenario
-	Window         runwindow.Window
+	SLAThresholdMs   int64
+	TargetTxRate     int
+	Duration         time.Duration
+	Replay           config.Replay
+	Scenarios        []config.Scenario
+	Window           runwindow.Window
+	NotificationPull pullmetrics.Snapshot
 }
 
 func Build(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {
@@ -128,6 +145,7 @@ func Build(starts []events.Start, notifications []events.Notification, statusSta
 		return Summary{}, err
 	}
 	summary.Generation = summarizeGeneration(starts, options)
+	summary.NotificationPull = summarizeNotificationPull(options.NotificationPull)
 	summary.Performance.ThresholdMs = options.SLAThresholdMs
 	summary.Scenarios = make([]ScenarioSummary, len(scenarios))
 	scenarioIndexes := make(map[string]int, len(scenarios))
@@ -263,9 +281,49 @@ func Build(starts []events.Start, notifications []events.Notification, statusSta
 		summary.Generation.OutsideWindow == 0 &&
 		summary.Replays.Pacs008.Violations == 0 &&
 		summary.Replays.Pacs002.Violations == 0 &&
+		summary.NotificationPull.Violations == 0 &&
 		scenariosAreValid(summary.Scenarios) &&
 		summary.Performance.WithinSLA
 	return summary, nil
+}
+
+func summarizeNotificationPull(snapshot pullmetrics.Snapshot) NotificationPullSummary {
+	summary := NotificationPullSummary{
+		Batches: NotificationPullBatchSummary{
+			EmptyResponses: int(snapshot.EmptyResponses),
+		},
+	}
+	if snapshot.AboveProtocolMaximum {
+		summary.Violations = 1
+	}
+	var weightedTotal uint64
+	for size := 1; size <= pullmetrics.MaximumBatch; size++ {
+		count := snapshot.Batches[size]
+		summary.Batches.Count += int(count)
+		weightedTotal += uint64(size) * count
+		if count > 0 {
+			summary.Batches.Max = size
+		}
+	}
+	if summary.Batches.Count == 0 {
+		return summary
+	}
+	summary.Batches.Mean = roundMetric(float64(weightedTotal) / float64(summary.Batches.Count))
+	summary.Batches.P50 = histogramPercentile(snapshot.Batches, uint64(summary.Batches.Count), 0.50)
+	summary.Batches.P95 = histogramPercentile(snapshot.Batches, uint64(summary.Batches.Count), 0.95)
+	return summary
+}
+
+func histogramPercentile(batches [pullmetrics.MaximumBatch + 1]uint64, total uint64, quantile float64) int {
+	target := uint64(math.Ceil(float64(total) * quantile))
+	var cumulative uint64
+	for size := 1; size <= pullmetrics.MaximumBatch; size++ {
+		cumulative += batches[size]
+		if cumulative >= target {
+			return size
+		}
+	}
+	return 0
 }
 
 func validateStartScenarios(starts []events.Start, scenarios []config.Scenario) error {

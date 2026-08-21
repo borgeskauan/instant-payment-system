@@ -31,8 +31,8 @@ flowchart LR
     Worker -->|"at-least-once; acks=all"| Notifications
     Notifications -->|"consume and deduplicate"| Gateway
     Gateway -->|"insert by communicationId"| Delivery
-    Gateway -->|"mTLS gRPC notification stream"| PSP
-    PSP -->|"gRPC ACK"| Gateway
+    PSP -->|"mTLS gRPC Pull cursor + maxBatch"| Gateway
+    Gateway -->|"batch + nextCursor"| PSP
 ```
 
 ## Topics
@@ -47,18 +47,18 @@ flowchart LR
 
 ## Transport Boundary
 
-PSPs do not consume Kafka directly. They submit messages to `kafka-producer` over mTLS HTTPS and receive SPI notifications from `notification-gateway` through an mTLS gRPC stream.
+PSPs do not consume Kafka directly. They submit messages to `kafka-producer` over mTLS HTTPS and pull SPI notifications from `notification-gateway` through unary gRPC calls over a persistent HTTP/2/mTLS connection.
 
-The notification stream is bidirectional. PSP identity comes from its client certificate, and the PSP sends an ACK only after processing a delivery successfully. The gateway tracks each logical delivery by `communication_id` and retries unacknowledged deliveries with its own `IN_FLIGHT` lease.
+Each PSP maintains one logical pull flow. A request carries only the last cursor processed durably by that PSP. When backlog is available, the Gateway immediately returns the next 10 notifications at most, in stable order, plus an opaque HMAC-authenticated `nextCursor`; when the backlog is empty, the existing long poll waits for new work or its timeout. The fixed limit of 10 is part of the protocol rather than a client or profile setting. The PSP advances its durable cursor only after processing the complete response; presenting an older cursor redelivers the corresponding rows and therefore provides at-least-once delivery without individual ACK writes, leases, or an active redelivery scheduler.
 
 The SPI outbox and gateway delivery table protect different boundaries:
 
-| Boundary | Durable owner | Terminal marker in that boundary |
+| Boundary | Durable owner | Completion evidence in that boundary |
 | --- | --- | --- |
 | Confirmed financial fact to Kafka publication | SPI `notification_outbox` | `PUBLISHED`: Kafka broker confirmed the send with `acks=all` |
-| Kafka consumption to PSP processing | Gateway `notification_delivery` | `ACKED`: PSP explicitly confirmed processing |
+| Kafka consumption to PSP processing | Gateway backlog + PSP cursor | PSP durably retained the last Gateway-issued cursor it fully processed |
 
-SPI `PUBLISHED` is not an end-to-end PSP ACK.
+SPI `PUBLISHED` is broker confirmation only. The Gateway does not persist PSP progress in the hot path; the PSP is authoritative for the last cursor it processed, while the Gateway is authoritative for whether that opaque cursor was genuinely issued for the authenticated PSP.
 
 ## Transactional Financial, Audit, and Outbox Write Path
 
@@ -127,7 +127,7 @@ Failure after Kafka accepts a send but before the database update leaves the row
 
 There is no ownership, claim, lease, fencing, lock, or coordination among SPI workers. Multiple instances can select and physically publish the same row concurrently. This is accepted in the MVP.
 
-Every duplicate carries the same `communicationId`. The notification gateway inserts delivery state with `ON CONFLICT (communication_id) DO NOTHING`, so physical Kafka duplicates produce one logical delivery and one end-to-end ACK lifecycle.
+Every duplicate carries the same `communicationId`. The notification gateway inserts delivery state with `ON CONFLICT (communication_id) DO NOTHING`, so physical Kafka duplicates produce one logical backlog row. A Gateway-owned global `delivery_position` orders committed rows independently of Kafka partitions and offsets; cursor validity therefore survives Kafka repartitioning.
 
 The system guarantees durable obligation plus at-least-once Kafka publication. It does not guarantee exactly-once publication.
 
@@ -154,6 +154,8 @@ Outbox publication failure is not sent to a DLQ in this cut. The row remains `PE
 - There is no `DEAD` state, attempt limit, or automatic recovery path for permanently invalid messages.
 - Observability is limited to logs and manual table queries; this cut adds no outbox metrics or dashboard.
 - There is no exactly-once guarantee; physical duplicates are an expected consequence of at-least-once delivery.
+- The Gateway retains all `notification_delivery` rows; cursor-based retention/GC is not implemented in this MVP.
+- Only one pull may be active per PSP; parallel cursor shards are outside the MVP.
 - Business audit starts at its migration; there is no historical backfill.
 - Audit rows have no causal ordering guarantee, and `event_id` is only a technical identity.
 - Audit has no retention, cleanup, partitioning, archived history, dedicated metrics, or comparative load-test gate in this cut.

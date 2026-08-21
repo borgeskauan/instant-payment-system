@@ -92,7 +92,11 @@ This provides durable at-least-once Kafka publication, not exactly-once publicat
 
 The `notification-gateway` consumes every physical `psp-notifications` message and inserts delivery state with `ON CONFLICT (communication_id) DO NOTHING`. Concurrent or repeated outbox publications therefore create one logical delivery.
 
-The gateway, independently from the SPI outbox, owns delivery retry to the PSP and waits for an explicit PSP ACK. SPI `PUBLISHED` means broker confirmation only; gateway `ACKED` means end-to-end PSP confirmation.
+The delivery table assigns a Gateway-owned global `delivery_position` while Kafka batches are serialized by a transaction-scoped advisory lock. This prevents a lower position from committing after a cursor containing a later row was already issued. Kafka partition and offset remain ingestion metadata rather than a durable external cursor.
+
+The authenticated PSP calls unary `PullNotifications(cursor, maxBatch)` with at most one request in flight. The cursor is opaque, HMAC-authenticated, versioned, and bound to the PSP identity. The PSP advances it only after durably processing the whole response. Reusing an older cursor returns the rows again, which provides at-least-once delivery without per-notification ACK persistence, `IN_FLIGHT` state, leases, or an active retry scheduler. SPI `PUBLISHED` still means broker confirmation only; completed PSP processing is represented by the cursor held durably by the PSP, not by a Gateway row state.
+
+The Gateway does not yet delete acknowledged history or persist a retention watermark. Retention/GC and parallel pull streams per PSP are explicitly outside this MVP.
 
 ## PSP Incoming Requests
 

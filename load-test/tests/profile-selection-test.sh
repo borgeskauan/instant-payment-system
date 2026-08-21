@@ -10,7 +10,7 @@ source "${ROOT_DIR}/run-load-test.sh"
 tmp_dir="$(mktemp -d)"
 trap 'cleanup; rm -rf "$tmp_dir"' EXIT
 
-printf '%s\n' '{"schemaVersion":1}' > "$tmp_dir/missing-name.json"
+printf '%s\n' '{"schemaVersion":3}' > "$tmp_dir/missing-name.json"
 if shallow_validate_profile "$tmp_dir/missing-name.json" selected-profile >"$tmp_dir/missing-name.log" 2>&1; then
     echo "profile without embedded name should fail shallow validation" >&2
     exit 1
@@ -20,7 +20,7 @@ if ! grep -q "name must be 'selected-profile'" "$tmp_dir/missing-name.log"; then
     exit 1
 fi
 
-printf '%s\n' '{"name":"other-profile","schemaVersion":1}' > "$tmp_dir/mismatched-name.json"
+printf '%s\n' '{"name":"other-profile","schemaVersion":3}' > "$tmp_dir/mismatched-name.json"
 if shallow_validate_profile "$tmp_dir/mismatched-name.json" selected-profile >"$tmp_dir/mismatched-name.log" 2>&1; then
     echo "profile with mismatched embedded name should fail shallow validation" >&2
     exit 1

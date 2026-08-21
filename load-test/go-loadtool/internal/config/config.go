@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	SchemaVersion               = 1
+	SchemaVersion               = 3
 	DefaultProfile              = "uniform-smoke"
 	ExpectedHTTP2xx             = "2xx"
 	DeliveryAtLeastOnce         = "at-least-once"
@@ -297,7 +297,6 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			return Runtime{}, malformedProfile(name, required.field, errors.New("must be a non-empty string"))
 		}
 	}
-
 	warmup, err := parseWholeSecondDuration(name, "load.warmup", file.Load.Warmup, true)
 	if err != nil {
 		return Runtime{}, err

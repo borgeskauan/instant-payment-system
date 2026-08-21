@@ -229,8 +229,8 @@ try:
         raise ValueError("root must be a JSON object")
     if profile.get("name") != name:
         raise ValueError(f"name must be '{name}'")
-    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 1:
-        raise ValueError("schemaVersion must be 1")
+    if type(profile.get("schemaVersion")) is not int or profile["schemaVersion"] != 3:
+        raise ValueError("schemaVersion must be 3")
 except (OSError, json.JSONDecodeError, ValueError) as error:
     raise SystemExit(f"Profile '{name}' failed shallow validation: {error}")
 PY

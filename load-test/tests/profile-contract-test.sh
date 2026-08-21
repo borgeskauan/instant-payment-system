@@ -43,7 +43,7 @@ fi
 cat <<'JSON'
 {
   "profile": "mixed-outcomes-smoke",
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "warmupSeconds": 60,
   "activeSeconds": 60,
   "drainSeconds": 30,
@@ -133,7 +133,7 @@ LOADTOOL_BUILD_DIR="$tmp_dir"
 LOADTOOL_BIN="$tmp_dir/validating-loadtool"
 validate_profile_with_loadtool
 
-if [[ "$PROFILE_SCHEMA_VERSION" != 1 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
+if [[ "$PROFILE_SCHEMA_VERSION" != 3 || "$PROFILE_WARMUP_SECONDS" != 60 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi
@@ -267,6 +267,7 @@ if [[ -e "$tmp_dir/result-side-effect" ]]; then
     exit 1
 fi
 if ! grep -q "semantic profile validation failed" "$tmp_dir/semantic-order.log"; then
+    cat "$tmp_dir/semantic-order.log" >&2
     echo "runner did not surface the Go validation failure" >&2
     exit 1
 fi

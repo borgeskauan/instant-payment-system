@@ -15,14 +15,17 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/events"
 	"instant-payment-system/load-test/go-loadtool/internal/gen/notificationpb"
 	"instant-payment-system/load-test/go-loadtool/internal/ids"
 	"instant-payment-system/load-test/go-loadtool/internal/payload"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 	"instant-payment-system/load-test/go-loadtool/internal/runwindow"
 )
 
@@ -36,6 +39,7 @@ type Config struct {
 	GatewayCACert                 string
 	GatewayClientCertRoot         string
 	GatewayServerName             string
+	PullMetrics                   *pullmetrics.Recorder
 	TargetTxRate                  int
 	Warmup                        time.Duration
 	Duration                      time.Duration
@@ -62,57 +66,56 @@ type statusJob struct {
 }
 
 type simulator struct {
-	cfg                        Config
-	runID                      string
-	httpClients                map[string]*http.Client
-	startWriter                *events.StartWriter
-	eventWriter                *events.NotificationWriter
-	replayWriter               *events.ReplayWriter
-	statusStartWriter          *events.StatusStartWriter
-	replayScheduler            *replayScheduler
-	startMu                    sync.Mutex
-	eventMu                    sync.Mutex
-	replayMu                   sync.Mutex
-	statusStartMu              sync.Mutex
-	pacs002SelectorMu          sync.Mutex
-	originalMu                 sync.Mutex
-	statusQueuedMu             sync.Mutex
-	transferScenariosMu        sync.RWMutex
-	runErrorMu                 sync.Mutex
-	runError                   error
-	buildPacs008Func           func(string, string, string, int64) []byte
-	buildPacs002Func           func(string) []byte
-	sendPacs002Func            func(context.Context, statusJob)
-	openNotificationStreamFunc func(context.Context, string) (notificationStreamClient, func() error, error)
-	statusJobs                 chan statusJob
-	statusQueuedIDs            map[string]struct{}
-	transferScenarios          map[string]string
-	pacs002ReplaySelector      *replaySelector
-	pacs008ReplaySelector      *replaySelector
-	originalPlanner            *workloadPlanner
-	nextOriginalSequence       uint64
-	generationEndedAt          time.Time
-	replayDeadlineAt           time.Time
-	started                    atomic.Uint64
-	accepted                   atomic.Uint64
-	pacs002Sent                atomic.Uint64
-	notifications              atomic.Uint64
-	statusJobsQueued           atomic.Uint64
-	replaysScheduled           atomic.Uint64
-	replaysSent                atomic.Uint64
-	replaysAccepted            atomic.Uint64
+	cfg                      Config
+	runID                    string
+	httpClients              map[string]*http.Client
+	startWriter              *events.StartWriter
+	eventWriter              *events.NotificationWriter
+	replayWriter             *events.ReplayWriter
+	statusStartWriter        *events.StatusStartWriter
+	replayScheduler          *replayScheduler
+	startMu                  sync.Mutex
+	eventMu                  sync.Mutex
+	replayMu                 sync.Mutex
+	statusStartMu            sync.Mutex
+	pacs002SelectorMu        sync.Mutex
+	originalMu               sync.Mutex
+	statusQueuedMu           sync.Mutex
+	transferScenariosMu      sync.RWMutex
+	runErrorMu               sync.Mutex
+	runError                 error
+	buildPacs008Func         func(string, string, string, int64) []byte
+	buildPacs002Func         func(string) []byte
+	sendPacs002Func          func(context.Context, statusJob)
+	openNotificationPullFunc func(context.Context, string) (notificationPullClient, func() error, error)
+	statusJobs               chan statusJob
+	statusQueuedIDs          map[string]struct{}
+	transferScenarios        map[string]string
+	pacs002ReplaySelector    *replaySelector
+	pacs008ReplaySelector    *replaySelector
+	originalPlanner          *workloadPlanner
+	nextOriginalSequence     uint64
+	generationEndedAt        time.Time
+	activeStartedAt          time.Time
+	replayDeadlineAt         time.Time
+	started                  atomic.Uint64
+	accepted                 atomic.Uint64
+	pacs002Sent              atomic.Uint64
+	notifications            atomic.Uint64
+	statusJobsQueued         atomic.Uint64
+	replaysScheduled         atomic.Uint64
+	replaysSent              atomic.Uint64
+	replaysAccepted          atomic.Uint64
 }
 
-type notificationStreamClient interface {
-	Send(*notificationpb.ClientMessage) error
-	Recv() (*notificationpb.Notification, error)
-	CloseSend() error
+type notificationPullClient interface {
+	PullNotifications(context.Context, *notificationpb.PullRequest, ...grpc.CallOption) (*notificationpb.PullResponse, error)
 }
 
-type notificationStreamSession struct {
+type notificationPullSession struct {
 	ispb         string
 	receiverRole bool
-	stream       notificationStreamClient
+	client       notificationPullClient
 	close        func() error
 }
 
@@ -123,8 +126,8 @@ type grpcReadyConn interface {
 }
 
 type runDependencies struct {
-	newHTTPClients         func(Config, []ids.Pair) (map[string]*http.Client, error)
-	openNotificationStream func(context.Context, string) (notificationStreamClient, func() error, error)
+	newHTTPClients       func(Config, []ids.Pair) (map[string]*http.Client, error)
+	openNotificationPull func(context.Context, string) (notificationPullClient, func() error, error)
 }
 
 func Run(cfg Config) error {
@@ -134,6 +137,9 @@ func Run(cfg Config) error {
 func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	if cfg.TargetTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
+	}
+	if cfg.PullMetrics == nil {
+		cfg.PullMetrics = pullmetrics.NewRecorder()
 	}
 	if _, err := maximumGeneratedTransfers(cfg.TargetTxRate, cfg.Warmup, cfg.Duration); err != nil {
 		return err
@@ -193,20 +199,20 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	defer closeHTTPClients(httpClients)
 
 	s := &simulator{
-		cfg:                        cfg,
-		runID:                      fmt.Sprintf("go-%d", time.Now().UnixNano()),
-		httpClients:                httpClients,
-		startWriter:                startWriter,
-		eventWriter:                eventWriter,
-		replayWriter:               replayWriter,
-		statusStartWriter:          statusStartWriter,
-		statusJobs:                 make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
-		statusQueuedIDs:            make(map[string]struct{}),
-		transferScenarios:          make(map[string]string),
-		pacs002ReplaySelector:      pacs002ReplaySelector,
-		pacs008ReplaySelector:      selector,
-		originalPlanner:            planner,
-		openNotificationStreamFunc: dependencies.openNotificationStream,
+		cfg:                      cfg,
+		runID:                    fmt.Sprintf("go-%d", time.Now().UnixNano()),
+		httpClients:              httpClients,
+		startWriter:              startWriter,
+		eventWriter:              eventWriter,
+		replayWriter:             replayWriter,
+		statusStartWriter:        statusStartWriter,
+		statusJobs:               make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
+		statusQueuedIDs:          make(map[string]struct{}),
+		transferScenarios:        make(map[string]string),
+		pacs002ReplaySelector:    pacs002ReplaySelector,
+		pacs008ReplaySelector:    selector,
+		originalPlanner:          planner,
+		openNotificationPullFunc: dependencies.openNotificationPull,
 	}
 	s.sendPacs002Func = s.sendPacs002
 
@@ -219,23 +225,14 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	}
 	logPhase("central transfer HTTP/2 prewarm finished: psps=%d protocol=h2", len(httpClients))
 
-	logPhase("connecting notification streams: streams=%d", len(pairs)*2)
+	logPhase("prewarming notification pull clients: psps=%d", len(pairs)*2)
 	notificationCtx, stopNotifications := context.WithCancel(rootCtx)
-	sessions, err := s.openNotificationStreams(notificationCtx, pairs)
+	sessions, err := s.openNotificationPulls(notificationCtx, pairs)
 	if err != nil {
 		stopNotifications()
 		return err
 	}
-
-	var streams sync.WaitGroup
-	for _, session := range sessions {
-		streams.Add(1)
-		go s.consumeNotificationStream(notificationCtx, &streams, session)
-	}
-
-	// Give streams a short window to connect before the generator starts.
-	time.Sleep(2 * time.Second)
-	logPhase("notification streams warmup finished")
+	logPhase("notification pull clients ready")
 
 	windowPath := cfg.RunWindowPath
 	if windowPath == "" {
@@ -245,11 +242,16 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	if err := runwindow.Write(windowPath, windowDocument); err != nil {
 		stopNotifications()
 		closeNotificationSessions(sessions)
-		streams.Wait()
 		return err
 	}
+	s.activeStartedAt = windowDocument.Window.ActiveStartedAt
 	s.generationEndedAt = windowDocument.Window.GenerationEndedAt
 	s.replayDeadlineAt = windowDocument.Window.ReplayDeadlineAt
+	var pulls sync.WaitGroup
+	for _, session := range sessions {
+		pulls.Add(1)
+		go s.consumeNotificationPull(notificationCtx, &pulls, session)
+	}
 	experimentCtx, stopExperiment := context.WithDeadline(rootCtx, s.replayDeadlineAt)
 	defer stopExperiment()
 
@@ -297,12 +299,12 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	workers.Wait()
 	logPhase("original HTTP workers finished; waiting until fixed replay deadline: deadline=%s", s.replayDeadlineAt.Format(time.RFC3339Nano))
 	<-experimentCtx.Done()
-	logPhase("replay deadline reached; closing notification streams")
+	logPhase("replay deadline reached; closing notification pulls")
 	cancel()
 	stopNotifications()
 	closeNotificationSessions(sessions)
-	streams.Wait()
-	logPhase("notification streams closed")
+	pulls.Wait()
+	logPhase("notification pulls closed")
 	close(s.statusJobs)
 	statusWorkers.Wait()
 	logPhase("status workers finished")
@@ -729,27 +731,27 @@ func (s *simulator) startStatusWorkers(
 	}
 }
 
-func (s *simulator) openNotificationStreams(
+func (s *simulator) openNotificationPulls(
 	ctx context.Context,
 	pairs []ids.Pair,
-) ([]notificationStreamSession, error) {
+) ([]notificationPullSession, error) {
 	specs := notificationStreamSpecs(pairs)
-	sessions := make([]notificationStreamSession, 0, len(specs))
+	sessions := make([]notificationPullSession, 0, len(specs))
 
 	for _, spec := range specs {
-		open := s.openNotificationStream
-		if s.openNotificationStreamFunc != nil {
-			open = s.openNotificationStreamFunc
+		open := s.openNotificationPull
+		if s.openNotificationPullFunc != nil {
+			open = s.openNotificationPullFunc
 		}
-		stream, closeFunc, err := open(ctx, spec.ispb)
+		client, closeFunc, err := open(ctx, spec.ispb)
 		if err != nil {
 			closeNotificationSessions(sessions)
-			return nil, fmt.Errorf("open notification stream for ISPB %s: %w", spec.ispb, err)
+			return nil, fmt.Errorf("open notification pull client for ISPB %s: %w", spec.ispb, err)
 		}
-		sessions = append(sessions, notificationStreamSession{
+		sessions = append(sessions, notificationPullSession{
 			ispb:         spec.ispb,
 			receiverRole: spec.receiverRole,
-			stream:       stream,
+			client:       client,
 			close:        closeFunc,
 		})
 	}
@@ -780,10 +782,10 @@ func notificationStreamSpecs(pairs []ids.Pair) []notificationStreamSpec {
 	return specs
 }
 
-func (s *simulator) openNotificationStream(
+func (s *simulator) openNotificationPull(
 	ctx context.Context,
 	ispb string,
-) (notificationStreamClient, func() error, error) {
+) (notificationPullClient, func() error, error) {
 	transportCredentials, err := s.notificationTransportCredentials(ispb)
 	if err != nil {
 		return nil, nil, err
@@ -799,17 +801,7 @@ func (s *simulator) openNotificationStream(
 	}
 
 	client := notificationpb.NewNotificationGatewayClient(conn)
-	stream, err := client.StreamNotifications(ctx)
-	if err != nil {
-		_ = conn.Close()
-		return nil, nil, err
-	}
-
-	closeFunc := func() error {
-		_ = stream.CloseSend()
-		return conn.Close()
-	}
-	return stream, closeFunc, nil
+	return client, conn.Close, nil
 }
 
 func waitForGrpcReady(ctx context.Context, conn grpcReadyConn) error {
@@ -873,7 +865,7 @@ func clientCertPaths(root string, ispb string) (string, string) {
 	return filepath.Join(base, "client.crt"), filepath.Join(base, "client.key")
 }
 
-func closeNotificationSessions(sessions []notificationStreamSession) {
+func closeNotificationSessions(sessions []notificationPullSession) {
 	for _, session := range sessions {
 		if session.close != nil {
 			_ = session.close()
@@ -881,30 +873,71 @@ func closeNotificationSessions(sessions []notificationStreamSession) {
 	}
 }
 
-func (s *simulator) consumeNotificationStream(ctx context.Context, wg *sync.WaitGroup, session notificationStreamSession) {
+func (s *simulator) consumeNotificationPull(ctx context.Context, wg *sync.WaitGroup, session notificationPullSession) {
 	defer wg.Done()
+	cursor := ""
 	for {
-		msg, err := session.stream.Recv()
+		response, err := session.client.PullNotifications(ctx, &notificationpb.PullRequest{
+			Cursor: cursor,
+		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			fmt.Fprintf(os.Stderr, "stream %s recv failed: %v\n", session.ispb, err)
-			return
-		}
-		notifications, err := payload.ExtractNotifications(msg.Payload)
-		if err != nil {
+			code := status.Code(err)
+			if code != codes.Unavailable && code != codes.DeadlineExceeded {
+				s.recordRunError(fmt.Errorf("notification pull %s: %w", session.ispb, err))
+				return
+			}
+			fmt.Fprintf(os.Stderr, "notification pull %s failed: %v\n", session.ispb, err)
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				stopTimer(timer)
+				return
+			case <-timer.C:
+			}
 			continue
 		}
-		s.notifications.Add(uint64(len(notifications)))
+		receivedAt := time.Now()
+		if !s.activeStartedAt.IsZero() && !receivedAt.Before(s.activeStartedAt) && receivedAt.Before(s.generationEndedAt) {
+			s.cfg.PullMetrics.Observe(len(response.Notifications))
+		}
+		if err := s.processNotificationPull(ctx, session, response, receivedAt); err != nil {
+			s.recordRunError(fmt.Errorf("process notification pull for ISPB %s: %w", session.ispb, err))
+			return
+		}
+		cursor = response.NextCursor
+	}
+}
+
+func (s *simulator) processNotificationPull(
+	ctx context.Context,
+	session notificationPullSession,
+	response *notificationpb.PullResponse,
+	receivedAt time.Time,
+) error {
+	extracted := make([][]payload.Notification, len(response.Notifications))
+	for index, message := range response.Notifications {
+		notifications, err := payload.ExtractNotifications(message.Payload)
+		if err != nil {
+			return err
+		}
+		extracted[index] = notifications
+	}
+	for _, notifications := range extracted {
 		for _, notification := range notifications {
+			if !s.isCurrentTransfer(notification.EndToEndID) {
+				continue
+			}
+			s.notifications.Add(1)
 			switch notification.Kind {
 			case payload.KindPacs008:
 				s.writeNotification(events.Notification{
 					EndToEndID:   notification.EndToEndID,
 					ISPB:         session.ispb,
 					EventType:    events.EventPacs008Received,
-					ReceivedAtNS: time.Now().UnixNano(),
+					ReceivedAtNS: receivedAt.UnixNano(),
 				})
 				if session.receiverRole {
 					s.enqueuePacs002(ctx, session.ispb, notification.EndToEndID)
@@ -914,20 +947,21 @@ func (s *simulator) consumeNotificationStream(ctx context.Context, wg *sync.Wait
 					EndToEndID:   notification.EndToEndID,
 					ISPB:         session.ispb,
 					EventType:    events.EventPacs002Received,
-					ReceivedAtNS: time.Now().UnixNano(),
+					ReceivedAtNS: receivedAt.UnixNano(),
 					StatusCode:   notification.StatusCode,
 					ReasonCodes:  notification.ReasonCodes,
 				})
 			}
 		}
-		if deliveryID := msg.GetDeliveryId(); deliveryID != "" {
-			_ = session.stream.Send(&notificationpb.ClientMessage{
-				Message: &notificationpb.ClientMessage_Ack{
-					Ack: &notificationpb.Ack{DeliveryId: deliveryID},
-				},
-			})
-		}
 	}
+	return nil
+}
+
+func (s *simulator) isCurrentTransfer(endToEndID string) bool {
+	s.transferScenariosMu.RLock()
+	defer s.transferScenariosMu.RUnlock()
+	_, exists := s.transferScenarios[endToEndID]
+	return exists
 }
 
 func (s *simulator) writeStart(row events.Start) {

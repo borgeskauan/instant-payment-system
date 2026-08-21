@@ -77,7 +77,7 @@ func TestSummaryJSONOmitsRemovedAggregateBlocks(t *testing.T) {
 	if err := json.Unmarshal(encoded, &document); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"valid", "generation", "scenarios", "replays", "performance"} {
+	for _, key := range []string{"valid", "generation", "scenarios", "replays", "notification_pull", "performance"} {
 		if _, exists := document[key]; !exists {
 			t.Fatalf("new report key %q is absent from %s", key, encoded)
 		}

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
+	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
 	"instant-payment-system/load-test/go-loadtool/internal/sim"
 )
 
@@ -54,6 +55,7 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		GatewayCACert:                 runtimeCfg.Connections.NotificationGateway.CACert,
 		GatewayClientCertRoot:         runtimeCfg.Connections.NotificationGateway.ClientCertRoot,
 		GatewayServerName:             runtimeCfg.Connections.NotificationGateway.ServerName,
+		PullMetrics:                   pullmetrics.NewRecorder(),
 		TargetTxRate:                  runtimeCfg.Load.TargetTxRate,
 		Warmup:                        runtimeCfg.Load.Warmup,
 		Duration:                      runtimeCfg.Load.Duration,

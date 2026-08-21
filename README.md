@@ -41,6 +41,10 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
 
+O protocolo de pull retorna até `10` notificações por chamada; o tamanho não é
+configurável pelo PSP nem pelo profile. O relatório registra a distribuição dos
+lotes efetivamente recebidos.
+
 JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
 `--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
 experimento precisar desativá-los.
