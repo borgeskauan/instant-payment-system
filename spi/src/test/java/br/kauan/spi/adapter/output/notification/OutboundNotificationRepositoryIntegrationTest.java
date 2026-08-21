@@ -35,13 +35,13 @@ class OutboundNotificationRepositoryIntegrationTest {
         NotificationPublication first = notification(PAYMENT_PREFIX + "1", "original");
         NotificationPublication second = notification(PAYMENT_PREFIX + "2", "second");
 
-        List<NotificationPublication> inserted = repository.insertAll(List.of(first, second));
-        List<NotificationPublication> replayed = repository.insertAll(List.of(
+        int inserted = repository.insertAll(List.of(first, second));
+        int replayed = repository.insertAll(List.of(
                 notification(PAYMENT_PREFIX + "1", "replayed")
         ));
 
-        assertThat(inserted).containsExactly(first, second);
-        assertThat(replayed).isEmpty();
+        assertThat(inserted).isEqualTo(2);
+        assertThat(replayed).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM outbound_notification WHERE payment_id LIKE ?",
                 Integer.class,

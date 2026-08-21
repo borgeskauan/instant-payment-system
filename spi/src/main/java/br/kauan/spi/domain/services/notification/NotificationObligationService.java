@@ -142,9 +142,16 @@ public class NotificationObligationService {
     }
 
     private void store(List<NotificationPublication> obligations) {
-        List<NotificationPublication> inserted = outboundNotificationRepository.insertAll(obligations);
-        if (!inserted.isEmpty()) {
-            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
+        int inserted = outboundNotificationRepository.insertAll(obligations);
+        if (inserted == obligations.size()) {
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
+        } else {
+            log.warn(
+                    "Outbound notification conflicts detected; skipping Kafka fast path for the batch. "
+                            + "requested={}, inserted={}",
+                    obligations.size(),
+                    inserted
+            );
         }
     }
 

@@ -7,12 +7,8 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Array;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 @Repository
 public class OutboundNotificationRepository {
@@ -55,7 +51,6 @@ public class OutboundNotificationRepository {
                 payload
             )
             ON CONFLICT (communication_id) DO NOTHING
-            RETURNING communication_id
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -64,12 +59,12 @@ public class OutboundNotificationRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<NotificationPublication> insertAll(List<NotificationPublication> notifications) {
+    public int insertAll(List<NotificationPublication> notifications) {
         if (notifications.isEmpty()) {
-            return List.of();
+            return 0;
         }
 
-        return jdbcTemplate.execute((ConnectionCallback<List<NotificationPublication>>) connection -> {
+        Integer inserted = jdbcTemplate.execute((ConnectionCallback<Integer>) connection -> {
             String[] communicationIds = new String[notifications.size()];
             String[] recipientIspbs = new String[notifications.size()];
             String[] eventTypes = new String[notifications.size()];
@@ -111,19 +106,7 @@ public class OutboundNotificationRepository {
                     statement.setArray(5, notificationStatusArray);
                     statement.setArray(6, schemaVersionArray);
                     statement.setArray(7, payloadArray);
-                    Set<String> insertedIds = new LinkedHashSet<>();
-                    try (ResultSet resultSet = statement.executeQuery()) {
-                        while (resultSet.next()) {
-                            insertedIds.add(resultSet.getString("communication_id"));
-                        }
-                    }
-                    List<NotificationPublication> inserted = new ArrayList<>(insertedIds.size());
-                    for (NotificationPublication notification : notifications) {
-                        if (insertedIds.remove(notification.communicationId())) {
-                            inserted.add(notification);
-                        }
-                    }
-                    return List.copyOf(inserted);
+                    return statement.executeUpdate();
                 }
             } finally {
                 free(
@@ -137,6 +120,7 @@ public class OutboundNotificationRepository {
                 );
             }
         });
+        return inserted == null ? 0 : inserted;
     }
 
     private void free(Array... arrays) throws SQLException {

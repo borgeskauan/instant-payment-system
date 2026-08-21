@@ -65,8 +65,8 @@ class OutboundNotificationFastPathIntegrationTest {
         NotificationPublication notification = notification(PAYMENT_PREFIX + "COMMIT");
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
+            repository.insertAll(List.of(notification));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(List.of(notification)));
 
             verifyNoInteractions(notificationPublisher);
             assertThat(storedRows(notification.communicationId())).isOne();
@@ -81,8 +81,8 @@ class OutboundNotificationFastPathIntegrationTest {
         NotificationPublication notification = notification(PAYMENT_PREFIX + "ROLLBACK");
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
+            repository.insertAll(List.of(notification));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(List.of(notification)));
             status.setRollbackOnly();
         });
 
@@ -97,8 +97,8 @@ class OutboundNotificationFastPathIntegrationTest {
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker unavailable")));
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            List<NotificationPublication> inserted = repository.insertAll(List.of(notification));
-            eventPublisher.publishEvent(new OutboundNotificationBatchReady(inserted));
+            repository.insertAll(List.of(notification));
+            eventPublisher.publishEvent(new OutboundNotificationBatchReady(List.of(notification)));
         });
 
         verify(notificationPublisher).publish(notification);

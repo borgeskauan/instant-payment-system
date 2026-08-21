@@ -146,14 +146,11 @@ class NotificationObligationServiceTest {
     }
 
     @Test
-    void publishesOnlyNewlyInsertedObligationsForAfterCommitDelivery() {
+    void schedulesEveryStoredObligationForAfterCommitBestEffortDelivery() {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         NotificationObligationService service = service(repository, eventPublisher);
-        when(repository.insertAll(anyList())).thenAnswer(invocation -> {
-            List<NotificationPublication> requested = invocation.getArgument(0);
-            return List.of(requested.getLast());
-        });
+        when(repository.insertAll(anyList())).thenReturn(2);
 
         service.storeAcceptanceObligations(List.of(
                 payment("E2E-REPLAY", "10000001", "20000001"),
@@ -165,7 +162,22 @@ class NotificationObligationServiceTest {
         verify(eventPublisher).publishEvent(event.capture());
         assertThat(event.getValue().notifications())
                 .extracting(NotificationPublication::paymentId)
-                .containsExactly("E2E-NEW");
+                .containsExactly("E2E-REPLAY", "E2E-NEW");
+    }
+
+    @Test
+    void leavesAConflictedBatchForReconciliationInsteadOfPublishingUnverifiedBytes() {
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        NotificationObligationService service = service(repository, eventPublisher);
+        when(repository.insertAll(anyList())).thenReturn(1);
+
+        service.storeAcceptanceObligations(List.of(
+                payment("E2E-CONFLICT", "10000001", "20000001"),
+                payment("E2E-NEW", "10000002", "20000002")
+        ));
+
+        verifyNoInteractions(eventPublisher);
     }
 
     private NotificationObligationService service(OutboundNotificationRepository repository) {
@@ -176,6 +188,10 @@ class NotificationObligationServiceTest {
             OutboundNotificationRepository repository,
             ApplicationEventPublisher eventPublisher
     ) {
+        when(repository.insertAll(anyList())).thenAnswer(invocation -> {
+            List<NotificationPublication> requested = invocation.getArgument(0);
+            return requested.size();
+        });
         return new NotificationObligationService(
                 new NotificationPayloadFactory(),
                 new NotificationContentSerializer(new ObjectMapper().findAndRegisterModules()),
