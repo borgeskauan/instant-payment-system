@@ -19,9 +19,25 @@ public final class NotificationDeliveryReader {
     }
 
     public List<NotificationDelivery> findAfter(String recipientIspb, long position, int limit) {
-        List<NotificationDelivery> buffered = buffer.findContiguousAfter(recipientIspb, position, limit);
-        return buffered.isEmpty()
-                ? repository.findAfter(recipientIspb, position, limit)
-                : buffered;
+        if (limit <= 0) {
+            return List.of();
+        }
+
+        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter(recipientIspb, position, limit);
+        if (lookup.state() == RecentNotificationBuffer.LookupState.DATA) {
+            return lookup.deliveries();
+        }
+        if (lookup.state() == RecentNotificationBuffer.LookupState.KNOWN_TAIL) {
+            return List.of();
+        }
+
+        List<NotificationDelivery> persisted = repository.findAfter(recipientIspb, position, limit);
+        if (persisted.size() < limit) {
+            long confirmedThrough = persisted.isEmpty()
+                    ? position
+                    : persisted.getLast().deliveryPosition();
+            buffer.confirmThrough(recipientIspb, confirmedThrough);
+        }
+        return persisted;
     }
 }

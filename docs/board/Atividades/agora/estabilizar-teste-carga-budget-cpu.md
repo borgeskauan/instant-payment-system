@@ -3211,3 +3211,46 @@ dos índices. A V15 também não qualifica o sistema: todas as quatro runs ficar
 abaixo do piso rolling de `2.000 TPS` e acima do p99 de `1 s`. A decisão sobre
 manter a compactação pode usar o ganho físico reproduzido, enquanto a origem da
 variância e da cauda permanece como investigação distinta.
+
+### Fronteira conhecida do Pull em memória
+
+O read path do Pull consultava PostgreSQL sempre que o buffer recente não
+continha dados depois do cursor. No estado saudável, isso transformava cada
+Pull que alcançava a ponta conhecida do fluxo em um `SELECT` vazio. O bundle
+`audit-index-compaction-repeat/20260822_141246` caracterizou esse custo com
+`113.151` chamadas, somente `5.841` rows retornadas e `19.584,633 ms` de tempo
+SQL acumulado.
+
+O buffer passou a manter, por PSP, uma frontier efêmera `confirmedThrough`.
+Ela só é estabelecida por uma leitura do PostgreSQL que retorna menos que o
+limite solicitado: resposta vazia confirma o próprio cursor e resposta parcial
+confirma a última posição retornada. Uma página cheia não prova a ponta. Novas
+posições indexadas avançam a frontier somente quando formam uma sequência
+contígua; lacunas, posições já expulsas do buffer e restart continuam usando o
+fallback SQL. Não foi adicionado cursor persistente, reidratação de payload ou
+mudança no protocolo.
+
+O diagnóstico limpo
+`pull-known-tail/20260822_203915` preservou profile, recursos, instrumentação e
+reset da stack do B2. A consulta de fallback passou a ocorrer uma vez por PSP
+para estabelecer a frontier e depois deixou de participar do polling saudável:
+
+| sinal do fallback Pull | B2 | fronteira conhecida | variação |
+| --- | ---: | ---: | ---: |
+| chamadas | `113.151` | `100` | `-99,912%` |
+| rows retornadas | `5.841` | `0` | `-100%` |
+| tempo SQL acumulado | `19.584,633 ms` | `2,506 ms` | `-99,987%` |
+| tempo médio por chamada | `0,173 ms` | `0,025 ms` | `-85,549%` |
+
+O run processou `272.078/272.078` POSTs e `217.660/217.660` PACS.002, sem
+outcome ausente ou contraditório e sem violação de replay ou Pull. A latência
+ativa caiu de `817,123 / 1.815,940 / 2.100,281 ms` em p50/p95/p99 no B2 para
+`193,071 / 597,650 / 815,602 ms`; o p99 ficou dentro do SLA de `1 s`. Essa
+comparação é informativa e não atribui sozinha toda a melhora end-to-end ao
+fallback removido, mas o efeito local da intervenção é direto e dominante.
+
+O run permaneceu inválido somente para qualificação do piso sustentado: iniciou
+`119.349` pagamentos ativos, média de `1.989,15 TPS` e mínimo rolling de
+`1.898 TPS`. Não houve carga fora da janela. Portanto, a intervenção removeu o
+polling SQL vazio e preservou correctness, mas ainda não prova a capacidade
+contratada de `2.000 TPS` contínuos.

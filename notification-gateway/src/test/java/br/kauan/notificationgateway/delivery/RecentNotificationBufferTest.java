@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RecentNotificationBufferTest {
 
@@ -21,7 +22,10 @@ class RecentNotificationBufferTest {
                 delivery(4, "20000001")
         ));
 
-        assertThat(buffer.findContiguousAfter("20000001", 0, 3))
+        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter("20000001", 0, 3);
+
+        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.DATA);
+        assertThat(lookup.deliveries())
                 .extracting(NotificationDelivery::deliveryPosition)
                 .containsExactly(1L, 2L, 3L);
     }
@@ -33,7 +37,8 @@ class RecentNotificationBufferTest {
                 delivery(3, "20000001")
         ));
 
-        assertThat(buffer.findContiguousAfter("20000001", 0, 15)).isEmpty();
+        assertThat(buffer.lookupAfter("20000001", 0, 15).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
     }
 
     @Test
@@ -44,7 +49,10 @@ class RecentNotificationBufferTest {
                 delivery(4, "20000001")
         ));
 
-        assertThat(buffer.findContiguousAfter("20000001", 0, 15))
+        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter("20000001", 0, 15);
+
+        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.DATA);
+        assertThat(lookup.deliveries())
                 .extracting(NotificationDelivery::deliveryPosition)
                 .containsExactly(1L, 2L);
     }
@@ -57,8 +65,9 @@ class RecentNotificationBufferTest {
         }
         buffer.addAll(deliveries);
 
-        assertThat(buffer.findContiguousAfter("20000001", 0, 150)).isEmpty();
-        assertThat(buffer.findContiguousAfter("20000001", 50, 200))
+        assertThat(buffer.lookupAfter("20000001", 0, 150).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+        assertThat(buffer.lookupAfter("20000001", 50, 200).deliveries())
                 .hasSize(150)
                 .extracting(NotificationDelivery::deliveryPosition)
                 .startsWith(51L)
@@ -72,12 +81,49 @@ class RecentNotificationBufferTest {
                 delivery(1, "20000002")
         ));
 
-        assertThat(buffer.findContiguousAfter("20000001", 0, 15))
+        assertThat(buffer.lookupAfter("20000001", 0, 15).deliveries())
                 .extracting(NotificationDelivery::recipientIspb)
                 .containsOnly("20000001");
-        assertThat(buffer.findContiguousAfter("20000002", 0, 15))
+        assertThat(buffer.lookupAfter("20000002", 0, 15).deliveries())
                 .extracting(NotificationDelivery::recipientIspb)
                 .containsOnly("20000002");
+    }
+
+    @Test
+    void doesNotClaimTheObservedMaximumAsTheDurableTail() {
+        buffer.addAll(List.of(delivery(1, "20000001")));
+
+        assertThat(buffer.lookupAfter("20000001", 1, 15).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+    }
+
+    @Test
+    void reportsKnownTailOnlyAfterDatabaseConfirmation() {
+        buffer.confirmThrough("20000001", 1);
+
+        assertThat(buffer.lookupAfter("20000001", 1, 15).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
+    }
+
+    @Test
+    void advancesTheConfirmedFrontierOnlyAcrossContiguousBufferedPositions() {
+        buffer.confirmThrough("20000001", 0);
+        buffer.addAll(List.of(delivery(2, "20000001")));
+
+        assertThat(buffer.lookupAfter("20000001", 0, 15).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+
+        buffer.addAll(List.of(delivery(1, "20000001")));
+
+        assertThat(buffer.lookupAfter("20000001", 2, 15).state())
+                .isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
+    }
+
+    @Test
+    void rejectsNegativeDatabaseFrontiers() {
+        assertThatThrownBy(() -> buffer.confirmThrough("20000001", -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("confirmed delivery position must not be negative");
     }
 
     private NotificationDelivery delivery(long position, String recipientIspb) {
