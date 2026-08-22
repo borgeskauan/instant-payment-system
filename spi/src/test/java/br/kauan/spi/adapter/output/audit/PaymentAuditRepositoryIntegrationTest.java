@@ -41,7 +41,13 @@ class PaymentAuditRepositoryIntegrationTest {
                             previous_status,
                             resulting_status,
                             reason
-                        ) VALUES (?, ?, ?, ?, ?)
+                        ) VALUES (
+                            ?,
+                            ?::payment_audit_event_type,
+                            ?::payment_status,
+                            ?::payment_status,
+                            ?::payment_rejection_reason
+                        )
                         """,
                 "E2E-AUDIT-REPOSITORY-REJECTION-REASON",
                 PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
@@ -67,7 +73,13 @@ class PaymentAuditRepositoryIntegrationTest {
                             previous_status,
                             resulting_status,
                             reason
-                        ) VALUES (?, ?, ?, ?, ?)
+                        ) VALUES (
+                            ?,
+                            ?::payment_audit_event_type,
+                            ?::payment_status,
+                            ?::payment_status,
+                            ?::payment_rejection_reason
+                        )
                         """,
                 "E2E-AUDIT-REPOSITORY-INVALID-REJECTION-REASON",
                 PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
@@ -228,7 +240,17 @@ class PaymentAuditRepositoryIntegrationTest {
                             receiver_ispb,
                             sender_delta_cents,
                             receiver_delta_cents
-                        ) VALUES (?, ?, NULL, ?, ?, ?, ?, NULL, NULL)
+                        ) VALUES (
+                            ?,
+                            ?::payment_audit_event_type,
+                            NULL,
+                            ?::payment_status,
+                            ?,
+                            ?,
+                            ?,
+                            NULL,
+                            NULL
+                        )
                         """,
                 "E2E-AUDIT-REPOSITORY-INVALID-TYPE",
                 "UNKNOWN_EVENT",

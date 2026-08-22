@@ -39,15 +39,15 @@ public class PaymentAuditRepository {
                 reason
             FROM unnest(
                 ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::text[],
+                ?::payment_audit_event_type[],
+                ?::payment_status[],
+                ?::payment_status[],
                 ?::bigint[],
                 ?::text[],
                 ?::text[],
                 ?::bigint[],
                 ?::bigint[],
-                ?::text[]
+                ?::payment_rejection_reason[]
             ) AS event(
                 payment_id,
                 event_type,

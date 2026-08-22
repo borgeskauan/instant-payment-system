@@ -74,10 +74,10 @@ class IncomingStatusReportPersistence {
 
     private static final String ACQUIRE_TRANSITIONS_SQL = """
             UPDATE payment_transaction_entity
-            SET status = ?,
+            SET status = ?::payment_status,
                 rejection_reason = NULL
             WHERE payment_id = ANY (?::text[])
-              AND status = ?
+              AND status = ?::payment_status
             """;
 
     private static final String APPLY_BALANCE_DELTAS_SQL = """

@@ -6,17 +6,52 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
+import java.util.Arrays;
 
 public final class RequestFingerprint {
 
-    public static final String VERSION = "v1";
+    private static final short CURRENT_VERSION = 1;
 
-    private RequestFingerprint() {
+    private final byte[] bytes;
+    private final short version;
+
+    private RequestFingerprint(byte[] bytes, short version) {
+        this.bytes = bytes.clone();
+        this.version = version;
     }
 
-    public static String from(PaymentTransactionCommand command) {
-        return sha256(canonicalPayload(command));
+    public static RequestFingerprint calculate(PaymentTransactionCommand command) {
+        return new RequestFingerprint(sha256(canonicalPayload(command)), CURRENT_VERSION);
+    }
+
+    public byte[] bytes() {
+        return bytes.clone();
+    }
+
+    public short version() {
+        return version;
+    }
+
+    boolean matches(byte[] candidateBytes, Short candidateVersion) {
+        return candidateVersion != null
+                && version == candidateVersion
+                && Arrays.equals(bytes, candidateBytes);
+    }
+
+    @Override
+    public boolean equals(Object candidate) {
+        if (this == candidate) {
+            return true;
+        }
+        if (!(candidate instanceof RequestFingerprint other)) {
+            return false;
+        }
+        return version == other.version && Arrays.equals(bytes, other.bytes);
+    }
+
+    @Override
+    public int hashCode() {
+        return 31 * Short.hashCode(version) + Arrays.hashCode(bytes);
     }
 
     private static String canonicalPayload(PaymentTransactionCommand command) {
@@ -57,10 +92,10 @@ public final class RequestFingerprint {
                 .append('\n');
     }
 
-    private static String sha256(String payload) {
+    private static byte[] sha256(String payload) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(payload.getBytes(StandardCharsets.UTF_8)));
+            return digest.digest(payload.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm is not available", e);
         }

@@ -214,7 +214,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
 
     private int auditCount(String paymentId, String eventType) {
         return count(
-                "SELECT COUNT(*) FROM payment_audit_event WHERE payment_id = ? AND event_type = ?",
+                "SELECT COUNT(*) FROM payment_audit_event WHERE payment_id = ? AND event_type = ?::payment_audit_event_type",
                 paymentId,
                 eventType
         );

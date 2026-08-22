@@ -290,7 +290,7 @@ class TransactionalOutboxRollbackIntegrationTest {
                             status,
                             sender_bank_code,
                             receiver_bank_code
-                        ) VALUES (?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?::payment_status, ?, ?)
                         """,
                 payment.getPaymentId(),
                 payment.getAmountCents(),

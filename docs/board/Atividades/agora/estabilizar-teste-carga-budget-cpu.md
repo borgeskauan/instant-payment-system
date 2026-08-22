@@ -2816,3 +2816,189 @@ do piso contínuo de `2.000`, e o p99 permaneceu em `2,005 s`, acima do SLA de
 de replay/Pull. A evidência sustenta a configuração como candidata vigente; a
 decisão final e eventuais ajustes posteriores permanecem explícitos, sem
 remoção automática do código.
+
+### Microbenchmark do fingerprint binário
+
+O armazenamento atual do fingerprint (`VARCHAR(64)` hexadecimal e versão
+`VARCHAR(16)`) foi comparado a `BYTEA` com exatamente 32 bytes e versão
+`SMALLINT`. Duas tabelas scratch reproduziram o schema, primary key,
+cardinalidade observada de `276.602` rows e `fillfactor=50`. Cada variante
+processou quatro rodadas de `100.000` entradas em batches de `200`, com `5%` de
+conflitos, ordem alternada, commit por batch e consumo integral do `RETURNING`.
+
+O preparo Java calculou SHA-256 de verdade nas duas variantes. A vigente ainda
+converteu os 32 bytes para 64 caracteres hexadecimais; a candidata entregou os
+bytes diretamente ao array JDBC. Os tempos agregados das quatro rodadas foram:
+
+| sinal isolado | texto hexadecimal | binário | variação |
+| --- | ---: | ---: | ---: |
+| preparo Java | `970,347 ms` | `868,395 ms` | `-10,507%` |
+| JDBC + statement + commit | `13.938,806 ms` | `12.650,637 ms` | `-9,242%` |
+| tempo total | `14.909,153 ms` | `13.519,032 ms` | `-9,324%` |
+| throughput | `26.829 inputs/s` | `29.588 inputs/s` | `+10,283%` |
+| CPU do backend PostgreSQL | `9.000 ms` | `8.720 ms` | `-3,111%` |
+| WAL por input | `368,443 B` | `338,016 B` | `-8,258%` |
+
+A variante binária melhorou o tempo total em três das quatro rodadas, mas houve
+ruído material: o ganho pareado variou de uma regressão de `20,365%` a uma
+melhora de `29,175%`. Por isso, os `10,283%` agregados caracterizam o candidato
+isolado, não uma previsão direta para o end-to-end. A queda de CPU de apenas
+`3,111%` é a estimativa mais conservadora do trabalho que pode ser liberado no
+PostgreSQL saturado.
+
+| armazenamento após as rodadas | texto hexadecimal | binário | variação |
+| --- | ---: | ---: | ---: |
+| bytes médios por row | `171,995 B` | `140,000 B` | `-18,602%` |
+| heap | `254.918.656 B` | `207.716.352 B` | `-18,517%` |
+| índice | `49.496.064 B` | `49.496.064 B` | `0%` |
+| relação total | `304.513.024 B` | `257.302.528 B` | `-15,504%` |
+
+A redução física e de WAL é inequívoca, e o ganho isolado de throughput torna
+o fingerprint binário um candidato plausível para implementação e A/B. O
+benefício sistêmico esperado deve permanecer moderado: primary key, commits e
+demais campos não encolhem, e a CPU do executor não caiu na mesma proporção que
+a heap. O schema scratch foi removido; a tabela operacional permaneceu com
+`276.602` rows e nenhum código de produção foi alterado pelo spike.
+
+### Microbenchmark da compactação de status e motivo
+
+O armazenamento vigente de `status` (`VARCHAR(50)`) e `rejection_reason`
+(`TEXT`) foi comparado a dois códigos `SMALLINT`. As tabelas scratch
+reproduziram o restante do schema, primary key, `fillfactor=50` e os `276.602`
+pagamentos existentes. Cada variante processou quatro rodadas de `100.000`
+entradas em batches de `200`, com `5%` de conflitos. Em cada batch, os novos
+pagamentos foram inseridos como `WAITING_ACCEPTANCE`, exatamente `20%` foram
+atualizados para `REJECTED / INSUFFICIENT_FUNDS`, e então ocorreu o commit.
+
+| sinal isolado | texto | códigos compactos | variação |
+| --- | ---: | ---: | ---: |
+| JDBC + statements + commits | `14.329,596 ms` | `12.262,535 ms` | `-14,425%` |
+| throughput | `27.914 inputs/s` | `32.620 inputs/s` | `+16,857%` |
+| CPU do backend PostgreSQL | `8.750 ms` | `8.510 ms` | `-2,743%` |
+| WAL por input | `364,137 B` | `344,319 B` | `-5,442%` |
+
+Os códigos compactos venceram no tempo de parede em três das quatro rodadas.
+O ganho pareado de throughput variou de uma regressão de `3,020%` a uma
+melhora de `27,663%`; por isso, os `16,857%` agregados caracterizam apenas o
+microbenchmark. A redução de CPU de `2,743%` é a estimativa conservadora do
+trabalho que essa representação pode liberar no PostgreSQL saturado.
+
+| armazenamento após as rodadas | texto | códigos compactos | variação |
+| --- | ---: | ---: | ---: |
+| bytes médios por row | `177,326 B` | `159,648 B` | `-9,969%` |
+| heap | `249.405.440 B` | `228.073.472 B` | `-8,553%` |
+| índice | `29.212.672 B` | `29.212.672 B` | `0%` |
+| relação total | `278.708.224 B` | `257.368.064 B` | `-7,657%` |
+
+O ganho físico e de WAL é consistente, mas o efeito direto sobre a CPU foi
+moderado e semelhante ao observado no fingerprint binário. A compactação é um
+candidato plausível para implementação e A/B, não um gargalo dominante já
+demonstrado. O spike mediu somente `payment_transaction_entity`; aplicar a
+mesma representação à auditoria seria uma mudança adicional. O schema scratch
+foi removido, a tabela operacional permaneceu com `276.602` rows e nenhum
+código de produção foi alterado.
+
+### Microbenchmark das categorias da auditoria
+
+A auditoria append-only vigente, com `event_type`, `previous_status`,
+`resulting_status` e `reason` textuais, foi comparada a duas representações:
+códigos `SMALLINT` e tipos `ENUM` do PostgreSQL. As três tabelas scratch
+reproduziram as constraints, os três índices, a cardinalidade inicial de
+`719.166` eventos e a distribuição real entre criação aceita, criação
+rejeitada, mudança de status e settlement.
+
+Cada variante processou seis rodadas de `100.000` eventos em `500` commits de
+`200`. A ordem formou um quadrado latino: cada representação executou primeira,
+intermediária e última exatamente duas vezes. Isso evita atribuir à
+representação o aquecimento de cache dentro da rodada.
+
+| sinal isolado | texto | `SMALLINT` | `ENUM` PostgreSQL |
+| --- | ---: | ---: | ---: |
+| JDBC + statements + commits | `12.666,889 ms` | `11.090,981 ms` (`-12,441%`) | `11.218,770 ms` (`-11,432%`) |
+| throughput mediano | `51.039 eventos/s` | `54.409 eventos/s` (`+6,602%`) | `53.635 eventos/s` (`+5,086%`) |
+| CPU agregada do backend | `7.430 ms` | `7.050 ms` (`-5,114%`) | `7.110 ms` (`-4,307%`) |
+| CPU mediana por rodada | `1.185 ms` | `1.150 ms` (`-2,954%`) | `1.185 ms` (`0%`) |
+| WAL por evento | `454,204 B` | `419,021 B` (`-7,746%`) | `421,350 B` (`-7,233%`) |
+
+A quinta rodada textual consumiu `2.630,076 ms` de parede, mas somente
+`1.150 ms` de CPU do backend. Esse outlier externo ao executor PostgreSQL
+infla o throughput agregado; por isso, a comparação de parede usa a mediana.
+`SMALLINT` apresentou o melhor sinal de CPU e venceu o tempo de parede em todas
+as seis rodadas. `ENUM` venceu cinco, preservando os nomes nas consultas.
+
+| armazenamento após as rodadas | texto | `SMALLINT` | `ENUM` PostgreSQL |
+| --- | ---: | ---: | ---: |
+| bytes médios por row | `145,440 B` | `110,189 B` (`-24,237%`) | `114,110 B` (`-21,542%`) |
+| heap | `199.368.704 B` | `152.461.312 B` (`-23,528%`) | `157.294.592 B` (`-21,104%`) |
+| índices | `205.979.648 B` | `205.979.648 B` (`0%`) | `205.979.648 B` (`0%`) |
+| relação total | `405.422.080 B` | `358.506.496 B` (`-11,572%`) | `363.339.776 B` (`-10,380%`) |
+
+A compactação da auditoria oferece um sinal de CPU mais forte que as duas
+compactações isoladas da payment row e uma redução física relevante, porque
+cada pagamento produz múltiplos eventos. `SMALLINT` maximiza o ganho;
+`ENUM` preserva a legibilidade operacional e retém quase todo o benefício de
+WAL e armazenamento, mas não melhorou a CPU mediana. O schema scratch foi
+removido, `payment_audit_event` permaneceu com `719.166` rows e nenhum código
+de produção foi alterado.
+
+### Compactação conjunta de pagamentos e auditoria
+
+A implementação reuniu os três candidatos em uma única migração. O fingerprint
+SHA-256 passou de hexadecimal textual para `BYTEA(32)` validado por constraint,
+e sua versão passou de `v1` textual para `SMALLINT`. Status, motivo de rejeição
+e categorias da auditoria passaram a usar tipos `ENUM` do PostgreSQL com os
+mesmos nomes dos enums Java. A escolha preserva consultas operacionais legíveis
+e evita uma tabela de tradução de códigos no tooling de diagnóstico.
+
+A migração converte dados existentes e recria constraints e índices parciais
+da auditoria sobre os novos tipos. Um teste dedicado executa V1--V13, persiste
+rows no formato legado, aplica V14 e comprova a preservação do fingerprint,
+versão, status, tipo de evento e motivo. A suíte completa do SPI passou com
+`201` testes, sem falha ou erro.
+
+O diagnóstico B está em
+`compact-payment-audit-storage/20260822_021728`. O baseline comparável é
+`pacs008-kafka-batch-200/20260822_012325`; ambos usam o mesmo profile,
+recursos, instrumentação e batching PACS.008. O B iniciou `275.802` pagamentos
+e produziu todos os outcomes, sem ausência, contradição ou violação de replay e
+Pull. Um POST de warmup excedeu o timeout de `5 s` e recebeu status observável
+`0`, embora o pagamento tenha sido processado e seu outcome tenha chegado; por
+isso o relatório contém uma violação HTTP funcional que não pertence à janela
+ativa.
+
+| persistência | baseline | compactada | variação |
+| --- | ---: | ---: | ---: |
+| insert de pagamentos — rows | `276.602` | `275.802` | `-0,289%` |
+| insert de pagamentos — SQL | `44,832 s` | `38,943 s` | `-13,137%` |
+| insert de pagamentos — SQL/row | `162,083 us` | `141,198 us` | `-12,885%` |
+| insert de pagamentos — WAL/row | `392,986 B` | `341,547 B` | `-13,089%` |
+| insert da auditoria — rows | `719.166` | `717.086` | `-0,289%` |
+| insert da auditoria — SQL | `55,178 s` | `49,411 s` | `-10,451%` |
+| insert da auditoria — SQL/row | `76,724 us` | `68,906 us` | `-10,191%` |
+| insert da auditoria — WAL/row | `468,709 B` | `437,386 B` | `-6,683%` |
+| 23 queries exportadas — SQL | `202,476 s` | `194,314 s` | `-4,031%` |
+| 23 queries exportadas — WAL | `704.382.461 B` | `652.856.482 B` | `-7,315%` |
+
+O efeito físico apareceu no pipeline real: os dois inserts diretamente
+afetados ficaram mais baratos por row, e o WAL total caiu apesar de o workload
+útil ter permanecido praticamente igual. A transição aceita de pagamentos foi
+o sinal contrário: seu WAL por row caiu `32,393%`, mas o tempo SQL subiu de
+`6,312 s` para `17,452 s`. As amostras de atividade mostram o backend
+executável, sem lock ou I/O dominante; retirando somente esse statement, o
+tempo agregado das demais queries caiu `9,840%`. Portanto, a run confirma a
+compactação física, mas não atribui a variação de parede dessa transição à
+representação dos enums.
+
+| resultado end-to-end | baseline | compactada | variação |
+| --- | ---: | ---: | ---: |
+| TPS médio / mínimo rolling | `1.994,850 / 1.925` | `1.995,683 / 1.914` | `+0,042% / -0,571%` |
+| latência p50 / p95 | `839,264 / 1.683,226 ms` | `831,572 / 1.488,426 ms` | `-0,917% / -11,573%` |
+| latência p99 / máxima | `2.005,423 / 2.558,075 ms` | `1.730,257 / 2.080,070 ms` | `-13,721% / -18,686%` |
+| outcomes ativos dentro de `1 s` | `86.655` (`72,399%`) | `85.871` (`71,714%`) | `-0,685 pp` |
+| CPU média PostgreSQL no ativo | `98,982%` | `101,358%` | `+2,376 pp` |
+
+A cauda melhorou, mas a fração dentro de `1 s`, o mínimo rolling e a CPU não.
+Logo, esta única comparação não demonstra uma redução sistêmica uniforme nem
+qualifica a meta: o piso contínuo de `2.000 TPS` e o p99 de `1 s` continuam
+abertos. O código permanece disponível para a decisão explícita do projeto;
+nenhuma reversão automática foi feita a partir do resultado misto.

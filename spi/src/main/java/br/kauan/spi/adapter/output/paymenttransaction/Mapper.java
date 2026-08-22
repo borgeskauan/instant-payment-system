@@ -16,7 +16,7 @@ public class Mapper {
         entity.setAmountCents(transaction.getAmountCents());
         entity.setCurrency(transaction.getCurrency());
         entity.setDescription(transaction.getDescription());
-        entity.setStatus(status.name());
+        entity.setStatus(status);
 
         var sender = transaction.getSender();
 

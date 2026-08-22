@@ -1,8 +1,13 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
+import br.kauan.spi.domain.entity.status.PaymentStatus;
+import jakarta.persistence.Column;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Data;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Data
 @jakarta.persistence.Entity
@@ -15,8 +20,13 @@ public class Entity {
     private String currency;
     private String description;
 
-    private String status;
-    private String rejectionReason;
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(columnDefinition = "payment_status")
+    private PaymentStatus status;
+
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(columnDefinition = "payment_rejection_reason")
+    private PaymentRejectionReason rejectionReason;
 
     // Sender fields
     private String senderName;
@@ -40,6 +50,6 @@ public class Entity {
     private String receiverAccountType;
     private String receiverBankCode;
 
-    private String requestFingerprint;
-    private String requestFingerprintVersion;
+    private byte[] requestFingerprint;
+    private Short requestFingerprintVersion;
 }

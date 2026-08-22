@@ -53,9 +53,10 @@ class IncomingPaymentRequestPersistence {
 
     private static final String REJECT_INSUFFICIENT_SQL = """
             UPDATE payment_transaction_entity
-            SET status = ?, rejection_reason = ?
+            SET status = ?::payment_status,
+                rejection_reason = ?::payment_rejection_reason
             WHERE payment_id = ANY (?::text[])
-              AND status = ?
+              AND status = ?::payment_status
             """;
 
     private static final String INSERT_CANDIDATES_SQL = """
@@ -71,7 +72,7 @@ class IncomingPaymentRequestPersistence {
             SELECT
                 payment_id,
                 amount_cents,
-                ?::text,
+                ?::payment_status,
                 sender_bank_code,
                 receiver_bank_code,
                 request_fingerprint,
@@ -81,8 +82,8 @@ class IncomingPaymentRequestPersistence {
                 ?::bigint[],
                 ?::text[],
                 ?::text[],
-                ?::text[],
-                ?::text[]
+                ?::bytea[],
+                ?::smallint[]
             ) AS incoming(
                     payment_id,
                     amount_cents,
@@ -249,8 +250,11 @@ class IncomingPaymentRequestPersistence {
                 amountCentsArray = connection.createArrayOf("int8", incoming.amountCents());
                 senderBankCodeArray = connection.createArrayOf("text", incoming.senderBankCodes());
                 receiverBankCodeArray = connection.createArrayOf("text", incoming.receiverBankCodes());
-                requestFingerprintArray = connection.createArrayOf("text", incoming.requestFingerprints());
-                requestFingerprintVersionArray = connection.createArrayOf("text", incoming.requestFingerprintVersions());
+                requestFingerprintArray = connection.createArrayOf("bytea", incoming.requestFingerprints());
+                requestFingerprintVersionArray = connection.createArrayOf(
+                        "int2",
+                        incoming.requestFingerprintVersions()
+                );
 
                 try (var statement = connection.prepareStatement(INSERT_CANDIDATES_SQL)) {
                     statement.setString(1, PaymentStatus.WAITING_ACCEPTANCE.name());
@@ -370,8 +374,8 @@ class IncomingPaymentRequestPersistence {
                             ExistingPaymentRow existingPayment = new ExistingPaymentRow(
                                     resultSet.getString("payment_id"),
                                     resultSet.getString("sender_bank_code"),
-                                    resultSet.getString("request_fingerprint"),
-                                    resultSet.getString("request_fingerprint_version")
+                                    resultSet.getBytes("request_fingerprint"),
+                                    nullableShort(resultSet, "request_fingerprint_version")
                             );
                             if (existingPayments.put(existingPayment.paymentId(), existingPayment) != null) {
                                 throw new IllegalStateException("Conflict query returned a duplicate payment ID");
@@ -570,13 +574,14 @@ class IncomingPaymentRequestPersistence {
     }
 
     private boolean sameFingerprint(IncomingPaymentRow firstRow, IncomingPaymentRow row) {
-        return Objects.equals(firstRow.requestFingerprintVersion(), row.requestFingerprintVersion())
-                && Objects.equals(firstRow.requestFingerprint(), row.requestFingerprint());
+        return firstRow.requestFingerprint().equals(row.requestFingerprint());
     }
 
     private boolean sameFingerprint(IncomingPaymentRow incoming, ExistingPaymentRow existing) {
-        return Objects.equals(incoming.requestFingerprintVersion(), existing.requestFingerprintVersion())
-                && Objects.equals(incoming.requestFingerprint(), existing.requestFingerprint());
+        return incoming.requestFingerprint().matches(
+                existing.requestFingerprint(),
+                existing.requestFingerprintVersion()
+        );
     }
 
     private List<IncomingPaymentRow> incomingRows(List<AuthenticatedPaymentRequest> paymentRequests) {
@@ -585,8 +590,7 @@ class IncomingPaymentRequestPersistence {
             PaymentTransactionCommand paymentTransaction = paymentRequest.command();
             incomingRows.add(new IncomingPaymentRow(
                     paymentRequest,
-                    RequestFingerprint.from(paymentTransaction),
-                    RequestFingerprint.VERSION
+                    RequestFingerprint.calculate(paymentTransaction)
             ));
         }
         return incomingRows;
@@ -598,8 +602,8 @@ class IncomingPaymentRequestPersistence {
         Long[] amountCents = new Long[size];
         String[] senderBankCodes = new String[size];
         String[] receiverBankCodes = new String[size];
-        String[] requestFingerprints = new String[size];
-        String[] requestFingerprintVersions = new String[size];
+        byte[][] requestFingerprints = new byte[size][];
+        Short[] requestFingerprintVersions = new Short[size];
 
         for (int index = 0; index < incomingRows.size(); index++) {
             IncomingPaymentRow incomingRow = incomingRows.get(index);
@@ -609,8 +613,8 @@ class IncomingPaymentRequestPersistence {
             amountCents[index] = paymentTransaction.getAmountCents();
             senderBankCodes[index] = Utils.getBankCode(paymentTransaction.getSender());
             receiverBankCodes[index] = Utils.getBankCode(paymentTransaction.getReceiver());
-            requestFingerprints[index] = incomingRow.requestFingerprint();
-            requestFingerprintVersions[index] = incomingRow.requestFingerprintVersion();
+            requestFingerprints[index] = incomingRow.requestFingerprint().bytes();
+            requestFingerprintVersions[index] = incomingRow.requestFingerprint().version();
         }
 
         return new IncomingPaymentArrays(
@@ -631,14 +635,18 @@ class IncomingPaymentRequestPersistence {
         }
     }
 
+    private Short nullableShort(ResultSet resultSet, String columnName) throws SQLException {
+        short value = resultSet.getShort(columnName);
+        return resultSet.wasNull() ? null : value;
+    }
+
     private int mapCapacity(int expectedSize) {
         return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
     private record IncomingPaymentRow(
             AuthenticatedPaymentRequest paymentRequest,
-            String requestFingerprint,
-            String requestFingerprintVersion
+            RequestFingerprint requestFingerprint
     ) {
         private int ordinal() {
             return paymentRequest.sourceOrdinal();
@@ -664,8 +672,8 @@ class IncomingPaymentRequestPersistence {
             Long[] amountCents,
             String[] senderBankCodes,
             String[] receiverBankCodes,
-            String[] requestFingerprints,
-            String[] requestFingerprintVersions
+            byte[][] requestFingerprints,
+            Short[] requestFingerprintVersions
     ) {
         private IncomingPaymentArrays {
             int size = paymentIds.length;
@@ -682,8 +690,8 @@ class IncomingPaymentRequestPersistence {
     private record ExistingPaymentRow(
             String paymentId,
             String senderBankCode,
-            String requestFingerprint,
-            String requestFingerprintVersion
+            byte[] requestFingerprint,
+            Short requestFingerprintVersion
     ) {
     }
 }

@@ -69,7 +69,12 @@ class JpaAdapterIntegrationTest {
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
 
         jdbcTemplate.update(
-                "UPDATE payment_transaction_entity SET status = ?, rejection_reason = ? WHERE payment_id = ?",
+                """
+                        UPDATE payment_transaction_entity
+                        SET status = ?::payment_status,
+                            rejection_reason = ?::payment_rejection_reason
+                        WHERE payment_id = ?
+                        """,
                 PaymentStatus.REJECTED.name(),
                 "INSUFFICIENT_FUNDS",
                 payment.getPaymentId()
@@ -88,7 +93,11 @@ class JpaAdapterIntegrationTest {
         insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE, null, null);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "UPDATE payment_transaction_entity SET rejection_reason = ? WHERE payment_id = ?",
+                """
+                        UPDATE payment_transaction_entity
+                        SET rejection_reason = ?::payment_rejection_reason
+                        WHERE payment_id = ?
+                        """,
                 "INSUFFICIENT_FUNDS",
                 payment.getPaymentId()
         )).isInstanceOf(DataIntegrityViolationException.class);
@@ -104,7 +113,11 @@ class JpaAdapterIntegrationTest {
         insertPayment(payment, PaymentStatus.REJECTED, null, null);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "UPDATE payment_transaction_entity SET rejection_reason = ? WHERE payment_id = ?",
+                """
+                        UPDATE payment_transaction_entity
+                        SET rejection_reason = ?::payment_rejection_reason
+                        WHERE payment_id = ?
+                        """,
                 "UNKNOWN_REASON",
                 payment.getPaymentId()
         )).isInstanceOf(DataIntegrityViolationException.class);
@@ -121,8 +134,9 @@ class JpaAdapterIntegrationTest {
         assertThat(result.createdPayments()).containsExactly(payment);
         assertThat(result.divergentDuplicates()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        assertThat(fingerprint(payment.getPaymentId())).isEqualTo(RequestFingerprint.from(payment));
-        assertThat(fingerprintVersion(payment.getPaymentId())).isEqualTo("v1");
+        assertThat(fingerprint(payment.getPaymentId()))
+                .containsExactly(RequestFingerprint.calculate(payment).bytes());
+        assertThat(fingerprintVersion(payment.getPaymentId())).isEqualTo((short) 1);
     }
 
     @Test
@@ -237,7 +251,7 @@ class JpaAdapterIntegrationTest {
         PaymentTransactionCommand payment = paymentTransaction("E2E-IDEMP-ADVANCED", "11111111", "22222222");
         store(payment);
         jdbcTemplate.update(
-                "UPDATE payment_transaction_entity SET status = ? WHERE payment_id = ?",
+                "UPDATE payment_transaction_entity SET status = ?::payment_status WHERE payment_id = ?",
                 PaymentStatus.ACCEPTED_IN_PROCESS.name(),
                 payment.getPaymentId()
         );
@@ -256,8 +270,8 @@ class JpaAdapterIntegrationTest {
         insertPayment(
                 payment,
                 PaymentStatus.WAITING_ACCEPTANCE,
-                RequestFingerprint.from(payment),
-                "v0"
+                RequestFingerprint.calculate(payment),
+                (short) 0
         );
 
         PaymentTransactionPersistenceResult result =
@@ -303,8 +317,8 @@ class JpaAdapterIntegrationTest {
         insertPayment(
                 existing,
                 PaymentStatus.WAITING_ACCEPTANCE,
-                RequestFingerprint.from(existing),
-                RequestFingerprint.VERSION
+                RequestFingerprint.calculate(existing),
+                (short) 1
         );
 
         PaymentTransactionPersistenceResult result =
@@ -638,8 +652,8 @@ class JpaAdapterIntegrationTest {
         insertPayment(
                 valid,
                 PaymentStatus.WAITING_ACCEPTANCE,
-                RequestFingerprint.from(valid),
-                RequestFingerprint.VERSION
+                RequestFingerprint.calculate(valid),
+                (short) 1
         );
 
         PaymentTransactionPersistenceResult result =
@@ -746,8 +760,8 @@ class JpaAdapterIntegrationTest {
     private void insertPayment(
             PaymentTransactionCommand payment,
             PaymentStatus status,
-            String requestFingerprint,
-            String requestFingerprintVersion
+            RequestFingerprint requestFingerprint,
+            Short requestFingerprintVersion
     ) {
         jdbcTemplate.update(
                 """
@@ -759,14 +773,22 @@ class JpaAdapterIntegrationTest {
                             receiver_bank_code,
                             request_fingerprint,
                             request_fingerprint_version
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (
+                            ?,
+                            ?,
+                            ?::payment_status,
+                            ?,
+                            ?,
+                            ?::bytea,
+                            ?::smallint
+                        )
                         """,
                 payment.getPaymentId(),
                 payment.getAmountCents(),
                 status.name(),
                 payment.getSender().getAccount().getBankCode(),
                 payment.getReceiver().getAccount().getBankCode(),
-                requestFingerprint,
+                requestFingerprint == null ? null : requestFingerprint.bytes(),
                 requestFingerprintVersion
         );
     }
@@ -813,18 +835,18 @@ class JpaAdapterIntegrationTest {
         return new BigDecimal(amount);
     }
 
-    private String fingerprint(String paymentId) {
+    private byte[] fingerprint(String paymentId) {
         return jdbcTemplate.queryForObject(
                 "SELECT request_fingerprint FROM payment_transaction_entity WHERE payment_id = ?",
-                String.class,
+                byte[].class,
                 paymentId
         );
     }
 
-    private String fingerprintVersion(String paymentId) {
+    private Short fingerprintVersion(String paymentId) {
         return jdbcTemplate.queryForObject(
                 "SELECT request_fingerprint_version FROM payment_transaction_entity WHERE payment_id = ?",
-                String.class,
+                Short.class,
                 paymentId
         );
     }
