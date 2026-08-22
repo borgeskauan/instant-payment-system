@@ -3002,3 +3002,212 @@ Logo, esta única comparação não demonstra uma redução sistêmica uniforme 
 qualifica a meta: o piso contínuo de `2.000 TPS` e o p99 de `1 s` continuam
 abertos. O código permanece disponível para a decisão explícita do projeto;
 nenhuma reversão automática foi feita a partir do resultado misto.
+
+### Microbenchmark do índice geral da auditoria
+
+O custo de `idx_payment_audit_event_payment (payment_id, event_id)` foi isolado
+em duas tabelas scratch. Ambas preservaram a primary key, os índices únicos de
+`PAYMENT_CREATED` e `SETTLEMENT_APPLIED`, enums, constraints e schema da tabela
+operacional; somente a variante B não possuía o índice geral usado para leitura
+do histórico.
+
+Cada tabela começou com os mesmos `717.086` eventos e a mesma distribuição do
+último diagnóstico. Foram executadas seis rodadas alternadas por variante,
+cada uma com `100.000` eventos, `500` commits e batches de `200`. O cliente
+`pgbench` executou fora do cgroup do PostgreSQL; CPU acumulada mediu somente o
+container servidor. O scratch foi removido após a coleta e os componentes
+parados para isolamento foram reiniciados.
+
+| sinal isolado | com índice geral | sem índice geral | variação |
+| --- | ---: | ---: | ---: |
+| throughput agregado | `49.219 eventos/s` | `58.924 eventos/s` | `+19,718%` |
+| parede por evento | `20,317 us` | `16,971 us` | `-16,470%` |
+| CPU PostgreSQL por evento | `11,543 us` | `8,930 us` | `-22,633%` |
+| WAL estável por evento | `374,643 B` | `269,230 B` | `-28,137%` |
+
+A variante sem índice venceu as seis rodadas em parede e CPU. A primeira
+rodada de WAL de cada tabela foi excluída somente da razão estável por conter
+full-page images de primeiro toque; as cinco rodadas seguintes ficaram
+consistentes. Ao final, cada tabela continha exatamente `1.319.086` eventos. A
+heap era `134 MB` em ambas; os índices ocupavam `134 MB` com o índice geral e
+`65 MB` sem ele. O próprio índice removido ocupava `68 MB`.
+
+O resultado demonstra que esse índice de leitura é um custo material no hot
+path append-only. Ele não participa das invariantes de unicidade: primary key e
+os dois índices parciais de correctness permanecem. A remoção é candidata a um
+A/B end-to-end se consulta online do histórico completo por `payment_id` não
+for requisito; exportações integrais por run continuam naturalmente orientadas
+a leitura sequencial.
+
+### Microbenchmark da PK técnica da auditoria
+
+O ganho incremental de remover a primary key de `event_id` foi medido depois
+da remoção do índice geral. As duas tabelas scratch mantiveram os índices
+únicos parciais de criação e settlement. A variante B removeu somente a
+constraint/índice da PK; `event_id` permaneceu
+`BIGINT GENERATED ALWAYS AS IDENTITY NOT NULL`.
+
+O preparo e a carga repetiram a cardinalidade, distribuição, batches e ordem
+alternada do spike anterior: `717.086` eventos iniciais e seis rodadas de
+`100.000`, com `500` commits de `200` eventos por variante.
+
+| sinal isolado | com PK | identity `NOT NULL`, sem PK | variação |
+| --- | ---: | ---: | ---: |
+| throughput agregado | `58.241 eventos/s` | `63.670 eventos/s` | `+9,321%` |
+| parede por evento | `17,170 us` | `15,706 us` | `-8,526%` |
+| CPU PostgreSQL por evento | `9,285 us` | `7,829 us` | `-15,683%` |
+| WAL estável por evento | `269,356 B` | `203,133 B` | `-24,586%` |
+
+A variante sem PK venceu as seis rodadas em parede e CPU. Com `1.319.086`
+eventos em cada tabela, a heap permaneceu em `134 MB`; os índices caíram de
+`65 MB` para `37 MB`, e o total da relação de `199 MB` para `171 MB`. O índice
+da PK ocupava `28 MB`. Todos os `event_id` gerados no spike foram não nulos e
+distintos.
+
+O resultado demonstra o custo da identidade declarativa, mas não equivale a
+uma garantia de unicidade. `IDENTITY NOT NULL` rejeita o insert ordinário sem
+valor gerado e a aplicação não fornece `event_id`; ainda assim, reset
+administrativo da sequence ou `OVERRIDING SYSTEM VALUE` pode criar duplicata
+sem a PK. As invariantes de negócio de criação e settlement continuam nos dois
+índices únicos parciais. O scratch foi removido e nenhuma mudança foi aplicada
+ao schema operacional.
+
+### Aplicação da compactação dos índices da auditoria
+
+A migration V15 aplicou em conjunto os dois candidatos medidos: removeu
+`idx_payment_audit_event_payment` e a primary key técnica de `event_id`. A
+coluna permaneceu `BIGINT GENERATED ALWAYS AS IDENTITY NOT NULL`, e os índices
+únicos parciais `uq_payment_audit_created` e
+`uq_payment_audit_settlement` continuaram protegendo as invariantes de negócio.
+O teste de migration parte de V14 com um evento persistido e comprova que V15
+preserva seu `event_id`; os testes de schema comprovam a ausência da PK e do
+índice geral. A suíte completa do SPI passou com `204` testes.
+
+O diagnóstico B está em
+`audit-index-compaction/20260822_135027`. O baseline comparável permanece
+`compact-payment-audit-storage/20260822_021728`: a V15 é a única alteração no
+caminho exercitado, e profile, recursos, instrumentação, reset da stack e
+parâmetros do workload foram preservados. Após o B, a tabela operacional tinha
+`673.210` eventos, heap de `79 MB` e somente `30 MB` nos dois índices parciais.
+
+| custo físico | baseline | sem índices técnicos | variação |
+| --- | ---: | ---: | ---: |
+| auditoria — rows | `717.086` | `673.210` | `-6,119%` |
+| auditoria — SQL/row | `68,906 us` | `58,190 us` | `-15,552%` |
+| auditoria — WAL/row | `437,387 B` | `234,686 B` | `-46,344%` |
+| 23 queries exportadas — SQL | `194,314 s` | `209,937 s` | `+8,040%` |
+| 23 queries exportadas — WAL | `652.856.482 B` | `437.062.413 B` | `-33,054%` |
+
+O efeito local previsto apareceu: o insert da auditoria ficou mais barato e o
+WAL total caiu. Esse ganho não se traduziu em melhora end-to-end nesta execução.
+O PostgreSQL continuou saturado e outros statements ficaram mais caros por row,
+incluindo o insert de pagamento (`+48,302%`), o select PACS.002 com lock
+(`+18,516%`) e o insert da outbound notification (`+70,832%`). Isso demonstra
+redistribuição do tempo do PostgreSQL na run, mas uma única comparação não
+atribui a variação desses statements à remoção dos índices.
+
+| resultado end-to-end | baseline | sem índices técnicos | variação |
+| --- | ---: | ---: | ---: |
+| TPS médio / mínimo rolling | `1.995,683 / 1.914` | `1.989,017 / 1.903` | `-0,334% / -0,575%` |
+| latência p50 / p95 | `831,572 / 1.488,426 ms` | `1.068,209 / 1.706,421 ms` | `+28,457% / +14,646%` |
+| latência p99 / máxima | `1.730,257 / 2.080,070 ms` | `2.050,477 / 2.636,731 ms` | `+18,507% / +26,762%` |
+| outcomes ativos dentro de `1 s` | `85.871` (`71,714%`) | `47.209` (`39,558%`) | `-32,156 pp` |
+| CPU média PostgreSQL no ativo | `101,358%` | `101,076%` | `-0,282 pp` |
+
+O B iniciou todos os `119.341` pagamentos ativos sem carga fora da janela e não
+teve erro HTTP ativo, outcome ausente/contraditório nem violação de replay ou
+Pull. Houve `17` timeouts HTTP observáveis somente no warmup, contra um no
+baseline; seus pagamentos foram processados e tiveram outcome, mas essas
+violações funcionais e o piso rolling abaixo de `2.000 TPS` mantiveram
+`valid: false`. O código permanece no worktree para decisão explícita do
+projeto; o benchmark não acionou reversão automática.
+
+#### Repetição limpa da variante sem índices técnicos
+
+Uma única repetição B foi executada para verificar se a regressão ampla do
+primeiro B era reproduzível. A stack e os volumes foram recriados, e código,
+profile, recursos e instrumentação permaneceram inalterados. O bundle está em
+`audit-index-compaction-repeat/20260822_141246`.
+
+O B2 aceitou todos os `275.304` POSTs, sem timeout ou outra violação funcional,
+e produziu todos os outcomes esperados, sem ausência, contradição ou violação
+de replay/Pull. O gate de warmup levou aproximadamente `10,4 s`, praticamente o
+mesmo tempo observado no baseline e no B1.
+
+| custo físico | baseline | B1 | B2 | B2 vs. baseline |
+| --- | ---: | ---: | ---: | ---: |
+| auditoria — SQL/row | `68,906 us` | `58,190 us` | `42,548 us` | `-38,252%` |
+| auditoria — WAL/row | `437,387 B` | `234,686 B` | `235,552 B` | `-46,146%` |
+| 23 queries exportadas — SQL | `194,314 s` | `209,937 s` | `183,946 s` | `-5,336%` |
+| 23 queries exportadas — WAL | `652.856.482 B` | `437.062.413 B` | `491.783.960 B` | `-24,672%` |
+
+A redução direta do custo da auditoria reapareceu e, no B2, também reduziu o
+tempo SQL e o WAL agregados. A variação dos demais statements não foi uniforme:
+o select PACS.002 e o update aceito ficaram mais baratos que no baseline,
+enquanto inserts de pagamento, outbound notification e delivery index ficaram
+mais caros por row.
+
+| resultado end-to-end | baseline | B1 | B2 | B2 vs. baseline |
+| --- | ---: | ---: | ---: | ---: |
+| TPS médio / mínimo rolling | `1.995,683 / 1.914` | `1.989,017 / 1.903` | `1.992,550 / 1.907` | `-0,157% / -0,366%` |
+| latência p50 | `831,572 ms` | `1.068,209 ms` | `817,123 ms` | `-1,738%` |
+| latência p95 | `1.488,426 ms` | `1.706,421 ms` | `1.815,940 ms` | `+22,004%` |
+| latência p99 | `1.730,257 ms` | `2.050,477 ms` | `2.100,281 ms` | `+21,385%` |
+| latência máxima | `2.080,070 ms` | `2.636,731 ms` | `2.612,402 ms` | `+25,592%` |
+| outcomes ativos dentro de `1 s` | `71,714%` | `39,558%` | `74,952%` | `+3,238 pp` |
+| CPU média PostgreSQL no ativo | `101,358%` | `101,076%` | `102,142%` | `+0,785 pp` |
+
+A repetição não reproduziu a piora do p50 nem da fração dentro de `1 s` do B1,
+mas reproduziu a cauda acima do baseline: p95, p99 e máxima foram maiores nos
+dois Bs. Portanto, as duas medições sustentam a economia física da remoção dos
+índices e mostram que ela não resolve a fonte atual da cauda. Elas não isolam a
+causa dessa cauda nem autorizam outra alteração; essa investigação permanece
+separada da decisão sobre manter a compactação do índice.
+
+#### Nova A limpa e revisão da interpretação
+
+Uma nova A foi executada para testar se o primeiro baseline representava a
+variância natural do sistema. A stack e os volumes foram novamente recriados.
+Antes de qualquer funding, instrumentação ou tráfego, a tabela vazia recebeu de
+volta `payment_audit_event_pkey` e `idx_payment_audit_event_payment`. O preflight
+comprovou zero eventos, quatro índices e uma PK. O bundle está em
+`audit-index-baseline-repeat/20260822_155458`.
+
+A2 aceitou todos os `271.495` POSTs e não apresentou outcome ausente,
+contraditório nem violação de replay/Pull. Ao final, os quatro índices e a PK
+continuavam presentes; a heap tinha `83 MB` e os índices, `101 MB`. Apesar da
+correção funcional, A2 teve uma cauda muito pior que A1 e que ambos os Bs.
+
+| resultado end-to-end | A1 | A2 | B1 | B2 |
+| --- | ---: | ---: | ---: | ---: |
+| TPS médio | `1.995,683` | `1.993,983` | `1.989,017` | `1.992,550` |
+| mínimo rolling | `1.914` | `1.918` | `1.903` | `1.907` |
+| latência p50 | `831,572 ms` | `1.016,354 ms` | `1.068,209 ms` | `817,123 ms` |
+| latência p95 | `1.488,426 ms` | `3.271,407 ms` | `1.706,421 ms` | `1.815,940 ms` |
+| latência p99 | `1.730,257 ms` | `3.898,830 ms` | `2.050,477 ms` | `2.100,281 ms` |
+| latência máxima | `2.080,070 ms` | `4.582,609 ms` | `2.636,731 ms` | `2.612,402 ms` |
+| outcomes ativos dentro de `1 s` | `71,714%` | `48,239%` | `39,558%` | `74,952%` |
+
+A grande distância entre A1 e A2 invalida a interpretação anterior de que a
+cauda dos Bs, por estar acima somente de A1, fosse uma regressão atribuível à
+V15. Na comparação limpa mais recente, B2 contra A2:
+
+| sinal | A2 | B2 | variação |
+| --- | ---: | ---: | ---: |
+| latência p50 | `1.016,354 ms` | `817,123 ms` | `-19,603%` |
+| latência p95 | `3.271,407 ms` | `1.815,940 ms` | `-44,491%` |
+| latência p99 | `3.898,830 ms` | `2.100,281 ms` | `-46,130%` |
+| outcomes ativos dentro de `1 s` | `48,239%` | `74,952%` | `+26,712 pp` |
+| 23 queries exportadas — SQL | `234,279 s` | `183,946 s` | `-21,484%` |
+| 23 queries exportadas — WAL | `626.093.901 B` | `491.783.960 B` | `-21,452%` |
+| auditoria — SQL/row | `89,439 us` | `42,548 us` | `-52,428%` |
+| auditoria — WAL/row | `436,771 B` | `235,552 B` | `-46,070%` |
+
+O custo físico da auditoria é a evidência estável: os dois As ficaram entre
+`68,906` e `89,439 us/row` e aproximadamente `437 B/row`; os dois Bs, entre
+`42,548` e `58,190 us/row` e aproximadamente `235 B/row`. A latência
+end-to-end varia muito mais e não sustenta uma regressão causada pela remoção
+dos índices. A V15 também não qualifica o sistema: todas as quatro runs ficaram
+abaixo do piso rolling de `2.000 TPS` e acima do p99 de `1 s`. A decisão sobre
+manter a compactação pode usar o ganho físico reproduzido, enquanto a origem da
+variância e da cauda permanece como investigação distinta.
