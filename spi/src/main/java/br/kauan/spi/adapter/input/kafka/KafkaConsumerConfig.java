@@ -35,20 +35,50 @@ public class KafkaConsumerConfig {
     @Value("${spi.kafka.status-report-listener-concurrency:3}")
     private int statusReportListenerConcurrency;
 
-    @Value("${spi.kafka.max-poll-records:500}")
-    private int maxPollRecords;
+    @Value("${spi.kafka.payment-request.max-poll-records:500}")
+    private int paymentRequestMaxPollRecords;
 
-    @Value("${spi.kafka.fetch-min-bytes:1024}")
-    private int fetchMinBytes;
+    @Value("${spi.kafka.payment-request.fetch-min-bytes:131072}")
+    private int paymentRequestFetchMinBytes;
 
-    @Value("${spi.kafka.fetch-max-wait-ms:10}")
-    private int fetchMaxWaitMs;
+    @Value("${spi.kafka.payment-request.fetch-max-wait-ms:100}")
+    private int paymentRequestFetchMaxWaitMs;
+
+    @Value("${spi.kafka.status-report.max-poll-records:500}")
+    private int statusReportMaxPollRecords;
+
+    @Value("${spi.kafka.status-report.fetch-min-bytes:1024}")
+    private int statusReportFetchMinBytes;
+
+    @Value("${spi.kafka.status-report.fetch-max-wait-ms:10}")
+    private int statusReportFetchMaxWaitMs;
 
     @Value("${spring.kafka.listener.auto-startup:true}")
     private boolean listenerAutoStartup;
 
     @Bean
-    public ConsumerFactory<String, byte[]> consumerFactory() {
+    public ConsumerFactory<String, byte[]> paymentRequestConsumerFactory() {
+        return consumerFactory(
+                paymentRequestMaxPollRecords,
+                paymentRequestFetchMinBytes,
+                paymentRequestFetchMaxWaitMs
+        );
+    }
+
+    @Bean
+    public ConsumerFactory<String, byte[]> statusReportConsumerFactory() {
+        return consumerFactory(
+                statusReportMaxPollRecords,
+                statusReportFetchMinBytes,
+                statusReportFetchMaxWaitMs
+        );
+    }
+
+    private ConsumerFactory<String, byte[]> consumerFactory(
+            int maxPollRecords,
+            int fetchMinBytes,
+            int fetchMaxWaitMs
+    ) {
         Map<String, Object> config = new HashMap<>();
 
         config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -68,7 +98,7 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, byte[]> paymentRequestKafkaListenerContainerFactory(
-            @Qualifier("consumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
+            @Qualifier("paymentRequestConsumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
             @Qualifier("kafkaErrorHandler") CommonErrorHandler kafkaErrorHandler
     ) {
         return listenerContainerFactory(
@@ -80,7 +110,7 @@ public class KafkaConsumerConfig {
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, byte[]> statusReportKafkaListenerContainerFactory(
-            @Qualifier("consumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
+            @Qualifier("statusReportConsumerFactory") ConsumerFactory<String, byte[]> consumerFactory,
             @Qualifier("kafkaErrorHandler") CommonErrorHandler kafkaErrorHandler
     ) {
         return listenerContainerFactory(

@@ -18,13 +18,14 @@ class KafkaConsumerConfigTest {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "paymentRequestListenerConcurrency", 8);
         ReflectionTestUtils.setField(config, "statusReportListenerConcurrency", 1);
-        ConsumerFactory<String, byte[]> consumerFactory = mock(ConsumerFactory.class);
+        ConsumerFactory<String, byte[]> paymentConsumerFactory = mock(ConsumerFactory.class);
+        ConsumerFactory<String, byte[]> statusConsumerFactory = mock(ConsumerFactory.class);
         CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
 
         ConcurrentKafkaListenerContainerFactory<String, byte[]> paymentFactory =
-                config.paymentRequestKafkaListenerContainerFactory(consumerFactory, errorHandler);
+                config.paymentRequestKafkaListenerContainerFactory(paymentConsumerFactory, errorHandler);
         ConcurrentKafkaListenerContainerFactory<String, byte[]> statusFactory =
-                config.statusReportKafkaListenerContainerFactory(consumerFactory, errorHandler);
+                config.statusReportKafkaListenerContainerFactory(statusConsumerFactory, errorHandler);
 
         assertThat(ReflectionTestUtils.getField(paymentFactory, "concurrency")).isEqualTo(8);
         assertThat(ReflectionTestUtils.getField(statusFactory, "concurrency")).isEqualTo(1);
@@ -65,55 +66,61 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
-    void consumerFactoriesDisableAutoCommit() {
+    void consumerFactoriesShareTransportSafetySettings() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
         ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
 
-        var paymentRequestConsumerFactory = config.consumerFactory();
+        var paymentRequestConsumerFactory = config.paymentRequestConsumerFactory();
+        var statusReportConsumerFactory = config.statusReportConsumerFactory();
 
         assertThat(paymentRequestConsumerFactory.getConfigurationProperties())
-                .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-    }
-
-    @Test
-    void consumerFactoryUsesConfiguredPollAndFetchSettings() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
-        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
-        ReflectionTestUtils.setField(config, "maxPollRecords", 500);
-        ReflectionTestUtils.setField(config, "fetchMinBytes", 1);
-        ReflectionTestUtils.setField(config, "fetchMaxWaitMs", 5);
-
-        var consumerFactory = config.consumerFactory();
-
-        assertThat(consumerFactory.getConfigurationProperties())
-                .containsEntry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500)
-                .containsEntry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 1)
-                .containsEntry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 5);
-    }
-
-    @Test
-    void consumerFactoryDoesNotSetSharedGroupId() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
-        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
-
-        var consumerFactory = config.consumerFactory();
-
-        assertThat(consumerFactory.getConfigurationProperties())
+                .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
+                .containsEntry("enable.metrics.push", false)
+                .doesNotContainKey(ConsumerConfig.GROUP_ID_CONFIG);
+        assertThat(statusReportConsumerFactory.getConfigurationProperties())
+                .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false)
+                .containsEntry("enable.metrics.push", false)
                 .doesNotContainKey(ConsumerConfig.GROUP_ID_CONFIG);
     }
 
     @Test
-    void consumerFactoryDisablesKafkaClientTelemetryPush() {
+    void paymentRequestConsumerFactoryUsesDedicatedBatchingSettings() {
         KafkaConsumerConfig config = new KafkaConsumerConfig();
         ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
         ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
+        ReflectionTestUtils.setField(config, "paymentRequestMaxPollRecords", 500);
+        ReflectionTestUtils.setField(config, "paymentRequestFetchMinBytes", 131_072);
+        ReflectionTestUtils.setField(config, "paymentRequestFetchMaxWaitMs", 100);
+        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 300);
+        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 1_024);
+        ReflectionTestUtils.setField(config, "statusReportFetchMaxWaitMs", 10);
 
-        var consumerFactory = config.consumerFactory();
+        var consumerFactory = config.paymentRequestConsumerFactory();
 
         assertThat(consumerFactory.getConfigurationProperties())
-                .containsEntry("enable.metrics.push", false);
+                .containsEntry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500)
+                .containsEntry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 131_072)
+                .containsEntry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 100);
+    }
+
+    @Test
+    void statusReportConsumerFactoryKeepsLowLatencyFetchSettings() {
+        KafkaConsumerConfig config = new KafkaConsumerConfig();
+        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
+        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
+        ReflectionTestUtils.setField(config, "paymentRequestMaxPollRecords", 500);
+        ReflectionTestUtils.setField(config, "paymentRequestFetchMinBytes", 131_072);
+        ReflectionTestUtils.setField(config, "paymentRequestFetchMaxWaitMs", 100);
+        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 500);
+        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 1_024);
+        ReflectionTestUtils.setField(config, "statusReportFetchMaxWaitMs", 10);
+
+        var consumerFactory = config.statusReportConsumerFactory();
+
+        assertThat(consumerFactory.getConfigurationProperties())
+                .containsEntry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500)
+                .containsEntry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 1_024)
+                .containsEntry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 10);
     }
 }

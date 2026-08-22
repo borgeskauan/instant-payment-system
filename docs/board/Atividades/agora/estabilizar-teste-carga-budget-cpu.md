@@ -2720,3 +2720,99 @@ continuaram acima do SLA de `1 s` (`1,153 / 2,328 / 2,808 s`). O PostgreSQL
 permaneceu praticamente saturado; o próximo perfil deve partir das novas
 queries dominantes, não do custo de persistência de uma mensagem por item que
 esta mudança removeu.
+
+### Microbenchmark do tamanho do batch de admissão PACS.008
+
+Antes de alterar o consumer Kafka, o insert de admissão foi medido isoladamente
+com batches de `50`, `100`, `200` e `500` entradas. O schema scratch reproduziu
+a tabela larga vigente, primary key e `fillfactor=50`, partindo das `273.969`
+rows observadas no último diagnóstico. Cada variante recebeu duas rodadas de
+`100.000` entradas com `5%` de conflitos, em ordens inversas; cada batch usou
+os arrays JDBC, o `INSERT ... ON CONFLICT DO NOTHING RETURNING payment_id` e um
+commit próprios. O ResultSet foi integralmente consumido.
+
+| batch | transações nas duas rodadas | inputs/s | parede/input | CPU/input | WAL/input |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| `50` | `4.000` | `19.996` | `50,010 us` | `26,050 us` | `368,520 B` |
+| `100` | `2.000` | `29.175` | `34,275 us` | `21,200 us` | `368,340 B` |
+| `200` | `1.000` | `36.373` | `27,493 us` | `19,050 us` | `368,072 B` |
+| `500` | `400` | `35.612` | `28,081 us` | `18,900 us` | `368,179 B` |
+
+O custo fixo por transação é material: de `50` para `200`, o throughput do
+statement cresceu `81,90%`, o tempo de parede por entrada caiu `45,03%` e a CPU
+por entrada caiu `26,87%`. Já `500` não melhorou o resultado de parede: ficou
+`2,09%` abaixo de `200`, com somente `0,79%` menos CPU por entrada. O WAL ficou
+praticamente constante porque a quantidade de rows persistidas não mudou.
+
+O resultado não justifica forçar o limite máximo de `500`. O próximo candidato
+deve preservar `max.poll.records=500`, separar a configuração do consumer
+PACS.008 da configuração de PACS.002 e buscar batches efetivos próximos de
+`200` por meio de `fetch.min.bytes` e `fetch.max.wait.ms`. A distribuição real
+dos lotes no listener e o A/B end-to-end decidirão se a economia local libera
+capacidade do PostgreSQL sem custo de latência desproporcional. O schema
+scratch foi removido e a tabela operacional permaneceu com `273.969` rows.
+
+O candidato implementado cria factories independentes. PACS.008 mantém
+`max.poll.records=500`, passa a `fetch.min.bytes=131.072` e
+`fetch.max.wait.ms=100`; em `2.000 TPS`, o limite temporal deve formar cerca de
+`200` registros quando o mínimo em bytes não for atingido antes. PACS.002
+preserva `500 / 1.024 / 10 ms`, pois adicionar espera à transição de settlement
+não participa da hipótese. Esses números são candidatos experimentais, não um
+novo contrato de negócio. O próximo diagnóstico deve registrar a cardinalidade
+real recebida pelo listener PACS.008 e comparar throughput, cauda, CPU, SQL e
+WAL com `outbound-notification-batched-15/20260821_232146`.
+
+### A/B end-to-end do batching de admissão PACS.008
+
+O diagnóstico limpo do candidato está em
+`pacs008-kafka-batch-200/20260822_012325`. Ele foi executado uma única vez após
+recriar a stack e os volumes, com o mesmo profile e instrumentação do baseline
+`outbound-notification-batched-15/20260821_232146`. O container confirmou os
+parâmetros `500 / 131.072 / 100 ms` para PACS.008 e `500 / 1.024 / 10 ms` para
+PACS.002.
+
+O tamanho efetivo médio foi reconstruído pelo total de pagamentos criados mais
+os conflitos reclassificados, dividido pelas chamadas do insert. O workload
+não contém payload inválido ou não autorizado; portanto essa soma representa
+os candidatos válidos recebidos pelo listener, incluindo os replays.
+
+| admissão PACS.008 | baseline | candidato | variação |
+| --- | ---: | ---: | ---: |
+| batch efetivo médio | `90,833` | `197,842` | `+117,809%` |
+| chamadas do insert | `3.167` | `1.468` | `-53,647%` |
+| pagamentos criados | `273.969` | `276.602` | `+0,961%` |
+| conflitos reclassificados | `13.698` | `13.830` | `+0,964%` |
+| tempo SQL do insert | `49,132 s` | `44,832 s` | `-8,750%` |
+| lock de saldos do pagador | `2.252` chamadas | `1.272` chamadas | `-43,517%` |
+| aplicação de débitos | `2.214` chamadas | `1.267` chamadas | `-42,773%` |
+| rejeição por fundos insuficientes | `1.971` chamadas | `1.228` chamadas | `-37,697%` |
+
+O mecanismo medido no spike apareceu no pipeline real: o batch médio ficou a
+apenas `1,079%` do alvo experimental de `200`, e a redução de transações se
+propagou para saldo e rejeição. O insert processou mais rows com `8,750%` menos
+tempo SQL acumulado.
+
+| resultado end-to-end | baseline | candidato | variação |
+| --- | ---: | ---: | ---: |
+| TPS médio / mínimo rolling | `1.992,283 / 1.900` | `1.994,850 / 1.925` | `+0,129% / +1,316%` |
+| PACS.002 ativo | `1.563,883 TPS` | `1.579,733 TPS` | `+1,014%` |
+| notificações ao pagador no ativo | `1.951,333 TPS` | `1.968,450 TPS` | `+0,877%` |
+| outcomes finais / ausentes | `273.969 / 0` | `276.602 / 0` | — |
+| outcomes ativos dentro de `1 s` | `39.298` (`32,875%`) | `86.655` (`72,399%`) | `+39,524 pp` |
+| latência p50 / p95 | `1.152,972 / 2.327,797 ms` | `839,264 / 1.683,226 ms` | `-27,209% / -27,690%` |
+| latência p99 / máxima | `2.808,128 / 3.332,072 ms` | `2.005,423 / 2.558,075 ms` | `-28,585% / -23,229%` |
+| CPU média PostgreSQL | `99,514%` | `98,982%` | `-0,532 pp` |
+| SQL agregado das 50 queries | `217,843 s` | `202,476 s` | `-7,054%` |
+| WAL agregado das 50 queries | `698.588.931 B` | `704.382.461 B` | `+0,829%` |
+
+O aumento pequeno de WAL acompanha `0,961%` mais pagamentos e mais progresso
+downstream; não apareceu uma nova amplificação por row. PostgreSQL continuou
+saturado e executável na maior parte das amostras ativas, mas o mesmo minuto
+ativo concluiu todo o workload com cauda muito menor.
+
+O run ainda não qualifica a meta: o mínimo rolling ficou em `1.925 TPS`, abaixo
+do piso contínuo de `2.000`, e o p99 permaneceu em `2,005 s`, acima do SLA de
+`1 s`. Não houve HTTP rejeitado, outcome ausente ou contraditório, nem violação
+de replay/Pull. A evidência sustenta a configuração como candidata vigente; a
+decisão final e eventuais ajustes posteriores permanecem explícitos, sem
+remoção automática do código.

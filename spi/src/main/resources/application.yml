@@ -38,9 +38,14 @@ spi:
     status-report-listener-concurrency: 3
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group
-    max-poll-records: 500
-    fetch-min-bytes: 1024
-    fetch-max-wait-ms: 10
+    payment-request:
+      max-poll-records: 500
+      fetch-min-bytes: 131072
+      fetch-max-wait-ms: 100
+    status-report:
+      max-poll-records: 500
+      fetch-min-bytes: 1024
+      fetch-max-wait-ms: 10
     force-unknown-processing-error: false
   trace:
     file: /tmp/spi-trace.csv
