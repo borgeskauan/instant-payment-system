@@ -79,7 +79,7 @@ class DeliveryIndexRepositoryIntegrationTest {
     }
 
     @Test
-    void replayDoesNotCreateAnIndexOrConsumeAPosition() {
+    void replayFallsBackWithoutCreatingAnIndexOrConsumingAPosition() {
         repository.indexNew(List.of(
                 incoming("v1:first", "20000001", "first"),
                 incoming("v1:second", "20000001", "second")
@@ -97,6 +97,12 @@ class DeliveryIndexRepositoryIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM delivery_index", Integer.class
         )).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT delivery_position
+                FROM delivery_index
+                WHERE recipient_ispb = '20000001'
+                ORDER BY delivery_position
+                """, Long.class)).containsExactly(1L, 2L, 3L);
     }
 
     @Test
@@ -109,6 +115,24 @@ class DeliveryIndexRepositoryIntegrationTest {
                 .hasMessageContaining("v1:first")
                 .hasMessageContaining("20000001")
                 .hasMessageContaining("20000002");
+    }
+
+    @Test
+    void divergentReplayRollsBackNewIndexesFromTheSameBatch() {
+        repository.indexNew(List.of(incoming("v1:first", "20000001", "first")));
+
+        assertThatThrownBy(() -> repository.indexNew(List.of(
+                incoming("v1:new", "20000002", "new"),
+                incoming("v1:first", "20000002", "divergent")
+        ))).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("v1:first")
+                .hasMessageContaining("20000001")
+                .hasMessageContaining("20000002");
+
+        assertThat(jdbcTemplate.queryForList(
+                "SELECT communication_id FROM delivery_index ORDER BY communication_id",
+                String.class
+        )).containsExactly("v1:first");
     }
 
     @Test

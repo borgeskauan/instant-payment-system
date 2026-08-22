@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.delivery;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -97,29 +98,29 @@ public class DeliveryIndexRepository {
             return List.of();
         }
 
+        try {
+            return indexInTransaction(uniqueNotifications, false);
+        } catch (DuplicateKeyException ignored) {
+            return indexInTransaction(uniqueNotifications, true);
+        }
+    }
+
+    private List<NotificationDelivery> indexInTransaction(
+            List<IncomingNotification> uniqueNotifications,
+            boolean filterExisting
+    ) {
         List<NotificationDelivery> indexed = transactionTemplate.execute(ignored -> {
-            List<String> recipients = uniqueNotifications.stream()
-                    .map(IncomingNotification::recipientIspb)
-                    .distinct()
-                    .sorted()
-                    .toList();
+            List<String> recipients = recipients(uniqueNotifications);
             lockRecipients(recipients);
 
-            Map<String, String> existingRecipients = existingRecipients(uniqueNotifications);
-            List<IncomingNotification> newNotifications = new ArrayList<>(uniqueNotifications.size());
-            for (IncomingNotification notification : uniqueNotifications) {
-                String existingRecipient = existingRecipients.get(notification.communicationId());
-                if (existingRecipient == null) {
-                    newNotifications.add(notification);
-                } else if (!existingRecipient.equals(notification.recipientIspb())) {
-                    throw conflictingRecipient(notification, existingRecipient);
-                }
-            }
+            List<IncomingNotification> newNotifications = filterExisting
+                    ? newNotifications(uniqueNotifications)
+                    : uniqueNotifications;
             if (newNotifications.isEmpty()) {
                 return List.of();
             }
 
-            Map<String, Long> nextPositions = lastPositions(recipients);
+            Map<String, Long> nextPositions = lastPositions(recipients(newNotifications));
             List<NotificationDelivery> newIndexes = new ArrayList<>(newNotifications.size());
             for (IncomingNotification notification : newNotifications) {
                 long position = nextPositions.merge(notification.recipientIspb(), 1L, Long::sum);
@@ -168,7 +169,11 @@ public class DeliveryIndexRepository {
             }
             IncomingNotification existing = unique.putIfAbsent(notification.communicationId(), notification);
             if (existing != null && !existing.recipientIspb().equals(notification.recipientIspb())) {
-                throw conflictingRecipient(notification, existing.recipientIspb());
+                throw conflictingRecipient(
+                        notification.communicationId(),
+                        notification.recipientIspb(),
+                        existing.recipientIspb()
+                );
             }
         }
         return List.copyOf(unique.values());
@@ -191,12 +196,20 @@ public class DeliveryIndexRepository {
         });
     }
 
-    private Map<String, String> existingRecipients(List<IncomingNotification> notifications) {
+    private List<String> recipients(List<IncomingNotification> notifications) {
+        return notifications.stream()
+                .map(IncomingNotification::recipientIspb)
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
+    private List<IncomingNotification> newNotifications(List<IncomingNotification> notifications) {
         Set<String> communicationIds = new LinkedHashSet<>();
         for (IncomingNotification notification : notifications) {
             communicationIds.add(notification.communicationId());
         }
-        return jdbcTemplate.query(
+        Map<String, String> existingRecipients = jdbcTemplate.query(
                 """
                 SELECT communication_id, recipient_ispb
                 FROM delivery_index
@@ -211,6 +224,21 @@ public class DeliveryIndexRepository {
                     return existing;
                 }
         );
+
+        List<IncomingNotification> newNotifications = new ArrayList<>(notifications.size());
+        for (IncomingNotification notification : notifications) {
+            String existingRecipient = existingRecipients.get(notification.communicationId());
+            if (existingRecipient == null) {
+                newNotifications.add(notification);
+            } else if (!existingRecipient.equals(notification.recipientIspb())) {
+                throw conflictingRecipient(
+                        notification.communicationId(),
+                        notification.recipientIspb(),
+                        existingRecipient
+                );
+            }
+        }
+        return List.copyOf(newNotifications);
     }
 
     private Map<String, Long> lastPositions(List<String> recipients) {
@@ -272,13 +300,14 @@ public class DeliveryIndexRepository {
     }
 
     private IllegalStateException conflictingRecipient(
-            IncomingNotification notification,
+            String communicationId,
+            String recipientIspb,
             String existingRecipient
     ) {
         return new IllegalStateException(
-                "communication ID " + notification.communicationId()
+                "communication ID " + communicationId
                         + " belongs to recipient " + existingRecipient
-                        + ", not " + notification.recipientIspb()
+                        + ", not " + recipientIspb
         );
     }
 
