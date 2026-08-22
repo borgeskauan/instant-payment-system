@@ -137,10 +137,6 @@ A tabela contém uma única vez:
 ```text
 communication_id
 recipient_ispb
-event_type
-payment_id
-notification_status
-schema_version
 payload
 created_at
 ```
@@ -151,6 +147,14 @@ Depois do insert, a row é imutável. O significado persistido é somente:
 
 Não existem status de publicação, tentativas, retry timestamps ou confirmação
 de entrega nessa tabela.
+
+Cada row representa uma mensagem completa, não necessariamente um único
+pagamento. O SPI agrupa itens por PSP destinatário, preserva a ordem de origem e
+divide o resultado em mensagens consecutivas de no máximo 15 itens. O UUID da
+mensagem é usado ao mesmo tempo como `GrpHdr.MsgId` e `communication_id`.
+Somente transições financeiras efetivamente aplicadas geram itens; replay sem
+transição é no-op antes da fronteira de notificação. Por isso o insert em
+`outbound_notification` é estrito e qualquer falha reverte a transação atual.
 
 ### `delivery_index`
 

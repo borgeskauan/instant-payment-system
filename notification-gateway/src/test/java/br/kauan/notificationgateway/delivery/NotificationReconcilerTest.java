@@ -101,10 +101,6 @@ class NotificationReconcilerTest {
         return new IncomingNotification(
                 communicationId,
                 recipientIspb,
-                "SETTLED_NOTIFICATION",
-                "E2E-" + communicationId,
-                "ACSC",
-                "v1",
                 communicationId.getBytes(StandardCharsets.UTF_8)
         );
     }

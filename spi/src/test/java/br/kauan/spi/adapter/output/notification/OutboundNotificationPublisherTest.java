@@ -68,9 +68,7 @@ class OutboundNotificationPublisherTest {
         return NotificationPublication.create(
                 "20000001",
                 paymentId.getBytes(StandardCharsets.UTF_8),
-                "ACCEPTANCE_REQUEST",
-                paymentId,
-                null
+                paymentId
         );
     }
 }

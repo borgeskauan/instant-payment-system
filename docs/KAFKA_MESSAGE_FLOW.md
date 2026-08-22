@@ -107,22 +107,32 @@ serialization, or notification insertion rolls back the financial statement,
 status, and balances. The input Kafka acknowledgment happens after the
 PostgreSQL commit; it does not wait for notification publication.
 
-The `communication_id` primary key and `ON CONFLICT DO NOTHING` make replay
-idempotent at the obligation boundary. Identical `pacs.008` replay in
-`WAITING_ACCEPTANCE` keeps an existing row and recreates it if missing. Replay
-in advanced status and `pacs.002` that produces no new transition remain
-no-ops. There is no backfill for pre-migration payments.
+The financial transition is the authority for creating notification items.
+Only payments effectively created or transitioned by the current transaction
+contribute an item; identical `pacs.008` and `pacs.002` replays that acquire no
+transition are no-ops. The outbox insert is strict: an insertion failure rolls
+the financial transaction back instead of acting as a second idempotency
+layer. There is no backfill for pre-migration payments.
+
+Items are grouped by recipient while preserving their source order, then split
+into consecutive messages of at most 15 items. Acceptance requests group
+`pacs.008` items by receiver. Status notifications group `pacs.002` items by
+recipient; statuses such as `ACSC`, `ACCC`, and `RJCT` can coexist because each
+transaction item carries its own outcome. Every resulting message receives a
+new UUID, used both as `GrpHdr.MsgId` and as `communication_id`.
 
 ## Persisted Message Contract
 
-The business payload is created and serialized once per obligation, then persisted as `BYTEA`. Publication sends the exact stored bytes and never reloads the payment to reconstruct content.
+The business payload is created and serialized once per message, then persisted
+as `BYTEA`. Publication sends the exact stored bytes and never reloads the
+payment to reconstruct content. `outbound_notification` contains only
+`communication_id`, `recipient_ispb`, `payload`, and `created_at`.
 
 Topic, key, and headers are deterministic and therefore not persisted:
 
 - topic: `psp-notifications`;
 - key: `recipient_ispb`;
-- required headers: `notification.communication-id`, `notification.event-type`, `notification.payment-id`, and `notification.schema-version`;
-- optional header: `notification.status`, reconstructed only when `notification_status` is present.
+- required header: `notification.communication-id`.
 
 The producer uses `StringSerializer` for the key, `ByteArraySerializer` for the payload, and `acks=all`.
 

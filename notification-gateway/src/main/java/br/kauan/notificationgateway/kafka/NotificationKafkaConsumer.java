@@ -49,10 +49,6 @@ public class NotificationKafkaConsumer {
             IncomingNotification notification = new IncomingNotification(
                     requiredHeader(record, "notification.communication-id"),
                     ispb,
-                    requiredHeader(record, "notification.event-type"),
-                    requiredHeader(record, "notification.payment-id"),
-                    optionalHeader(record, "notification.status"),
-                    requiredHeader(record, "notification.schema-version"),
                     record.value()
             );
             log.debug(

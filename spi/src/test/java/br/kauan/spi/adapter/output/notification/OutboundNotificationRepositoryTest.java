@@ -33,9 +33,9 @@ class OutboundNotificationRepositoryTest {
         NotificationPublication notification = notification("E2E-IMMUTABLE");
 
         when(jdbcTemplate.execute(org.mockito.ArgumentMatchers
-                .<ConnectionCallback<Void>>any()))
+                .<ConnectionCallback<Integer>>any()))
                 .thenAnswer(invocation -> {
-                    ConnectionCallback<Void> callback = invocation.getArgument(0);
+                    ConnectionCallback<Integer> callback = invocation.getArgument(0);
                     return callback.doInConnection(connection);
                 });
         when(connection.createArrayOf(eq("text"), any(Object[].class))).thenReturn(textArray);
@@ -44,23 +44,26 @@ class OutboundNotificationRepositoryTest {
 
         when(statement.executeUpdate()).thenReturn(1);
 
-        int inserted = new OutboundNotificationRepository(jdbcTemplate).insertAll(List.of(notification));
+        new OutboundNotificationRepository(jdbcTemplate).insertAll(List.of(notification));
 
-        assertThat(inserted).isOne();
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(connection).prepareStatement(sql.capture());
         assertThat(sql.getValue())
                 .contains("INSERT INTO outbound_notification")
                 .contains("FROM unnest(")
-                .contains("ON CONFLICT (communication_id) DO NOTHING")
+                .doesNotContain("ON CONFLICT")
                 .doesNotContain("RETURNING")
+                .doesNotContain("event_type")
+                .doesNotContain("payment_id")
+                .doesNotContain("notification_status")
+                .doesNotContain("schema_version")
                 .doesNotContain("publication_status")
                 .doesNotContain("attempt_count")
                 .doesNotContain("next_attempt_at")
                 .doesNotContain("last_error")
                 .doesNotContain("published_at")
                 .doesNotContain("updated_at");
-        verify(connection, times(6)).createArrayOf(eq("text"), any(Object[].class));
+        verify(connection, times(2)).createArrayOf(eq("text"), any(Object[].class));
         verify(connection).createArrayOf(eq("bytea"), any(Object[].class));
         verify(statement).executeUpdate();
     }
@@ -69,9 +72,7 @@ class OutboundNotificationRepositoryTest {
         return NotificationPublication.create(
                 "20000001",
                 paymentId.getBytes(StandardCharsets.UTF_8),
-                "ACCEPTANCE_REQUEST",
-                paymentId,
-                null
+                paymentId
         );
     }
 }

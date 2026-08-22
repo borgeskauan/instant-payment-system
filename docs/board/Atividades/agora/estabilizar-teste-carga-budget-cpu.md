@@ -2656,3 +2656,67 @@ sem índice e zero índice sem fonte. O perfil SQL não contém
 antigo. Isso comprova a remoção do lifecycle e a convergência final, mas o piso
 sustentado de `2.000 TPS` e o SLA de um segundo permanecem abertos para o
 trabalho de estabilização.
+
+### Batching de mensagens de saída por destinatário
+
+O SPI passou a agrupar, dentro da própria transação de processamento, os itens
+de notificação por PSP destinatário e a emitir mensagens consecutivas de no
+máximo 15 itens. `pacs.008` de aceite é agrupado pelo recebedor; resultados
+`pacs.002` são agrupados pelo destinatário e podem misturar `ACSC`, `ACCC` e
+`RJCT`, pois o status permanece no item. A ordem de entrada é preservada dentro
+de cada grupo.
+
+Cada mensagem recebe um UUID que é usado tanto em `GrpHdr.MsgId` quanto em
+`communication_id`. A transição financeira efetivamente adquirida continua
+sendo a única autoridade para criar itens. A outbox deixou de implementar uma
+segunda idempotência com `ON CONFLICT`: o insert é estrito, e sua falha reverte
+pagamento/status, saldo, auditoria e notificação na transação corrente.
+
+O schema de `outbound_notification` foi reduzido a
+`communication_id`, `recipient_ispb`, `payload` e `created_at`. Kafka carrega o
+destinatário como chave, o payload completo como value e somente
+`notification.communication-id` como header. O Gateway e o reconciler usam o
+mesmo contrato mínimo. O protocolo Pull permanece limitado a 15 mensagens; uma
+resposta pode, portanto, conter até 225 itens de negócio.
+
+O smoke limpo
+`outbound-notification-batching-smoke/20260821_231905` concluiu `1.250/1.250`
+POSTs e todos os `1.250` outcomes, sem contradição nem violação de replay/Pull.
+O p99 foi `247,247 ms`. O relatório saiu inválido apenas porque o rolling mínimo
+do smoke foi `99 TPS` para alvo de `100 TPS`.
+
+O diagnóstico B limpo
+`outbound-notification-batched-15/20260821_232146` foi comparado ao baseline
+pre-batching
+`delivery-index-strict-insert-fallback/20260821_215806`, com o mesmo profile,
+recursos e instrumentação:
+
+| sinal | baseline — uma mensagem por item | B — até 15 itens | variação |
+| --- | ---: | ---: | ---: |
+| rows em `outbound_notification` | `648.923` | `142.524` | `-78,037%` |
+| tempo SQL do insert da outbox | `146,211 s` | `13,483 s` | `-90,779%` |
+| WAL do insert da outbox | `613.432.099 B` | `136.471.982 B` | `-77,753%` |
+| tempo SQL do insert em `delivery_index` | `83,520 s` | `9,280 s` | `-88,889%` |
+| WAL do insert em `delivery_index` | `362.110.006 B` | `57.931.319 B` | `-84,002%` |
+| tempo SQL agregado das 50 queries | `428,799 s` | `217,843 s` | `-49,197%` |
+| WAL agregado das 50 queries | `1.435.220.438 B` | `698.588.931 B` | `-51,325%` |
+| PACS.002 ativo | `908,483 TPS` | `1.563,883 TPS` | `+72,142%` |
+| notificações ao pagador no ativo | `1.105,600 TPS` | `1.951,333 TPS` | `+76,495%` |
+| outcomes finais | `242.877` | `273.969` | `+12,802%` |
+| outcomes ausentes | `14.118` | `0` | — |
+| latência p50 / p99 | `19,854 / 46,036 s` | `1,153 / 2,808 s` | `-94,193% / -93,900%` |
+| TPS médio / mínimo rolling | `1.993,983 / 1.924` | `1.992,283 / 1.900` | `-0,085% / -1,247%` |
+| CPU média PostgreSQL no ativo | `100,209%` | `99,514%` | `-0,695 pp` |
+
+As `142.524` mensagens persistidas carregaram exatamente `712.321` itens:
+média `4,998`, p50 `2`, p95 `15` e máximo `15`. Nenhum
+`communication_id` divergiu de `GrpHdr.MsgId`. Ao final, havia exatamente
+`142.524` rows tanto na outbox quanto no índice, sem notificação não indexada
+nem índice órfão.
+
+O efeito local e o progresso downstream melhoraram de forma material, mas o B
+ainda não prova a meta: o mínimo rolling ficou em `1.900 TPS`, e p50/p95/p99
+continuaram acima do SLA de `1 s` (`1,153 / 2,328 / 2,808 s`). O PostgreSQL
+permaneceu praticamente saturado; o próximo perfil deve partir das novas
+queries dominantes, não do custo de persistência de uma mensagem por item que
+esta mudança removeu.

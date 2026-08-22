@@ -21,7 +21,7 @@ import static org.mockito.Mockito.when;
 class NotificationPublisherTest {
 
     @Test
-    void sendsStoredBytesWithDeterministicTopicKeyAndHeaders() {
+    void sendsStoredBytesWithRecipientKeyAndMessageIdentityOnly() {
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         NotificationPublisher publisher = new NotificationPublisher(kafkaTemplate);
         CompletableFuture<SendResult<String, byte[]>> brokerConfirmation =
@@ -31,9 +31,7 @@ class NotificationPublisherTest {
         NotificationPublication notification = NotificationPublication.create(
                 "20000001",
                 storedPayload,
-                "SETTLED_NOTIFICATION",
-                "E2E-1",
-                "ACSC"
+                "message-1"
         );
 
         assertThat(publisher.publish(notification)).isSameAs(brokerConfirmation);
@@ -46,32 +44,8 @@ class NotificationPublisherTest {
         assertThat(record.value()).isSameAs(storedPayload);
         assertThat(header(record.headers(), "notification.communication-id"))
                 .isEqualTo(notification.communicationId());
-        assertThat(header(record.headers(), "notification.event-type"))
-                .isEqualTo("SETTLED_NOTIFICATION");
-        assertThat(header(record.headers(), "notification.payment-id")).isEqualTo("E2E-1");
-        assertThat(header(record.headers(), "notification.schema-version")).isEqualTo("v1");
-        assertThat(header(record.headers(), "notification.status")).isEqualTo("ACSC");
+        assertThat(record.headers().toArray()).hasSize(1);
         assertThat(record.headers().lastHeader("notification.delivery-id")).isNull();
-    }
-
-    @Test
-    void omitsStatusHeaderWhenStoredStatusIsAbsent() {
-        KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
-        when(kafkaTemplate.send(any(ProducerRecord.class)))
-                .thenReturn(CompletableFuture.completedFuture(sendResult()));
-        NotificationPublisher publisher = new NotificationPublisher(kafkaTemplate);
-
-        publisher.publish(NotificationPublication.create(
-                "20000001",
-                "{}".getBytes(StandardCharsets.UTF_8),
-                "ACCEPTANCE_REQUEST",
-                "E2E-1",
-                null
-        ));
-
-        var captor = forClass(ProducerRecord.class);
-        verify(kafkaTemplate).send(captor.capture());
-        assertThat(captor.getValue().headers().lastHeader("notification.status")).isNull();
     }
 
     private static SendResult<String, byte[]> sendResult() {

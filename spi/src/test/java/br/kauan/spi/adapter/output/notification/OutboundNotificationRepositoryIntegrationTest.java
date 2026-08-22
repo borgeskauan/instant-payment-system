@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 class OutboundNotificationRepositoryIntegrationTest {
@@ -27,23 +28,21 @@ class OutboundNotificationRepositoryIntegrationTest {
     @BeforeEach
     @AfterEach
     void cleanFixtureRows() {
-        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE ?", PAYMENT_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE communication_id LIKE ?", PAYMENT_PREFIX + "%");
     }
 
     @Test
-    void insertsNotificationsInBulkAndKeepsTheOriginalBytesOnReplay() {
+    void insertsNotificationsInBulkAndRejectsADuplicateMessageId() {
         NotificationPublication first = notification(PAYMENT_PREFIX + "1", "original");
         NotificationPublication second = notification(PAYMENT_PREFIX + "2", "second");
 
-        int inserted = repository.insertAll(List.of(first, second));
-        int replayed = repository.insertAll(List.of(
-                notification(PAYMENT_PREFIX + "1", "replayed")
-        ));
+        repository.insertAll(List.of(first, second));
 
-        assertThat(inserted).isEqualTo(2);
-        assertThat(replayed).isZero();
+        assertThatThrownBy(() -> repository.insertAll(List.of(
+                notification(PAYMENT_PREFIX + "1", "replayed")
+        ))).isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM outbound_notification WHERE payment_id LIKE ?",
+                "SELECT count(*) FROM outbound_notification WHERE communication_id LIKE ?",
                 Integer.class,
                 PAYMENT_PREFIX + "%"
         )).isEqualTo(2);
@@ -58,9 +57,7 @@ class OutboundNotificationRepositoryIntegrationTest {
         return NotificationPublication.create(
                 "20000001",
                 bytes(payload),
-                "ACCEPTANCE_REQUEST",
-                paymentId,
-                null
+                paymentId
         );
     }
 

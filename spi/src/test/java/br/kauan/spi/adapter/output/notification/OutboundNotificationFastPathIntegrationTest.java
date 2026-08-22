@@ -57,7 +57,7 @@ class OutboundNotificationFastPathIntegrationTest {
 
     @AfterEach
     void cleanFixtureRows() {
-        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE ?", PAYMENT_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM outbound_notification WHERE communication_id LIKE ?", PAYMENT_PREFIX + "%");
     }
 
     @Test
@@ -122,9 +122,7 @@ class OutboundNotificationFastPathIntegrationTest {
         return NotificationPublication.create(
                 "20000001",
                 paymentId.getBytes(StandardCharsets.UTF_8),
-                "ACCEPTANCE_REQUEST",
-                paymentId,
-                null
+                paymentId
         );
     }
 }

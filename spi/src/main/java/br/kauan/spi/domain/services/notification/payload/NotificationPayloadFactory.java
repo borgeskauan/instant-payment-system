@@ -23,22 +23,36 @@ import java.util.UUID;
 public class NotificationPayloadFactory {
 
     public Map<String, Object> paymentNotification(List<PaymentTransactionCommand> transactions) {
+        return paymentNotification(UUID.randomUUID().toString(), transactions);
+    }
+
+    public Map<String, Object> paymentNotification(
+            String messageId,
+            List<PaymentTransactionCommand> transactions
+    ) {
         return orderedMap(
-                "GrpHdr", groupHeader(transactions.size()),
+                "GrpHdr", groupHeader(messageId, transactions.size()),
                 "CdtTrfTxInf", paymentItems(transactions)
         );
     }
 
     public Map<String, Object> statusNotification(List<StatusReportCommand> statusReports) {
+        return statusNotification(UUID.randomUUID().toString(), statusReports);
+    }
+
+    public Map<String, Object> statusNotification(
+            String messageId,
+            List<StatusReportCommand> statusReports
+    ) {
         return orderedMap(
-                "GrpHdr", groupHeader(statusReports.size()),
+                "GrpHdr", groupHeader(messageId, statusReports.size()),
                 "TxInfAndSts", statusItems(statusReports)
         );
     }
 
-    private Map<String, Object> groupHeader(int totalTransactions) {
+    private Map<String, Object> groupHeader(String messageId, int totalTransactions) {
         return orderedMap(
-                "MsgId", UUID.randomUUID().toString(),
+                "MsgId", messageId,
                 "CreDtTm", Instant.now().atOffset(ZoneOffset.UTC),
                 "NbOfTxs", BigInteger.valueOf(totalTransactions)
         );

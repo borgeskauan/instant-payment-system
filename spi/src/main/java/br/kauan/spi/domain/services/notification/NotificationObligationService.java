@@ -15,7 +15,10 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import static br.kauan.spi.Utils.getBankCode;
 
@@ -23,9 +26,7 @@ import static br.kauan.spi.Utils.getBankCode;
 @Service
 public class NotificationObligationService {
 
-    private static final String ACCEPTANCE_REQUEST = "ACCEPTANCE_REQUEST";
-    private static final String REJECTED_NOTIFICATION = "REJECTED_NOTIFICATION";
-    private static final String SETTLED_NOTIFICATION = "SETTLED_NOTIFICATION";
+    static final int MAX_ITEMS_PER_MESSAGE = 15;
 
     private final NotificationPayloadFactory payloadFactory;
     private final NotificationContentSerializer contentSerializer;
@@ -49,22 +50,21 @@ public class NotificationObligationService {
             return;
         }
 
-        List<NotificationPublication> obligations = new ArrayList<>(paymentTransactions.size());
+        Map<String, List<PaymentTransactionCommand>> byRecipient = new LinkedHashMap<>();
         for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
             validatePaymentTransaction(paymentTransaction);
             String receiverIspb = validatedIspb(getBankCode(paymentTransaction.getReceiver()));
-            byte[] payload = contentSerializer.serialize(
-                    payloadFactory.paymentNotification(List.of(paymentTransaction))
-            );
-            obligations.add(NotificationPublication.create(
-                    receiverIspb,
-                    payload,
-                    ACCEPTANCE_REQUEST,
-                    paymentTransaction.getPaymentId(),
-                    null
-            ));
+            byRecipient.computeIfAbsent(receiverIspb, ignored -> new ArrayList<>())
+                    .add(paymentTransaction);
         }
 
+        List<NotificationPublication> obligations = new ArrayList<>();
+        for (Map.Entry<String, List<PaymentTransactionCommand>> recipient : byRecipient.entrySet()) {
+            forEachChunk(recipient.getValue(), chunk -> obligations.add(paymentObligation(
+                    recipient.getKey(),
+                    chunk
+            )));
+        }
         store(obligations);
         log.debug("Acceptance notification obligations stored. payments={}", paymentTransactions.size());
     }
@@ -77,37 +77,44 @@ public class NotificationObligationService {
             return;
         }
 
-        List<NotificationPublication> obligations =
-                new ArrayList<>(settledPayments.size() * 2 + rejectedPayments.size());
+        Map<String, List<StatusReportCommand>> byRecipient = new LinkedHashMap<>();
 
         for (PaymentTransactionCommand paymentTransaction : settledPayments) {
             validatePaymentTransaction(paymentTransaction);
             String receiverIspb = validatedIspb(getBankCode(paymentTransaction.getReceiver()));
             String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
-            obligations.add(statusObligation(
-                    paymentTransaction,
+            addStatus(byRecipient,
                     receiverIspb,
+                    paymentTransaction,
                     PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER,
                     null
-            ));
-            obligations.add(statusObligation(
-                    paymentTransaction,
+            );
+            addStatus(byRecipient,
                     senderIspb,
+                    paymentTransaction,
                     PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER,
                     null
-            ));
+            );
         }
 
         for (PaymentRejection rejection : rejectedPayments) {
             PaymentTransactionCommand paymentTransaction = rejection.payment();
             validatePaymentTransaction(paymentTransaction);
             String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
-            obligations.add(statusObligation(
-                    paymentTransaction,
+            addStatus(byRecipient,
                     senderIspb,
+                    paymentTransaction,
                     PaymentStatus.REJECTED,
                     rejection.reason()
-            ));
+            );
+        }
+
+        List<NotificationPublication> obligations = new ArrayList<>();
+        for (Map.Entry<String, List<StatusReportCommand>> recipient : byRecipient.entrySet()) {
+            forEachChunk(recipient.getValue(), chunk -> obligations.add(statusObligation(
+                    recipient.getKey(),
+                    chunk
+            )));
         }
 
         store(obligations);
@@ -118,9 +125,10 @@ public class NotificationObligationService {
         );
     }
 
-    private NotificationPublication statusObligation(
-            PaymentTransactionCommand paymentTransaction,
+    private void addStatus(
+            Map<String, List<StatusReportCommand>> byRecipient,
             String recipientIspb,
+            PaymentTransactionCommand paymentTransaction,
             PaymentStatus paymentStatus,
             PaymentRejectionReason rejectionReason
     ) {
@@ -129,30 +137,51 @@ public class NotificationObligationService {
                 .status(paymentStatus)
                 .reasons(notificationReasons(rejectionReason))
                 .build();
+        byRecipient.computeIfAbsent(recipientIspb, ignored -> new ArrayList<>()).add(statusReport);
+    }
+
+    private NotificationPublication paymentObligation(
+            String recipientIspb,
+            List<PaymentTransactionCommand> paymentTransactions
+    ) {
+        String messageId = UUID.randomUUID().toString();
         byte[] payload = contentSerializer.serialize(
-                payloadFactory.statusNotification(List.of(statusReport))
+                payloadFactory.paymentNotification(messageId, paymentTransactions)
         );
         return NotificationPublication.create(
                 recipientIspb,
                 payload,
-                paymentStatus == PaymentStatus.REJECTED ? REJECTED_NOTIFICATION : SETTLED_NOTIFICATION,
-                paymentTransaction.getPaymentId(),
-                notificationStatus(paymentStatus)
+                messageId
         );
     }
 
-    private void store(List<NotificationPublication> obligations) {
-        int inserted = outboundNotificationRepository.insertAll(obligations);
-        if (inserted == obligations.size()) {
-            eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
-        } else {
-            log.warn(
-                    "Outbound notification conflicts detected; skipping Kafka fast path for the batch. "
-                            + "requested={}, inserted={}",
-                    obligations.size(),
-                    inserted
-            );
+    private NotificationPublication statusObligation(
+            String recipientIspb,
+            List<StatusReportCommand> statusReports
+    ) {
+        String messageId = UUID.randomUUID().toString();
+        byte[] payload = contentSerializer.serialize(
+                payloadFactory.statusNotification(messageId, statusReports)
+        );
+        return NotificationPublication.create(
+                recipientIspb,
+                payload,
+                messageId
+        );
+    }
+
+    private <T> void forEachChunk(List<T> items, java.util.function.Consumer<List<T>> consumer) {
+        for (int start = 0; start < items.size(); start += MAX_ITEMS_PER_MESSAGE) {
+            consumer.accept(List.copyOf(items.subList(
+                    start,
+                    Math.min(start + MAX_ITEMS_PER_MESSAGE, items.size())
+            )));
         }
+    }
+
+    private void store(List<NotificationPublication> obligations) {
+        outboundNotificationRepository.insertAll(obligations);
+        eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
     }
 
     private List<Reason> notificationReasons(PaymentRejectionReason rejectionReason) {
@@ -183,13 +212,4 @@ public class NotificationObligationService {
         return ispb;
     }
 
-    private String notificationStatus(PaymentStatus paymentStatus) {
-        return switch (paymentStatus) {
-            case ACCEPTED_AND_SETTLED_FOR_RECEIVER -> "ACCC";
-            case ACCEPTED_AND_SETTLED_FOR_SENDER -> "ACSC";
-            case REJECTED -> "RJCT";
-            case ACCEPTED_IN_PROCESS, WAITING_ACCEPTANCE, ACCEPTED_AND_SETTLED ->
-                    throw new IllegalArgumentException("No notification status for: " + paymentStatus);
-        };
-    }
 }

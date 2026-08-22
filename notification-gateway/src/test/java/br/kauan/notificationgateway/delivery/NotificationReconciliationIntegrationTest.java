@@ -67,10 +67,6 @@ class NotificationReconciliationIntegrationTest {
                 CREATE TABLE IF NOT EXISTS outbound_notification (
                     communication_id TEXT PRIMARY KEY,
                     recipient_ispb TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    payment_id TEXT NOT NULL,
-                    notification_status TEXT,
-                    schema_version TEXT NOT NULL,
                     payload BYTEA NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -167,31 +163,19 @@ class NotificationReconciliationIntegrationTest {
         IncomingNotification notification = new IncomingNotification(
                 communicationId,
                 recipientIspb,
-                "SETTLED_NOTIFICATION",
-                "E2E-" + communicationId,
-                "ACSC",
-                "v1",
                 payload.getBytes(StandardCharsets.UTF_8)
         );
         jdbcTemplate.update("""
                 INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
-                    event_type,
-                    payment_id,
-                    notification_status,
-                    schema_version,
                     payload,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
                 """,
                 notification.communicationId(),
                 notification.recipientIspb(),
-                notification.eventType(),
-                notification.paymentId(),
-                notification.status(),
-                notification.schemaVersion(),
                 notification.payload()
         );
         return notification;

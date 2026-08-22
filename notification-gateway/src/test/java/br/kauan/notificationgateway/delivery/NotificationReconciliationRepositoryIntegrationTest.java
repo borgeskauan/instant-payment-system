@@ -46,10 +46,6 @@ class NotificationReconciliationRepositoryIntegrationTest {
                 CREATE TABLE IF NOT EXISTS outbound_notification (
                     communication_id TEXT PRIMARY KEY,
                     recipient_ispb TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    payment_id TEXT NOT NULL,
-                    notification_status TEXT,
-                    schema_version TEXT NOT NULL,
                     payload BYTEA NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -59,9 +55,9 @@ class NotificationReconciliationRepositoryIntegrationTest {
 
     @Test
     void returnsOnlyCanonicalNotificationsWithoutADeliveryIndex() {
-        storeOutboundNotification("v1:first", "20000001", "ACSC", "first");
-        storeOutboundNotification("v1:published", "20000002", "RJCT", "published");
-        storeOutboundNotification("v1:indexed", "20000001", "RJCT", "indexed");
+        storeOutboundNotification("v1:first", "20000001", "first");
+        storeOutboundNotification("v1:published", "20000002", "published");
+        storeOutboundNotification("v1:indexed", "20000001", "indexed");
         jdbcTemplate.update("""
                 INSERT INTO delivery_index (communication_id, recipient_ispb, delivery_position)
                 VALUES ('v1:indexed', '20000001', 1)
@@ -73,24 +69,19 @@ class NotificationReconciliationRepositoryIntegrationTest {
         assertThat(notifications.getFirst()).satisfies(notification -> {
             assertThat(notification.communicationId()).isEqualTo("v1:first");
             assertThat(notification.recipientIspb()).isEqualTo("20000001");
-            assertThat(notification.eventType()).isEqualTo("SETTLED_NOTIFICATION");
-            assertThat(notification.paymentId()).isEqualTo("E2E-v1:first");
-            assertThat(notification.status()).isEqualTo("ACSC");
-            assertThat(notification.schemaVersion()).isEqualTo("v1");
             assertThat(notification.payload()).isEqualTo(bytes("first"));
         });
         assertThat(notifications.getLast()).satisfies(notification -> {
             assertThat(notification.communicationId()).isEqualTo("v1:published");
-            assertThat(notification.status()).isEqualTo("RJCT");
             assertThat(notification.payload()).isEqualTo(bytes("published"));
         });
     }
 
     @Test
     void pagesByCommunicationIdWithoutPersistingAReconciliationCursor() {
-        storeOutboundNotification("v1:c", "20000001", "ACSC", "c");
-        storeOutboundNotification("v1:a", "20000001", "ACSC", "a");
-        storeOutboundNotification("v1:b", "20000001", "ACSC", "b");
+        storeOutboundNotification("v1:c", "20000001", "c");
+        storeOutboundNotification("v1:a", "20000001", "a");
+        storeOutboundNotification("v1:b", "20000001", "b");
 
         List<IncomingNotification> firstPage = repository.findUnindexedAfter("", 2);
         List<IncomingNotification> secondPage = repository.findUnindexedAfter(
@@ -109,15 +100,15 @@ class NotificationReconciliationRepositoryIntegrationTest {
 
     @Test
     void nonPositiveLimitReturnsNoRows() {
-        storeOutboundNotification("v1:first", "20000001", "ACSC", "first");
+        storeOutboundNotification("v1:first", "20000001", "first");
 
         assertThat(repository.findUnindexedAfter("", 0)).isEmpty();
     }
 
     @Test
     void leavesRecentRowsForTheKafkaFastPath() {
-        storeOutboundNotification("v1:old", "20000001", "ACSC", "old");
-        storeRecentOutboundNotification("v1:recent", "20000001", "ACSC", "recent");
+        storeOutboundNotification("v1:old", "20000001", "old");
+        storeRecentOutboundNotification("v1:recent", "20000001", "recent");
 
         assertThat(repository.findUnindexedAfter("", 1_000))
                 .extracting(IncomingNotification::communicationId)
@@ -127,26 +118,19 @@ class NotificationReconciliationRepositoryIntegrationTest {
     private void storeOutboundNotification(
             String communicationId,
             String recipientIspb,
-            String status,
             String payload
     ) {
         jdbcTemplate.update("""
                 INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
-                    event_type,
-                    payment_id,
-                    notification_status,
-                    schema_version,
                     payload,
                     created_at
                 )
-                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP - INTERVAL '2 minutes')
                 """,
                 communicationId,
                 recipientIspb,
-                "E2E-" + communicationId,
-                status,
                 bytes(payload)
         );
     }
@@ -154,26 +138,19 @@ class NotificationReconciliationRepositoryIntegrationTest {
     private void storeRecentOutboundNotification(
             String communicationId,
             String recipientIspb,
-            String status,
             String payload
     ) {
         jdbcTemplate.update("""
                 INSERT INTO outbound_notification (
                     communication_id,
                     recipient_ispb,
-                    event_type,
-                    payment_id,
-                    notification_status,
-                    schema_version,
                     payload,
                     created_at
                 )
-                VALUES (?, ?, 'SETTLED_NOTIFICATION', ?, ?, 'v1', ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 communicationId,
                 recipientIspb,
-                "E2E-" + communicationId,
-                status,
                 bytes(payload)
         );
     }

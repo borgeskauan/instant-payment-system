@@ -140,10 +140,6 @@ class DeliveryIndexRepositoryIntegrationTest {
         IncomingNotification invalid = new IncomingNotification(
                 "v1:invalid",
                 "20000001",
-                "SETTLED_NOTIFICATION",
-                "E2E-1",
-                "ACSC",
-                "v1",
                 null
         );
 
@@ -271,10 +267,6 @@ class DeliveryIndexRepositoryIntegrationTest {
         return new IncomingNotification(
                 communicationId,
                 recipientIspb,
-                "SETTLED_NOTIFICATION",
-                "E2E-1",
-                "ACSC",
-                "v1",
                 bytes(payload)
         );
     }

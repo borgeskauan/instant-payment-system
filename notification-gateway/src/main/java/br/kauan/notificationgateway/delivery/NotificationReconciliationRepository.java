@@ -12,10 +12,6 @@ public class NotificationReconciliationRepository {
             SELECT
                 notification.communication_id,
                 notification.recipient_ispb,
-                notification.event_type,
-                notification.payment_id,
-                notification.notification_status,
-                notification.schema_version,
                 notification.payload
             FROM outbound_notification AS notification
             WHERE notification.communication_id > ?
@@ -45,10 +41,6 @@ public class NotificationReconciliationRepository {
                 (rows, ignored) -> new IncomingNotification(
                         rows.getString("communication_id"),
                         rows.getString("recipient_ispb"),
-                        rows.getString("event_type"),
-                        rows.getString("payment_id"),
-                        rows.getString("notification_status"),
-                        rows.getString("schema_version"),
                         rows.getBytes("payload")
                 ),
                 cursor,

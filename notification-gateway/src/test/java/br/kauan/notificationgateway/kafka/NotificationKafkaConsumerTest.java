@@ -23,8 +23,8 @@ class NotificationKafkaConsumerTest {
     void decodesTheWholeKafkaPollBeforeEnsuringItsNotificationsAreIndexed() {
         NotificationIndexingService indexingService = mock(NotificationIndexingService.class);
         NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(indexingService);
-        ConsumerRecord<String, byte[]> first = record(10, "20000001", "v1:first", "E2E-1", "ACSC", "first");
-        ConsumerRecord<String, byte[]> second = record(11, "20000002", "v1:second", "E2E-2", "RJCT", "second");
+        ConsumerRecord<String, byte[]> first = record(10, "20000001", "message-1", "first");
+        ConsumerRecord<String, byte[]> second = record(11, "20000002", "message-2", "second");
 
         consumer.consume(List.of(first, second));
 
@@ -33,25 +33,26 @@ class NotificationKafkaConsumerTest {
         verify(indexingService).ensureIndexed(notifications.capture());
         assertThat(notifications.getValue()).extracting(
                 IncomingNotification::communicationId,
-                IncomingNotification::recipientIspb,
-                IncomingNotification::paymentId,
-                IncomingNotification::status
+                IncomingNotification::recipientIspb
         ).containsExactly(
-                tuple("v1:first", "20000001", "E2E-1", "ACSC"),
-                tuple("v1:second", "20000002", "E2E-2", "RJCT")
+                tuple("message-1", "20000001"),
+                tuple("message-2", "20000002")
         );
+        assertThat(notifications.getValue())
+                .extracting(IncomingNotification::payload)
+                .containsExactly(bytes("first"), bytes("second"));
     }
 
     @Test
     void malformedRecordPreventsAnyPersistenceOrSignal() {
         NotificationIndexingService indexingService = mock(NotificationIndexingService.class);
         NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(indexingService);
-        ConsumerRecord<String, byte[]> invalid = record(10, "20000001", "v1:first", "E2E-1", "ACSC", "first");
-        invalid.headers().remove("notification.schema-version");
+        ConsumerRecord<String, byte[]> invalid = record(10, "20000001", "message-1", "first");
+        invalid.headers().remove("notification.communication-id");
 
         assertThatThrownBy(() -> consumer.consume(List.of(invalid)))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Missing Kafka header: notification.schema-version");
+                .hasMessage("Missing Kafka header: notification.communication-id");
         verifyNoInteractions(indexingService);
     }
 
@@ -59,8 +60,6 @@ class NotificationKafkaConsumerTest {
             long offset,
             String ispb,
             String communicationId,
-            String paymentId,
-            String status,
             String payload
     ) {
         ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
@@ -68,10 +67,6 @@ class NotificationKafkaConsumerTest {
         );
         RecordHeaders headers = new RecordHeaders();
         headers.add("notification.communication-id", bytes(communicationId));
-        headers.add("notification.event-type", bytes("SETTLED_NOTIFICATION"));
-        headers.add("notification.payment-id", bytes(paymentId));
-        headers.add("notification.status", bytes(status));
-        headers.add("notification.schema-version", bytes("v1"));
         headers.forEach(record.headers()::add);
         return record;
     }

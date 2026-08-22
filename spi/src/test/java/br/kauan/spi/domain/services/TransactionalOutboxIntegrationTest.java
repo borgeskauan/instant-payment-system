@@ -43,7 +43,9 @@ class TransactionalOutboxIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
-        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
+        jdbcTemplate.update(
+                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE '%E2E-TX-OUTBOX-%'"
+        );
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update(
                 "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
@@ -241,7 +243,10 @@ class TransactionalOutboxIntegrationTest {
         assertThat(outboxCount(payment.getPaymentId())).isEqualTo(1);
         assertThat(auditRows(payment.getPaymentId())).hasSize(1);
 
-        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id = ?", payment.getPaymentId());
+        jdbcTemplate.update(
+                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "%" + payment.getPaymentId() + "%"
+        );
         processor.processTransactions(request);
 
         assertThat(outboxCount(payment.getPaymentId())).isZero();
@@ -270,18 +275,28 @@ class TransactionalOutboxIntegrationTest {
     private List<OutboundNotificationRow> outboxRows(String paymentId) {
         return jdbcTemplate.query(
                 """
-                        SELECT event_type, recipient_ispb, notification_status
+                        SELECT recipient_ispb, payload
                         FROM outbound_notification
-                        WHERE payment_id = ?
+                        WHERE convert_from(payload, 'UTF8') LIKE ?
                         ORDER BY recipient_ispb
                         """,
-                (resultSet, rowNumber) -> new OutboundNotificationRow(
-                        resultSet.getString(1),
-                        resultSet.getString(2),
-                        resultSet.getString(3)
+                (resultSet, rowNumber) -> outboundNotificationRow(
+                        resultSet.getString("recipient_ispb"),
+                        new String(resultSet.getBytes("payload"), java.nio.charset.StandardCharsets.UTF_8)
                 ),
-                paymentId
+                "%" + paymentId + "%"
         );
+    }
+
+    private OutboundNotificationRow outboundNotificationRow(String recipientIspb, String payload) {
+        if (!payload.contains("\"TxSts\"")) {
+            return new OutboundNotificationRow("ACCEPTANCE_REQUEST", recipientIspb, null);
+        }
+        if (payload.contains("\"TxSts\":\"RJCT\"")) {
+            return new OutboundNotificationRow("REJECTED_NOTIFICATION", recipientIspb, "RJCT");
+        }
+        String status = payload.contains("\"TxSts\":\"ACCC\"") ? "ACCC" : "ACSC";
+        return new OutboundNotificationRow("SETTLED_NOTIFICATION", recipientIspb, status);
     }
 
     private List<AuditRow> auditRows(String paymentId) {
@@ -317,9 +332,9 @@ class TransactionalOutboxIntegrationTest {
 
     private int outboxCount(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM outbound_notification WHERE payment_id = ?",
+                "SELECT count(*) FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
                 Integer.class,
-                paymentId
+                "%" + paymentId + "%"
         );
     }
 
@@ -341,9 +356,9 @@ class TransactionalOutboxIntegrationTest {
 
     private String outboxPayload(String paymentId) {
         byte[] payload = jdbcTemplate.queryForObject(
-                "SELECT payload FROM outbound_notification WHERE payment_id = ?",
+                "SELECT payload FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
                 byte[].class,
-                paymentId
+                "%" + paymentId + "%"
         );
         return new String(payload, java.nio.charset.StandardCharsets.UTF_8);
     }

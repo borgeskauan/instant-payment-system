@@ -50,10 +50,6 @@ class NotificationIndexingServiceTest {
         return new IncomingNotification(
                 communicationId,
                 recipientIspb,
-                "SETTLED_NOTIFICATION",
-                "E2E-1",
-                "ACSC",
-                "v1",
                 communicationId.getBytes(StandardCharsets.UTF_8)
         );
     }

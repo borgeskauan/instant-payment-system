@@ -30,12 +30,6 @@ public class NotificationPublisher {
         ProducerRecord<String, byte[]> record =
                 new ProducerRecord<>(NOTIFICATION_TOPIC, notification.recipientIspb(), notification.payload());
         addHeader(record, "notification.communication-id", notification.communicationId());
-        addHeader(record, "notification.event-type", notification.eventType());
-        addHeader(record, "notification.payment-id", notification.paymentId());
-        addHeader(record, "notification.schema-version", notification.schemaVersion());
-        if (notification.status() != null && !notification.status().isBlank()) {
-            addHeader(record, "notification.status", notification.status());
-        }
         return record;
     }
 

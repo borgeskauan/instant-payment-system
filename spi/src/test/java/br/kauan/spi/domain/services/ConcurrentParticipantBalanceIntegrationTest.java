@@ -50,7 +50,10 @@ class ConcurrentParticipantBalanceIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
-        jdbcTemplate.update("DELETE FROM outbound_notification WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
+        jdbcTemplate.update(
+                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "%" + PAYMENT_ID_PREFIX + "%"
+        );
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
         jdbcTemplate.update(
                 "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
@@ -218,11 +221,16 @@ class ConcurrentParticipantBalanceIntegrationTest {
     }
 
     private int outboxCount(String paymentId, String eventType) {
-        return count(
-                "SELECT COUNT(*) FROM outbound_notification WHERE payment_id = ? AND event_type = ?",
-                paymentId,
-                eventType
-        );
+        String payloadMarker = switch (eventType) {
+            case "ACCEPTANCE_REQUEST" -> "CdtTrfTxInf";
+            default -> throw new IllegalArgumentException("Unsupported event type: " + eventType);
+        };
+        return count("""
+                SELECT COUNT(*)
+                FROM outbound_notification
+                WHERE convert_from(payload, 'UTF8') LIKE ?
+                  AND convert_from(payload, 'UTF8') LIKE ?
+                """, "%" + paymentId + "%", "%" + payloadMarker + "%");
     }
 
     private int statusOutboxCount(String paymentId) {
@@ -230,10 +238,10 @@ class ConcurrentParticipantBalanceIntegrationTest {
                 """
                         SELECT COUNT(*)
                         FROM outbound_notification
-                        WHERE payment_id = ?
-                          AND event_type IN ('SETTLED_NOTIFICATION', 'REJECTED_NOTIFICATION')
+                        WHERE convert_from(payload, 'UTF8') LIKE ?
+                          AND convert_from(payload, 'UTF8') LIKE '%TxSts%'
                         """,
-                paymentId
+                "%" + paymentId + "%"
         );
     }
 

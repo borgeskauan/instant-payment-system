@@ -25,10 +25,6 @@ class OutboundNotificationSchemaIntegrationTest {
         assertThat(columns()).containsExactly(
                 "communication_id",
                 "recipient_ispb",
-                "event_type",
-                "payment_id",
-                "notification_status",
-                "schema_version",
                 "payload",
                 "created_at"
         );
