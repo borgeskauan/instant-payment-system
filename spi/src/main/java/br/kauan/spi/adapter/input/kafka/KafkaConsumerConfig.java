@@ -38,7 +38,7 @@ public class KafkaConsumerConfig {
     @Value("${spi.kafka.payment-request.max-poll-records:500}")
     private int paymentRequestMaxPollRecords;
 
-    @Value("${spi.kafka.payment-request.fetch-min-bytes:131072}")
+    @Value("${spi.kafka.payment-request.fetch-min-bytes:57344}")
     private int paymentRequestFetchMinBytes;
 
     @Value("${spi.kafka.payment-request.fetch-max-wait-ms:100}")

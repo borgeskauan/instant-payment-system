@@ -2755,12 +2755,13 @@ scratch foi removido e a tabela operacional permaneceu com `273.969` rows.
 O candidato implementado cria factories independentes. PACS.008 mantém
 `max.poll.records=500`, passa a `fetch.min.bytes=131.072` e
 `fetch.max.wait.ms=100`; em `2.000 TPS`, o limite temporal deve formar cerca de
-`200` registros quando o mínimo em bytes não for atingido antes. PACS.002
-preserva `500 / 1.024 / 10 ms`, pois adicionar espera à transição de settlement
-não participa da hipótese. Esses números são candidatos experimentais, não um
-novo contrato de negócio. O próximo diagnóstico deve registrar a cardinalidade
-real recebida pelo listener PACS.008 e comparar throughput, cauda, CPU, SQL e
-WAL com `outbound-notification-batched-15/20260821_232146`.
+`200` registros quando o mínimo em bytes não for atingido antes. Naquele A/B,
+PACS.002 ainda preservava `500 / 1.024 / 10 ms`, pois adicionar espera à
+transição de settlement não participava da hipótese. Esses números são
+candidatos experimentais, não um novo contrato de negócio. O próximo
+diagnóstico deve registrar a cardinalidade real recebida pelo listener
+PACS.008 e comparar throughput, cauda, CPU, SQL e WAL com
+`outbound-notification-batched-15/20260821_232146`.
 
 ### A/B end-to-end do batching de admissão PACS.008
 
@@ -3307,3 +3308,84 @@ de `2.000 TPS`. Não houve outcome ausente ou contraditório, violação de repl
 Pull, carga fora da janela ou estouro do SLA ativo. O código permanece no
 worktree para decisão explícita do projeto; o benchmark não acionou reversão
 automática.
+
+### Ajuste final do batching PACS.002
+
+Depois de estabilizar o PACS.008, o consumer PACS.002 ainda formava lotes
+pequenos e executava muitas transações curtas. A investigação preservou um
+consumer, o workload, os recursos e o timeout máximo de `125 ms`, alterando uma
+variável por vez. Os primeiros candidatos foram:
+
+1. `pacs002-kafka-batch-200/20260823_042452`: `500 / 128 KiB / 125 ms`,
+   buscando aproximadamente `200` status por timeout no ativo;
+2. `pacs002-fetch-min-16k/20260823_060042`: manteve o máximo em `500` e
+   reduziu somente `fetch.min.bytes` para `16 KiB`;
+3. `pacs002-fetch-16k-max-220/20260823_060838`: limitou o poll a `220` para
+   testar se evitar lotes maiores protegeria a cauda;
+4. `pacs002-batch-formation-125ms/20260823_072200`: adicionou ao JFR a
+   cardinalidade real entregue aos listeners;
+5. `pacs002-callback-idle-125ms/20260823_075131`: estendeu o mesmo evento JFR
+   com a duração integral do callback, permitindo separar processamento de
+   espera entre polls.
+
+Reduzir o mínimo de `128 KiB` para `16 KiB` melhorou a latência observada, mas
+o limite de `220` criou uma nova fronteira artificial. Entre o primeiro
+candidato e o limite de `220`, as chamadas do lock/read PACS.002 subiram de
+`1.479` para `1.864`, e as chamadas do update aceito, de `1.302` para `1.709`.
+A instrumentação confirmou que o p95, p99 e máximo do batch ficavam exatamente
+em `220`, caracterizando fragmentação pelo limite, não falta de registros no
+consumer.
+
+O A/B decisivo removeu somente essa fragmentação. O controle
+`pacs002-callback-idle-125ms/20260823_075131` usou `220 / 16 KiB / 125 ms`; o
+candidato `pacs002-fetch-16k-max-500-callback-idle/20260823_081953` usou
+`500 / 16 KiB / 125 ms`. Profiles e planos de execução eram byte-idênticos.
+
+| sinal no ativo | máximo `220` | máximo `500` | leitura |
+| --- | ---: | ---: | --- |
+| callbacks PACS.002 | `491` | `391` | `-20,37%` |
+| registros observados | `63.380` | `63.657` | população equivalente |
+| batch médio | `129,084` | `162,806` | `+26,13%` |
+| batch p50 / p95 / p99 / máximo | `164 / 220 / 220 / 220` | `177 / 277 / 319 / 339` | o poll deixou de cortar lotes disponíveis |
+| processamento total dos callbacks | `7.171,355 ms` | `5.442,326 ms` | `-24,11%` |
+| processamento p95 / p99 | `30,838 / 134,368 ms` | `25,825 / 62,490 ms` | menor cauda de processamento |
+| chamadas do lock/read PACS.002 | `1.888` | `1.571` | `-16,79%` |
+| chamadas do update aceito | `1.729` | `1.406` | `-18,68%` |
+| latência E2E p50 | `176,629 ms` | `179,148 ms` | praticamente estável |
+| latência E2E p95 / p99 | `377,347 / 500,166 ms` | `320,677 / 489,036 ms` | cauda menor |
+
+Ambos os runs aceitaram todos os POSTs e concluíram todos os outcomes, sem
+ausência, contradição ou violação de replay/Pull. O `max.poll.records=500` é uma
+capacidade máxima, não um batch-alvo: o maior lote observado foi `339`.
+
+Foi executado ainda o candidato descartável
+`pacs002-fetch-20k-max-500-callback-idle/20260823_084032`, alterando somente
+`fetch.min.bytes` de `16 KiB` para `20 KiB`. Ele não produziu o aumento de lote
+esperado: o batch médio passou apenas de `162,806` para `164,354`, e os
+callbacks, de `391` para `387`. Em contrapartida:
+
+| sinal | `16 KiB` | `20 KiB` |
+| --- | ---: | ---: |
+| processamento total dos callbacks | `5.442,326 ms` | `8.686,456 ms` |
+| processamento p95 / p99 | `25,825 / 62,490 ms` | `74,555 / 127,529 ms` |
+| latência E2E p50 | `179,148 ms` | `207,184 ms` |
+| latência E2E p95 / p99 | `320,677 / 489,036 ms` | `482,211 / 668,482 ms` |
+| CPU média PostgreSQL no ativo | `61,96%` | `71,17%` |
+| fallback SQL do Pull | `100` chamadas | `1.631` chamadas |
+| mínimo rolling | `1.937 TPS` | `1.918 TPS` |
+
+O ganho de quatro callbacks não compensou a piora sistêmica. O experimento de
+`20 KiB` foi descartado e a configuração voltou ao estado commitado. A decisão
+vigente para o ambiente de performance é:
+
+| consumer | concorrência | `max.poll.records` | `fetch.min.bytes` | `fetch.max.wait.ms` |
+| --- | ---: | ---: | ---: | ---: |
+| PACS.008 | `1` | `500` | `128 KiB` | `100 ms` |
+| PACS.002 | `1` | `500` | `16 KiB` | `125 ms` |
+
+O evento JFR de batch permanece como instrumentação permanente e registra
+tópico, quantidade de records e duração do callback. Nenhum desses diagnósticos
+qualifica sozinho a meta contratada: todos ficaram abaixo do piso rolling
+contínuo de `2.000 TPS`. Eles caracterizam somente a decisão de batching. A
+corretude permaneceu íntegra e o controle final de `16 KiB` manteve toda a
+latência ativa abaixo do SLA de `1 s`.

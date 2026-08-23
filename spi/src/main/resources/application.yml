@@ -40,7 +40,7 @@ spi:
     status-report-group-id: spi-status-report-consumer-group
     payment-request:
       max-poll-records: 500
-      fetch-min-bytes: 131072
+      fetch-min-bytes: 57344
       fetch-max-wait-ms: 100
     status-report:
       max-poll-records: 500
