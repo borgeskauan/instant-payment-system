@@ -26,11 +26,11 @@ import (
 func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run")
 	err := Run(Config{
-		TargetTxRate: math.MaxInt/4 + 1,
-		Warmup:       config.Warmup{TargetTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
-		Duration:     time.Second,
-		Scenarios:    mixedPlannerScenarios(),
-		OutputDir:    outputDir,
+		OfferedTxRate: math.MaxInt/4 + 1,
+		Warmup:        config.Warmup{OfferedTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
+		Duration:      time.Second,
+		Scenarios:     mixedPlannerScenarios(),
+		OutputDir:     outputDir,
 	})
 	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
 		t.Fatalf("Run error = %v, want rate is too large", err)
@@ -55,8 +55,8 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 	err := runWithDependencies(Config{
 		ProfileName:   "prewarm-failure-test",
 		BaseURL:       "https://localhost:8001",
-		TargetTxRate:  1,
-		Warmup:        config.Warmup{TargetTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
+		OfferedTxRate: 1,
+		Warmup:        config.Warmup{OfferedTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
 		Duration:      time.Second,
 		Scenarios:     mixedPlannerScenarios(),
 		OutputDir:     outputDir,

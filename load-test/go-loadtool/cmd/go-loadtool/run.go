@@ -162,10 +162,11 @@ func applyMTLSOverrides(flags *flag.FlagSet, cfg *sim.Config, overrides mTLSOver
 
 func reportOptions(runtimeCfg config.Runtime) report.Options {
 	return report.Options{
-		SLAThresholdMs: runtimeCfg.Reporting.SLAThresholdMs,
-		TargetTxRate:   runtimeCfg.Load.TargetTxRate,
-		Duration:       runtimeCfg.Load.Duration,
-		Replay:         runtimeCfg.Replay,
-		Scenarios:      runtimeCfg.Scenarios,
+		SLAThresholdMs:        runtimeCfg.Reporting.SLAThresholdMs,
+		OfferedTxRate:         runtimeCfg.Load.OfferedTxRate,
+		RequiredMinimumTxRate: runtimeCfg.Load.RequiredMinimumTxRate,
+		Duration:              runtimeCfg.Load.Duration,
+		Replay:                runtimeCfg.Replay,
+		Scenarios:             runtimeCfg.Scenarios,
 	}
 }

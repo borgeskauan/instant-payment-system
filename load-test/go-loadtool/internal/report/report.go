@@ -43,7 +43,8 @@ type ReplaySummary struct {
 }
 
 type GenerationSummary struct {
-	TargetTPS            int     `json:"target_tps"`
+	OfferedTPS           int     `json:"offered_tps"`
+	RequiredMinimumTPS   int     `json:"required_minimum_tps"`
 	Started              int     `json:"started"`
 	RollingWindowSeconds int     `json:"rolling_window_seconds"`
 	AverageTPS           float64 `json:"average_tps"`
@@ -120,13 +121,14 @@ type LatencySummary struct {
 }
 
 type Options struct {
-	SLAThresholdMs   int64
-	TargetTxRate     int
-	Duration         time.Duration
-	Replay           config.Replay
-	Scenarios        []config.Scenario
-	Window           runwindow.Window
-	NotificationPull pullmetrics.Snapshot
+	SLAThresholdMs        int64
+	OfferedTxRate         int
+	RequiredMinimumTxRate int
+	Duration              time.Duration
+	Replay                config.Replay
+	Scenarios             []config.Scenario
+	Window                runwindow.Window
+	NotificationPull      pullmetrics.Snapshot
 }
 
 func Build(starts []events.Start, notifications []events.Notification, statusStarts []events.StatusStart, replays []events.Replay, options Options) (Summary, error) {

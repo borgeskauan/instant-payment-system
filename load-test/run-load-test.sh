@@ -28,7 +28,9 @@ readonly OPERATIONAL_FAILURE_EXIT=2
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
-PROFILE_WARMUP_TARGET_TX_RATE=""
+PROFILE_OFFERED_TX_RATE=""
+PROFILE_REQUIRED_MINIMUM_TX_RATE=""
+PROFILE_WARMUP_OFFERED_TX_RATE=""
 PROFILE_WARMUP_SECONDS=""
 PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS=""
 PROFILE_ACTIVE_SECONDS=""
@@ -278,7 +280,9 @@ pacs002_replay = data.get("replay", {}).get("pacs002")
 print("\t".join([
     "metadata",
     data["profile"],
-    str(data["warmupTargetTxRate"]),
+    str(data["offeredTxRate"]),
+    str(data["requiredMinimumTxRate"]),
+    str(data["warmupOfferedTxRate"]),
     str(data["warmupSeconds"]),
     str(data["warmupCompletionTimeoutSeconds"]),
     str(data["activeSeconds"]),
@@ -306,7 +310,7 @@ PY
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
-    IFS=$'\t' read -r record_kind returned_profile PROFILE_WARMUP_TARGET_TX_RATE PROFILE_WARMUP_SECONDS PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
+    IFS=$'\t' read -r record_kind returned_profile PROFILE_OFFERED_TX_RATE PROFILE_REQUIRED_MINIMUM_TX_RATE PROFILE_WARMUP_OFFERED_TX_RATE PROFILE_WARMUP_SECONDS PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
     if [[ "$record_kind" != metadata || "$returned_profile" != "$PROFILE_NAME" ]]; then
         echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
@@ -661,7 +665,7 @@ log_selected_options() {
 
     log_phase "starting load test: tag=${RUN_TAG} profile=${PROFILE_NAME} output=${target_dir}"
     log_phase "using profile: ${PROFILE_NAME}"
-    log_phase "execution window: warmup_rate=${PROFILE_WARMUP_TARGET_TX_RATE}/s warmup=${PROFILE_WARMUP_SECONDS}s warmup_completion_timeout=${PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
+    log_phase "execution window: offered_rate=${PROFILE_OFFERED_TX_RATE}/s required_minimum_rate=${PROFILE_REQUIRED_MINIMUM_TX_RATE}/s warmup_offered_rate=${PROFILE_WARMUP_OFFERED_TX_RATE}/s warmup=${PROFILE_WARMUP_SECONDS}s warmup_completion_timeout=${PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS}s active=${PROFILE_ACTIVE_SECONDS}s drain=${PROFILE_DRAIN_SECONDS}s"
     if [[ "$PROFILE_PACS008_REPLAY_SHARE" != - ]]; then
         log_phase "pacs.008 replay: share=${PROFILE_PACS008_REPLAY_SHARE} delay=${PROFILE_PACS008_REPLAY_DELAY_SECONDS}s"
     fi

@@ -157,8 +157,9 @@ func TestSummaryUsesRequestStartForMeasuredWindow(t *testing.T) {
 
 func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
 	options := Options{
-		TargetTxRate: 1,
-		Duration:     5 * time.Second,
+		OfferedTxRate:         1,
+		RequiredMinimumTxRate: 1,
+		Duration:              5 * time.Second,
 		Window: runwindow.Window{
 			GenerationStartedAt: time.Unix(0, 0),
 			ActiveStartedAt:     time.Unix(10, 0),
@@ -175,7 +176,7 @@ func TestSummaryDoesNotShiftActiveWindowToDelayedFirstStart(t *testing.T) {
 	if summary.Performance.ActiveTPS.Payments != 0.2 {
 		t.Fatalf("active original rate = %f, want 0.2", summary.Performance.ActiveTPS.Payments)
 	}
-	if summary.Generation.TargetTPS != 1 || summary.Generation.Started != 1 || summary.Generation.AverageTPS != 0.2 || summary.Generation.MinimumObservedTPS != 0 || summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 1 || summary.Valid {
+	if summary.Generation.OfferedTPS != 1 || summary.Generation.Started != 1 || summary.Generation.AverageTPS != 0.2 || summary.Generation.MinimumObservedTPS != 0 || summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 1 || summary.Valid {
 		t.Fatalf("load generation = %#v", summary.Generation)
 	}
 }
@@ -323,9 +324,10 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 	}
 
 	summary := mustBuildSummary(t, starts, nil, Options{
-		SLAThresholdMs: 4600,
-		TargetTxRate:   2,
-		Duration:       2 * time.Second,
+		SLAThresholdMs:        4600,
+		OfferedTxRate:         2,
+		RequiredMinimumTxRate: 2,
+		Duration:              2 * time.Second,
 	})
 
 	if summary.Generation.AverageTPS != 1.5 {
@@ -335,12 +337,13 @@ func TestSummaryReportsConfiguredStartRate(t *testing.T) {
 
 func TestSummaryIncludesOnlyReportRelevantConfiguration(t *testing.T) {
 	summary := mustBuildSummary(t, nil, nil, Options{
-		SLAThresholdMs: 1000,
-		TargetTxRate:   2000,
-		Duration:       180 * time.Second,
+		SLAThresholdMs:        1000,
+		OfferedTxRate:         2000,
+		RequiredMinimumTxRate: 2000,
+		Duration:              180 * time.Second,
 	})
 
-	if summary.Generation.TargetTPS != 2000 || summary.Generation.RollingWindowSeconds != 1 {
+	if summary.Generation.OfferedTPS != 2000 || summary.Generation.RollingWindowSeconds != 1 {
 		t.Fatalf("Generation = %#v", summary.Generation)
 	}
 	if summary.Performance.ThresholdMs != 1000 {

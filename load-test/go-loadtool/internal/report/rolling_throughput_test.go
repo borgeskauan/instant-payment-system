@@ -56,6 +56,36 @@ func TestGenerationAllowsPeaksWhenEveryRollingWindowMeetsMinimum(t *testing.T) {
 	}
 }
 
+func TestGenerationValidatesRequiredMinimumBelowOfferedRate(t *testing.T) {
+	start := time.Unix(100, 0)
+	options := Options{
+		OfferedTxRate:         3,
+		RequiredMinimumTxRate: 2,
+		Duration:              2 * time.Second,
+		Window: runwindow.Window{
+			GenerationStartedAt: start,
+			ActiveStartedAt:     start,
+			GenerationEndedAt:   start.Add(2 * time.Second),
+			ReplayDeadlineAt:    start.Add(3 * time.Second),
+		},
+	}
+	starts := startsAt(start,
+		0,
+		500*time.Millisecond,
+		time.Second,
+		1500*time.Millisecond,
+	)
+
+	summary := summarizeGeneration(starts, options)
+
+	if summary.OfferedTPS != 3 || summary.RequiredMinimumTPS != 2 {
+		t.Fatalf("configured rates = %#v, want offered=3 required=2", summary)
+	}
+	if summary.MinimumObservedTPS != 2 || !summary.SustainedMinimumMet {
+		t.Fatalf("generation = %#v, want required minimum to be met", summary)
+	}
+}
+
 func TestGenerationRollingWindowUsesSemiOpenBoundaries(t *testing.T) {
 	start := time.Unix(100, 0)
 	options := rollingGenerationOptions(start, time.Second, 2)
@@ -166,8 +196,9 @@ func TestSummaryRejectsP99AboveConfiguredSLA(t *testing.T) {
 
 func rollingGenerationOptions(activeStart time.Time, duration time.Duration, target int) Options {
 	return Options{
-		TargetTxRate: target,
-		Duration:     duration,
+		OfferedTxRate:         target,
+		RequiredMinimumTxRate: target,
+		Duration:              duration,
 		Window: runwindow.Window{
 			GenerationStartedAt: activeStart,
 			ActiveStartedAt:     activeStart,

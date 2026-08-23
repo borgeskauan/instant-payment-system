@@ -50,6 +50,8 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - Os profiles oficial de 15 minutos e diagnóstico usam warmup explícito de
   `1.500 TPS` por `120 s`, com timeout de conclusão de `120 s`. O ativo só
   começa depois que as obrigações de warmup observáveis pelo load-tool terminam.
+- Durante o ativo, ambos oferecem `2.100 TPS`; essa margem pertence ao gerador
+  e não altera o piso contratual de `2.000 TPS` validado pelo relatório.
 - Meta: pelo menos 2.000 pagamentos originais iniciados em toda rolling window
   de um segundo integralmente contida nos 15 minutos ativos.
 - Replays: 5% de `pacs.008` e 5% de `pacs.002`, sempre como carga adicional.
@@ -90,9 +92,10 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 Usar `mixed-outcomes-2k-diagnostic` para reproduzir o atraso do ingresso
 PACS.008 sem repetir o run de 15 minutos: warmup de 1.500 TPS por 120 segundos,
-gate de conclusão de até 120 segundos, 2.000 TPS por 60 segundos ativos e 30
-segundos de drain. Mix, participantes, funding e replays de 5% permanecem
-idênticos a `mixed-outcomes-2k-15m`.
+gate de conclusão de até 120 segundos, oferta de 2.100 TPS por 60 segundos
+ativos, piso exigido de 2.000 TPS e 30 segundos de drain. Mix, participantes,
+funding e replays de 5% permanecem idênticos a
+`mixed-outcomes-2k-15m`.
 
 JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Além dos
 artefatos já existentes, o bundle inclui:
@@ -3438,3 +3441,69 @@ Os dois runs ficaram inválidos somente porque o mínimo rolling permaneceu
 abaixo de `2.000 TPS`; ambos ficaram inteiramente dentro do SLA de `1 s`. A
 medição caracteriza o efeito local e a ausência de ganho end-to-end inequívoco,
 sem atribuir a variação da cauda exclusivamente a esta mudança.
+
+### Separação entre carga oferecida e piso contratado
+
+Os perfis de performance agora distinguem duas responsabilidades que antes
+usavam o mesmo valor de `2.000 TPS`:
+
+- `load.offeredTxRate` controla somente a quantidade de pagamentos originais
+  que o simulador tenta iniciar; filas, workers, funding e replays derivados
+  usam essa taxa;
+- `load.requiredMinimumTxRate` é exclusivamente o piso contratual validado pelo
+  relatório em toda rolling window contínua de um segundo.
+
+`mixed-outcomes-2k-diagnostic` e `mixed-outcomes-2k-15m` oferecem `2.100 TPS` e
+continuam exigindo no mínimo `2.000 TPS`. A margem de 5% evita que jitter normal
+do gerador torne o experimento inconclusivo sem reduzir o contrato: qualquer
+rolling window abaixo de `2.000` continua invalidando o run, enquanto carga
+acima do piso é reportada como workload efetivamente exercitada. Os smokes
+mantêm oferta e piso iguais às taxas anteriores.
+
+O `sla-report.json` registra ambos como `generation.offered_tps` e
+`generation.required_minimum_tps`; `sustained_minimum_met` compara o mínimo
+observado somente com o segundo. O contrato antigo `targetTxRate` não é aceito.
+
+O primeiro diagnóstico com esse contrato foi
+`offered-2100-required-2000/20260823_161054`, executado com stack e volumes
+novos. O run confirmou a separação sem relaxar a qualificação:
+
+| sinal | resultado |
+| --- | ---: |
+| oferta configurada / piso requerido | `2.100 / 2.000 TPS` |
+| pagamentos ativos / média | `121.119 / 2.018,650 TPS` |
+| mínimo / máximo rolling | `1.550 / 2.119 TPS` |
+| latência p50 / p95 / p99 / máxima | `318,148 / 1.502,077 / 1.763,113 / 2.217,660 ms` |
+| outcomes ausentes / contraditórios | `0 / 0` |
+| violações de replay / Pull | `0 / 0` |
+
+Os `273.858` POSTs originais do run foram aceitos e os `24.631` replays foram
+executados e aceitos. A margem elevou a média acima do piso, mas não sustentou
+`2.000 TPS` em toda janela contínua e o p99 excedeu `1 s`; portanto o relatório
+permaneceu corretamente inválido. O resultado não autoriza aumentar novamente
+a oferta como substituto de capacidade: o próximo trabalho continua sendo
+identificar e reduzir o gargalo end-to-end observado sob essa carga.
+
+Uma repetição limpa, sem qualquer alteração de código, recursos, profile ou
+instrumentação, foi executada em
+`offered-2100-required-2000-repeat/20260823_175126`:
+
+| sinal | controle `2.000` | primeiro `2.100` | repetição `2.100` |
+| --- | ---: | ---: | ---: |
+| TPS médio | `1.997,850` | `2.018,650` | `2.098,550` |
+| mínimo rolling | `1.956` | `1.550` | `2.062` |
+| p99 | `386,178 ms` | `1.763,113 ms` | `513,842 ms` |
+| CPU média PostgreSQL | `54,25%` | `88,18%` | `63,23%` |
+| tempo SQL total | `42.494,081 ms` | `104.249,131 ms` | `51.143,402 ms` |
+
+A repetição aceitou os `286.260` originais e os `25.753` replays, sem outcome
+ausente/contraditório nem violação de replay/Pull. O relatório foi válido: toda
+rolling window ficou acima de `2.000 TPS` e toda a distribuição de latência
+ficou abaixo de `1 s`.
+
+Portanto, aumentar a oferta em `100 TPS` não causa deterministicamente a
+degradação observada no primeiro run. O primeiro resultado continua relevante:
+ele mostra que a execução pode entrar num regime muito mais caro, mas um único
+par sucesso/falha ainda não separa ruído ambiental de instabilidade próxima ao
+limite. A configuração `2.100 oferecidos / 2.000 requeridos` permanece vigente;
+o diagnóstico de 60 segundos não substitui a qualificação final de 15 minutos.

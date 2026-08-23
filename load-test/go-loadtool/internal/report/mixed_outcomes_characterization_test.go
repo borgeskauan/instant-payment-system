@@ -23,10 +23,11 @@ func TestMixedOutcomesCharacterizesOneLogicalFinalResultPerPayment(t *testing.T)
 	}
 
 	summary := mustBuildSummary(t, starts, notifications, Options{
-		TargetTxRate:   2,
-		Duration:       time.Second,
-		SLAThresholdMs: 1_000,
-		Scenarios:      scenarios,
+		OfferedTxRate:         2,
+		RequiredMinimumTxRate: 2,
+		Duration:              time.Second,
+		SLAThresholdMs:        1_000,
+		Scenarios:             scenarios,
 	})
 
 	if len(summary.Scenarios) != 2 {

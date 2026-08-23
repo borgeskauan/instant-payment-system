@@ -9,17 +9,17 @@ import (
 
 func TestMixedOutcomesSmokeCharacterizesWorkloadPopulations(t *testing.T) {
 	cfg := Config{
-		TargetTxRate: 100,
-		Warmup:       config.Warmup{TargetTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second},
-		Duration:     10 * time.Second,
-		Scenarios:    mixedPlannerScenarios(),
+		OfferedTxRate: 100,
+		Warmup:        config.Warmup{OfferedTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second},
+		Duration:      10 * time.Second,
+		Scenarios:     mixedPlannerScenarios(),
 		Replay: config.Replay{
 			Pacs008: &config.Pacs008Replay{Share: 0.05, Delay: 10 * time.Second},
 			Pacs002: &config.Pacs002Replay{Share: 0.05, Delay: 10 * time.Second},
 		},
 	}
 
-	originalCount, err := maximumGeneratedTransfers(cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.TargetTxRate, cfg.Duration)
+	originalCount, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestMixedOutcomesSmokeCharacterizesWorkloadPopulations(t *testing.T) {
 	if originalCount != 1_250 {
 		t.Fatalf("original payments = %d, want 1250", originalCount)
 	}
-	if activeOriginals := cfg.TargetTxRate * int(cfg.Duration/time.Second); activeOriginals != 1_000 {
+	if activeOriginals := cfg.OfferedTxRate * int(cfg.Duration/time.Second); activeOriginals != 1_000 {
 		t.Fatalf("active original payments = %d, want 1000", activeOriginals)
 	}
 	if scenarioCounts["happy-path"] != 1_000 || scenarioCounts["insufficient-funds"] != 250 {

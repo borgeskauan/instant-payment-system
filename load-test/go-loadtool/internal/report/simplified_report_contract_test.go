@@ -26,10 +26,11 @@ func TestSummaryUsesScenarioCenteredContract(t *testing.T) {
 		{EndToEndID: "insufficient", ISPB: "10000041", EventType: events.EventPacs002Received, StatusCode: "RJCT", ReasonCodes: []string{"AM04"}, ReceivedAtNS: 600_000_000},
 	}
 	options := Options{
-		TargetTxRate:   2,
-		Duration:       time.Second,
-		SLAThresholdMs: 1_000,
-		Scenarios:      scenarios,
+		OfferedTxRate:         2,
+		RequiredMinimumTxRate: 2,
+		Duration:              time.Second,
+		SLAThresholdMs:        1_000,
+		Scenarios:             scenarios,
 		Window: runwindow.Window{
 			GenerationStartedAt: time.Unix(0, 0),
 			ActiveStartedAt:     time.Unix(0, 0),
@@ -45,7 +46,7 @@ func TestSummaryUsesScenarioCenteredContract(t *testing.T) {
 	if !summary.Valid {
 		t.Fatalf("Valid = false, summary=%#v", summary)
 	}
-	if summary.Generation.TargetTPS != 2 || summary.Generation.RollingWindowSeconds != 1 || summary.Generation.Started != 2 || summary.Generation.AverageTPS != 2 || summary.Generation.MinimumObservedTPS != 2 || summary.Generation.MaximumObservedTPS != 2 || !summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 0 {
+	if summary.Generation.OfferedTPS != 2 || summary.Generation.RequiredMinimumTPS != 2 || summary.Generation.RollingWindowSeconds != 1 || summary.Generation.Started != 2 || summary.Generation.AverageTPS != 2 || summary.Generation.MinimumObservedTPS != 2 || summary.Generation.MaximumObservedTPS != 2 || !summary.Generation.SustainedMinimumMet || summary.Generation.OutsideWindow != 0 {
 		t.Fatalf("generation = %#v", summary.Generation)
 	}
 	if len(summary.Scenarios) != 2 {
@@ -92,12 +93,12 @@ func TestSummaryJSONOmitsRemovedAggregateBlocks(t *testing.T) {
 	if err := json.Unmarshal(document["generation"], &generation); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"target_tps", "rolling_window_seconds", "started", "average_tps", "minimum_observed_tps", "maximum_observed_tps", "sustained_minimum_met", "outside_window"} {
+	for _, key := range []string{"offered_tps", "required_minimum_tps", "rolling_window_seconds", "started", "average_tps", "minimum_observed_tps", "maximum_observed_tps", "sustained_minimum_met", "outside_window"} {
 		if _, exists := generation[key]; !exists {
 			t.Fatalf("generation key %q is absent from %s", key, document["generation"])
 		}
 	}
-	for _, key := range []string{"expected", "actual_tps", "intervals_below_target", "violations"} {
+	for _, key := range []string{"target_tps", "expected", "actual_tps", "intervals_below_target", "violations"} {
 		if _, exists := generation[key]; exists {
 			t.Fatalf("removed generation key %q is present in %s", key, document["generation"])
 		}

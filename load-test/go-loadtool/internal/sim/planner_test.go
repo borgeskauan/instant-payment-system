@@ -210,9 +210,9 @@ func TestMaximumGeneratedTransfersRejectsRateThatOverflowsQueueCapacity(t *testi
 
 func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	cfg := Config{
-		TargetTxRate: 100,
+		OfferedTxRate: 100,
 		Warmup: config.Warmup{
-			TargetTxRate:      50,
+			OfferedTxRate:     50,
 			Duration:          5 * time.Second,
 			CompletionTimeout: 30 * time.Second,
 		},
@@ -243,7 +243,7 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.TargetTxRate, cfg.Duration)
+	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 }
 
 func TestDerivedProvisioningDoesNotDependOnScenarioName(t *testing.T) {
-	first := Config{TargetTxRate: 100, Warmup: config.Warmup{TargetTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
+	first := Config{OfferedTxRate: 100, Warmup: config.Warmup{OfferedTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
 	first.Scenarios[0].Share = 1
 	second := first
 	second.Scenarios = append([]config.Scenario(nil), first.Scenarios...)

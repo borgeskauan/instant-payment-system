@@ -26,9 +26,10 @@ const testProfile = `{
     }
   },
   "load": {
-    "targetTxRate": 1234,
+    "offeredTxRate": 1234,
+    "requiredMinimumTxRate": 1234,
     "warmup": {
-      "targetTxRate": 617,
+      "offeredTxRate": 617,
       "duration": "10s",
       "completionTimeout": "30s"
     },
@@ -104,7 +105,7 @@ func TestLoadProfileReadsRuntimeSettingsWithoutSchemaVersion(t *testing.T) {
 	if cfg.Connections.NotificationGateway.Address != "127.0.0.1:9090" {
 		t.Fatalf("gateway Address = %q", cfg.Connections.NotificationGateway.Address)
 	}
-	if cfg.Load.TargetTxRate != 1234 || cfg.Load.Warmup.TargetTxRate != 617 || cfg.Load.Warmup.Duration != 10*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
+	if cfg.Load.OfferedTxRate != 1234 || cfg.Load.RequiredMinimumTxRate != 1234 || cfg.Load.Warmup.OfferedTxRate != 617 || cfg.Load.Warmup.Duration != 10*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
 		t.Fatalf("Load = %#v", cfg.Load)
 	}
 	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
@@ -142,6 +143,25 @@ func TestLoadProfileReadsRuntimeSettingsWithoutSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestLoadProfileReadsDistinctOfferedAndRequiredRates(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(
+		testProfile,
+		`"offeredTxRate": 1234,`,
+		`"offeredTxRate": 1300,`,
+		1,
+	)
+	writeProfile(t, dir, "distinct-rates", content)
+
+	cfg, err := loadProfileFromDir(dir, "distinct-rates")
+	if err != nil {
+		t.Fatalf("loadProfileFromDir returned error: %v", err)
+	}
+	if cfg.Load.OfferedTxRate != 1300 || cfg.Load.RequiredMinimumTxRate != 1234 {
+		t.Fatalf("Load = %#v, want offered=1300 required=1234", cfg.Load)
+	}
+}
+
 func TestLoadProfileReadsSiblingCatalogFromModuleRoot(t *testing.T) {
 	root := t.TempDir()
 	profiles := filepath.Join(root, "profiles")
@@ -170,7 +190,7 @@ func TestUniformSmokePreservesBaselineWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Load.TargetTxRate != 2000 || cfg.Load.Warmup.TargetTxRate != 1000 || cfg.Load.Warmup.Duration != time.Minute || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
+	if cfg.Load.OfferedTxRate != 2000 || cfg.Load.RequiredMinimumTxRate != 2000 || cfg.Load.Warmup.OfferedTxRate != 1000 || cfg.Load.Warmup.Duration != time.Minute || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
 		t.Fatalf("uniform-smoke Load = %#v", cfg.Load)
 	}
 	scenario := cfg.Scenarios[0]
@@ -297,7 +317,7 @@ func TestLoadRunProfileReadsEmbeddedIdentityAndRuntimeSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRunProfile() error = %v", err)
 	}
-	if cfg.Name != "run-profile" || cfg.Load.TargetTxRate != 1234 || cfg.Reporting.SLAThresholdMs != 3200 {
+	if cfg.Name != "run-profile" || cfg.Load.OfferedTxRate != 1234 || cfg.Reporting.SLAThresholdMs != 3200 {
 		t.Fatalf("LoadRunProfile() = %#v", cfg)
 	}
 }
@@ -332,10 +352,27 @@ func TestLoadProfileRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadProfileRejectsLegacyTargetRateContract(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Replace(
+		testProfile,
+		`"offeredTxRate": 1234,
+    "requiredMinimumTxRate": 1234,`,
+		`"targetTxRate": 1234,`,
+		1,
+	)
+	writeProfile(t, dir, "legacy-target-rate", content)
+
+	_, err := loadProfileFromDir(dir, "legacy-target-rate")
+	if err == nil || !strings.Contains(err.Error(), `unknown field "targetTxRate"`) {
+		t.Fatalf("error = %v, want legacy targetTxRate rejection", err)
+	}
+}
+
 func TestLoadProfileRejectsLegacyStringWarmup(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Replace(testProfile, `"warmup": {
-      "targetTxRate": 617,
+      "offeredTxRate": 617,
       "duration": "10s",
       "completionTimeout": "30s"
     }`, `"warmup": "10s"`, 1)
@@ -355,7 +392,10 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		wantMessage string
 	}{
 		{name: "duration", old: `"duration": "45s"`, new: `"duration": "soon"`, wantMessage: "load.duration"},
-		{name: "warmup rate", old: `"targetTxRate": 617`, new: `"targetTxRate": 0`, wantMessage: "load.warmup.targetTxRate"},
+		{name: "offered rate", old: `"offeredTxRate": 1234`, new: `"offeredTxRate": 0`, wantMessage: "load.offeredTxRate"},
+		{name: "required minimum rate", old: `"requiredMinimumTxRate": 1234`, new: `"requiredMinimumTxRate": 0`, wantMessage: "load.requiredMinimumTxRate"},
+		{name: "required minimum above offered", old: `"requiredMinimumTxRate": 1234`, new: `"requiredMinimumTxRate": 1235`, wantMessage: "must not exceed load.offeredTxRate"},
+		{name: "warmup offered rate", old: `"offeredTxRate": 617`, new: `"offeredTxRate": 0`, wantMessage: "load.warmup.offeredTxRate"},
 		{name: "warmup duration", old: `"duration": "10s"`, new: `"duration": "0s"`, wantMessage: "load.warmup.duration"},
 		{name: "warmup completion timeout", old: `"completionTimeout": "30s"`, new: `"completionTimeout": "0s"`, wantMessage: "load.warmup.completionTimeout"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
@@ -417,7 +457,7 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Load.TargetTxRate != 100 || cfg.Load.Warmup.TargetTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
+	if cfg.Load.OfferedTxRate != 100 || cfg.Load.RequiredMinimumTxRate != 100 || cfg.Load.Warmup.OfferedTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
 		t.Fatalf("mixed load = %#v", cfg.Load)
 	}
 	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "happy-path" || cfg.Scenarios[1].Name != "insufficient-funds" {
@@ -457,7 +497,7 @@ func TestMixedOutcomesLongProfileDefinesStabilizationWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if long.Load.TargetTxRate != 2000 || long.Load.Warmup.TargetTxRate != 1500 || long.Load.Warmup.Duration != 2*time.Minute || long.Load.Warmup.CompletionTimeout != 2*time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
+	if long.Load.OfferedTxRate != 2100 || long.Load.RequiredMinimumTxRate != 2000 || long.Load.Warmup.OfferedTxRate != 1500 || long.Load.Warmup.Duration != 2*time.Minute || long.Load.Warmup.CompletionTimeout != 2*time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
 		t.Fatalf("mixed-outcomes-2k-15m Load = %#v", long.Load)
 	}
 	if !reflect.DeepEqual(long.Replay, smoke.Replay) {
@@ -482,8 +522,9 @@ func TestMixedOutcomesDiagnosticProfileDefinesShortInvestigationWorkload(t *test
 		t.Fatal(err)
 	}
 
-	if diagnostic.Load.TargetTxRate != 2000 ||
-		diagnostic.Load.Warmup.TargetTxRate != 1500 ||
+	if diagnostic.Load.OfferedTxRate != 2100 ||
+		diagnostic.Load.RequiredMinimumTxRate != 2000 ||
+		diagnostic.Load.Warmup.OfferedTxRate != 1500 ||
 		diagnostic.Load.Warmup.Duration != 2*time.Minute ||
 		diagnostic.Load.Warmup.CompletionTimeout != 2*time.Minute ||
 		diagnostic.Load.Duration != time.Minute ||

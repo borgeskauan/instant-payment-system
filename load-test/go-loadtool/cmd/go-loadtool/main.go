@@ -56,7 +56,7 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 		GatewayClientCertRoot:         runtimeCfg.Connections.NotificationGateway.ClientCertRoot,
 		GatewayServerName:             runtimeCfg.Connections.NotificationGateway.ServerName,
 		PullMetrics:                   pullmetrics.NewRecorder(),
-		TargetTxRate:                  runtimeCfg.Load.TargetTxRate,
+		OfferedTxRate:                 runtimeCfg.Load.OfferedTxRate,
 		Warmup:                        runtimeCfg.Load.Warmup,
 		Duration:                      runtimeCfg.Load.Duration,
 		Drain:                         runtimeCfg.Load.Drain,
@@ -67,7 +67,9 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 
 type profileValidation struct {
 	Profile                        string                      `json:"profile"`
-	WarmupTargetTxRate             int                         `json:"warmupTargetTxRate"`
+	OfferedTxRate                  int                         `json:"offeredTxRate"`
+	RequiredMinimumTxRate          int                         `json:"requiredMinimumTxRate"`
+	WarmupOfferedTxRate            int                         `json:"warmupOfferedTxRate"`
 	WarmupSeconds                  int64                       `json:"warmupSeconds"`
 	WarmupCompletionTimeoutSeconds int64                       `json:"warmupCompletionTimeoutSeconds"`
 	ActiveSeconds                  int64                       `json:"activeSeconds"`
@@ -172,7 +174,9 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 	}
 	validation := profileValidation{
 		Profile:                        runtimeCfg.Name,
-		WarmupTargetTxRate:             runtimeCfg.Load.Warmup.TargetTxRate,
+		OfferedTxRate:                  runtimeCfg.Load.OfferedTxRate,
+		RequiredMinimumTxRate:          runtimeCfg.Load.RequiredMinimumTxRate,
+		WarmupOfferedTxRate:            runtimeCfg.Load.Warmup.OfferedTxRate,
 		WarmupSeconds:                  int64(runtimeCfg.Load.Warmup.Duration.Seconds()),
 		WarmupCompletionTimeoutSeconds: int64(runtimeCfg.Load.Warmup.CompletionTimeout.Seconds()),
 		ActiveSeconds:                  int64(runtimeCfg.Load.Duration.Seconds()),

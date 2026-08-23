@@ -51,7 +51,7 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 	if loadedProfile != "custom-validation" || validation.Profile != "custom-validation" {
 		t.Fatalf("loaded/output profile = %q/%q", loadedProfile, validation.Profile)
 	}
-	if validation.WarmupTargetTxRate != 160 || validation.WarmupSeconds != 12 || validation.WarmupCompletionTimeoutSeconds != 30 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
+	if validation.OfferedTxRate != 321 || validation.RequiredMinimumTxRate != 300 || validation.WarmupOfferedTxRate != 160 || validation.WarmupSeconds != 12 || validation.WarmupCompletionTimeoutSeconds != 30 || validation.ActiveSeconds != 34 || validation.DrainSeconds != 9 {
 		t.Fatalf("validation window = %#v", validation)
 	}
 	if validation.Replay.Pacs008 == nil || validation.Replay.Pacs008.Share != 0.25 || validation.Replay.Pacs008.DelaySeconds != 7 {
@@ -99,7 +99,7 @@ func TestValidateProfileReturnsNormalizedRunnerMetadata(t *testing.T) {
 
 func TestValidateProfileReturnsMixedScenarioProvisioning(t *testing.T) {
 	runtimeCfg := commandTestRuntime()
-	runtimeCfg.Load = config.Load{TargetTxRate: 100, Warmup: config.Warmup{TargetTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Drain: 10 * time.Second}
+	runtimeCfg.Load = config.Load{OfferedTxRate: 100, RequiredMinimumTxRate: 100, Warmup: config.Warmup{OfferedTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Drain: 10 * time.Second}
 	runtimeCfg.Scenarios[0].Share = 0.8
 	runtimeCfg.Scenarios = append(runtimeCfg.Scenarios, config.Scenario{
 		Name:         "insufficient-funds",
@@ -167,10 +167,11 @@ func commandTestRuntime() config.Runtime {
 			},
 		},
 		Load: config.Load{
-			TargetTxRate: 321,
-			Warmup:       config.Warmup{TargetTxRate: 160, Duration: 12 * time.Second, CompletionTimeout: 30 * time.Second},
-			Duration:     34 * time.Second,
-			Drain:        9 * time.Second,
+			OfferedTxRate:         321,
+			RequiredMinimumTxRate: 300,
+			Warmup:                config.Warmup{OfferedTxRate: 160, Duration: 12 * time.Second, CompletionTimeout: 30 * time.Second},
+			Duration:              34 * time.Second,
+			Drain:                 9 * time.Second,
 		},
 		Replay: config.Replay{
 			Pacs008: &config.Pacs008Replay{Share: 0.25, Delay: 7 * time.Second},

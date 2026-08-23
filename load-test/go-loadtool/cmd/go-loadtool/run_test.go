@@ -44,7 +44,7 @@ func TestParseRunConfigUsesRunProfileAndFixedBundlePaths(t *testing.T) {
 	if command.simulator.OutputDir != filepath.Join(runDir, "events") || command.simulator.RunWindowPath != filepath.Join(runDir, "run-window.json") {
 		t.Fatalf("simulator paths = %q / %q", command.simulator.OutputDir, command.simulator.RunWindowPath)
 	}
-	if command.runtime.Name != "run-profile" || command.runtime.Load.TargetTxRate != 321 {
+	if command.runtime.Name != "run-profile" || command.runtime.Load.OfferedTxRate != 321 {
 		t.Fatalf("runtime profile/options = %#v", command.runtime)
 	}
 	if command.simulator.PullMetrics == nil {
@@ -218,14 +218,15 @@ func TestExecuteRunUsesRealReportRendererWithCompletedArtifacts(t *testing.T) {
 	var document struct {
 		Valid      bool `json:"valid"`
 		Generation struct {
-			TargetTPS           int  `json:"target_tps"`
+			OfferedTPS          int  `json:"offered_tps"`
+			RequiredMinimumTPS  int  `json:"required_minimum_tps"`
 			SustainedMinimumMet bool `json:"sustained_minimum_met"`
 		} `json:"generation"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("report is not valid JSON: %v", err)
 	}
-	if document.Valid || document.Generation.TargetTPS != 321 || document.Generation.SustainedMinimumMet {
+	if document.Valid || document.Generation.OfferedTPS != 321 || document.Generation.RequiredMinimumTPS != 300 || document.Generation.SustainedMinimumMet {
 		t.Fatalf("report document = %#v", document)
 	}
 }

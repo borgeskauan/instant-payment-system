@@ -59,14 +59,15 @@ type NotificationGatewayConnection struct {
 }
 
 type Load struct {
-	TargetTxRate int
-	Warmup       Warmup
-	Duration     time.Duration
-	Drain        time.Duration
+	OfferedTxRate         int
+	RequiredMinimumTxRate int
+	Warmup                Warmup
+	Duration              time.Duration
+	Drain                 time.Duration
 }
 
 type Warmup struct {
-	TargetTxRate      int
+	OfferedTxRate     int
 	Duration          time.Duration
 	CompletionTimeout time.Duration
 }
@@ -163,14 +164,15 @@ type fileNotificationGatewayConnection struct {
 }
 
 type fileLoad struct {
-	TargetTxRate int        `json:"targetTxRate"`
-	Warmup       fileWarmup `json:"warmup"`
-	Duration     string     `json:"duration"`
-	Drain        string     `json:"drain"`
+	OfferedTxRate         int        `json:"offeredTxRate"`
+	RequiredMinimumTxRate int        `json:"requiredMinimumTxRate"`
+	Warmup                fileWarmup `json:"warmup"`
+	Duration              string     `json:"duration"`
+	Drain                 string     `json:"drain"`
 }
 
 type fileWarmup struct {
-	TargetTxRate      int    `json:"targetTxRate"`
+	OfferedTxRate     int    `json:"offeredTxRate"`
 	Duration          string `json:"duration"`
 	CompletionTimeout string `json:"completionTimeout"`
 }
@@ -319,11 +321,17 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if err != nil {
 		return Runtime{}, err
 	}
-	if file.Load.TargetTxRate <= 0 {
-		return Runtime{}, malformedProfile(name, "load.targetTxRate", errors.New("must be positive"))
+	if file.Load.OfferedTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.offeredTxRate", errors.New("must be positive"))
 	}
-	if file.Load.Warmup.TargetTxRate <= 0 {
-		return Runtime{}, malformedProfile(name, "load.warmup.targetTxRate", errors.New("must be positive"))
+	if file.Load.RequiredMinimumTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.requiredMinimumTxRate", errors.New("must be positive"))
+	}
+	if file.Load.RequiredMinimumTxRate > file.Load.OfferedTxRate {
+		return Runtime{}, malformedProfile(name, "load.requiredMinimumTxRate", errors.New("must not exceed load.offeredTxRate"))
+	}
+	if file.Load.Warmup.OfferedTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.warmup.offeredTxRate", errors.New("must be positive"))
 	}
 	replay, err := decodeReplay(name, file.Replay)
 	if err != nil {
@@ -389,9 +397,10 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			},
 		},
 		Load: Load{
-			TargetTxRate: file.Load.TargetTxRate,
+			OfferedTxRate:         file.Load.OfferedTxRate,
+			RequiredMinimumTxRate: file.Load.RequiredMinimumTxRate,
 			Warmup: Warmup{
-				TargetTxRate:      file.Load.Warmup.TargetTxRate,
+				OfferedTxRate:     file.Load.Warmup.OfferedTxRate,
 				Duration:          warmupDuration,
 				CompletionTimeout: warmupCompletionTimeout,
 			},

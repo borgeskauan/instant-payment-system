@@ -41,7 +41,7 @@ type Config struct {
 	GatewayClientCertRoot         string
 	GatewayServerName             string
 	PullMetrics                   *pullmetrics.Recorder
-	TargetTxRate                  int
+	OfferedTxRate                 int
 	Warmup                        config.Warmup
 	Duration                      time.Duration
 	Drain                         time.Duration
@@ -142,13 +142,13 @@ func Run(cfg Config) error {
 }
 
 func runWithDependencies(cfg Config, dependencies runDependencies) error {
-	if cfg.TargetTxRate <= 0 {
+	if cfg.OfferedTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
 	}
 	if cfg.PullMetrics == nil {
 		cfg.PullMetrics = pullmetrics.NewRecorder()
 	}
-	if _, err := maximumGeneratedTransfers(cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.TargetTxRate, cfg.Duration); err != nil {
+	if _, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration); err != nil {
 		return err
 	}
 	planner, err := newWorkloadPlanner(cfg.Scenarios)
@@ -213,7 +213,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		eventWriter:              eventWriter,
 		replayWriter:             replayWriter,
 		statusStartWriter:        statusStartWriter,
-		statusJobs:               make(chan statusJob, statusQueueCapacity(cfg.TargetTxRate)),
+		statusJobs:               make(chan statusJob, statusQueueCapacity(cfg.OfferedTxRate)),
 		statusQueuedIDs:          make(map[string]struct{}),
 		transferScenarios:        make(map[string]string),
 		transferPayers:           make(map[string]string),
@@ -265,8 +265,8 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		if cfg.Replay.Pacs002 != nil {
 			replayShare += cfg.Replay.Pacs002.Share
 		}
-		replayRate := int(math.Ceil(float64(cfg.TargetTxRate) * replayShare))
-		replayWorkerCount := workerCountForTargetRate(max(1, replayRate))
+		replayRate := int(math.Ceil(float64(cfg.OfferedTxRate) * replayShare))
+		replayWorkerCount := workerCountForRate(max(1, replayRate))
 		s.replayScheduler = newReplayScheduler(experimentCtx, replayWorkerCount)
 		s.startReplayWorkers(experimentCtx, &replayWorkers, s.replayScheduler.Ready(), replayWorkerCount)
 		if cfg.Replay.Pacs008 != nil {
@@ -277,14 +277,14 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		}
 	}
 
-	statusWorkerCount := workerCountForTargetRate(max(cfg.TargetTxRate, cfg.Warmup.TargetTxRate))
+	statusWorkerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate))
 	var statusWorkers sync.WaitGroup
 	s.startStatusWorkers(experimentCtx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
 	jobs := make(chan originalSlot)
 	var workers sync.WaitGroup
-	workerCount := workerCountForTargetRate(max(cfg.TargetTxRate, cfg.Warmup.TargetTxRate))
-	logPhase("starting warmup: rate=%d/s duration=%s completion_timeout=%s workers=%d status_workers=%d", cfg.Warmup.TargetTxRate, cfg.Warmup.Duration, cfg.Warmup.CompletionTimeout, workerCount, statusWorkerCount)
+	workerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate))
+	logPhase("starting warmup: offered_rate=%d/s duration=%s completion_timeout=%s workers=%d status_workers=%d", cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.Warmup.CompletionTimeout, workerCount, statusWorkerCount)
 	for range workerCount {
 		workers.Add(1)
 		go s.transferWorker(experimentCtx, &workers, jobs)
@@ -315,7 +315,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	warmupTracker := newPhaseTracker()
 	generationStartedAt := time.Now()
 	warmupEndedAt := generationStartedAt.Add(cfg.Warmup.Duration)
-	s.generateOriginalPhase(experimentCtx, jobs, generationStartedAt, warmupEndedAt, cfg.Warmup.TargetTxRate, warmupTracker)
+	s.generateOriginalPhase(experimentCtx, jobs, generationStartedAt, warmupEndedAt, cfg.Warmup.OfferedTxRate, warmupTracker)
 	warmupTracker.CloseGeneration()
 	logPhase("warmup generation finished; waiting for observable warmup work: timeout=%s", cfg.Warmup.CompletionTimeout)
 	warmupCtx, cancelWarmup := context.WithDeadline(experimentCtx, warmupEndedAt.Add(cfg.Warmup.CompletionTimeout))
@@ -336,8 +336,8 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	if err := runwindow.Write(windowPath, windowDocument); err != nil {
 		return err
 	}
-	logPhase("warmup work completed; starting active load: rate=%d/s duration=%s", cfg.TargetTxRate, cfg.Duration)
-	s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.TargetTxRate, nil)
+	logPhase("warmup work completed; starting active load: offered_rate=%d/s duration=%s", cfg.OfferedTxRate, cfg.Duration)
+	s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.OfferedTxRate, nil)
 	closeJobs()
 	logPhase("load generation finished; waiting for in-flight HTTP requests")
 	workers.Wait()
@@ -418,12 +418,12 @@ func closeHTTPClients(clients map[string]*http.Client) {
 	}
 }
 
-func workerCountForTargetRate(targetRate int) int {
-	return max(16, min(512, targetRate/2))
+func workerCountForRate(rate int) int {
+	return max(16, min(512, rate/2))
 }
 
-func statusQueueCapacity(targetRate int) int {
-	return max(1024, targetRate*4)
+func statusQueueCapacity(rate int) int {
+	return max(1024, rate*4)
 }
 
 func buildPairs(pairNumberStart int, count int) []ids.Pair {

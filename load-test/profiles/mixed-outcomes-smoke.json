@@ -15,9 +15,10 @@
     }
   },
   "load": {
-    "targetTxRate": 100,
+    "offeredTxRate": 100,
+    "requiredMinimumTxRate": 100,
     "warmup": {
-      "targetTxRate": 50,
+      "offeredTxRate": 50,
       "duration": "5s",
       "completionTimeout": "30s"
     },

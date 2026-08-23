@@ -55,8 +55,11 @@ JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
 `--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
 experimento precisar desativá-los.
 
-O workload oficial de estabilização executa 2.000 pagamentos originais por
-segundo durante 15 minutos, além dos replays configurados:
+O workload oficial oferece 2.100 pagamentos originais por segundo durante 15
+minutos, além dos replays configurados. O relatório qualifica a capacidade
+contra o contrato separado de pelo menos 2.000 pagamentos originais em toda
+janela contínua de um segundo; picos acima desse piso não compensam períodos
+abaixo dele:
 
 ```bash
 cd load-test

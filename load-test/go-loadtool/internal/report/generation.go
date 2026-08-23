@@ -10,7 +10,8 @@ import (
 func summarizeGeneration(starts []events.Start, options Options) GenerationSummary {
 	const rollingWindow = time.Second
 	summary := GenerationSummary{
-		TargetTPS:            options.TargetTxRate,
+		OfferedTPS:           options.OfferedTxRate,
+		RequiredMinimumTPS:   options.RequiredMinimumTxRate,
 		RollingWindowSeconds: 1,
 	}
 	activeStart := options.Window.ActiveStartedAt.UnixNano()
@@ -38,7 +39,7 @@ func summarizeGeneration(starts []events.Start, options Options) GenerationSumma
 	sort.Slice(timestamps, func(left, right int) bool { return timestamps[left] < timestamps[right] })
 	summary.MinimumObservedTPS = minimumRollingCount(timestamps, activeStart, generationEnd, rollingWindow.Nanoseconds())
 	summary.MaximumObservedTPS = maximumRollingCount(timestamps, activeStart, generationEnd, rollingWindow.Nanoseconds())
-	summary.SustainedMinimumMet = summary.MinimumObservedTPS >= options.TargetTxRate
+	summary.SustainedMinimumMet = summary.MinimumObservedTPS >= options.RequiredMinimumTxRate
 	return summary
 }
 
