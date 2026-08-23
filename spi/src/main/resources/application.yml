@@ -43,7 +43,7 @@ spi:
       fetch-min-bytes: 131072
       fetch-max-wait-ms: 100
     status-report:
-      max-poll-records: 220
+      max-poll-records: 500
       fetch-min-bytes: 16384
       fetch-max-wait-ms: 125
     force-unknown-processing-error: false

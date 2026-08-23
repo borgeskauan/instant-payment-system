@@ -128,18 +128,18 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
-    void performanceDefaultsTargetTwoHundredRecordStatusReportBatches() throws Exception {
+    void performanceDefaultsDoNotFragmentAvailableStatusReportBatches() throws Exception {
         String application = Files.readString(Path.of("src", "main", "resources", "application.yml"));
         String compose = Files.readString(Path.of("..", "infra", "docker-compose.yml"));
 
         assertThat(application).contains(
                 "    status-report:\n"
-                        + "      max-poll-records: 220\n"
+                        + "      max-poll-records: 500\n"
                         + "      fetch-min-bytes: 16384\n"
                         + "      fetch-max-wait-ms: 125\n"
         );
         assertThat(compose)
-                .contains("SPI_KAFKA_STATUS_REPORT_MAX_POLL_RECORDS: 220")
+                .contains("SPI_KAFKA_STATUS_REPORT_MAX_POLL_RECORDS: 500")
                 .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MIN_BYTES: 16384")
                 .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MAX_WAIT_MS: 125");
     }
