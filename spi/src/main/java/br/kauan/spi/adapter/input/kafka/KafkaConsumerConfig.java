@@ -47,10 +47,10 @@ public class KafkaConsumerConfig {
     @Value("${spi.kafka.status-report.max-poll-records:500}")
     private int statusReportMaxPollRecords;
 
-    @Value("${spi.kafka.status-report.fetch-min-bytes:1024}")
+    @Value("${spi.kafka.status-report.fetch-min-bytes:131072}")
     private int statusReportFetchMinBytes;
 
-    @Value("${spi.kafka.status-report.fetch-max-wait-ms:10}")
+    @Value("${spi.kafka.status-report.fetch-max-wait-ms:125}")
     private int statusReportFetchMaxWaitMs;
 
     @Value("${spring.kafka.listener.auto-startup:true}")

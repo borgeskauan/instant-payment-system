@@ -44,8 +44,8 @@ spi:
       fetch-max-wait-ms: 100
     status-report:
       max-poll-records: 500
-      fetch-min-bytes: 1024
-      fetch-max-wait-ms: 10
+      fetch-min-bytes: 131072
+      fetch-max-wait-ms: 125
     force-unknown-processing-error: false
   trace:
     file: /tmp/spi-trace.csv
