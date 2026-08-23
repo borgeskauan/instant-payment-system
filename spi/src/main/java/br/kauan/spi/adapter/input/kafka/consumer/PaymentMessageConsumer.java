@@ -69,7 +69,15 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records,
             Acknowledgment acknowledgment
     ) {
-        KafkaBatchReceivedEvent.record(PAYMENT_REQUESTS_TOPIC, records.size());
+        try (var ignored = KafkaBatchReceivedEvent.start(PAYMENT_REQUESTS_TOPIC, records.size())) {
+            processPaymentRequestBatch(records, acknowledgment);
+        }
+    }
+
+    private void processPaymentRequestBatch(
+            List<ConsumerRecord<String, byte[]>> records,
+            Acknowledgment acknowledgment
+    ) {
         log.debug("Received records from Kafka topic '{}', records: {}", PAYMENT_REQUESTS_TOPIC, records.size());
         var payments = new ArrayList<AuthenticatedPaymentRequest>(records.size());
 
@@ -146,7 +154,15 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records,
             Acknowledgment acknowledgment
     ) {
-        KafkaBatchReceivedEvent.record(PAYMENT_STATUS_REPORTS_TOPIC, records.size());
+        try (var ignored = KafkaBatchReceivedEvent.start(PAYMENT_STATUS_REPORTS_TOPIC, records.size())) {
+            processStatusReportBatch(records, acknowledgment);
+        }
+    }
+
+    private void processStatusReportBatch(
+            List<ConsumerRecord<String, byte[]>> records,
+            Acknowledgment acknowledgment
+    ) {
         log.debug("Received records from Kafka topic '{}', records: {}", PAYMENT_STATUS_REPORTS_TOPIC, records.size());
         var statusReports = new ArrayList<AuthenticatedStatusReport>(records.size());
 

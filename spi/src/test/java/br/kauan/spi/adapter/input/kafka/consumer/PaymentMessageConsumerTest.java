@@ -35,6 +35,7 @@ import jdk.jfr.Recording;
 import jdk.jfr.consumer.RecordingFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,9 +57,14 @@ import static org.mockito.Mockito.when;
 class PaymentMessageConsumerTest {
 
     @Test
-    void kafkaCallbacksRecordTheirTopicAndBatchSizeInJfr(@TempDir Path tempDir) throws Exception {
+    void kafkaCallbacksRecordBatchSizeProcessingDurationAndIdleGapInJfr(@TempDir Path tempDir) throws Exception {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
-        stubNoDivergentDuplicates(processor);
+        var paymentResult = new PaymentTransactionPersistenceResult(
+                List.of(), List.of(), List.of(), List.of(), List.of());
+        when(processor.processTransactions(any(List.class))).thenAnswer(invocation -> {
+            Thread.sleep(20);
+            return paymentResult;
+        });
         stubNoDivergentStatusReports(processor);
         PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
@@ -71,6 +77,10 @@ class PaymentMessageConsumerTest {
                     paymentRequestRecord("E2E-JFR-2", "456", "34"),
                     paymentRequestRecord("E2E-JFR-3", "789", "56")
             ), acknowledgment);
+            Thread.sleep(30);
+            consumer.consumePaymentRequests(List.of(
+                    paymentRequestRecord("E2E-JFR-4", "123", "12")
+            ), acknowledgment);
             consumer.consumeStatusReports(List.of(
                     statusReportRecord("E2E-JFR-1", PaymentStatus.ACCEPTED_IN_PROCESS),
                     statusReportRecord("E2E-JFR-2", PaymentStatus.ACCEPTED_IN_PROCESS)
@@ -79,13 +89,31 @@ class PaymentMessageConsumerTest {
             recording.dump(recordingFile);
         }
 
-        assertThat(RecordingFile.readAllEvents(recordingFile).stream()
-                .filter(event -> event.getEventType().getName().equals("br.kauan.spi.KafkaBatchReceived")))
-                .extracting(event -> event.getString("topic"), event -> event.getInt("recordCount"))
+        var batchEvents = RecordingFile.readAllEvents(recordingFile).stream()
+                .filter(event -> event.getEventType().getName().equals("br.kauan.spi.KafkaBatchReceived"))
+                .toList();
+
+        assertThat(batchEvents)
+                .extracting(
+                        event -> event.getString("topic"),
+                        event -> event.getInt("recordCount"))
                 .containsExactlyInAnyOrder(
                         tuple("spi-payment-requests", 3),
+                        tuple("spi-payment-requests", 1),
                         tuple("spi-payment-status-reports", 2)
                 );
+        var paymentRequestEvents = batchEvents.stream()
+                .filter(event -> event.getString("topic").equals("spi-payment-requests"))
+                .sorted((left, right) -> left.getStartTime().compareTo(right.getStartTime()))
+                .toList();
+
+        assertThat(paymentRequestEvents)
+                .allSatisfy(event -> assertThat(event.getDuration())
+                        .isGreaterThanOrEqualTo(Duration.ofMillis(15)));
+        assertThat(Duration.between(
+                paymentRequestEvents.getFirst().getEndTime(),
+                paymentRequestEvents.getLast().getStartTime()
+        )).isGreaterThanOrEqualTo(Duration.ofMillis(20));
     }
 
     @Test
