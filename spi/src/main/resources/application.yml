@@ -34,7 +34,7 @@ spring:
 spi:
   default-initial-balance: 1_000_000_000
   kafka:
-    payment-request-listener-concurrency: 3
+    payment-request-listener-concurrency: 1
     status-report-listener-concurrency: 3
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group

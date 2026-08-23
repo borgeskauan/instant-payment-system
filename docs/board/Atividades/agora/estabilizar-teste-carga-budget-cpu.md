@@ -3389,3 +3389,52 @@ qualifica sozinho a meta contratada: todos ficaram abaixo do piso rolling
 contínuo de `2.000 TPS`. Eles caracterizam somente a decisão de batching. A
 corretude permaneceu íntegra e o controle final de `16 KiB` manteve toda a
 latência ativa abaixo do SLA de `1 s`.
+
+### Pré-seleção de replays antes do insert PACS.008
+
+O caminho de admissão executava `INSERT ... ON CONFLICT DO NOTHING RETURNING`
+para todo candidato e consultava depois somente os conflitos. Como replays são
+uma minoria conhecida do workload, foi testado o caminho inverso: consultar os
+IDs do lote primeiro, classificar os pagamentos já persistidos em Java e
+executar um `INSERT` estrito somente para os ausentes. O insert verifica que a
+quantidade afetada corresponde a todos os candidatos novos; uma violação da PK
+continua abortando a transação.
+
+O escopo de performance vigente usa uma instância do SPI e um listener
+PACS.008. Os defaults do listener foram alinhados para concorrência `1`. A
+coordenação de inserts concorrentes do mesmo `payment_id` fica fora desta
+intervenção e deverá ser desenhada junto da futura qualificação multi-instância.
+
+No microbenchmark isolado de `100.000` entradas em batches de `200`, a
+pré-seleção reduziu o tempo de parede em `47,5%` sem replay e em `33,6%` com
+`5%` de replay; o tempo SQL combinado caiu respectivamente `68,5%` e `65,9%`,
+e o WAL caiu aproximadamente `14%` nos dois casos.
+
+O A/B end-to-end comparou os bundles
+`pacs008-fetch-min-56k/20260823_142558` e
+`payment-preselect-strict-insert/20260823_153931`, ambos com stack e volumes
+novos e com o mesmo profile `mixed-outcomes-2k-diagnostic`:
+
+| sinal | `ON CONFLICT` | pré-seleção + insert estrito | variação |
+| --- | ---: | ---: | ---: |
+| pagamentos ativos / TPS médio | `119.871 / 1.997,850` | `119.883 / 1.998,050` | população equivalente |
+| mínimo rolling | `1.956 TPS` | `1.943 TPS` | `-0,665%` |
+| latência p50 | `162,884 ms` | `160,045 ms` | `-1,743%` |
+| latência p95 | `267,375 ms` | `271,273 ms` | `+1,458%` |
+| latência p99 | `386,178 ms` | `488,553 ms` | `+26,510%` |
+| latência máxima | `585,028 ms` | `806,561 ms` | `+37,867%` |
+| insert + classificação existente — SQL | `11.090,785 ms` | `10.563,446 ms` | `-4,755%` |
+| insert + classificação existente — WAL | `94.234.352 B` | `80.660.167 B` | `-14,405%` |
+| statements exportados — SQL total | `42.494,081 ms` | `44.879,362 ms` | `+5,613%` |
+
+O candidato aceitou todos os `279.769` POSTs, concluiu todos os outcomes e
+replays e não apresentou ausência, contradição ou violação de Pull. A economia
+física local de WAL reapareceu, mas a economia SQL do caminho de admissão foi
+pequena no sistema completo: o custo removido do insert foi em grande parte
+substituído pela consulta de todos os candidatos. A cauda e o SQL global
+pioraram nessa execução, enquanto o p50 permaneceu praticamente estável.
+
+Os dois runs ficaram inválidos somente porque o mínimo rolling permaneceu
+abaixo de `2.000 TPS`; ambos ficaram inteiramente dentro do SLA de `1 s`. A
+medição caracteriza o efeito local e a ausência de ganho end-to-end inequívoco,
+sem atribuir a variação da cauda exclusivamente a esta mudança.

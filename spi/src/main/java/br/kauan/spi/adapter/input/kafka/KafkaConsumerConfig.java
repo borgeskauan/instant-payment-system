@@ -29,7 +29,7 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.consumer.auto-offset-reset}")
     private String autoOffsetReset;
 
-    @Value("${spi.kafka.payment-request-listener-concurrency:3}")
+    @Value("${spi.kafka.payment-request-listener-concurrency:1}")
     private int paymentRequestListenerConcurrency;
 
     @Value("${spi.kafka.status-report-listener-concurrency:3}")
