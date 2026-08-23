@@ -23,16 +23,22 @@ import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.support.Acknowledgment;
 
-import java.util.List;
+import jdk.jfr.Configuration;
+import jdk.jfr.Recording;
+import jdk.jfr.consumer.RecordingFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentCaptor.forClass;
@@ -48,6 +54,39 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class PaymentMessageConsumerTest {
+
+    @Test
+    void kafkaCallbacksRecordTheirTopicAndBatchSizeInJfr(@TempDir Path tempDir) throws Exception {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
+        stubNoDivergentStatusReports(processor);
+        PaymentMessageConsumer consumer = consumer(processor, mock(SpiTraceRecorder.class));
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        Path recordingFile = tempDir.resolve("kafka-batches.jfr");
+
+        try (Recording recording = new Recording(Configuration.getConfiguration("profile"))) {
+            recording.start();
+            consumer.consumePaymentRequests(List.of(
+                    paymentRequestRecord("E2E-JFR-1", "123", "12"),
+                    paymentRequestRecord("E2E-JFR-2", "456", "34"),
+                    paymentRequestRecord("E2E-JFR-3", "789", "56")
+            ), acknowledgment);
+            consumer.consumeStatusReports(List.of(
+                    statusReportRecord("E2E-JFR-1", PaymentStatus.ACCEPTED_IN_PROCESS),
+                    statusReportRecord("E2E-JFR-2", PaymentStatus.ACCEPTED_IN_PROCESS)
+            ), acknowledgment);
+            recording.stop();
+            recording.dump(recordingFile);
+        }
+
+        assertThat(RecordingFile.readAllEvents(recordingFile).stream()
+                .filter(event -> event.getEventType().getName().equals("br.kauan.spi.KafkaBatchReceived")))
+                .extracting(event -> event.getString("topic"), event -> event.getInt("recordCount"))
+                .containsExactlyInAnyOrder(
+                        tuple("spi-payment-requests", 3),
+                        tuple("spi-payment-status-reports", 2)
+                );
+    }
 
     @Test
     void consumerDoesNotExposeSingleRecordEntryPoints() {
