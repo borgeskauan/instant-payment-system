@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
         "spring.flyway.baseline-version=0"
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@DirtiesContext
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class NotificationReconciliationIntegrationTest {
 
     @Autowired

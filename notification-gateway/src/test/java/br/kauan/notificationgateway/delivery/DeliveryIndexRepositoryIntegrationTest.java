@@ -7,10 +7,13 @@ import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabas
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -41,11 +44,16 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 @DirtiesContext
 class DeliveryIndexRepositoryIntegrationTest {
 
-    @Autowired
     private DeliveryIndexRepository repository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void resetTables() {
@@ -57,6 +65,10 @@ class DeliveryIndexRepositoryIntegrationTest {
                 )
                 """);
         jdbcTemplate.update("TRUNCATE outbound_notification");
+        repository = new DeliveryIndexRepository(
+                namedParameterJdbcTemplate,
+                new TransactionTemplate(transactionManager)
+        );
     }
 
     @Test
@@ -76,6 +88,38 @@ class DeliveryIndexRepositoryIntegrationTest {
                 tuple("v1:other", "20000002", 1L),
                 tuple("v1:second", "20000001", 2L)
         );
+    }
+
+    @Test
+    void reusesTheCommittedPositionWithoutScanningTheDeliveryIndexAgain() {
+        repository.indexNew(List.of(incoming("v1:first", "20000001", "first")));
+        long scansAfterFirstIndex = recipientPositionIndexScans();
+
+        List<NotificationDelivery> indexed = repository.indexNew(List.of(
+                incoming("v1:second", "20000001", "second")
+        ));
+
+        assertThat(indexed).extracting(
+                NotificationDelivery::communicationId,
+                NotificationDelivery::deliveryPosition
+        ).containsExactly(tuple("v1:second", 2L));
+        assertThat(recipientPositionIndexScans()).isEqualTo(scansAfterFirstIndex);
+    }
+
+    @Test
+    void aNewRepositoryInstanceContinuesFromThePersistedPosition() {
+        repository.indexNew(List.of(incoming("v1:first", "20000001", "first")));
+        repository = new DeliveryIndexRepository(
+                namedParameterJdbcTemplate,
+                new TransactionTemplate(transactionManager)
+        );
+
+        assertThat(repository.indexNew(List.of(incoming("v1:second", "20000001", "second"))))
+                .extracting(
+                        NotificationDelivery::communicationId,
+                        NotificationDelivery::deliveryPosition
+                )
+                .containsExactly(tuple("v1:second", 2L));
     }
 
     @Test
@@ -133,6 +177,13 @@ class DeliveryIndexRepositoryIntegrationTest {
                 "SELECT communication_id FROM delivery_index ORDER BY communication_id",
                 String.class
         )).containsExactly("v1:first");
+
+        assertThat(repository.indexNew(List.of(incoming("v1:second", "20000001", "second"))))
+                .extracting(
+                        NotificationDelivery::communicationId,
+                        NotificationDelivery::deliveryPosition
+                )
+                .containsExactly(tuple("v1:second", 2L));
     }
 
     @Test
@@ -261,6 +312,16 @@ class DeliveryIndexRepositoryIntegrationTest {
                 communicationId,
                 bytes(payload)
         );
+    }
+
+    private long recipientPositionIndexScans() {
+        jdbcTemplate.queryForObject("SELECT pg_stat_force_next_flush()", Object.class);
+        Long scans = jdbcTemplate.queryForObject("""
+                SELECT idx_scan
+                FROM pg_stat_user_indexes
+                WHERE indexrelname = 'delivery_index_recipient_position_key'
+                """, Long.class);
+        return scans == null ? 0L : scans;
     }
 
     private IncomingNotification incoming(String communicationId, String recipientIspb, String payload) {

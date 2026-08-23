@@ -17,6 +17,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Repository
 public class DeliveryIndexRepository {
@@ -83,6 +85,7 @@ public class DeliveryIndexRepository {
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
+    private final ConcurrentHashMap<String, RecipientPositionState> recipientPositions = new ConcurrentHashMap<>();
 
     public DeliveryIndexRepository(
             NamedParameterJdbcTemplate jdbcTemplate,
@@ -98,10 +101,32 @@ public class DeliveryIndexRepository {
             return List.of();
         }
 
+        List<String> recipients = recipients(uniqueNotifications);
+        List<RecipientPositionState> lockedPositions = lockRecipientPositions(recipients);
         try {
-            return indexInTransaction(uniqueNotifications, false);
-        } catch (DuplicateKeyException ignored) {
-            return indexInTransaction(uniqueNotifications, true);
+            try {
+                return indexAndRemember(uniqueNotifications, false, recipients);
+            } catch (DuplicateKeyException ignored) {
+                invalidatePositions(recipients);
+                return indexAndRemember(uniqueNotifications, true, recipients);
+            }
+        } finally {
+            unlockRecipientPositions(lockedPositions);
+        }
+    }
+
+    private List<NotificationDelivery> indexAndRemember(
+            List<IncomingNotification> uniqueNotifications,
+            boolean filterExisting,
+            List<String> recipients
+    ) {
+        try {
+            List<NotificationDelivery> indexed = indexInTransaction(uniqueNotifications, filterExisting);
+            rememberCommittedPositions(indexed);
+            return indexed;
+        } catch (RuntimeException failure) {
+            invalidatePositions(recipients);
+            throw failure;
         }
     }
 
@@ -120,7 +145,7 @@ public class DeliveryIndexRepository {
                 return List.of();
             }
 
-            Map<String, Long> nextPositions = lastPositions(recipients(newNotifications));
+            Map<String, Long> nextPositions = knownOrPersistedLastPositions(recipients(newNotifications));
             List<NotificationDelivery> newIndexes = new ArrayList<>(newNotifications.size());
             for (IncomingNotification notification : newNotifications) {
                 long position = nextPositions.merge(notification.recipientIspb(), 1L, Long::sum);
@@ -202,6 +227,60 @@ public class DeliveryIndexRepository {
                 .distinct()
                 .sorted()
                 .toList();
+    }
+
+    private List<RecipientPositionState> lockRecipientPositions(List<String> recipients) {
+        List<RecipientPositionState> lockedPositions = new ArrayList<>(recipients.size());
+        for (String recipient : recipients) {
+            RecipientPositionState position = recipientPositions.computeIfAbsent(
+                    recipient,
+                    ignored -> new RecipientPositionState()
+            );
+            position.lock.lock();
+            lockedPositions.add(position);
+        }
+        return lockedPositions;
+    }
+
+    private void unlockRecipientPositions(List<RecipientPositionState> lockedPositions) {
+        for (int index = lockedPositions.size() - 1; index >= 0; index--) {
+            lockedPositions.get(index).lock.unlock();
+        }
+    }
+
+    private Map<String, Long> knownOrPersistedLastPositions(List<String> recipients) {
+        List<String> unknownRecipients = new ArrayList<>();
+        for (String recipient : recipients) {
+            if (recipientPositions.get(recipient).lastCommittedPosition == null) {
+                unknownRecipients.add(recipient);
+            }
+        }
+
+        Map<String, Long> persistedPositions = unknownRecipients.isEmpty()
+                ? Map.of()
+                : lastPositions(unknownRecipients);
+        Map<String, Long> positions = new HashMap<>(recipients.size());
+        for (String recipient : recipients) {
+            Long knownPosition = recipientPositions.get(recipient).lastCommittedPosition;
+            positions.put(recipient, knownPosition == null ? persistedPositions.get(recipient) : knownPosition);
+        }
+        return positions;
+    }
+
+    private void rememberCommittedPositions(List<NotificationDelivery> indexed) {
+        for (NotificationDelivery delivery : indexed) {
+            RecipientPositionState position = recipientPositions.get(delivery.recipientIspb());
+            if (position.lastCommittedPosition == null
+                    || delivery.deliveryPosition() > position.lastCommittedPosition) {
+                position.lastCommittedPosition = delivery.deliveryPosition();
+            }
+        }
+    }
+
+    private void invalidatePositions(List<String> recipients) {
+        for (String recipient : recipients) {
+            recipientPositions.get(recipient).lastCommittedPosition = null;
+        }
     }
 
     private List<IncomingNotification> newNotifications(List<IncomingNotification> notifications) {
@@ -317,5 +396,11 @@ public class DeliveryIndexRepository {
                 array.free();
             }
         }
+    }
+
+    private static final class RecipientPositionState {
+
+        private final ReentrantLock lock = new ReentrantLock();
+        private Long lastCommittedPosition;
     }
 }

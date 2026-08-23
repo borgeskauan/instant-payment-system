@@ -3254,3 +3254,56 @@ O run permaneceu inválido somente para qualificação do piso sustentado: inici
 `1.898 TPS`. Não houve carga fora da janela. Portanto, a intervenção removeu o
 polling SQL vazio e preservou correctness, mas ainda não prova a capacidade
 contratada de `2.000 TPS` contínuos.
+
+### Fronteira conhecida da posição de delivery
+
+Depois de remover o polling vazio do Pull, o próximo trabalho repetido do
+Gateway era a busca da última `delivery_position` de cada PSP em toda transação
+de indexação. O bundle `pull-known-tail/20260822_203915` registrou `6.644`
+chamadas, `165.374` posições consultadas e `9.991,803 ms` de tempo SQL
+acumulado. A posição só pode avançar por um writer lógico por PSP nesta
+implantação, portanto essa leitura não precisava ser repetida depois que o
+processo conhecia uma posição já commitada.
+
+O repositório de indexação passou a manter por PSP um estado process-local com
+lock e última posição commitada. Kafka e reconciler compartilham o mesmo estado.
+Os locks locais são adquiridos em ordem determinística; somente PSPs ainda
+desconhecidos consultam o PostgreSQL; a posição em memória avança apenas depois
+do commit e antes de liberar o lock. Falha ou resultado transacional incerto
+invalida os PSPs afetados, fazendo a próxima tentativa recarregar a posição
+durável. Advisory lock e constraints do banco permanecem como proteção de
+corretude.
+
+Essa otimização assume uma instância do Notification Gateway, que é o escopo do
+MVP. Em múltiplas instâncias, o caminho continua protegido pelo banco e consegue
+se recuperar de conflito, mas perderia o benefício estável do cache; um contador
+durável próprio deverá ser avaliado antes de qualificar essa topologia.
+
+O diagnóstico limpo `position-cache/20260822_210828` preservou profile,
+recursos, instrumentação e reset da stack do baseline anterior:
+
+| sinal da última posição | baseline | cache por PSP | variação |
+| --- | ---: | ---: | ---: |
+| chamadas | `6.644` | `15` | `-99,774%` |
+| PSPs consultados | `165.374` | `90` | `-99,946%` |
+| tempo SQL acumulado | `9.991,803 ms` | `1,034 ms` | `-99,990%` |
+| tempo médio por chamada | `1,504 ms` | `0,069 ms` | `-95,412%` |
+
+As 15 leituras ocorreram enquanto os PSPs eram descobertos nos primeiros lotes;
+depois disso a consulta saiu do steady state. A quantidade não é um novo
+contrato: ela depende do agrupamento dos primeiros lotes, enquanto o resultado
+relevante é não reler posições já conhecidas.
+
+O active iniciou `119.792` pagamentos, com média de `1.996,533 TPS` e mínimo
+rolling de `1.938 TPS`. A latência p50/p95/p99 caiu de
+`193,071 / 597,650 / 815,602 ms` para
+`141,349 / 386,057 / 526,965 ms`, e o total SQL exportado caiu de
+`95,208 s` para `93,337 s`. A comparação end-to-end é informativa; o efeito
+direto atribuído à mudança é a eliminação das leituras repetidas de posição.
+
+O run não qualificou: duas requisições do começo do warmup terminaram em
+timeout HTTP (`status 0`), uma por cenário, e o mínimo rolling permaneceu abaixo
+de `2.000 TPS`. Não houve outcome ausente ou contraditório, violação de replay ou
+Pull, carga fora da janela ou estouro do SLA ativo. O código permanece no
+worktree para decisão explícita do projeto; o benchmark não acionou reversão
+automática.
