@@ -115,32 +115,32 @@ class KafkaConsumerConfigTest {
         ReflectionTestUtils.setField(config, "paymentRequestMaxPollRecords", 500);
         ReflectionTestUtils.setField(config, "paymentRequestFetchMinBytes", 131_072);
         ReflectionTestUtils.setField(config, "paymentRequestFetchMaxWaitMs", 100);
-        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 500);
-        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 131_072);
+        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 220);
+        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 16_384);
         ReflectionTestUtils.setField(config, "statusReportFetchMaxWaitMs", 125);
 
         var consumerFactory = config.statusReportConsumerFactory();
 
         assertThat(consumerFactory.getConfigurationProperties())
-                .containsEntry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500)
-                .containsEntry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 131_072)
+                .containsEntry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 220)
+                .containsEntry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 16_384)
                 .containsEntry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 125);
     }
 
     @Test
-    void performanceDefaultsTargetLargerStatusReportBatches() throws Exception {
+    void performanceDefaultsTargetTwoHundredRecordStatusReportBatches() throws Exception {
         String application = Files.readString(Path.of("src", "main", "resources", "application.yml"));
         String compose = Files.readString(Path.of("..", "infra", "docker-compose.yml"));
 
         assertThat(application).contains(
                 "    status-report:\n"
-                        + "      max-poll-records: 500\n"
-                        + "      fetch-min-bytes: 131072\n"
+                        + "      max-poll-records: 220\n"
+                        + "      fetch-min-bytes: 16384\n"
                         + "      fetch-max-wait-ms: 125\n"
         );
         assertThat(compose)
-                .contains("SPI_KAFKA_STATUS_REPORT_MAX_POLL_RECORDS: 500")
-                .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MIN_BYTES: 131072")
+                .contains("SPI_KAFKA_STATUS_REPORT_MAX_POLL_RECORDS: 220")
+                .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MIN_BYTES: 16384")
                 .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MAX_WAIT_MS: 125");
     }
 }
