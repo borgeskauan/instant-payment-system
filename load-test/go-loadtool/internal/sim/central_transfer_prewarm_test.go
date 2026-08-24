@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,6 +166,7 @@ func TestPrewarmReusesConfiguredHTTP2ClientForConcurrentTransfers(t *testing.T) 
 	var transferRequests atomic.Int64
 	var activeTransfers atomic.Int64
 	var maximumConcurrentTransfers atomic.Int64
+	var connections atomic.Int64
 	var wrongProtocol atomic.Bool
 	transferStarted := make(chan struct{}, 2)
 	releaseTransfers := make(chan struct{})
@@ -201,6 +203,11 @@ func TestPrewarmReusesConfiguredHTTP2ClientForConcurrentTransfers(t *testing.T) 
 			response.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
 	server.EnableHTTP2 = true
 	server.StartTLS()
 	defer server.Close()
@@ -234,14 +241,10 @@ func TestPrewarmReusesConfiguredHTTP2ClientForConcurrentTransfers(t *testing.T) 
 	}
 	release()
 
-	reused := 0
 	for range 2 {
 		result := <-results
 		if result.HTTPStatus != http.StatusOK {
 			t.Fatalf("transfer status = %d, want 200", result.HTTPStatus)
-		}
-		if result.ConnectionReused {
-			reused++
 		}
 	}
 	if healthRequests.Load() != 1 || transferRequests.Load() != 2 {
@@ -250,8 +253,8 @@ func TestPrewarmReusesConfiguredHTTP2ClientForConcurrentTransfers(t *testing.T) 
 	if wrongProtocol.Load() {
 		t.Fatal("server observed a non-HTTP/2 request")
 	}
-	if reused == 0 {
-		t.Fatal("concurrent transfers did not reuse the prewarmed HTTP/2 session")
+	if connections.Load() != 1 {
+		t.Fatalf("HTTP/2 connections = %d, want the single prewarmed connection", connections.Load())
 	}
 	if maximumConcurrentTransfers.Load() < 2 {
 		t.Fatalf("maximum concurrent transfers = %d, want at least 2", maximumConcurrentTransfers.Load())

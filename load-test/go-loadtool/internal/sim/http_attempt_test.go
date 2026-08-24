@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,51 +32,6 @@ func TestHTTP2TransportIsExclusiveAndBounded(t *testing.T) {
 	}
 	if transport.IdleConnTimeout != 90*time.Second {
 		t.Fatalf("IdleConnTimeout = %s, want 90s", transport.IdleConnTimeout)
-	}
-}
-
-func TestHTTP2TransportObservesNewThenReusedConnection(t *testing.T) {
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.ProtoMajor != 2 {
-			t.Fatalf("request protocol = HTTP/%d, want HTTP/2", request.ProtoMajor)
-		}
-		_, _ = io.Copy(io.Discard, request.Body)
-		_ = request.Body.Close()
-		response.WriteHeader(http.StatusOK)
-	}))
-	server.EnableHTTP2 = true
-	server.StartTLS()
-	defer server.Close()
-
-	serverTransport := server.Client().Transport.(*http.Transport)
-	transport := newHTTP2Transport(serverTransport.TLSClientConfig.Clone())
-	defer transport.CloseIdleConnections()
-	s := &simulator{httpClients: map[string]*http.Client{
-		"10000001": {
-			Transport: transport,
-			Timeout:   time.Second,
-		},
-	}}
-
-	first := s.post(context.Background(), "10000001", server.URL, []byte("first"))
-	second := s.post(context.Background(), "10000001", server.URL, []byte("second"))
-
-	for index, attempt := range []httpAttemptResult{first, second} {
-		if attempt.HTTPStatus != http.StatusOK {
-			t.Fatalf("attempt %d HTTPStatus = %d, want 200", index+1, attempt.HTTPStatus)
-		}
-		if attempt.ConnectionAcquiredAtNS == 0 {
-			t.Fatalf("attempt %d did not record connection acquisition", index+1)
-		}
-		if attempt.RequestWrittenAtNS == 0 {
-			t.Fatalf("attempt %d did not record request write", index+1)
-		}
-	}
-	if first.ConnectionReused {
-		t.Fatal("first request unexpectedly reused a connection")
-	}
-	if !second.ConnectionReused {
-		t.Fatal("second request did not reuse the first HTTP/2 connection")
 	}
 }
 

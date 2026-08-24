@@ -631,18 +631,15 @@ func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedA
 		s.accepted.Add(1)
 	}
 	s.writeStart(events.Start{
-		EndToEndID:             job.ID,
-		PayerISPB:              job.Pair.Payer,
-		ReceiverISPB:           job.Pair.Receiver,
-		CreatedAtNS:            job.Created,
-		RequestStartedAtNS:     startedAt,
-		RequestDoneAtNS:        doneAt,
-		HTTPStatus:             status,
-		ScenarioName:           job.ScenarioName,
-		Pacs008ReplaySelected:  job.ReplaySelected,
-		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
-		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
-		ConnectionReused:       attempt.ConnectionReused,
+		EndToEndID:            job.ID,
+		PayerISPB:             job.Pair.Payer,
+		ReceiverISPB:          job.Pair.Receiver,
+		CreatedAtNS:           job.Created,
+		RequestStartedAtNS:    startedAt,
+		RequestDoneAtNS:       doneAt,
+		HTTPStatus:            status,
+		ScenarioName:          job.ScenarioName,
+		Pacs008ReplaySelected: job.ReplaySelected,
 	})
 }
 
@@ -664,16 +661,13 @@ func (s *simulator) sendReplay(ctx context.Context, job replayJob) {
 		s.replaysAccepted.Add(1)
 	}
 	s.writeReplay(events.Replay{
-		EndToEndID:             job.endToEndID,
-		SenderISPB:             job.senderISPB,
-		ScenarioName:           job.scenarioName,
-		MessageType:            job.messageType,
-		RequestStartedAtNS:     startedAt,
-		RequestDoneAtNS:        doneAt,
-		HTTPStatus:             status,
-		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
-		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
-		ConnectionReused:       attempt.ConnectionReused,
+		EndToEndID:         job.endToEndID,
+		SenderISPB:         job.senderISPB,
+		ScenarioName:       job.scenarioName,
+		MessageType:        job.messageType,
+		RequestStartedAtNS: startedAt,
+		RequestDoneAtNS:    doneAt,
+		HTTPStatus:         status,
 	})
 }
 
@@ -743,16 +737,13 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.writeStatusStart(events.StatusStart{
-		EndToEndID:             job.endToEndID,
-		SenderISPB:             job.receiverISPB,
-		ScenarioName:           job.scenarioName,
-		RequestStartedAtNS:     startedAtTime.UnixNano(),
-		RequestDoneAtNS:        doneAt,
-		HTTPStatus:             status,
-		Pacs002ReplaySelected:  selected,
-		ConnectionAcquiredAtNS: attempt.ConnectionAcquiredAtNS,
-		RequestWrittenAtNS:     attempt.RequestWrittenAtNS,
-		ConnectionReused:       attempt.ConnectionReused,
+		EndToEndID:            job.endToEndID,
+		SenderISPB:            job.receiverISPB,
+		ScenarioName:          job.scenarioName,
+		RequestStartedAtNS:    startedAtTime.UnixNano(),
+		RequestDoneAtNS:       doneAt,
+		HTTPStatus:            status,
+		Pacs002ReplaySelected: selected,
 	})
 	if status < 200 || status >= 300 {
 		return
