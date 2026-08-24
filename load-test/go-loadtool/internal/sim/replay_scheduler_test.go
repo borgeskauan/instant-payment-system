@@ -48,14 +48,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dir := t.TempDir()
-	startWriter, err := events.NewStartWriter(filepath.Join(dir, "starts.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayWriter, err := events.NewReplayWriter(filepath.Join(dir, "replays.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := newTestEventRecorder(t, dir)
 
 	delay := 70 * time.Millisecond
 	scheduler := newReplayScheduler(ctx, 1)
@@ -91,8 +84,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 			}},
 		},
 		httpClients:     map[string]*http.Client{"10000001": httpClient},
-		startWriter:     startWriter,
-		replayWriter:    replayWriter,
+		eventRecorder:   recorder,
 		replayScheduler: scheduler,
 		buildPacs008Func: func(string, string, string, int64) []byte {
 			buildCalls.Add(1)
@@ -129,10 +121,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 	scheduler.Close()
 	scheduler.Wait()
 	replayWorkers.Wait()
-	if err := startWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := replayWriter.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +133,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 	if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
 		t.Fatalf("POST bodies differ: %q", bodies)
 	}
-	starts, err := events.ReadStarts(filepath.Join(dir, "starts.csv"))
+	starts, err := events.ReadStarts(filepath.Join(dir, "pacs008-starts.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,14 +153,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	dir := t.TempDir()
-	statusWriter, err := events.NewStatusStartWriter(filepath.Join(dir, "status-starts.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayWriter, err := events.NewReplayWriter(filepath.Join(dir, "replays.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := newTestEventRecorder(t, dir)
 
 	delay := 70 * time.Millisecond
 	selector, err := newReplaySelectorWithDomain(1, pacs002ReplayShuffleDomain)
@@ -210,8 +192,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 			}},
 		},
 		httpClients:           map[string]*http.Client{"20000001": httpClient},
-		statusStartWriter:     statusWriter,
-		replayWriter:          replayWriter,
+		eventRecorder:         recorder,
 		replayScheduler:       scheduler,
 		pacs002ReplaySelector: selector,
 		generationEndedAt:     time.Now().Add(time.Second),
@@ -242,10 +223,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 	scheduler.Close()
 	scheduler.Wait()
 	replayWorkers.Wait()
-	if err := statusWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := replayWriter.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -257,7 +235,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 		t.Fatalf("POST bodies differ: %q", bodies)
 	}
 	bodiesMu.Unlock()
-	statuses, err := events.ReadStatusStarts(filepath.Join(dir, "status-starts.csv"))
+	statuses, err := events.ReadStatusStarts(filepath.Join(dir, "pacs002-starts.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,14 +253,7 @@ func TestSelectedPacs002ReplayIsScheduledFromOriginalStartAndReusesExactBody(t *
 
 func TestPacs002StartedDuringDrainIsSentWithoutCreatingReplayObligation(t *testing.T) {
 	dir := t.TempDir()
-	statusWriter, err := events.NewStatusStartWriter(filepath.Join(dir, "status-starts.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	eventWriter, err := events.NewNotificationWriter(filepath.Join(dir, "notifications.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := newTestEventRecorder(t, dir)
 	selector, err := newReplaySelectorWithDomain(1, pacs002ReplayShuffleDomain)
 	if err != nil {
 		t.Fatal(err)
@@ -302,8 +273,7 @@ func TestPacs002StartedDuringDrainIsSentWithoutCreatingReplayObligation(t *testi
 				return &http.Response{StatusCode: http.StatusOK, Proto: "HTTP/2.0", ProtoMajor: 2, ProtoMinor: 0, Body: http.NoBody}, nil
 			}),
 		}},
-		statusStartWriter:     statusWriter,
-		eventWriter:           eventWriter,
+		eventRecorder:         recorder,
 		pacs002ReplaySelector: selector,
 		generationEndedAt:     time.Now().Add(-time.Second),
 		replayDeadlineAt:      time.Now().Add(time.Second),
@@ -314,14 +284,11 @@ func TestPacs002StartedDuringDrainIsSentWithoutCreatingReplayObligation(t *testi
 		endToEndID:   "tx-in-drain",
 		scenarioName: "happy-path",
 	})
-	if err := statusWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := eventWriter.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	statuses, err := events.ReadStatusStarts(filepath.Join(dir, "status-starts.csv"))
+	statuses, err := events.ReadStatusStarts(filepath.Join(dir, "pacs002-starts.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -80,15 +81,9 @@ type simulator struct {
 	cfg                      Config
 	runID                    string
 	httpClients              map[string]*http.Client
-	startWriter              *events.StartWriter
-	eventWriter              *events.NotificationWriter
-	replayWriter             *events.ReplayWriter
-	statusStartWriter        *events.StatusStartWriter
+	eventRecorder            *eventRecorder
+	cancelRun                context.CancelFunc
 	replayScheduler          *replayScheduler
-	startMu                  sync.Mutex
-	eventMu                  sync.Mutex
-	replayMu                 sync.Mutex
-	statusStartMu            sync.Mutex
 	pacs002SelectorMu        sync.Mutex
 	originalMu               sync.Mutex
 	paymentStatesMu          sync.Mutex
@@ -144,7 +139,7 @@ func Run(cfg Config) error {
 	return runWithDependencies(cfg, runDependencies{newHTTPClients: newHTTPClients})
 }
 
-func runWithDependencies(cfg Config, dependencies runDependencies) error {
+func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error) {
 	if cfg.OfferedTxRate <= 0 {
 		return fmt.Errorf("rate must be positive")
 	}
@@ -169,29 +164,28 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		return err
 	}
 
-	startWriter, err := events.NewStartWriter(filepath.Join(cfg.OutputDir, "pacs008-starts.csv"))
+	rootCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var s *simulator
+	recorder, err := newEventRecorder(
+		cfg.OutputDir,
+		eventQueueCapacity(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate)),
+		func(err error) {
+			if s != nil {
+				s.abortRun(err)
+				return
+			}
+			cancel()
+		},
+	)
 	if err != nil {
 		return err
 	}
-	defer startWriter.Close()
-
-	eventWriter, err := events.NewNotificationWriter(filepath.Join(cfg.OutputDir, "notifications.csv"))
-	if err != nil {
-		return err
-	}
-	defer eventWriter.Close()
-
-	replayWriter, err := events.NewReplayWriter(filepath.Join(cfg.OutputDir, "replays.csv"))
-	if err != nil {
-		return err
-	}
-	defer replayWriter.Close()
-
-	statusStartWriter, err := events.NewStatusStartWriter(filepath.Join(cfg.OutputDir, "pacs002-starts.csv"))
-	if err != nil {
-		return err
-	}
-	defer statusStartWriter.Close()
+	defer func() {
+		if err := recorder.Close(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 
 	var pacs002ReplaySelector *replaySelector
 	if cfg.Replay.Pacs002 != nil {
@@ -208,14 +202,12 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	}
 	defer closeHTTPClients(httpClients)
 
-	s := &simulator{
+	s = &simulator{
 		cfg:                      cfg,
 		runID:                    fmt.Sprintf("go-%d", time.Now().UnixNano()),
 		httpClients:              httpClients,
-		startWriter:              startWriter,
-		eventWriter:              eventWriter,
-		replayWriter:             replayWriter,
-		statusStartWriter:        statusStartWriter,
+		eventRecorder:            recorder,
+		cancelRun:                cancel,
 		statusJobs:               make(chan statusJob, statusQueueCapacity(cfg.OfferedTxRate)),
 		paymentStates:            make(map[string]paymentState),
 		pacs002ReplaySelector:    pacs002ReplaySelector,
@@ -224,9 +216,6 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		openNotificationPullFunc: dependencies.openNotificationPull,
 	}
 	s.sendPacs002Func = s.sendPacs002
-
-	rootCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	logPhase("prewarming central transfer HTTP/2 clients: psps=%d", len(httpClients))
 	if err := prewarmHTTP2Clients(rootCtx, cfg.BaseURL, httpClients); err != nil {
@@ -321,6 +310,9 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 	warmupErr := warmupTracker.Wait(warmupCtx)
 	cancelWarmup()
 	if warmupErr != nil {
+		if err := s.currentRunError(); err != nil {
+			return err
+		}
 		return fmt.Errorf("warmup completion gate: %w", warmupErr)
 	}
 	if err := s.currentRunError(); err != nil {
@@ -1099,34 +1091,33 @@ func (s *simulator) isCurrentTransfer(endToEndID string) bool {
 }
 
 func (s *simulator) writeStart(row events.Start) {
-	s.startMu.Lock()
-	defer s.startMu.Unlock()
-	if err := s.startWriter.Write(row); err != nil {
-		s.recordRunError(fmt.Errorf("write start: %w", err))
+	if err := s.eventRecorder.RecordStart(row); err != nil {
+		s.abortRun(err)
 	}
 }
 
 func (s *simulator) writeNotification(row events.Notification) {
-	s.eventMu.Lock()
-	defer s.eventMu.Unlock()
-	if err := s.eventWriter.Write(row); err != nil {
-		s.recordRunError(fmt.Errorf("write notification: %w", err))
+	if err := s.eventRecorder.RecordNotification(row); err != nil {
+		s.abortRun(err)
 	}
 }
 
 func (s *simulator) writeReplay(row events.Replay) {
-	s.replayMu.Lock()
-	defer s.replayMu.Unlock()
-	if err := s.replayWriter.Write(row); err != nil {
-		s.recordRunError(fmt.Errorf("write replay: %w", err))
+	if err := s.eventRecorder.RecordReplay(row); err != nil {
+		s.abortRun(err)
 	}
 }
 
 func (s *simulator) writeStatusStart(row events.StatusStart) {
-	s.statusStartMu.Lock()
-	defer s.statusStartMu.Unlock()
-	if err := s.statusStartWriter.Write(row); err != nil {
-		s.recordRunError(fmt.Errorf("write status start: %w", err))
+	if err := s.eventRecorder.RecordStatusStart(row); err != nil {
+		s.abortRun(err)
+	}
+}
+
+func (s *simulator) abortRun(err error) {
+	s.recordRunError(err)
+	if s.cancelRun != nil {
+		s.cancelRun()
 	}
 }
 

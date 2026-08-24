@@ -178,15 +178,7 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 }
 
 func TestWarmupHTTPFailureDoesNotFailGateWhenExpectedOutcomeArrives(t *testing.T) {
-	startWriter, err := events.NewStartWriter(filepath.Join(t.TempDir(), "starts.csv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := startWriter.Close(); err != nil {
-			t.Errorf("close start writer: %v", err)
-		}
-	}()
+	recorder := newTestEventRecorder(t, t.TempDir())
 
 	tracker := newPhaseTracker()
 	if err := tracker.Add(); err != nil {
@@ -200,7 +192,7 @@ func TestWarmupHTTPFailureDoesNotFailGateWhenExpectedOutcomeArrives(t *testing.T
 				return nil, errors.New("request timeout")
 			})},
 		},
-		startWriter:   startWriter,
+		eventRecorder: recorder,
 		paymentStates: make(map[string]paymentState),
 		buildPacs008Func: func(string, string, string, int64) []byte {
 			return []byte("pacs.008")
@@ -399,18 +391,15 @@ func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	eventsPath := filepath.Join(t.TempDir(), "events.csv")
-	writer, err := events.NewNotificationWriter(eventsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
+	recorder := newTestEventRecorder(t, dir)
 
 	client := newFakeNotificationPullClient()
 	now := time.Now()
 	s := &simulator{
 		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
 		runID:             "tx",
-		eventWriter:       writer,
+		eventRecorder:     recorder,
 		activeStartedAt:   now.Add(-time.Second),
 		generationEndedAt: now.Add(time.Second),
 	}
@@ -450,10 +439,10 @@ func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t 
 
 	cancel()
 	wg.Wait()
-	if err := writer.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := events.ReadNotifications(eventsPath)
+	rows, err := events.ReadNotifications(filepath.Join(dir, "notifications.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,18 +456,15 @@ func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t 
 }
 
 func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
-	eventsPath := filepath.Join(t.TempDir(), "events.csv")
-	writer, err := events.NewNotificationWriter(eventsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
+	recorder := newTestEventRecorder(t, dir)
 	s := &simulator{
-		cfg:         Config{PullMetrics: pullmetrics.NewRecorder()},
-		runID:       "current-run",
-		eventWriter: writer,
+		cfg:           Config{PullMetrics: pullmetrics.NewRecorder()},
+		runID:         "current-run",
+		eventRecorder: recorder,
 	}
 
-	err = s.processNotificationPull(
+	err := s.processNotificationPull(
 		context.Background(),
 		notificationPullSession{ispb: "20000001", receiverRole: true},
 		&notificationpb.PullResponse{
@@ -496,10 +482,10 @@ func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
 	if runErr := s.currentRunError(); runErr != nil {
 		t.Fatalf("run error = %v, want historical notification ignored", runErr)
 	}
-	if err := writer.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := events.ReadNotifications(eventsPath)
+	rows, err := events.ReadNotifications(filepath.Join(dir, "notifications.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,15 +514,12 @@ func TestCurrentTransferIsIdentifiedByTheExactRunPrefix(t *testing.T) {
 }
 
 func TestNotificationPullRecordsRepeatedPhysicalDelivery(t *testing.T) {
-	eventsPath := filepath.Join(t.TempDir(), "events.csv")
-	writer, err := events.NewNotificationWriter(eventsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
+	recorder := newTestEventRecorder(t, dir)
 	s := &simulator{
-		cfg:         Config{PullMetrics: pullmetrics.NewRecorder()},
-		runID:       "tx",
-		eventWriter: writer,
+		cfg:           Config{PullMetrics: pullmetrics.NewRecorder()},
+		runID:         "tx",
+		eventRecorder: recorder,
 	}
 	response := &notificationpb.PullResponse{Notifications: []*notificationpb.Notification{{
 		Payload:         payload.Pacs002("tx-1"),
@@ -553,10 +536,10 @@ func TestNotificationPullRecordsRepeatedPhysicalDelivery(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Close(); err != nil {
+	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := events.ReadNotifications(eventsPath)
+	rows, err := events.ReadNotifications(filepath.Join(dir, "notifications.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
