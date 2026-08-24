@@ -241,11 +241,7 @@ func NewNotificationWriter(path string) (*NotificationWriter, error) {
 }
 
 func (w *NotificationWriter) Write(row Notification) error {
-	reasonCodes := row.ReasonCodes
-	if reasonCodes == nil {
-		reasonCodes = []string{}
-	}
-	encodedReasonCodes, err := json.Marshal(reasonCodes)
+	encodedReasonCodes, err := encodeReasonCodes(row.ReasonCodes)
 	if err != nil {
 		return err
 	}
@@ -255,8 +251,19 @@ func (w *NotificationWriter) Write(row Notification) error {
 		row.EventType,
 		strconv.FormatInt(row.ReceivedAtNS, 10),
 		row.StatusCode,
-		string(encodedReasonCodes),
+		encodedReasonCodes,
 	})
+}
+
+func encodeReasonCodes(reasonCodes []string) (string, error) {
+	if len(reasonCodes) == 0 {
+		return "[]", nil
+	}
+	encoded, err := json.Marshal(reasonCodes)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func (w *NotificationWriter) Close() error {

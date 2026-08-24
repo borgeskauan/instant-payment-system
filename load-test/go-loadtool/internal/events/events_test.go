@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+var encodedReasonCodesSink string
+
 func TestStartEventsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "starts.csv")
@@ -96,6 +98,24 @@ func TestNotificationEventsRoundTrip(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].EventType != EventPacs002Received || rows[0].StatusCode != "RJCT" || len(rows[0].ReasonCodes) != 2 || rows[0].ReasonCodes[0] != "AM04" || rows[0].ReasonCodes[1] != "AB03" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestEmptyReasonCodesAreEncodedWithoutAllocating(t *testing.T) {
+	for _, reasonCodes := range [][]string{nil, {}} {
+		allocations := testing.AllocsPerRun(1000, func() {
+			encoded, err := encodeReasonCodes(reasonCodes)
+			if err != nil {
+				panic(err)
+			}
+			encodedReasonCodesSink = encoded
+		})
+		if allocations != 0 {
+			t.Fatalf("encodeReasonCodes(%v) allocations = %f, want 0", reasonCodes, allocations)
+		}
+		if encodedReasonCodesSink != "[]" {
+			t.Fatalf("encodeReasonCodes(%v) = %q, want []", reasonCodes, encodedReasonCodesSink)
+		}
 	}
 }
 
