@@ -15,7 +15,7 @@
     }
   },
   "load": {
-    "offeredTxRate": 100,
+    "offeredTxRate": 105,
     "requiredMinimumTxRate": 100,
     "warmup": {
       "offeredTxRate": 50,

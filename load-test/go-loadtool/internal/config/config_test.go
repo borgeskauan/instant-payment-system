@@ -457,7 +457,7 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Load.OfferedTxRate != 100 || cfg.Load.RequiredMinimumTxRate != 100 || cfg.Load.Warmup.OfferedTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
+	if cfg.Load.OfferedTxRate != 105 || cfg.Load.RequiredMinimumTxRate != 100 || cfg.Load.Warmup.OfferedTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
 		t.Fatalf("mixed load = %#v", cfg.Load)
 	}
 	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "happy-path" || cfg.Scenarios[1].Name != "insufficient-funds" {
