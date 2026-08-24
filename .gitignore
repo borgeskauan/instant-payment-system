@@ -36,4 +36,5 @@ build/
 
 /load_test/summary/
 /load-test/results/
+/load-test/results-*.tar.zst
 /infra/certs/local/

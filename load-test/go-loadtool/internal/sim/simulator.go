@@ -447,39 +447,54 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 	timer := time.NewTimer(time.Hour)
 	stopTimer(timer)
 	defer stopTimer(timer)
-	for index := uint64(0); index < slotCount; index++ {
-		firstValid := firstUnexpiredOriginalSlot(phaseStart, rate, time.Now(), originalStartTolerance)
-		if firstValid > index {
-			index = firstValid
-			if index >= slotCount {
-				return
-			}
+	for bucketIndex := uint64(0); ; bucketIndex++ {
+		currentBucket := currentOriginalBucketIndex(phaseStart, time.Now())
+		if currentBucket > bucketIndex {
+			bucketIndex = currentBucket
 		}
-
-		scheduledAt := originalSlotScheduledAt(phaseStart, rate, index)
-		if !waitUntil(ctx, timer, scheduledAt, phaseEnd) {
+		bucket, exists := originalBucketAt(phaseStart, phaseEnd, rate, bucketIndex)
+		if !exists {
 			return
 		}
-		deadline := originalSlotDeadline(scheduledAt, phaseEnd, originalStartTolerance)
-		if !originalSlotCanStart(time.Now(), deadline) {
+		if bucket.firstSlot >= slotCount {
+			return
+		}
+		if bucket.endSlot == bucket.firstSlot {
+			continue
+		}
+		if !waitUntil(ctx, timer, bucket.start, bucket.end) {
+			return
+		}
+		if !originalSlotCanStart(time.Now(), bucket.end) {
+			if bucket.endSlot >= slotCount {
+				return
+			}
 			continue
 		}
 
-		resetTimer(timer, time.Until(deadline))
-		if !s.addPhaseWork(tracker) {
-			stopTimer(timer)
-			return
+		resetTimer(timer, time.Until(bucket.end))
+		bucketExpired := false
+		for slotIndex := bucket.firstSlot; slotIndex < bucket.endSlot && slotIndex < slotCount; slotIndex++ {
+			if !s.addPhaseWork(tracker) {
+				return
+			}
+			slot := originalSlot{createdAt: time.Now().UnixNano(), deadline: bucket.end, tracker: tracker}
+			select {
+			case jobs <- slot:
+			case <-ctx.Done():
+				s.completePhaseWork(tracker)
+				return
+			case <-timer.C:
+				s.completePhaseWork(tracker)
+				bucketExpired = true
+			}
+			if bucketExpired {
+				break
+			}
 		}
-		slot := originalSlot{createdAt: time.Now().UnixNano(), deadline: deadline, tracker: tracker}
-		select {
-		case jobs <- slot:
-			stopTimer(timer)
-		case <-ctx.Done():
-			stopTimer(timer)
-			s.completePhaseWork(tracker)
+		stopTimer(timer)
+		if bucket.endSlot >= slotCount {
 			return
-		case <-timer.C:
-			s.completePhaseWork(tracker)
 		}
 	}
 }

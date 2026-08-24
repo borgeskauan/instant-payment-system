@@ -6,52 +6,96 @@ import (
 	"time"
 )
 
-func TestOriginalSlotScheduleDoesNotDriftForRatesThatDoNotDivideOneSecond(t *testing.T) {
+func TestOriginalBucketCarriesExactBudgetForConfiguredRates(t *testing.T) {
 	start := time.Unix(100, 0)
-	want := []time.Time{
-		start,
-		start.Add(333_333_333 * time.Nanosecond),
-		start.Add(666_666_666 * time.Nanosecond),
-		start.Add(time.Second),
+	end := start.Add(time.Second)
+
+	active, ok := originalBucketAt(start, end, 2_100, 0)
+	if !ok {
+		t.Fatal("active bucket 0 is absent")
+	}
+	if active.firstSlot != 0 || active.endSlot != 21 {
+		t.Fatalf("active bucket slots = [%d,%d), want [0,21)", active.firstSlot, active.endSlot)
+	}
+	if !active.start.Equal(start) || !active.end.Equal(start.Add(10*time.Millisecond)) {
+		t.Fatalf("active bucket bounds = [%s,%s), want [%s,%s)", active.start, active.end, start, start.Add(10*time.Millisecond))
 	}
 
-	for index, wantScheduledAt := range want {
-		if got := originalSlotScheduledAt(start, 3, uint64(index)); !got.Equal(wantScheduledAt) {
-			t.Fatalf("slot %d scheduled at %s, want %s", index, got, wantScheduledAt)
-		}
+	warmup, ok := originalBucketAt(start, end, 1_500, 0)
+	if !ok {
+		t.Fatal("warmup bucket 0 is absent")
+	}
+	if warmup.firstSlot != 0 || warmup.endSlot != 15 {
+		t.Fatalf("warmup bucket slots = [%d,%d), want [0,15)", warmup.firstSlot, warmup.endSlot)
 	}
 }
 
-func TestFirstUnexpiredOriginalSlotJumpsOverLongExpiredPrefix(t *testing.T) {
+func TestOriginalBucketsDistributeNonDivisibleRateWithoutChangingTotal(t *testing.T) {
+	start := time.Unix(100, 0)
+	end := start.Add(time.Second)
+
+	first, ok := originalBucketAt(start, end, 2_050, 0)
+	if !ok {
+		t.Fatal("bucket 0 is absent")
+	}
+	second, ok := originalBucketAt(start, end, 2_050, 1)
+	if !ok {
+		t.Fatal("bucket 1 is absent")
+	}
+	if first.endSlot-first.firstSlot != 21 || second.endSlot-second.firstSlot != 20 {
+		t.Fatalf("first bucket budgets = %d,%d, want 21,20", first.endSlot-first.firstSlot, second.endSlot-second.firstSlot)
+	}
+
+	var total uint64
+	for index := uint64(0); ; index++ {
+		bucket, exists := originalBucketAt(start, end, 2_050, index)
+		if !exists {
+			break
+		}
+		total += bucket.endSlot - bucket.firstSlot
+	}
+	if total != 2_050 {
+		t.Fatalf("bucket total = %d, want 2050", total)
+	}
+}
+
+func TestCurrentOriginalBucketJumpsDirectlyOverExpiredBuckets(t *testing.T) {
 	start := time.Unix(100, 0)
 	now := start.Add(49*time.Second + 123*time.Millisecond)
 
-	index := firstUnexpiredOriginalSlot(start, 2_000, now, 10*time.Millisecond)
+	index := currentOriginalBucketIndex(start, now)
 
-	if index != 98_227 {
-		t.Fatalf("first unexpired slot = %d, want 98227", index)
+	if index != 4_912 {
+		t.Fatalf("current bucket = %d, want 4912", index)
 	}
-	scheduledAt := originalSlotScheduledAt(start, 2_000, index)
-	if !now.Before(scheduledAt.Add(10 * time.Millisecond)) {
-		t.Fatalf("slot %d deadline %s is not after now %s", index, scheduledAt.Add(10*time.Millisecond), now)
+	bucket, ok := originalBucketAt(start, start.Add(time.Minute), 2_100, index)
+	if !ok {
+		t.Fatalf("current bucket %d is absent", index)
 	}
-	previous := originalSlotScheduledAt(start, 2_000, index-1)
-	if now.Before(previous.Add(10 * time.Millisecond)) {
-		t.Fatalf("previous slot %d deadline %s is still valid at %s", index-1, previous.Add(10*time.Millisecond), now)
+	if now.Before(bucket.start) || !now.Before(bucket.end) {
+		t.Fatalf("now %s is outside current bucket [%s,%s)", now, bucket.start, bucket.end)
 	}
 }
 
-func TestOriginalSlotDeadlineNeverCrossesPhaseBoundary(t *testing.T) {
-	phaseEnd := time.Unix(200, 0)
-	scheduledAt := phaseEnd.Add(-time.Millisecond)
+func TestOriginalBucketUsesFixedPhaseBoundariesAndExclusiveDeadline(t *testing.T) {
+	start := time.Unix(100, 0)
+	phaseEnd := start.Add(25 * time.Millisecond)
 
-	deadline := originalSlotDeadline(scheduledAt, phaseEnd, 10*time.Millisecond)
-
-	if !deadline.Equal(phaseEnd) {
-		t.Fatalf("deadline = %s, want phase end %s", deadline, phaseEnd)
+	bucket, ok := originalBucketAt(start, phaseEnd, 100, 2)
+	if !ok {
+		t.Fatal("final partial bucket is absent")
 	}
-	if originalSlotCanStart(phaseEnd, deadline) {
-		t.Fatal("slot was allowed to start at the exclusive phase boundary")
+	if !bucket.start.Equal(start.Add(20*time.Millisecond)) || !bucket.end.Equal(phaseEnd) {
+		t.Fatalf("final bucket bounds = [%s,%s), want [%s,%s)", bucket.start, bucket.end, start.Add(20*time.Millisecond), phaseEnd)
+	}
+	if bucket.firstSlot != 2 || bucket.endSlot != 3 {
+		t.Fatalf("final bucket slots = [%d,%d), want [2,3)", bucket.firstSlot, bucket.endSlot)
+	}
+	if originalSlotCanStart(bucket.end, bucket.end) {
+		t.Fatal("slot was allowed to start at the exclusive bucket deadline")
+	}
+	if _, exists := originalBucketAt(start, phaseEnd, 100, 3); exists {
+		t.Fatal("bucket was created beyond the phase boundary")
 	}
 }
 
@@ -61,6 +105,9 @@ func TestOriginalPhaseHasExactConfiguredSlotCount(t *testing.T) {
 	}
 	if got := originalPhaseSlotCount(2_000, time.Minute); got != 120_000 {
 		t.Fatalf("phase slots = %d, want 120000", got)
+	}
+	if got := originalPhaseSlotCount(100, 25*time.Millisecond); got != 3 {
+		t.Fatalf("partial phase slots = %d, want 3", got)
 	}
 }
 

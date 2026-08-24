@@ -5,7 +5,14 @@ import (
 	"time"
 )
 
-const originalStartTolerance = 10 * time.Millisecond
+const originalBucketDuration = 10 * time.Millisecond
+
+type originalBucket struct {
+	start     time.Time
+	end       time.Time
+	firstSlot uint64
+	endSlot   uint64
+}
 
 type originalSlot struct {
 	createdAt int64
@@ -13,29 +20,35 @@ type originalSlot struct {
 	tracker   *phaseTracker
 }
 
-func originalSlotScheduledAt(phaseStart time.Time, rate int, index uint64) time.Time {
-	unsignedRate := uint64(rate)
-	wholeSeconds := index / unsignedRate
-	remainder := index % unsignedRate
-	remainderNanoseconds := multiplyDivideFloor(remainder, uint64(time.Second), unsignedRate)
-	return phaseStart.Add(time.Duration(wholeSeconds)*time.Second + time.Duration(remainderNanoseconds))
+func originalBucketAt(phaseStart, phaseEnd time.Time, rate int, index uint64) (originalBucket, bool) {
+	if rate <= 0 || !phaseStart.Before(phaseEnd) {
+		return originalBucket{}, false
+	}
+	startOffset := time.Duration(index) * originalBucketDuration
+	if startOffset < 0 {
+		return originalBucket{}, false
+	}
+	start := phaseStart.Add(startOffset)
+	if !start.Before(phaseEnd) {
+		return originalBucket{}, false
+	}
+	end := start.Add(originalBucketDuration)
+	if phaseEnd.Before(end) {
+		end = phaseEnd
+	}
+	return originalBucket{
+		start:     start,
+		end:       end,
+		firstSlot: slotsThrough(phaseStart, start, rate),
+		endSlot:   slotsThrough(phaseStart, end, rate),
+	}, true
 }
 
-func firstUnexpiredOriginalSlot(phaseStart time.Time, rate int, now time.Time, tolerance time.Duration) uint64 {
-	threshold := now.Add(-tolerance)
-	if threshold.Before(phaseStart) {
+func currentOriginalBucketIndex(phaseStart, now time.Time) uint64 {
+	if !phaseStart.Before(now) {
 		return 0
 	}
-	elapsedThroughThreshold := uint64(threshold.Sub(phaseStart).Nanoseconds()) + 1
-	return multiplyDivideCeil(elapsedThroughThreshold, uint64(rate), uint64(time.Second))
-}
-
-func originalSlotDeadline(scheduledAt, phaseEnd time.Time, tolerance time.Duration) time.Time {
-	deadline := scheduledAt.Add(tolerance)
-	if phaseEnd.Before(deadline) {
-		return phaseEnd
-	}
-	return deadline
+	return uint64(now.Sub(phaseStart) / originalBucketDuration)
 }
 
 func originalSlotCanStart(now, deadline time.Time) bool {
@@ -43,13 +56,17 @@ func originalSlotCanStart(now, deadline time.Time) bool {
 }
 
 func originalPhaseSlotCount(rate int, duration time.Duration) uint64 {
-	return uint64(rate) * uint64(duration/time.Second)
+	if rate <= 0 || duration <= 0 {
+		return 0
+	}
+	return multiplyDivideCeil(uint64(duration), uint64(rate), uint64(time.Second))
 }
 
-func multiplyDivideFloor(left, right, divisor uint64) uint64 {
-	high, low := bits.Mul64(left, right)
-	quotient, _ := bits.Div64(high, low, divisor)
-	return quotient
+func slotsThrough(phaseStart, boundary time.Time, rate int) uint64 {
+	if !phaseStart.Before(boundary) {
+		return 0
+	}
+	return multiplyDivideCeil(uint64(boundary.Sub(phaseStart)), uint64(rate), uint64(time.Second))
 }
 
 func multiplyDivideCeil(left, right, divisor uint64) uint64 {
