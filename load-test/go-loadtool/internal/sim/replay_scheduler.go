@@ -167,3 +167,8 @@ func stopTimer(timer *time.Timer) {
 		}
 	}
 }
+
+func resetTimer(timer *time.Timer, duration time.Duration) {
+	stopTimer(timer)
+	timer.Reset(duration)
+}

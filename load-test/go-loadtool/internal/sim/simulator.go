@@ -444,6 +444,9 @@ func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 
 func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- originalSlot, phaseStart, phaseEnd time.Time, rate int, tracker *phaseTracker) {
 	slotCount := originalPhaseSlotCount(rate, phaseEnd.Sub(phaseStart))
+	timer := time.NewTimer(time.Hour)
+	stopTimer(timer)
+	defer stopTimer(timer)
 	for index := uint64(0); index < slotCount; index++ {
 		firstValid := firstUnexpiredOriginalSlot(phaseStart, rate, time.Now(), originalStartTolerance)
 		if firstValid > index {
@@ -454,7 +457,7 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 		}
 
 		scheduledAt := originalSlotScheduledAt(phaseStart, rate, index)
-		if !waitUntil(ctx, scheduledAt, phaseEnd) {
+		if !waitUntil(ctx, timer, scheduledAt, phaseEnd) {
 			return
 		}
 		deadline := originalSlotDeadline(scheduledAt, phaseEnd, originalStartTolerance)
@@ -462,7 +465,7 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 			continue
 		}
 
-		timer := time.NewTimer(time.Until(deadline))
+		resetTimer(timer, time.Until(deadline))
 		if !s.addPhaseWork(tracker) {
 			stopTimer(timer)
 			return
@@ -481,7 +484,7 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 	}
 }
 
-func waitUntil(ctx context.Context, target time.Time, end time.Time) bool {
+func waitUntil(ctx context.Context, timer *time.Timer, target time.Time, end time.Time) bool {
 	if !target.Before(end) {
 		return false
 	}
@@ -489,10 +492,10 @@ func waitUntil(ctx context.Context, target time.Time, end time.Time) bool {
 	if wait <= 0 {
 		return true
 	}
-	timer := time.NewTimer(wait)
-	defer stopTimer(timer)
+	resetTimer(timer, wait)
 	select {
 	case <-ctx.Done():
+		stopTimer(timer)
 		return false
 	case <-timer.C:
 		return true
