@@ -118,10 +118,11 @@ func (x *PullResponse) GetNextCursor() string {
 }
 
 type Notification struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Payload       []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Payload         []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+	CommunicationId string                 `protobuf:"bytes,2,opt,name=communication_id,json=communicationId,proto3" json:"communication_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Notification) Reset() {
@@ -161,6 +162,13 @@ func (x *Notification) GetPayload() []byte {
 	return nil
 }
 
+func (x *Notification) GetCommunicationId() string {
+	if x != nil {
+		return x.CommunicationId
+	}
+	return ""
+}
+
 var File_proto_notification_proto protoreflect.FileDescriptor
 
 const file_proto_notification_proto_rawDesc = "" +
@@ -171,9 +179,10 @@ const file_proto_notification_proto_rawDesc = "" +
 	"\fPullResponse\x12@\n" +
 	"\rnotifications\x18\x01 \x03(\v2\x1a.notification.NotificationR\rnotifications\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +
-	"nextCursor\"(\n" +
+	"nextCursor\"S\n" +
 	"\fNotification\x12\x18\n" +
-	"\apayload\x18\x01 \x01(\fR\apayload2a\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload\x12)\n" +
+	"\x10communication_id\x18\x02 \x01(\tR\x0fcommunicationId2a\n" +
 	"\x13NotificationGateway\x12J\n" +
 	"\x11PullNotifications\x12\x19.notification.PullRequest\x1a\x1a.notification.PullResponseBJZHinstant-payment-system/load-test/go-loadtool/internal/gen/notificationpbb\x06proto3"
 

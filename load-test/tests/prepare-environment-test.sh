@@ -33,7 +33,7 @@ if [[ "$*" == *"kafka-consumer-groups"* ]]; then
             lag="${SPI_STATUS_LAG:-0}"
             ;;
         notification-gateway-group)
-            topic="psp-notifications"
+            topic="psp-notifications-v1"
             lag="${GATEWAY_LAG:-0}"
             ;;
         *)

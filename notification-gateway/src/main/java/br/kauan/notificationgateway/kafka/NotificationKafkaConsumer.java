@@ -1,36 +1,31 @@
 package br.kauan.notificationgateway.kafka;
 
-import br.kauan.notificationgateway.delivery.IncomingNotification;
-import br.kauan.notificationgateway.delivery.NotificationIndexingService;
-import lombok.extern.slf4j.Slf4j;
+import br.kauan.notificationgateway.delivery.RecentNotificationBuffer;
+import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-/**
- * Consumes every message from {@code psp-notifications} and records its durable
- * position in the recipient's delivery flow. After the index transaction
- * commits, newly indexed payloads are buffered and any pending long-poll for
- * an affected recipient is signalled.
- *
- * <p>The payload remains opaque. Routing and idempotency metadata come from
- * Kafka key/headers produced by the SPI.
- */
-@Slf4j
+/** Tails the durable notification log into the bounded in-memory fast path. */
 @Component
 public class NotificationKafkaConsumer {
 
-    private static final String NOTIFICATIONS_TOPIC = "psp-notifications";
+    private static final String NOTIFICATIONS_TOPIC = "psp-notifications-v1";
 
-    private final NotificationIndexingService indexingService;
+    private final RecentNotificationBuffer buffer;
+    private final PullRequestCoordinator coordinator;
 
-    public NotificationKafkaConsumer(NotificationIndexingService indexingService) {
-        this.indexingService = indexingService;
+    public NotificationKafkaConsumer(
+            RecentNotificationBuffer buffer,
+            PullRequestCoordinator coordinator
+    ) {
+        this.buffer = buffer;
+        this.coordinator = coordinator;
     }
 
     @KafkaListener(
@@ -43,37 +38,14 @@ public class NotificationKafkaConsumer {
             return;
         }
 
-        List<IncomingNotification> notifications = new ArrayList<>(records.size());
+        List<KafkaNotificationRecord> notifications = new ArrayList<>(records.size());
+        Set<String> recipients = new HashSet<>();
         for (ConsumerRecord<String, byte[]> record : records) {
-            String ispb = record.key();
-            IncomingNotification notification = new IncomingNotification(
-                    requiredHeader(record, "notification.communication-id"),
-                    ispb,
-                    record.value()
-            );
-            log.debug(
-                    "Indexing notification delivery. communicationId={}, ispb={}, partition={}, offset={}",
-                    notification.communicationId(),
-                    ispb,
-                    record.partition(),
-                    record.offset()
-            );
+            KafkaNotificationRecord notification = KafkaNotificationRecordMapper.map(record);
             notifications.add(notification);
+            recipients.add(notification.recipientIspb());
         }
-
-        indexingService.ensureIndexed(notifications);
-    }
-
-    private String requiredHeader(ConsumerRecord<String, byte[]> record, String name) {
-        String value = optionalHeader(record, name);
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException("Missing Kafka header: " + name);
-        }
-        return value;
-    }
-
-    private String optionalHeader(ConsumerRecord<String, byte[]> record, String name) {
-        Header header = record.headers().lastHeader(name);
-        return header == null ? null : new String(header.value(), StandardCharsets.UTF_8);
+        buffer.addAll(notifications);
+        coordinator.signal(Set.copyOf(recipients));
     }
 }

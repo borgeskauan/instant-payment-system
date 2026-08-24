@@ -14,6 +14,12 @@ func TestNotificationPayloadIsBytes(t *testing.T) {
 	}
 }
 
+func TestNotificationCarriesLogicalCommunicationIdentity(t *testing.T) {
+	if _, ok := reflect.TypeOf(Notification{}).FieldByName("CommunicationId"); !ok {
+		t.Fatal("Notification does not carry the logical communication identity")
+	}
+}
+
 func TestNotificationDoesNotCarryIspb(t *testing.T) {
 	if _, ok := reflect.TypeOf(Notification{}).FieldByName("Ispb"); ok {
 		t.Fatal("Notification carries Ispb, but the stream subscription already identifies the ISPB")

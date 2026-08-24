@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.delivery;
 
+import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -7,131 +8,78 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RecentNotificationBufferTest {
 
-    private final RecentNotificationBuffer buffer = new RecentNotificationBuffer();
+    private final RecentNotificationBuffer buffer = new RecentNotificationBuffer(6);
 
     @Test
-    void returnsAtMostTheRequestedContiguousPrefixInPositionOrder() {
+    void onePartitionWindowServesMultiplePspsAndAdvancesAcrossUnrelatedRecords() {
         buffer.addAll(List.of(
-                delivery(3, "20000001"),
-                delivery(1, "20000001"),
-                delivery(2, "20000001"),
-                delivery(4, "20000001")
+                record(0, "20000001"),
+                record(1, "20000002"),
+                record(2, "20000001"),
+                record(3, "20000002")
         ));
 
-        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter("20000001", 0, 3);
+        RecentNotificationBuffer.Lookup first = buffer.lookup(3, "20000001", -1, 15, 100);
+        RecentNotificationBuffer.Lookup second = buffer.lookup(3, "20000002", -1, 15, 100);
 
-        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.DATA);
-        assertThat(lookup.deliveries())
-                .extracting(NotificationDelivery::deliveryPosition)
-                .containsExactly(1L, 2L, 3L);
+        assertThat(first.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(0L, 2L);
+        assertThat(second.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(1L, 3L);
+        assertThat(first.lastExaminedOffset()).isEqualTo(3);
+        assertThat(second.lastExaminedOffset()).isEqualTo(3);
+        assertThat(first.atTail()).isTrue();
     }
 
     @Test
-    void reportsAMissWhenTheFirstRequiredPositionIsNotInMemory() {
-        buffer.addAll(List.of(
-                delivery(2, "20000001"),
-                delivery(3, "20000001")
-        ));
-
-        assertThat(buffer.lookupAfter("20000001", 0, 15).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
-    }
-
-    @Test
-    void returnsTheAvailablePrefixWithoutCrossingALaterGap() {
-        buffer.addAll(List.of(
-                delivery(1, "20000001"),
-                delivery(2, "20000001"),
-                delivery(4, "20000001")
-        ));
-
-        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter("20000001", 0, 15);
-
-        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.DATA);
-        assertThat(lookup.deliveries())
-                .extracting(NotificationDelivery::deliveryPosition)
-                .containsExactly(1L, 2L);
-    }
-
-    @Test
-    void retainsOnlyTheMostRecentOneHundredAndFiftyPositionsPerPsp() {
-        List<NotificationDelivery> deliveries = new ArrayList<>();
-        for (long position = 200; position >= 1; position--) {
-            deliveries.add(delivery(position, "20000001"));
+    void stopsAtTheNotificationLimitWithoutSkippingTheNextMatchingOffset() {
+        List<KafkaNotificationRecord> records = new ArrayList<>();
+        for (int offset = 0; offset < 6; offset++) {
+            records.add(record(offset, "20000001"));
         }
-        buffer.addAll(deliveries);
+        buffer.addAll(records);
 
-        assertThat(buffer.lookupAfter("20000001", 0, 150).state())
+        RecentNotificationBuffer.Lookup page = buffer.lookup(3, "20000001", -1, 3, 100);
+
+        assertThat(page.notifications()).extracting(KafkaNotificationRecord::offset)
+                .containsExactly(0L, 1L, 2L);
+        assertThat(page.lastExaminedOffset()).isEqualTo(2);
+        assertThat(page.atTail()).isFalse();
+    }
+
+    @Test
+    void evictionAndDiscontinuousCoverageProduceACacheMiss() {
+        for (int offset = 0; offset < 8; offset++) {
+            buffer.addAll(List.of(record(offset, "20000001")));
+        }
+
+        assertThat(buffer.lookup(3, "20000001", -1, 15, 100).state())
                 .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
-        assertThat(buffer.lookupAfter("20000001", 50, 200).deliveries())
-                .hasSize(150)
-                .extracting(NotificationDelivery::deliveryPosition)
-                .startsWith(51L)
-                .endsWith(200L);
-    }
 
-    @Test
-    void isolatesRecipientWindows() {
-        buffer.addAll(List.of(
-                delivery(1, "20000001"),
-                delivery(1, "20000002")
-        ));
+        buffer.addAll(List.of(record(20, "20000001")));
 
-        assertThat(buffer.lookupAfter("20000001", 0, 15).deliveries())
-                .extracting(NotificationDelivery::recipientIspb)
-                .containsOnly("20000001");
-        assertThat(buffer.lookupAfter("20000002", 0, 15).deliveries())
-                .extracting(NotificationDelivery::recipientIspb)
-                .containsOnly("20000002");
-    }
-
-    @Test
-    void doesNotClaimTheObservedMaximumAsTheDurableTail() {
-        buffer.addAll(List.of(delivery(1, "20000001")));
-
-        assertThat(buffer.lookupAfter("20000001", 1, 15).state())
+        assertThat(buffer.lookup(3, "20000001", 7, 15, 100).state())
                 .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
     }
 
     @Test
-    void reportsKnownTailOnlyAfterDatabaseConfirmation() {
-        buffer.confirmThrough("20000001", 1);
+    void cursorAtTheObservedPartitionTailDoesNotHitKafkaAgain() {
+        buffer.addAll(List.of(record(10, "20000001")));
 
-        assertThat(buffer.lookupAfter("20000001", 1, 15).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
+        RecentNotificationBuffer.Lookup lookup = buffer.lookup(3, "20000001", 10, 15, 100);
+
+        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
+        assertThat(lookup.notifications()).isEmpty();
     }
 
-    @Test
-    void advancesTheConfirmedFrontierOnlyAcrossContiguousBufferedPositions() {
-        buffer.confirmThrough("20000001", 0);
-        buffer.addAll(List.of(delivery(2, "20000001")));
-
-        assertThat(buffer.lookupAfter("20000001", 0, 15).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
-
-        buffer.addAll(List.of(delivery(1, "20000001")));
-
-        assertThat(buffer.lookupAfter("20000001", 2, 15).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
-    }
-
-    @Test
-    void rejectsNegativeDatabaseFrontiers() {
-        assertThatThrownBy(() -> buffer.confirmThrough("20000001", -1))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("confirmed delivery position must not be negative");
-    }
-
-    private NotificationDelivery delivery(long position, String recipientIspb) {
-        return new NotificationDelivery(
-                position,
-                recipientIspb + ":" + position,
-                recipientIspb,
-                Long.toString(position).getBytes(StandardCharsets.UTF_8)
+    private KafkaNotificationRecord record(long offset, String recipient) {
+        return new KafkaNotificationRecord(
+                3,
+                offset,
+                recipient,
+                recipient + ":" + offset,
+                Long.toString(offset).getBytes(StandardCharsets.UTF_8)
         );
     }
 }

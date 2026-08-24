@@ -21,4 +21,5 @@ message PullResponse {
 
 message Notification {
   bytes payload = 1;
+  string communication_id = 2;
 }

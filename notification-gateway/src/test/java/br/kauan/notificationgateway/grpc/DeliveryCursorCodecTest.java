@@ -16,50 +16,42 @@ class DeliveryCursorCodecTest {
     @Test
     void springCreatesCodecFromConfiguredStableSecret() {
         new ApplicationContextRunner()
-                .withPropertyValues(
-                        "notification-gateway.pull.cursor-secret=0123456789abcdef0123456789abcdef"
-                )
+                .withPropertyValues("notification-gateway.pull.cursor-secret=0123456789abcdef0123456789abcdef")
                 .withBean(DeliveryCursorCodec.class)
                 .run(context -> assertThat(context).hasSingleBean(DeliveryCursorCodec.class));
     }
 
     @Test
-    void roundTripsPositionForAuthenticatedPspAcrossCodecRestart() {
+    void roundTripsThePspTopicPartitionAndLastExaminedOffsetAcrossRestart() {
         DeliveryCursorCodec issuer = new DeliveryCursorCodec(SECRET);
-        String cursor = issuer.encode("20000001", 250L);
+        DeliveryCursor issued = new DeliveryCursor("20000001", "psp-notifications-v1", 3, 250L);
 
-        DeliveryCursorCodec restarted = new DeliveryCursorCodec(SECRET);
+        String cursor = issuer.encode(issued);
 
-        assertThat(restarted.decodePosition(cursor, "20000001")).isEqualTo(250L);
+        assertThat(new DeliveryCursorCodec(SECRET).decode(cursor, "20000001", 3)).isEqualTo(issued);
     }
 
     @Test
-    void emptyCursorStartsBeforeTheFirstDelivery() {
+    void emptyCursorStartsBeforeTheCurrentRetainedLog() {
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
 
-        assertThat(codec.decodePosition("", "20000001")).isZero();
+        assertThat(codec.decode("", "20000001", 3))
+                .isEqualTo(new DeliveryCursor("20000001", "psp-notifications-v1", 3, -1L));
     }
 
     @Test
-    void rejectsTamperedCursor() {
+    void rejectsTamperingAnotherPspAndAnotherPartition() {
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        String cursor = codec.encode("20000001", 250L);
+        String cursor = codec.encode(new DeliveryCursor("20000001", "psp-notifications-v1", 3, 250L));
         String tampered = cursor.substring(0, cursor.length() - 1)
                 + (cursor.endsWith("A") ? "B" : "A");
 
-        assertThatThrownBy(() -> codec.decodePosition(tampered, "20000001"))
-                .isInstanceOf(InvalidDeliveryCursorException.class)
-                .hasMessage("invalid delivery cursor");
-    }
-
-    @Test
-    void rejectsCursorIssuedForAnotherPsp() {
-        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        String cursor = codec.encode("20000001", 250L);
-
-        assertThatThrownBy(() -> codec.decodePosition(cursor, "20000002"))
-                .isInstanceOf(InvalidDeliveryCursorException.class)
-                .hasMessage("invalid delivery cursor");
+        assertThatThrownBy(() -> codec.decode(tampered, "20000001", 3))
+                .isInstanceOf(InvalidDeliveryCursorException.class);
+        assertThatThrownBy(() -> codec.decode(cursor, "20000002", 3))
+                .isInstanceOf(InvalidDeliveryCursorException.class);
+        assertThatThrownBy(() -> codec.decode(cursor, "20000001", 4))
+                .isInstanceOf(InvalidDeliveryCursorException.class);
     }
 
     @Test

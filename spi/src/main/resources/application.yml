@@ -25,6 +25,8 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    listener:
+      auto-startup: false
   jmx:
     enabled: false
   main:
@@ -53,6 +55,10 @@ spi:
     flush-interval-ms: 250
     batch-size: 1024
     sample-rate: 100
+  notification-outbox:
+    queue-capacity: 1024
+    recovery-batch-size: 256
+    retry-delay: 100ms
 
 server:
   port: 8002

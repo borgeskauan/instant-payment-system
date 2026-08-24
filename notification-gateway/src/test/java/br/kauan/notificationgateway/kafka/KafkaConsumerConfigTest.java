@@ -85,6 +85,16 @@ class KafkaConsumerConfigTest {
     }
 
     @Test
+    void historicalSeekConsumersCannotCommitOverTheLiveTailerOffset() {
+        contextRunner.run(context -> {
+            var consumerFactory = context.getBean("notificationConsumerFactory", ConsumerFactory.class);
+
+            assertThat(consumerFactory.getConfigurationProperties())
+                    .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        });
+    }
+
+    @Test
     void disablesKafkaClientTelemetryPush() {
         contextRunner.run(context -> {
             var consumerFactory = context.getBean("notificationConsumerFactory", ConsumerFactory.class);

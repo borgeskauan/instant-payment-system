@@ -1,122 +1,181 @@
 package br.kauan.notificationgateway.delivery;
 
+import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * A bounded acceleration window over each Kafka partition. The window keeps
+ * every record, including records addressed to other PSPs, so a cursor can
+ * advance over the exact offsets that were examined.
+ */
 @Component
 public final class RecentNotificationBuffer {
 
-    static final int CAPACITY_PER_RECIPIENT = 150;
+    private final int capacityPerPartition;
+    private final ConcurrentHashMap<Integer, PartitionWindow> windows = new ConcurrentHashMap<>();
 
-    private final ConcurrentHashMap<String, RecipientWindow> windows = new ConcurrentHashMap<>();
+    public RecentNotificationBuffer(
+            @Value("${notification-gateway.kafka.ring-capacity-per-partition:4096}")
+            int capacityPerPartition
+    ) {
+        if (capacityPerPartition < 1) {
+            throw new IllegalArgumentException("partition buffer capacity must be positive");
+        }
+        this.capacityPerPartition = capacityPerPartition;
+    }
 
-    enum LookupState {
+    public enum LookupState {
         DATA,
         KNOWN_TAIL,
         MISS
     }
 
-    record Lookup(LookupState state, List<NotificationDelivery> deliveries) {
-
-        Lookup {
-            deliveries = List.copyOf(deliveries);
-        }
-
-        private static Lookup data(List<NotificationDelivery> deliveries) {
-            return new Lookup(LookupState.DATA, deliveries);
-        }
-
-        private static Lookup knownTail() {
-            return new Lookup(LookupState.KNOWN_TAIL, List.of());
-        }
-
-        private static Lookup miss() {
-            return new Lookup(LookupState.MISS, List.of());
-        }
-    }
-
-    public void addAll(List<NotificationDelivery> deliveries) {
-        for (NotificationDelivery delivery : deliveries) {
-            windows.computeIfAbsent(delivery.recipientIspb(), ignored -> new RecipientWindow())
-                    .add(delivery);
-        }
-    }
-
-    Lookup lookupAfter(
-            String recipientIspb,
-            long position,
-            int limit
+    public record Lookup(
+            LookupState state,
+            List<KafkaNotificationRecord> notifications,
+            long lastExaminedOffset,
+            boolean atTail
     ) {
-        if (limit <= 0) {
-            return Lookup.miss();
+        public Lookup {
+            notifications = List.copyOf(notifications);
         }
-        RecipientWindow window = windows.get(recipientIspb);
-        return window == null ? Lookup.miss() : window.lookupAfter(position, limit);
+
+        private static Lookup data(
+                List<KafkaNotificationRecord> notifications,
+                long lastExaminedOffset,
+                boolean atTail
+        ) {
+            return new Lookup(LookupState.DATA, notifications, lastExaminedOffset, atTail);
+        }
+
+        private static Lookup knownTail(long offset) {
+            return new Lookup(LookupState.KNOWN_TAIL, List.of(), offset, true);
+        }
+
+        private static Lookup miss(long offset) {
+            return new Lookup(LookupState.MISS, List.of(), offset, false);
+        }
     }
 
-    void confirmThrough(String recipientIspb, long position) {
-        if (position < 0) {
-            throw new IllegalArgumentException("confirmed delivery position must not be negative");
+    public void addAll(List<KafkaNotificationRecord> records) {
+        if (records.isEmpty()) {
+            return;
         }
-        windows.computeIfAbsent(recipientIspb, ignored -> new RecipientWindow())
-                .confirmThrough(position);
-    }
-
-    private static final class RecipientWindow {
-
-        private final NavigableMap<Long, NotificationDelivery> deliveries = new TreeMap<>();
-        private Long confirmedThrough;
-
-        synchronized void add(NotificationDelivery delivery) {
-            deliveries.put(delivery.deliveryPosition(), delivery);
-            advanceConfirmedThrough();
-            while (deliveries.size() > CAPACITY_PER_RECIPIENT) {
-                deliveries.pollFirstEntry();
+        for (KafkaNotificationRecord record : records) {
+            if (record.partition() < 0 || record.offset() < 0) {
+                throw new IllegalArgumentException("Kafka partition and offset must not be negative");
+            }
+            if (record.recipientIspb() == null || record.recipientIspb().isBlank()) {
+                throw new IllegalArgumentException("notification recipient must not be blank");
+            }
+            if (record.communicationId() == null || record.communicationId().isBlank()) {
+                throw new IllegalArgumentException("notification communication id must not be blank");
+            }
+            if (record.payload() == null) {
+                throw new IllegalArgumentException("notification payload must not be null");
             }
         }
 
-        synchronized void confirmThrough(long position) {
-            if (confirmedThrough == null || position > confirmedThrough) {
-                confirmedThrough = position;
-            }
-            advanceConfirmedThrough();
+        Map<Integer, List<KafkaNotificationRecord>> byPartition = new HashMap<>();
+        for (KafkaNotificationRecord record : records) {
+            byPartition.computeIfAbsent(record.partition(), ignored -> new ArrayList<>()).add(record);
+        }
+        byPartition.forEach((partition, partitionRecords) -> {
+            partitionRecords.sort(Comparator.comparingLong(KafkaNotificationRecord::offset));
+            windows.computeIfAbsent(partition, ignored -> new PartitionWindow(capacityPerPartition))
+                    .addAll(partitionRecords);
+        });
+    }
+
+    public Lookup lookup(
+            int partition,
+            String recipientIspb,
+            long afterOffset,
+            int notificationLimit,
+            int scanLimit
+    ) {
+        if (notificationLimit < 1 || scanLimit < notificationLimit) {
+            return Lookup.miss(afterOffset);
+        }
+        PartitionWindow window = windows.get(partition);
+        return window == null
+                ? Lookup.miss(afterOffset)
+                : window.lookup(recipientIspb, afterOffset, notificationLimit, scanLimit);
+    }
+
+    private static final class PartitionWindow {
+
+        private final int capacity;
+        private final NavigableMap<Long, KafkaNotificationRecord> records = new TreeMap<>();
+
+        private PartitionWindow(int capacity) {
+            this.capacity = capacity;
         }
 
-        synchronized Lookup lookupAfter(long position, int limit) {
-            long expectedPosition = position + 1;
-            List<NotificationDelivery> result = new ArrayList<>(Math.min(limit, deliveries.size()));
-            while (result.size() < limit) {
-                NotificationDelivery delivery = deliveries.get(expectedPosition);
-                if (delivery == null) {
+        synchronized void addAll(List<KafkaNotificationRecord> incoming) {
+            for (KafkaNotificationRecord record : incoming) {
+                add(record);
+            }
+        }
+
+        private void add(KafkaNotificationRecord record) {
+            if (records.isEmpty()) {
+                records.put(record.offset(), record);
+            } else if (record.offset() >= records.firstKey() && record.offset() <= records.lastKey()) {
+                records.put(record.offset(), record);
+            } else if (record.offset() == records.lastKey() + 1) {
+                records.put(record.offset(), record);
+            } else if (record.offset() > records.lastKey() + 1) {
+                records.clear();
+                records.put(record.offset(), record);
+            }
+            while (records.size() > capacity) {
+                records.pollFirstEntry();
+            }
+        }
+
+        synchronized Lookup lookup(
+                String recipientIspb,
+                long afterOffset,
+                int notificationLimit,
+                int scanLimit
+        ) {
+            long firstOffset = records.firstKey();
+            long tailOffset = records.lastKey();
+            if (afterOffset < firstOffset - 1 || afterOffset > tailOffset) {
+                return Lookup.miss(afterOffset);
+            }
+            if (afterOffset == tailOffset) {
+                return Lookup.knownTail(afterOffset);
+            }
+
+            List<KafkaNotificationRecord> matches = new ArrayList<>(notificationLimit);
+            long lastExamined = afterOffset;
+            int examined = 0;
+            for (KafkaNotificationRecord record : records.tailMap(afterOffset, false).values()) {
+                if (record.offset() != lastExamined + 1) {
+                    return Lookup.miss(afterOffset);
+                }
+                lastExamined = record.offset();
+                examined++;
+                if (recipientIspb.equals(record.recipientIspb())) {
+                    matches.add(record);
+                }
+                if (matches.size() == notificationLimit || examined == scanLimit) {
                     break;
                 }
-                result.add(delivery);
-                expectedPosition++;
             }
-            if (!result.isEmpty()) {
-                return Lookup.data(result);
-            }
-            if (confirmedThrough != null
-                    && position == confirmedThrough
-                    && deliveries.higherKey(position) == null) {
-                return Lookup.knownTail();
-            }
-            return Lookup.miss();
-        }
-
-        private void advanceConfirmedThrough() {
-            while (confirmedThrough != null && confirmedThrough < Long.MAX_VALUE) {
-                long nextPosition = confirmedThrough + 1;
-                if (!deliveries.containsKey(nextPosition)) {
-                    return;
-                }
-                confirmedThrough = nextPosition;
-            }
+            return Lookup.data(matches, lastExamined, lastExamined == tailOffset);
         }
     }
 }

@@ -11,18 +11,6 @@ spring:
       group-id: notification-gateway-group
       auto-offset-reset: earliest
 
-  datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/postgres}
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:mysecretpassword}
-    driver-class-name: org.postgresql.Driver
-
-  flyway:
-    enabled: true
-    table: notification_gateway_flyway_schema_history
-    baseline-on-migrate: true
-    baseline-version: 0
-
 grpc:
   server:
     port: 9090
@@ -36,9 +24,10 @@ grpc:
 notification-gateway:
   kafka:
     listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:1}
-  reconciliation:
-    batch-size: ${NOTIFICATION_GATEWAY_RECONCILIATION_BATCH_SIZE:1000}
-    fixed-delay: ${NOTIFICATION_GATEWAY_RECONCILIATION_FIXED_DELAY:1m}
+    partition-count: ${NOTIFICATION_GATEWAY_KAFKA_PARTITION_COUNT:8}
+    ring-capacity-per-partition: ${NOTIFICATION_GATEWAY_KAFKA_RING_CAPACITY_PER_PARTITION:4096}
   pull:
     cursor-secret: ${NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET:local-development-cursor-secret-change-me}
     long-poll-timeout-ms: ${NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS:30000}
+    kafka-scan-limit: ${NOTIFICATION_GATEWAY_PULL_KAFKA_SCAN_LIMIT:4096}
+    kafka-poll-timeout: ${NOTIFICATION_GATEWAY_PULL_KAFKA_POLL_TIMEOUT:100ms}

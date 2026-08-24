@@ -23,6 +23,8 @@ class KafkaNotificationProducerConfigTest {
 
         assertThat(producerFactory.getConfigurationProperties())
                 .containsEntry(ProducerConfig.ACKS_CONFIG, "all")
+                .containsEntry(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true)
+                .containsEntry(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4")
                 .containsEntry(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
     }
 }

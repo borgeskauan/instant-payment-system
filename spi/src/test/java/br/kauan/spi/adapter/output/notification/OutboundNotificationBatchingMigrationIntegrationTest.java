@@ -54,7 +54,7 @@ class OutboundNotificationBatchingMigrationIntegrationTest {
                         SELECT column_name
                         FROM information_schema.columns
                         WHERE table_schema = 'public'
-                          AND table_name = 'outbound_notification'
+                          AND table_name = 'notification_outbox'
                         ORDER BY ordinal_position
                         """)) {
                     var columnNames = new ArrayList<String>();
@@ -70,7 +70,7 @@ class OutboundNotificationBatchingMigrationIntegrationTest {
                 }
                 try (var rows = statement.executeQuery("""
                         SELECT communication_id, recipient_ispb, payload
-                        FROM outbound_notification
+                        FROM notification_outbox
                         """)) {
                     assertThat(rows.next()).isTrue();
                     assertThat(rows.getString("communication_id")).isEqualTo("v1:legacy-text-identity");

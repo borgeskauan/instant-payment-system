@@ -18,17 +18,18 @@ class OutboundNotificationSchemaIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void migrationLeavesOnlyTheImmutableOutboundNotificationSchema() {
-        assertThat(regclass("outbound_notification")).isEqualTo("outbound_notification");
-        assertThat(regclass("notification_outbox")).isNull();
+    void migrationLeavesOnlyTheMinimalTransactionalOutboxSchema() {
+        assertThat(regclass("outbound_notification")).isNull();
+        assertThat(regclass("notification_outbox")).isEqualTo("notification_outbox");
         assertThat(regclass("notification_outbox_pending_idx")).isNull();
+        assertThat(regclass("notification_outbox_position_counter")).isNull();
         assertThat(columns()).containsExactly(
                 "communication_id",
                 "recipient_ispb",
                 "payload",
                 "created_at"
         );
-        assertThat(primaryKeyName()).isEqualTo("outbound_notification_pkey");
+        assertThat(primaryKeyName()).isEqualTo("notification_outbox_pkey");
     }
 
     private String regclass(String relationName) {
@@ -41,7 +42,7 @@ class OutboundNotificationSchemaIntegrationTest {
                 SELECT column_name
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
-                  AND table_name = 'outbound_notification'
+                  AND table_name = 'notification_outbox'
                 ORDER BY ordinal_position
                 """,
                 String.class
@@ -54,7 +55,7 @@ class OutboundNotificationSchemaIntegrationTest {
                 SELECT constraint_name
                 FROM information_schema.table_constraints
                 WHERE table_schema = 'public'
-                  AND table_name = 'outbound_notification'
+                  AND table_name = 'notification_outbox'
                   AND constraint_type = 'PRIMARY KEY'
                 """,
                 String.class

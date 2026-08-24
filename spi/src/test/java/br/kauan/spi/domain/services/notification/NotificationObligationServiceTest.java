@@ -95,6 +95,36 @@ class NotificationObligationServiceTest {
     }
 
     @Test
+    void pacs008AcceptanceAndRejectionBecomeOneCombinedBulkInsertAndEvent() {
+        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        NotificationObligationService service = service(repository, eventPublisher);
+        PaymentTransactionCommand accepted = payment("E2E-ACCEPTED", "10000001", "20000001");
+        PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000002", "20000002");
+
+        service.storeTransactionObligations(
+                List.of(accepted),
+                List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+        );
+
+        List<NotificationPublication> obligations = capturedObligations(repository);
+        assertThat(obligations)
+                .extracting(NotificationPublication::recipientIspb)
+                .containsExactly("20000001", "10000002");
+        assertThat(payload(obligations.getFirst()))
+                .contains("\"EndToEndId\":\"E2E-ACCEPTED\"");
+        assertThat(payload(obligations.getLast()))
+                .contains("\"OrgnlEndToEndId\":\"E2E-REJECTED\"")
+                .contains("\"TxSts\":\"RJCT\"")
+                .contains("\"Cd\":\"AM04\"");
+
+        ArgumentCaptor<OutboundNotificationBatchReady> event =
+                ArgumentCaptor.forClass(OutboundNotificationBatchReady.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().notifications()).containsExactlyElementsOf(obligations);
+    }
+
+    @Test
     void insufficientFundsRejectionUsesAm04InThePayerRjctObligation() {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationObligationService service = service(repository);

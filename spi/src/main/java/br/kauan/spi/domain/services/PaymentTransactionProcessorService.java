@@ -56,12 +56,10 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 persistenceResult.createdPayments(),
                 persistenceResult.rejectedPayments()
         );
-        if (!persistenceResult.acceptanceRequests().isEmpty()) {
-            notificationObligationService.storeAcceptanceObligations(persistenceResult.acceptanceRequests());
-        }
-        if (!persistenceResult.rejectedPayments().isEmpty()) {
-            notificationObligationService.storeStatusObligations(
-                    List.of(),
+        if (!persistenceResult.acceptanceRequests().isEmpty()
+                || !persistenceResult.rejectedPayments().isEmpty()) {
+            notificationObligationService.storeTransactionObligations(
+                    persistenceResult.acceptanceRequests(),
                     persistenceResult.rejectedPayments()
             );
         }

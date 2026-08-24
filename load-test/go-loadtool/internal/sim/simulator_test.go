@@ -436,8 +436,11 @@ func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t 
 	}
 
 	client.responses <- &notificationpb.PullResponse{
-		Notifications: []*notificationpb.Notification{{Payload: payload.Pacs002("tx-1")}},
-		NextCursor:    "cursor-1",
+		Notifications: []*notificationpb.Notification{{
+			Payload:         payload.Pacs002("tx-1"),
+			CommunicationId: "notification-1",
+		}},
+		NextCursor: "cursor-1",
 	}
 
 	select {
@@ -485,7 +488,8 @@ func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
 		notificationPullSession{ispb: "20000001", receiverRole: true},
 		&notificationpb.PullResponse{
 			Notifications: []*notificationpb.Notification{{
-				Payload: payload.Pacs008("earlier-run", "10000001", "20000001", 100),
+				Payload:         payload.Pacs008("earlier-run", "10000001", "20000001", 100),
+				CommunicationId: "historical-notification",
 			}},
 			NextCursor: "earlier-cursor",
 		},
@@ -511,6 +515,44 @@ func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
 			s.notifications.Load(),
 			s.statusJobsQueued.Load(),
 		)
+	}
+}
+
+func TestNotificationPullProcessesACommunicationOnlyOnce(t *testing.T) {
+	eventsPath := filepath.Join(t.TempDir(), "events.csv")
+	writer, err := events.NewNotificationWriter(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &simulator{
+		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
+		eventWriter:       writer,
+		transferScenarios: map[string]string{"tx-1": "happy-path"},
+	}
+	response := &notificationpb.PullResponse{Notifications: []*notificationpb.Notification{{
+		Payload:         payload.Pacs002("tx-1"),
+		CommunicationId: "same-communication",
+	}}}
+
+	if err := s.processNotificationPull(
+		context.Background(), notificationPullSession{ispb: "10000001"}, response, time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.processNotificationPull(
+		context.Background(), notificationPullSession{ispb: "10000001"}, response, time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := events.ReadNotifications(eventsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || s.notifications.Load() != 1 {
+		t.Fatalf("logical notifications: rows=%d count=%d, want one", len(rows), s.notifications.Load())
 	}
 }
 

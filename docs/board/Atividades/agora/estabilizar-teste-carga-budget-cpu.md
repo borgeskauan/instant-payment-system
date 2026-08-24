@@ -3507,3 +3507,132 @@ ele mostra que a execução pode entrar num regime muito mais caro, mas um únic
 par sucesso/falha ainda não separa ruído ambiental de instabilidade próxima ao
 limite. A configuração `2.100 oferecidos / 2.000 requeridos` permanece vigente;
 o diagnóstico de 60 segundos não substitui a qualificação final de 15 minutos.
+
+### Reconciliação incremental por posição de commit
+
+O run de 15 minutos `stabilization-15m-rerun/20260823_190417` demonstrou que a
+varredura histórica do reconciler deixou de ser um custo aceitável: dez
+execuções sem nenhuma lacuna consumiram `519,7 s` de SQL wall-time, com máximo
+de `486,024 s`, aproximadamente `1.008.433` leituras e uso material de blocos
+temporários. O trabalho cresceu com o histórico mesmo quando Kafka e o índice
+estavam corretos.
+
+O SPI passa a atribuir a cada `outbound_notification` um `outbound_position`
+global. Cada insert bulk reserva um intervalo contíguo em um contador singleton
+dentro da mesma transação financeira; o lock do contador estabelece ordem de
+commit entre transações concorrentes, e rollback não consome posições. No
+PACS.008, obrigações de aceite e rejeição imediata da mesma transação são
+consolidadas em um único insert e uma única reserva.
+
+O Gateway mantém um checkpoint durável independente do cursor do PSP. Em cada
+ciclo de um minuto, lê `C`, tira um snapshot `U` da maior posição commitada e
+procura somente notificações sem índice em `(C, U]`, ordenadas por
+`outbound_position` e paginadas em lotes de `1.000`. A indexação continua
+passando pela mesma `ensureIndexed` idempotente usada por Kafka. O checkpoint
+só avança depois do sucesso; crash entre indexar e avançar repete trabalho sem
+duplicar a notificação lógica, enquanto qualquer falha retém a fronteira.
+
+`communication_id` continua sendo a identidade UUID da notificação e
+`delivery_position` continua sendo a ordem local por PSP exposta indiretamente
+no cursor Pull. `outbound_position` existe somente para eliminar o scan
+histórico da reconciliação; não altera a ordem nem o contrato externo de
+delivery. O checkpoint de performance desta mudança é um novo diagnóstico
+curto com stack limpa, preservando os mesmos recursos e workload.
+
+A suíte automatizada terminou com `211/211` testes do SPI e `71/71` do Gateway.
+O smoke `outbound-checkpoint-smoke/20260824_003017` concluiu `1.250/1.250`
+originais, `1.000/1.000` PACS.002, `3.250` notificações e `112/112` replays,
+sem outcome ausente/contraditório ou violação de Pull. Suas `2.800`
+notificações ocuparam exatamente as posições `1..2800`; contador e checkpoint
+terminaram em `2800`, com zero índice ausente. O relatório ficou inválido
+somente pelo conhecido mínimo rolling `99` do profile smoke com piso `100`.
+
+O diagnóstico curto
+`ordered-reconciliation-checkpoint/20260824_003447` foi comparado ao controle
+de mesmo profile `offered-2100-required-2000-repeat/20260823_175126`:
+
+| sinal | controle histórico | posição + checkpoint | variação |
+| --- | ---: | ---: | ---: |
+| TPS médio / mínimo rolling | `2.098,550 / 2.062` | `2.095,917 / 2.015` | ambos qualificam o piso |
+| latência p50 / p95 | `170,799 / 384,586 ms` | `173,548 / 360,397 ms` | `+1,61% / -6,29%` |
+| latência p99 / máxima | `513,842 / 649,426 ms` | `587,379 / 781,558 ms` | `+14,31% / +20,35%` |
+| CPU média PostgreSQL no ativo | `63,23%` | `63,706%` | `+0,476 pp` |
+| reconciler — SQL total / máximo | `876,176 / 624,823 ms` | `1.117,349 / 695,352 ms` | `+27,53% / +11,29%` |
+| outbound insert — chamadas / SQL | `4.852 / 4.488,512 ms` | `3.168 / 6.297,593 ms` | `-34,71% / +40,31%` |
+
+O curto confirma corretude e capacidade, mas não demonstra ganho no tamanho de
+aproximadamente `182 mil` notificações. A consolidação reduziu as chamadas, mas
+o contador transacional elevou o tempo do insert. Isso justificou medir a
+hipótese de escala no profile completo, em vez de extrapolar o run curto.
+
+O benchmark longo
+`ordered-reconciliation-checkpoint-15m/20260824_004156` partiu de stack e
+volumes novos. Todos os `2.045.806` pagamentos originais, `102.290` replays
+PACS.008, `81.787` replays PACS.002 e `1.636.643` status tiveram HTTP aceito.
+Não houve outcome ausente/contraditório nem violação de replay ou Pull. Ao
+final, as `1.239.480` notificações ocupavam exatamente `1..1239480`; contador e
+checkpoint eram `1.239.480`, com zero índice ausente.
+
+| sinal do run longo | resultado |
+| --- | ---: |
+| TPS médio / mínimo / máximo rolling | `2.094,518 / 1.837 / 2.121` |
+| latência p50 / p95 / p99 / máxima | `235,087 / 1.082,256 / 1.767,027 / 3.250,824 ms` |
+| CPU média PostgreSQL no ativo | `80,768%` |
+| SQL / WAL das 50 queries exportadas | `904,641 s / 4.603.208.389 B` |
+| insert ordenado — chamadas / SQL / máximo | `17.846 / 173,376 s / 970,376 ms` |
+| reconciler — chamadas / SQL / média / máximo | `17 / 69,974 s / 4,116 s / 11,507 s` |
+
+Contra o run longo histórico que motivou a mudança, o reconciler caiu de
+`519,7 s` para `69,974 s` de SQL acumulado (`-86,54%`) e de `486,024 s` para
+`11,507 s` no pior ciclo (`-97,63%`). Leituras de blocos compartilhados caíram
+de aproximadamente `1.008.433` para `193.061`; o spill temporário caiu de cerca
+de `182 mil` para `65.562/65.762` blocos lidos/escritos.
+
+O ganho não elimina o gargalo. `EXPLAIN ANALYZE` pós-run mostrou que o range de
+`outbound_notification` usa seu índice, mas o planner ainda faz `Parallel Seq
+Scan` de todo `delivery_index` para o hash anti-join. Uma forma correlacionada
+que forçou a PK fez `70 mil` probes e foi pior (`1.052,214 ms`), portanto não
+foi aplicada. A amostragem também registrou `75` observações do insert ordenado
+esperando `transactionid`, evidência do custo de serialização no contador
+global.
+
+O relatório longo permaneceu corretamente inválido: uma rolling window caiu a
+`1.837 TPS` e p95/p99 excederam `1 s`. A mudança reduz drasticamente a explosão
+histórica e preserva corretude, mas deixa dois alvos explícitos para a próxima
+decisão: evitar o scan global de `delivery_index` no reconciler e avaliar o ROI
+do contador global diante da contenção observada. Nenhuma reversão ou nova
+arquitetura foi aplicada automaticamente.
+
+### Kafka como log durável de notificações
+
+A investigação acima mostrou que otimizar separadamente o contador global e o
+anti-join manteria uma arquitetura híbrida com duas ordens duráveis,
+reconciliação e pressão no PostgreSQL financeiro. A direção vigente substitui
+essa arquitetura: Kafka passa a ser o log durável da entrega durante uma janela
+operacional de sete dias.
+
+O SPI voltou a manter uma `notification_outbox` mínima na mesma transação do
+efeito financeiro. Depois do commit, uma fila limitada alimenta um único
+publisher. O lote só é removido da outbox quando todas as mensagens recebem ACK
+do Kafka; falha parcial ou delete inconclusivo repete o lote completo. No
+startup, toda row residual é publicada antes de os consumers financeiros serem
+iniciados. Não existe scan periódico da outbox.
+
+O tópico versionado `psp-notifications-v1` possui exatamente oito partições,
+key por `recipient_ispb`, retenção de sete dias e volume persistente. O Gateway
+não usa mais PostgreSQL, `delivery_index`, posição local por PSP ou reconciler.
+Ele acompanha as partições em um buffer limitado e, em cache miss ou restart,
+lê diretamente o histórico Kafka a partir do cursor.
+
+O cursor Pull é HMAC e vincula PSP, geração do tópico, partição e último offset
+examinado. Ele pode avançar sobre mensagens de outros PSPs na mesma partição;
+somente a key do PSP autenticado é devolvida. O limite continua fixo em 15 e a
+semântica continua at-least-once. Duplicatas físicas preservam o mesmo
+`communication_id` e são tratadas idempotentemente no PSP.
+
+A decisão e suas limitações estão documentadas em
+`docs/architecture/kafka-durable-notification-delivery.md`. O ambiente MVP usa
+um broker e replication factor 1: valida o contrato e o processo, mas não HA de
+broker, host ou volume. Indisponibilidade superior a sete dias é disaster
+recovery. Admission control do ingresso financeiro baseado na saúde do
+transporte continua fora deste recorte.

@@ -328,7 +328,10 @@ class PaymentTransactionProcessorServiceTest {
         verify(auditService).storeCreationEvents(List.of(firstPayment, secondPayment), List.of());
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
-        verify(notificationService).storeAcceptanceObligations(List.of(firstPayment, secondPayment));
+        verify(notificationService).storeTransactionObligations(
+                List.of(firstPayment, secondPayment),
+                List.of()
+        );
         verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
@@ -364,7 +367,7 @@ class PaymentTransactionProcessorServiceTest {
                 divergentDuplicate
         ));
 
-        verify(notificationService).storeAcceptanceObligations(List.of(waitingDuplicate));
+        verify(notificationService).storeTransactionObligations(List.of(waitingDuplicate), List.of());
         verify(auditService).storeCreationEvents(List.of(), List.of());
         verify(traceRecorder).record("E2E-WAITING", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         verify(traceRecorder, never()).record("E2E-SETTLED", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
@@ -403,8 +406,59 @@ class PaymentTransactionProcessorServiceTest {
         service.processTransactions(requests);
 
         verify(auditService).storeCreationEvents(List.of(payment), List.of(rejection));
-        verify(notificationService).storeStatusObligations(List.of(), List.of(rejection));
+        verify(notificationService).storeTransactionObligations(List.of(), List.of(rejection));
         verify(notificationService, never()).storeAcceptanceObligations(org.mockito.ArgumentMatchers.anyList());
+        verify(notificationService, never()).storeStatusObligations(
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyList()
+        );
+    }
+
+    @Test
+    void transactionRequestCombinesAcceptanceAndRejectionNotificationPersistence() {
+        PaymentTransactionRepository repository = mock(PaymentTransactionRepository.class);
+        NotificationObligationService notificationService = mock(NotificationObligationService.class);
+        PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
+                repository,
+                mock(PaymentAuditService.class),
+                notificationService,
+                mock(SpiTraceRecorder.class)
+        );
+        PaymentTransactionCommand accepted = paymentTransaction(
+                "E2E-ACCEPTED",
+                "10000001",
+                "20000001"
+        );
+        PaymentTransactionCommand rejected = paymentTransaction(
+                "E2E-REJECTED",
+                "10000002",
+                "20000002"
+        );
+        PaymentRejection rejection = new PaymentRejection(
+                rejected,
+                br.kauan.spi.domain.entity.status.PaymentRejectionReason.INSUFFICIENT_FUNDS
+        );
+        List<AuthenticatedPaymentRequest> requests = authenticatedPayments(accepted, rejected);
+        when(repository.storeAndClassifyIncomingPaymentRequests(requests))
+                .thenReturn(new PaymentTransactionPersistenceResult(
+                        List.of(accepted),
+                        List.of(accepted, rejected),
+                        List.of(rejection),
+                        List.of(),
+                        List.of()
+                ));
+
+        service.processTransactions(requests);
+
+        verify(notificationService).storeTransactionObligations(
+                List.of(accepted),
+                List.of(rejection)
+        );
+        verify(notificationService, never()).storeAcceptanceObligations(org.mockito.ArgumentMatchers.anyList());
+        verify(notificationService, never()).storeStatusObligations(
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyList()
+        );
     }
 
     private static PaymentTransactionCommand paymentTransaction() {

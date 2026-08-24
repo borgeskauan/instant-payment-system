@@ -50,6 +50,36 @@ public class NotificationObligationService {
             return;
         }
 
+        store(acceptanceObligations(paymentTransactions));
+        log.debug("Acceptance notification obligations stored. payments={}", paymentTransactions.size());
+    }
+
+    public void storeTransactionObligations(
+            List<PaymentTransactionCommand> acceptanceRequests,
+            List<PaymentRejection> rejectedPayments
+    ) {
+        if (acceptanceRequests.isEmpty() && rejectedPayments.isEmpty()) {
+            return;
+        }
+
+        List<NotificationPublication> obligations = new ArrayList<>();
+        obligations.addAll(acceptanceObligations(acceptanceRequests));
+        obligations.addAll(statusObligations(List.of(), rejectedPayments));
+        store(obligations);
+        log.debug(
+                "Transaction notification obligations stored. acceptanceRequests={}, rejected={}",
+                acceptanceRequests.size(),
+                rejectedPayments.size()
+        );
+    }
+
+    private List<NotificationPublication> acceptanceObligations(
+            List<PaymentTransactionCommand> paymentTransactions
+    ) {
+        if (paymentTransactions.isEmpty()) {
+            return List.of();
+        }
+
         Map<String, List<PaymentTransactionCommand>> byRecipient = new LinkedHashMap<>();
         for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
             validatePaymentTransaction(paymentTransaction);
@@ -65,8 +95,7 @@ public class NotificationObligationService {
                     chunk
             )));
         }
-        store(obligations);
-        log.debug("Acceptance notification obligations stored. payments={}", paymentTransactions.size());
+        return List.copyOf(obligations);
     }
 
     public void storeStatusObligations(
@@ -75,6 +104,22 @@ public class NotificationObligationService {
     ) {
         if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
             return;
+        }
+
+        store(statusObligations(settledPayments, rejectedPayments));
+        log.debug(
+                "Status notification obligations stored. settled={}, rejected={}",
+                settledPayments.size(),
+                rejectedPayments.size()
+        );
+    }
+
+    private List<NotificationPublication> statusObligations(
+            List<PaymentTransactionCommand> settledPayments,
+            List<PaymentRejection> rejectedPayments
+    ) {
+        if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
+            return List.of();
         }
 
         Map<String, List<StatusReportCommand>> byRecipient = new LinkedHashMap<>();
@@ -116,13 +161,7 @@ public class NotificationObligationService {
                     chunk
             )));
         }
-
-        store(obligations);
-        log.debug(
-                "Status notification obligations stored. settled={}, rejected={}",
-                settledPayments.size(),
-                rejectedPayments.size()
-        );
+        return List.copyOf(obligations);
     }
 
     private void addStatus(
@@ -180,6 +219,9 @@ public class NotificationObligationService {
     }
 
     private void store(List<NotificationPublication> obligations) {
+        if (obligations.isEmpty()) {
+            return;
+        }
         outboundNotificationRepository.insertAll(obligations);
         eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
     }

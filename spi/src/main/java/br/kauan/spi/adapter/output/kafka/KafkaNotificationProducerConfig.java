@@ -29,9 +29,10 @@ public class KafkaNotificationProducerConfig {
         config.put("enable.metrics.push", false);
         
         config.put(ProducerConfig.ACKS_CONFIG, "all");
+        config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
         config.put(ProducerConfig.LINGER_MS_CONFIG, 5); // Small linger for batching
         config.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384); // 16KB batch size
-        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "none");
+        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
         config.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432); // 32MB buffer
         
         return new DefaultKafkaProducerFactory<>(config);

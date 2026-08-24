@@ -29,13 +29,15 @@ class NotificationContractTest {
     }
 
     @Test
-    void notificationContainsOnlyOpaqueBusinessPayload() {
+    void notificationContainsOpaqueBusinessPayloadAndLogicalIdentity() {
         Descriptors.Descriptor notification = NotificationProto.getDescriptor()
                 .findMessageTypeByName("Notification");
 
-        assertThat(notification.getFields()).singleElement().satisfies(payload -> {
-            assertThat(payload.getName()).isEqualTo("payload");
-            assertThat(payload.getType()).isEqualTo(Descriptors.FieldDescriptor.Type.BYTES);
-        });
+        assertThat(notification.getFields()).extracting(Descriptors.FieldDescriptor::getName)
+                .containsExactly("payload", "communication_id");
+        assertThat(notification.findFieldByName("payload").getType())
+                .isEqualTo(Descriptors.FieldDescriptor.Type.BYTES);
+        assertThat(notification.findFieldByName("communication_id").getType())
+                .isEqualTo(Descriptors.FieldDescriptor.Type.STRING);
     }
 }

@@ -51,7 +51,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
         jdbcTemplate.update(
-                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "DELETE FROM notification_outbox WHERE convert_from(payload, 'UTF8') LIKE ?",
                 "%" + PAYMENT_ID_PREFIX + "%"
         );
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE ?", PAYMENT_ID_PREFIX + "%");
@@ -227,7 +227,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
         };
         return count("""
                 SELECT COUNT(*)
-                FROM outbound_notification
+                FROM notification_outbox
                 WHERE convert_from(payload, 'UTF8') LIKE ?
                   AND convert_from(payload, 'UTF8') LIKE ?
                 """, "%" + paymentId + "%", "%" + payloadMarker + "%");
@@ -237,7 +237,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
         return count(
                 """
                         SELECT COUNT(*)
-                        FROM outbound_notification
+                        FROM notification_outbox
                         WHERE convert_from(payload, 'UTF8') LIKE ?
                           AND convert_from(payload, 'UTF8') LIKE '%TxSts%'
                         """,

@@ -6,13 +6,14 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import org.springframework.kafka.support.SendResult;
 
 @Service
 public class NotificationPublisher {
 
-    private static final String NOTIFICATION_TOPIC = "psp-notifications";
+    public static final String NOTIFICATION_TOPIC = "psp-notifications-v1";
     
     private final KafkaTemplate<String, byte[]> kafkaTemplate;
 
@@ -22,8 +23,16 @@ public class NotificationPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public CompletableFuture<SendResult<String, byte[]>> publish(NotificationPublication notification) {
-        return kafkaTemplate.send(producerRecord(notification));
+    public CompletableFuture<Void> publishAll(List<NotificationPublication> notifications) {
+        List<CompletableFuture<?>> confirmations = new ArrayList<>(notifications.size());
+        for (NotificationPublication notification : notifications) {
+            try {
+                confirmations.add(kafkaTemplate.send(producerRecord(notification)));
+            } catch (RuntimeException failure) {
+                confirmations.add(CompletableFuture.failedFuture(failure));
+            }
+        }
+        return CompletableFuture.allOf(confirmations.toArray(CompletableFuture[]::new));
     }
 
     private ProducerRecord<String, byte[]> producerRecord(NotificationPublication notification) {

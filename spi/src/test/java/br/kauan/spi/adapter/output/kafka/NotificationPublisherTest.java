@@ -9,6 +9,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,12 +35,12 @@ class NotificationPublisherTest {
                 "message-1"
         );
 
-        assertThat(publisher.publish(notification)).isSameAs(brokerConfirmation);
+        assertThat(publisher.publishAll(List.of(notification))).succeedsWithin(java.time.Duration.ofSeconds(1));
 
         var captor = forClass(ProducerRecord.class);
         verify(kafkaTemplate).send(captor.capture());
         ProducerRecord<String, byte[]> record = captor.getValue();
-        assertThat(record.topic()).isEqualTo("psp-notifications");
+        assertThat(record.topic()).isEqualTo("psp-notifications-v1");
         assertThat(record.key()).isEqualTo("20000001");
         assertThat(record.value()).isSameAs(storedPayload);
         assertThat(header(record.headers(), "notification.communication-id"))
@@ -50,7 +51,7 @@ class NotificationPublisherTest {
 
     private static SendResult<String, byte[]> sendResult() {
         return new SendResult<>(null, new RecordMetadata(
-                new TopicPartition("psp-notifications", 0),
+                new TopicPartition("psp-notifications-v1", 0),
                 10L,
                 0,
                 0,

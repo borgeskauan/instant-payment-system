@@ -44,7 +44,7 @@ class TransactionalOutboxIntegrationTest {
     void cleanFixtures() {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update(
-                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE '%E2E-TX-OUTBOX-%'"
+                "DELETE FROM notification_outbox WHERE convert_from(payload, 'UTF8') LIKE '%E2E-TX-OUTBOX-%'"
         );
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-TX-OUTBOX-%'");
         jdbcTemplate.update(
@@ -244,7 +244,7 @@ class TransactionalOutboxIntegrationTest {
         assertThat(auditRows(payment.getPaymentId())).hasSize(1);
 
         jdbcTemplate.update(
-                "DELETE FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "DELETE FROM notification_outbox WHERE convert_from(payload, 'UTF8') LIKE ?",
                 "%" + payment.getPaymentId() + "%"
         );
         processor.processTransactions(request);
@@ -276,7 +276,7 @@ class TransactionalOutboxIntegrationTest {
         return jdbcTemplate.query(
                 """
                         SELECT recipient_ispb, payload
-                        FROM outbound_notification
+                        FROM notification_outbox
                         WHERE convert_from(payload, 'UTF8') LIKE ?
                         ORDER BY recipient_ispb
                         """,
@@ -332,7 +332,7 @@ class TransactionalOutboxIntegrationTest {
 
     private int outboxCount(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "SELECT count(*) FROM notification_outbox WHERE convert_from(payload, 'UTF8') LIKE ?",
                 Integer.class,
                 "%" + paymentId + "%"
         );
@@ -356,7 +356,7 @@ class TransactionalOutboxIntegrationTest {
 
     private String outboxPayload(String paymentId) {
         byte[] payload = jdbcTemplate.queryForObject(
-                "SELECT payload FROM outbound_notification WHERE convert_from(payload, 'UTF8') LIKE ?",
+                "SELECT payload FROM notification_outbox WHERE convert_from(payload, 'UTF8') LIKE ?",
                 byte[].class,
                 "%" + paymentId + "%"
         );

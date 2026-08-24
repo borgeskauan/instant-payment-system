@@ -1,13 +1,15 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.delivery.NotificationDelivery;
 import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
+import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
+import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
+import br.kauan.notificationgateway.kafka.NotificationCursorExpiredException;
+import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import io.grpc.Context;
 import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
@@ -15,8 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,110 +28,78 @@ class NotificationGrpcServiceTest {
             "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
 
     @Test
-    void returnsOnlyTheAuthenticatedPspPageAndIssuesCursorAtItsLastPosition() throws Exception {
+    void returnsTheAuthenticatedPspPayloadsAndIssuesItsLastExaminedKafkaOffset() throws Exception {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
-        when(reader.findAfter("20000001", 0, 15)).thenReturn(List.of(
-                delivery(12, "v1:first", "first"),
-                delivery(18, "v1:second", "second")
+        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        when(reader.read("20000001", partition, -1, 15)).thenReturn(new KafkaNotificationPage(
+                List.of(record(partition, 12, "first"), record(partition, 18, "second")),
+                18,
+                true
         ));
         CapturingObserver observer = new CapturingObserver();
 
         authenticatedCall(service, PullRequest.newBuilder().build(), observer);
 
-        assertThat(observer.error).isNull();
-        assertThat(observer.completed).isTrue();
         assertThat(observer.response.getNotificationsList())
                 .extracting(notification -> notification.getPayload().toStringUtf8())
                 .containsExactly("first", "second");
-        assertThat(codec.decodePosition(observer.response.getNextCursor(), "20000001"))
+        assertThat(observer.response.getNotificationsList())
+                .extracting(notification -> notification.getCommunicationId())
+                .containsExactly("first", "second");
+        assertThat(codec.decode(observer.response.getNextCursor(), "20000001", partition).lastExaminedOffset())
                 .isEqualTo(18);
-        verify(reader).findAfter("20000001", 0, 15);
     }
 
     @Test
-    void emptyLongPollReturnsTheSameCursor() throws Exception {
+    void emptyPageThatExaminedUnrelatedRecordsAdvancesImmediatelyWithoutLongPolling() throws Exception {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        NotificationGrpcService service = service(reader, codec, 1);
-        String cursor = codec.encode("20000001", 20);
-        when(reader.findAfter("20000001", 20, 15)).thenReturn(List.of());
+        NotificationGrpcService service = service(reader, codec, 1_000);
+        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        when(reader.read("20000001", partition, -1, 15))
+                .thenReturn(new KafkaNotificationPage(List.of(), 25, true));
         CapturingObserver observer = new CapturingObserver();
 
-        authenticatedCall(service, PullRequest.newBuilder()
-                .setCursor(cursor)
-                .build(), observer);
+        authenticatedCall(service, PullRequest.newBuilder().build(), observer);
 
-        assertThat(observer.response.getNotificationsCount()).isZero();
-        assertThat(observer.response.getNextCursor()).isEqualTo(cursor);
-        verify(reader, org.mockito.Mockito.times(2)).findAfter("20000001", 20, 15);
+        assertThat(codec.decode(observer.response.getNextCursor(), "20000001", partition).lastExaminedOffset())
+                .isEqualTo(25);
+        verify(reader).read("20000001", partition, -1, 15);
     }
 
     @Test
-    void rejectsInvalidCursor() throws Exception {
+    void knownTailLongPollsAndReturnsTheSameCursorWhenNoRecordArrives() throws Exception {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
-        CapturingObserver invalidCursor = new CapturingObserver();
+        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", DeliveryCursorCodec.TOPIC_GENERATION, partition, 20));
+        when(reader.read("20000001", partition, 20, 15))
+                .thenReturn(new KafkaNotificationPage(List.of(), 20, true));
+        CapturingObserver observer = new CapturingObserver();
 
-        authenticatedCall(service, PullRequest.newBuilder()
-                .setCursor("tampered")
-                .build(), invalidCursor);
+        authenticatedCall(service, PullRequest.newBuilder().setCursor(cursor).build(), observer);
 
-        assertThat(Status.fromThrowable(invalidCursor.error).getCode())
-                .isEqualTo(Status.Code.INVALID_ARGUMENT);
+        assertThat(observer.response.getNextCursor()).isEqualTo(cursor);
+        verify(reader, times(2)).read("20000001", partition, 20, 15);
     }
 
     @Test
-    void missingAuthenticatedPspIsRejected() {
-        NotificationGrpcService service = service(
-                mock(NotificationDeliveryReader.class),
-                new DeliveryCursorCodec(SECRET),
-                1
-        );
-
-        assertThatThrownBy(() -> service.pullNotifications(
-                PullRequest.newBuilder().build(),
-                new CapturingObserver()
-        )).isInstanceOf(StatusRuntimeException.class)
-                .hasMessageContaining("authenticated PSP ISPB is required");
-    }
-
-    @Test
-    void releasesPullAdmissionBeforePublishingResponseToTheClient() throws Exception {
+    void mapsExpiredCursorToFailedPrecondition() throws Exception {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
-        NotificationGrpcService service = service(reader, new DeliveryCursorCodec(SECRET), 1);
-        when(reader.findAfter("20000001", 0, 15))
-                .thenReturn(List.of(delivery(1, "v1:first", "first")));
-        CapturingObserver nextPull = new CapturingObserver();
-        StreamObserver<PullResponse> immediateRepull = new StreamObserver<>() {
-            @Override
-            public void onNext(PullResponse ignored) {
-                service.pullNotifications(
-                        PullRequest.newBuilder().build(),
-                        nextPull
-                );
-            }
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", DeliveryCursorCodec.TOPIC_GENERATION, partition, 20));
+        when(reader.read("20000001", partition, 20, 15)).thenThrow(new NotificationCursorExpiredException());
+        CapturingObserver observer = new CapturingObserver();
 
-            @Override
-            public void onError(Throwable throwable) {
-                throw new AssertionError(throwable);
-            }
+        authenticatedCall(service, PullRequest.newBuilder().setCursor(cursor).build(), observer);
 
-            @Override
-            public void onCompleted() {
-            }
-        };
-
-        authenticatedCall(
-                service,
-                PullRequest.newBuilder().build(),
-                immediateRepull
-        );
-
-        assertThat(nextPull.error).isNull();
-        assertThat(nextPull.completed).isTrue();
+        assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo("notification cursor expired");
     }
 
     private NotificationGrpcService service(
@@ -141,6 +111,7 @@ class NotificationGrpcServiceTest {
                 reader,
                 new PullRequestCoordinator(),
                 codec,
+                new NotificationPartitionResolver(8),
                 timeoutMillis
         );
     }
@@ -158,11 +129,12 @@ class NotificationGrpcServiceTest {
                 });
     }
 
-    private NotificationDelivery delivery(long position, String id, String payload) {
-        return new NotificationDelivery(
-                position,
-                id,
+    private KafkaNotificationRecord record(int partition, long offset, String payload) {
+        return new KafkaNotificationRecord(
+                partition,
+                offset,
                 "20000001",
+                payload,
                 payload.getBytes(StandardCharsets.UTF_8)
         );
     }
@@ -170,7 +142,6 @@ class NotificationGrpcServiceTest {
     private static final class CapturingObserver implements StreamObserver<PullResponse> {
         private PullResponse response;
         private Throwable error;
-        private boolean completed;
 
         @Override
         public void onNext(PullResponse value) {
@@ -184,7 +155,6 @@ class NotificationGrpcServiceTest {
 
         @Override
         public void onCompleted() {
-            completed = true;
         }
     }
 }

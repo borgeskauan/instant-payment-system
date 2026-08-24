@@ -24,7 +24,7 @@ import static org.mockito.Mockito.when;
 class OutboundNotificationRepositoryTest {
 
     @Test
-    void insertAllUsesOnlyImmutableNotificationColumns() throws Exception {
+    void insertAllUsesOnlyTheMinimalTransactionalOutboxColumns() throws Exception {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         Connection connection = mock(Connection.class);
         PreparedStatement statement = mock(PreparedStatement.class);
@@ -49,10 +49,11 @@ class OutboundNotificationRepositoryTest {
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(connection).prepareStatement(sql.capture());
         assertThat(sql.getValue())
-                .contains("INSERT INTO outbound_notification")
+                .contains("INSERT INTO notification_outbox")
                 .contains("FROM unnest(")
                 .doesNotContain("ON CONFLICT")
-                .doesNotContain("RETURNING")
+                .doesNotContain("outbound_position")
+                .doesNotContain("position_counter")
                 .doesNotContain("event_type")
                 .doesNotContain("payment_id")
                 .doesNotContain("notification_status")

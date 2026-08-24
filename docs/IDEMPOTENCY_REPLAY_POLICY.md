@@ -3,25 +3,26 @@
 This document describes the idempotency and replay policy for Pix messages across the SPI, Kafka, the notification gateway, and PSP services.
 
 The goal is safe at-least-once processing. Kafka redelivery, manual replay,
-duplicate payloads, reconciliation races, and repeated PSP notifications must
+duplicate payloads, producer retries, and repeated PSP notifications must
 not duplicate logical obligations, settlement, status transitions, or PSP
 balance effects.
 
-There is no end-to-end exactly-once guarantee. Physical Kafka publication can
-be repeated or skipped by the best-effort fast path. Logical deduplication and
-durable PostgreSQL reconciliation use stable identities at each boundary.
+There is no end-to-end exactly-once guarantee. Physical Kafka publication and
+PSP delivery can repeat. Stable identities at each boundary keep those
+repetitions from duplicating logical business effects.
 
 ## Principles
 
 - `paymentId` / `EndToEndId` is the logical identity of a payment.
 - `communicationId` is the logical identity of one notification and recipient.
-- An identical replay reconstructs a missing acceptance obligation only while the payment remains `WAITING_ACCEPTANCE`.
-- An identical replay is a no-op after the persisted payment state advances.
+- An identical payment replay is a no-op and never reconstructs a second
+  notification obligation.
 - A divergent replay with the same identity is a deterministic conflict and must be observable.
 - Batch-local duplicates are classified before relying on persisted state.
-- SPI outbound-notification inserts use `ON CONFLICT (communication_id) DO NOTHING`.
+- SPI outbound-notification inserts are strict and are derived only from
+  financial transitions actually acquired by the current transaction.
 - SPI business audit records only facts effectively applied; `NOOP` creates no audit event.
-- The notification gateway deduplicates physical Kafka duplicates by `communicationId`.
+- The PSP deduplicates physical notification duplicates by `communicationId`.
 - Final PSP balance effects are idempotent by payment and final-status side.
 
 ## SPI `pacs.008`
@@ -37,7 +38,7 @@ Version and fingerprint must be compared together. A matching hash with a differ
 | Case | Financial classification | Audit result | Notification result |
 | ---- | ------------------------ | ------------ | ------------- |
 | New payment | Insert as `WAITING_ACCEPTANCE`. | Insert `PAYMENT_CREATED`. | Insert one `ACCEPTANCE_REQUEST` for the receiver. |
-| Existing identical payment in `WAITING_ACCEPTANCE` | Classify as acceptance replay. | No event: the payment was not created again. | Try the same `communicationId`; keep an existing row or recreate a missing row. |
+| Existing identical payment in `WAITING_ACCEPTANCE` | No-op. | No event: the payment was not created again. | No notification insert. The original outbox/Kafka delivery remains authoritative. |
 | Existing identical payment in advanced status | No-op. | No event. | No notification insert. |
 | Existing payment without comparable fingerprint | `DIVERGENT_DUPLICATE`. | No event in the business audit. | No notification insert; publish the original input to DLQ. |
 | Existing payment with divergent version/fingerprint | `DIVERGENT_DUPLICATE`. | No event in the business audit. | No notification insert; publish the original input to DLQ. |
@@ -53,10 +54,9 @@ acknowledge the source batch. The source Kafka input is acknowledged only after
 the database commit and any required DLQ publication; processing does not wait
 for Kafka notification publication.
 
-Replay never bypasses the durable obligation. If it recreates a missing
-notification, the normal after-commit fast path attempts Kafka publication; an
-already existing notification remains unchanged and is covered by the Gateway
-index or reconciler.
+Replay never bypasses the durable obligation. If it creates an effective
+notification, that notification follows the same transactional outbox and
+Kafka log as every other notification.
 
 ## SPI `pacs.002`
 
@@ -94,62 +94,51 @@ There is no audit backfill. A replay that applies a real creation, transition, o
 
 ## SPI Outbound Notifications
 
-`outbound_notification` stores one immutable payload per logical notification
+`notification_outbox` stores one immutable payload per logical notification
 and recipient. The business payload is built once, serialized with
-`ObjectMapper.writeValueAsBytes(...)`, and stored as `BYTEA`. The after-commit
-fast path sends those same bytes and does not rebuild them from current payment
-state.
+`ObjectMapper.writeValueAsBytes(...)`, and stored as `BYTEA` in the same
+transaction as the financial effect.
 
-`communicationId` retains the existing deterministic algorithm over schema
-version, event type, recipient, payment, and optional notification status. The
-row has no publication lifecycle: its presence means only that the notification
-exists and must eventually enter that PSP's flow.
+`communicationId` retains the deterministic algorithm over the notification
+type, recipient, payment, and outcome. The outbox row means the corresponding
+Kafka publication has not yet been confirmed.
 
-An `AFTER_COMMIT` listener starts one asynchronous send for each notification
-inserted by the current transaction. It does not wait for broker futures. Each
-physical message reconstructs the same topic (`psp-notifications`), key
-(`recipient_ispb`), and headers from the immutable values.
+After commit, a bounded in-memory queue feeds one publisher. It sends the exact
+stored bytes to `psp-notifications-v1`, keyed by `recipient_ispb`, with
+`notification.communication-id` as header. The producer uses idempotence and
+`acks=all`.
 
-The Kafka producer uses `acks=all`, but broker acknowledgement is not a durable
-SPI state transition. Synchronous and asynchronous send failures are logged;
-the SPI neither updates the row nor schedules retry. A process crash after the
-database commit can skip the fast path entirely.
+The SPI deletes a batch only after every broker future succeeds. Partial,
+inconclusive, or delete failure repeats the entire batch. Startup drains all
+surviving rows before payment consumers start. Consequently, a notification
+can appear physically more than once in Kafka but cannot be omitted after its
+financial transaction committed, provided Kafka remains recoverable.
 
-Correctness comes from the immutable PostgreSQL row plus Gateway
-reconciliation, not from guaranteed Kafka publication. Kafka remains the
-low-latency path that normally keeps the Gateway's memory buffer hot.
+## Notification Gateway and PSP Delivery
 
-## Notification Gateway Deduplication and Delivery
-
-The `notification-gateway` consumes every physical `psp-notifications` message
-and indexes each `communicationId` once. Producer retries or a concurrent
-Kafka/reconciler attempt therefore create one logical delivery and consume no
-additional position.
-
-The minimal `delivery_index` stores only `communication_id`, `recipient_ispb`, and a Gateway-owned `delivery_position` local to that PSP. Concurrent batches that contain the same recipient serialize position allocation with a transaction-scoped advisory lock; unrelated PSPs do not share that serialization. Kafka partition and offset remain ingestion details rather than a durable external cursor.
+Kafka is the durable delivery log. `psp-notifications-v1` has eight fixed
+partitions and seven-day retention. `recipient_ispb` is the Kafka key, so one
+PSP remains in one partition for this topic generation.
 
 The authenticated PSP calls unary `PullNotifications(cursor)` with at most one
 request in flight and receives at most 15 notifications. The cursor is opaque,
-HMAC-authenticated, and bound to the PSP identity. The PSP advances it only
-after durably processing the whole response. Reusing an older cursor returns
-the rows again, which provides at-least-once delivery without per-notification
-ACK persistence, `IN_FLIGHT` state, leases, or an active retry scheduler.
-Completed PSP processing is represented by the cursor held durably by the PSP,
-not by a Gateway row state.
+HMAC-authenticated, and bound to PSP, topic generation, partition, and the last
+Kafka offset examined. It may advance over records for other PSPs sharing the
+partition, while the response includes only the authenticated recipient.
 
-After index commit, the Gateway places recent payloads in a bounded per-PSP
-memory window. Pull uses RAM only for a contiguous sequence beginning at the
-next cursor position. If memory cannot answer, it reads the canonical payload
-directly with `delivery_index JOIN outbound_notification`; it does not maintain
-a separate rehydration process. Once-per-minute reconciliation also indexes
-canonical notification rows older than one minute and missing from
-`delivery_index`. The age boundary leaves transient Kafka work on the fast
-path. Kafka remains the fast path rather than a requirement for eventual
-indexing.
+The PSP advances its durable cursor only after durably processing the whole
+response. Reusing an older cursor returns messages again, providing
+at-least-once delivery without ACK persistence, `IN_FLIGHT`, leases,
+`delivery_index`, or a PostgreSQL reconciler.
 
-The MVP intentionally performs this historical anti-join infrequently instead of persisting another worklist or watermark. Each cycle is paged in batches of 1,000 using an in-memory cursor that is discarded at the end; the next cycle restarts from the beginning. This accepts greater latency in the rare recovery path and keeps the durable model small. If historical growth makes the scan material, a worklist or batch watermark is a later optimization.
+The Gateway tails all partitions into bounded contiguous memory windows. Pull
+uses memory while it covers the cursor; on restart, eviction, or gap it reads
+the Kafka partition directly. A cursor older than retained Kafka history fails
+explicitly and requires operational recovery.
 
-The Gateway does not yet delete acknowledged history or persist a retention watermark. Retention/GC and parallel pull streams per PSP are explicitly outside this MVP.
+Physical duplicates keep the same `communicationId`. The Gateway does not
+collapse them into a second logical index; PSP processing uses
+`communicationId` idempotently.
 
 ## PSP Incoming Requests
 
@@ -194,16 +183,15 @@ Current deterministic conflict types are `DIVERGENT_DUPLICATE` for `pacs.008` an
 
 ## Limitações Conscientes
 
-- There is no exactly-once guarantee; producer retries or a reconciliation race
-  can physically repeat a message.
-- The SPI does not durably record whether the best-effort Kafka send succeeded.
-- A Kafka outage moves delivery to the reconciler's one-to-two-minute recovery
-  latency.
-- The reconciler has no persistent worklist or watermark and rescans history
-  once per minute.
-- `outbound_notification` rows are retained indefinitely; the table grows
-  continuously without cleanup.
-- Notification-store observability is limited to logs and manual SQL queries.
+- There is no exactly-once guarantee; producer retries and replay from an older
+  cursor can physically repeat a message.
+- The local MVP uses one Kafka broker and replication factor 1; it does not
+  prove broker, host, or volume HA.
+- The notification log is retained for seven days. Older recovery belongs to
+  disaster recovery and is outside the normal Pull protocol.
+- Topic topology is fixed at eight partitions for this generation.
+- The SPI has no ingress admission control tied to notification transport
+  health.
 - There is no backfill for payments created before the notification-store migration.
 - There is no business-audit backfill, retention, cleanup, partitioning, or causal event ordering.
 - Business audit excludes `NOOP` replay, retries, redelivery, input rejection, and original PACS payloads.
@@ -212,15 +200,16 @@ Current deterministic conflict types are `DIVERGENT_DUPLICATE` for `pacs.008` an
 
 ## Sinais para Evolução
 
-Evolve to a reconciliation worklist/watermark, richer recovery, retention, or
-cleanup when one or more of these signals appears:
+Evolve Kafka HA, retention, admission control, or recovery when one or more of
+these signals appears:
 
 - physical duplicate publication or duplicate-caused Kafka traffic grows materially;
 - CPU, database, or notification-gateway load caused by duplicates becomes relevant;
-- reconciler scans become material as history grows;
-- recovery latency during Kafka outages becomes unacceptable;
+- broker/host failure must be tolerated without an availability gap;
+- seven-day retention is insufficient for the operational recovery target;
+- notification transport outages must stop financial admission explicitly;
 - durable publication-attempt diagnostics become necessary;
-- table growth requires retention, partitioning, or cleanup;
+- Kafka storage growth requires tiering, archival, or a different retention policy;
 - audit-table or WAL growth requires retention, partitioning, archival, or dedicated performance work;
 - a terminal failure state or operational intervention for irrecoverable
   notification data becomes necessary.

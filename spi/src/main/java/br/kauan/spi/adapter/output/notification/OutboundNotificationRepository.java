@@ -14,7 +14,7 @@ import java.util.List;
 public class OutboundNotificationRepository {
 
     private static final String INSERT_ALL_SQL = """
-            INSERT INTO outbound_notification (
+            INSERT INTO notification_outbox (
                 communication_id,
                 recipient_ispb,
                 payload,
@@ -34,6 +34,18 @@ public class OutboundNotificationRepository {
                 recipient_ispb,
                 payload
             )
+            """;
+
+    private static final String FIND_OLDEST_SQL = """
+            SELECT communication_id, recipient_ispb, payload
+            FROM notification_outbox
+            ORDER BY created_at, communication_id
+            LIMIT ?
+            """;
+
+    private static final String DELETE_ALL_SQL = """
+            DELETE FROM notification_outbox
+            WHERE communication_id = ANY (?::text[])
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -83,6 +95,44 @@ public class OutboundNotificationRepository {
             throw new IllegalStateException(
                     "Outbound notification insert count mismatch: requested="
                             + notifications.size() + ", inserted=" + inserted
+            );
+        }
+    }
+
+    public List<NotificationPublication> findOldest(int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("Outbox recovery limit must be positive");
+        }
+        return jdbcTemplate.query(
+                FIND_OLDEST_SQL,
+                (resultSet, ignored) -> NotificationPublication.create(
+                        resultSet.getString("recipient_ispb"),
+                        resultSet.getBytes("payload"),
+                        resultSet.getString("communication_id")
+                ),
+                limit
+        );
+    }
+
+    public void deleteAll(List<String> communicationIds) {
+        if (communicationIds.isEmpty()) {
+            return;
+        }
+        Integer deleted = jdbcTemplate.execute((ConnectionCallback<Integer>) connection -> {
+            Array communicationIdArray = null;
+            try {
+                communicationIdArray = connection.createArrayOf("text", communicationIds.toArray(String[]::new));
+                try (PreparedStatement statement = connection.prepareStatement(DELETE_ALL_SQL)) {
+                    statement.setArray(1, communicationIdArray);
+                    return statement.executeUpdate();
+                }
+            } finally {
+                free(communicationIdArray);
+            }
+        });
+        if (deleted == null || deleted != communicationIds.size()) {
+            throw new IllegalStateException(
+                    "Outbox delete count mismatch: requested=" + communicationIds.size() + ", deleted=" + deleted
             );
         }
     }

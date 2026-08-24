@@ -1,43 +1,50 @@
 package br.kauan.notificationgateway.delivery;
 
+import br.kauan.notificationgateway.kafka.HistoricalKafkaReader;
+import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-
-import java.util.List;
 
 @Component
 public final class NotificationDeliveryReader {
 
     private final RecentNotificationBuffer buffer;
-    private final DeliveryIndexRepository repository;
+    private final HistoricalKafkaReader history;
+    private final int scanLimit;
 
     public NotificationDeliveryReader(
             RecentNotificationBuffer buffer,
-            DeliveryIndexRepository repository
+            HistoricalKafkaReader history,
+            @Value("${notification-gateway.pull.kafka-scan-limit:4096}") int scanLimit
     ) {
+        if (scanLimit < 15) {
+            throw new IllegalArgumentException("Kafka scan limit must be at least 15");
+        }
         this.buffer = buffer;
-        this.repository = repository;
+        this.history = history;
+        this.scanLimit = scanLimit;
     }
 
-    public List<NotificationDelivery> findAfter(String recipientIspb, long position, int limit) {
-        if (limit <= 0) {
-            return List.of();
+    public KafkaNotificationPage read(
+            String recipientIspb,
+            int partition,
+            long afterOffset,
+            int notificationLimit
+    ) {
+        RecentNotificationBuffer.Lookup lookup = buffer.lookup(
+                partition,
+                recipientIspb,
+                afterOffset,
+                notificationLimit,
+                scanLimit
+        );
+        if (lookup.state() == RecentNotificationBuffer.LookupState.MISS) {
+            return history.read(recipientIspb, partition, afterOffset, notificationLimit, scanLimit);
         }
-
-        RecentNotificationBuffer.Lookup lookup = buffer.lookupAfter(recipientIspb, position, limit);
-        if (lookup.state() == RecentNotificationBuffer.LookupState.DATA) {
-            return lookup.deliveries();
-        }
-        if (lookup.state() == RecentNotificationBuffer.LookupState.KNOWN_TAIL) {
-            return List.of();
-        }
-
-        List<NotificationDelivery> persisted = repository.findAfter(recipientIspb, position, limit);
-        if (persisted.size() < limit) {
-            long confirmedThrough = persisted.isEmpty()
-                    ? position
-                    : persisted.getLast().deliveryPosition();
-            buffer.confirmThrough(recipientIspb, confirmedThrough);
-        }
-        return persisted;
+        return new KafkaNotificationPage(
+                lookup.notifications(),
+                lookup.lastExaminedOffset(),
+                lookup.atTail()
+        );
     }
 }

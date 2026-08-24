@@ -98,6 +98,7 @@ type simulator struct {
 	transferPayers           map[string]string
 	transferTrackers         map[string]*phaseTracker
 	completedOutcomes        map[string]struct{}
+	processedCommunications  sync.Map
 	pacs002ReplaySelector    *replaySelector
 	pacs008ReplaySelector    *replaySelector
 	originalPlanner          *workloadPlanner
@@ -994,13 +995,20 @@ func (s *simulator) processNotificationPull(
 ) error {
 	extracted := make([][]payload.Notification, len(response.Notifications))
 	for index, message := range response.Notifications {
+		if message.GetCommunicationId() == "" {
+			return fmt.Errorf("notification has no communication_id")
+		}
 		notifications, err := payload.ExtractNotifications(message.Payload)
 		if err != nil {
 			return err
 		}
 		extracted[index] = notifications
 	}
-	for _, notifications := range extracted {
+	for index, notifications := range extracted {
+		communicationID := response.Notifications[index].GetCommunicationId()
+		if _, alreadyProcessed := s.processedCommunications.LoadOrStore(communicationID, struct{}{}); alreadyProcessed {
+			continue
+		}
 		for _, notification := range notifications {
 			if !s.isCurrentTransfer(notification.EndToEndID) {
 				continue
