@@ -5,6 +5,28 @@ import (
 	"testing"
 )
 
+var builtPayloadSink []byte
+
+func TestPacs008AllocatesOnlyItsResultBuffer(t *testing.T) {
+	allocations := testing.AllocsPerRun(1_000, func() {
+		builtPayloadSink = Pacs008("go-1787592769302354517-123456", "10000001", "20000001", 12345)
+	})
+
+	if allocations != 1 {
+		t.Fatalf("Pacs008 allocations = %.0f, want 1", allocations)
+	}
+}
+
+func TestPacs002AllocatesOnlyItsResultBuffer(t *testing.T) {
+	allocations := testing.AllocsPerRun(1_000, func() {
+		builtPayloadSink = Pacs002("go-1787592769302354517-123456")
+	})
+
+	if allocations != 1 {
+		t.Fatalf("Pacs002 allocations = %.0f, want 1", allocations)
+	}
+}
+
 func TestPacs008ContainsTransactionAndISPBs(t *testing.T) {
 	body := Pacs008("tx-1", "10000001", "20000001", 12345)
 
