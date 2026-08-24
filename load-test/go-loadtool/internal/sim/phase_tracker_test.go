@@ -17,17 +17,21 @@ func TestWarmupOutcomeCompletesOnceAndAcceptsAtLeastOnceDuplicate(t *testing.T) 
 	}
 	tracker.CloseGeneration()
 	s := &simulator{
-		cfg:               configForOutcomeTest("ACSC", nil),
-		transferScenarios: map[string]string{"tx-1": "happy-path"},
-		transferPayers:    map[string]string{"tx-1": "10000001"},
-		transferTrackers:  map[string]*phaseTracker{"tx-1": tracker},
-		completedOutcomes: make(map[string]struct{}),
+		cfg: configForOutcomeTest("ACSC", nil),
+		paymentStates: map[string]paymentState{"tx-1": {
+			payerISPB:    "10000001",
+			scenarioName: "happy-path",
+			tracker:      tracker,
+		}},
 	}
 
-	s.observeWarmupOutcome("tx-1", "10000001", "ACSC", nil)
-	s.observeWarmupOutcome("tx-1", "10000001", "ACSC", nil)
+	s.observePayerOutcome("tx-1", "10000001", "ACSC", nil)
+	s.observePayerOutcome("tx-1", "10000001", "ACSC", nil)
 	if err := tracker.Wait(context.Background()); err != nil {
 		t.Fatalf("Wait() error = %v", err)
+	}
+	if len(s.paymentStates) != 0 {
+		t.Fatalf("pending payment states = %d, want 0", len(s.paymentStates))
 	}
 }
 
@@ -38,16 +42,36 @@ func TestWarmupContradictoryOutcomeFailsPhase(t *testing.T) {
 	}
 	tracker.CloseGeneration()
 	s := &simulator{
-		cfg:               configForOutcomeTest("RJCT", []string{"AM04"}),
-		transferScenarios: map[string]string{"tx-1": "happy-path"},
-		transferPayers:    map[string]string{"tx-1": "10000001"},
-		transferTrackers:  map[string]*phaseTracker{"tx-1": tracker},
-		completedOutcomes: make(map[string]struct{}),
+		cfg: configForOutcomeTest("RJCT", []string{"AM04"}),
+		paymentStates: map[string]paymentState{"tx-1": {
+			payerISPB:    "10000001",
+			scenarioName: "happy-path",
+			tracker:      tracker,
+		}},
 	}
 
-	s.observeWarmupOutcome("tx-1", "10000001", "ACSC", nil)
+	s.observePayerOutcome("tx-1", "10000001", "ACSC", nil)
 	if err := tracker.Wait(context.Background()); err == nil || !strings.Contains(err.Error(), "contradictory payer outcome") {
 		t.Fatalf("Wait() error = %v", err)
+	}
+	if len(s.paymentStates) != 1 {
+		t.Fatalf("pending payment states = %d, want contradictory outcome retained", len(s.paymentStates))
+	}
+}
+
+func TestActivePayerOutcomeReleasesPaymentState(t *testing.T) {
+	s := &simulator{
+		cfg: configForOutcomeTest("ACSC", nil),
+		paymentStates: map[string]paymentState{"tx-1": {
+			payerISPB:    "10000001",
+			scenarioName: "happy-path",
+		}},
+	}
+
+	s.observePayerOutcome("tx-1", "10000001", "ACSC", nil)
+
+	if len(s.paymentStates) != 0 {
+		t.Fatalf("pending payment states = %d, want 0", len(s.paymentStates))
 	}
 }
 

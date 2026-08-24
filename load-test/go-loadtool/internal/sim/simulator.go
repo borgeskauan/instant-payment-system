@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,6 +69,13 @@ type statusJob struct {
 	tracker      *phaseTracker
 }
 
+type paymentState struct {
+	payerISPB     string
+	scenarioName  string
+	tracker       *phaseTracker
+	pacs002Queued bool
+}
+
 type simulator struct {
 	cfg                      Config
 	runID                    string
@@ -83,8 +91,7 @@ type simulator struct {
 	statusStartMu            sync.Mutex
 	pacs002SelectorMu        sync.Mutex
 	originalMu               sync.Mutex
-	statusQueuedMu           sync.Mutex
-	transferScenariosMu      sync.RWMutex
+	paymentStatesMu          sync.Mutex
 	runErrorMu               sync.Mutex
 	windowMu                 sync.RWMutex
 	runError                 error
@@ -93,12 +100,7 @@ type simulator struct {
 	sendPacs002Func          func(context.Context, statusJob)
 	openNotificationPullFunc func(context.Context, string) (notificationPullClient, func() error, error)
 	statusJobs               chan statusJob
-	statusQueuedIDs          map[string]struct{}
-	transferScenarios        map[string]string
-	transferPayers           map[string]string
-	transferTrackers         map[string]*phaseTracker
-	completedOutcomes        map[string]struct{}
-	processedCommunications  sync.Map
+	paymentStates            map[string]paymentState
 	pacs002ReplaySelector    *replaySelector
 	pacs008ReplaySelector    *replaySelector
 	originalPlanner          *workloadPlanner
@@ -215,11 +217,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) error {
 		replayWriter:             replayWriter,
 		statusStartWriter:        statusStartWriter,
 		statusJobs:               make(chan statusJob, statusQueueCapacity(cfg.OfferedTxRate)),
-		statusQueuedIDs:          make(map[string]struct{}),
-		transferScenarios:        make(map[string]string),
-		transferPayers:           make(map[string]string),
-		transferTrackers:         make(map[string]*phaseTracker),
-		completedOutcomes:        make(map[string]struct{}),
+		paymentStates:            make(map[string]paymentState),
 		pacs002ReplaySelector:    pacs002ReplaySelector,
 		pacs008ReplaySelector:    selector,
 		originalPlanner:          planner,
@@ -570,20 +568,16 @@ func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedA
 	}
 	body := buildPayload(job.ID, job.Pair.Payer, job.Pair.Receiver, job.Amount)
 	startedAt := startedAtTime.UnixNano()
-	s.transferScenariosMu.Lock()
-	if s.transferScenarios == nil {
-		s.transferScenarios = make(map[string]string)
+	s.paymentStatesMu.Lock()
+	if s.paymentStates == nil {
+		s.paymentStates = make(map[string]paymentState)
 	}
-	if s.transferPayers == nil {
-		s.transferPayers = make(map[string]string)
+	s.paymentStates[job.ID] = paymentState{
+		payerISPB:    job.Pair.Payer,
+		scenarioName: job.ScenarioName,
+		tracker:      job.tracker,
 	}
-	if s.transferTrackers == nil {
-		s.transferTrackers = make(map[string]*phaseTracker)
-	}
-	s.transferScenarios[job.ID] = job.ScenarioName
-	s.transferPayers[job.ID] = job.Pair.Payer
-	s.transferTrackers[job.ID] = job.tracker
-	s.transferScenariosMu.Unlock()
+	s.paymentStatesMu.Unlock()
 	if job.ReplaySelected {
 		if !s.addPhaseWork(job.tracker) {
 			return
@@ -755,21 +749,17 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 }
 
 func (s *simulator) enqueuePacs002(ctx context.Context, receiverISPB string, endToEndID string) {
-	s.statusQueuedMu.Lock()
-	if _, exists := s.statusQueuedIDs[endToEndID]; exists {
-		s.statusQueuedMu.Unlock()
+	s.paymentStatesMu.Lock()
+	state, exists := s.paymentStates[endToEndID]
+	if !exists || state.pacs002Queued {
+		s.paymentStatesMu.Unlock()
 		return
 	}
-	s.statusQueuedIDs[endToEndID] = struct{}{}
-	s.statusQueuedMu.Unlock()
-	s.transferScenariosMu.RLock()
-	scenarioName, exists := s.transferScenarios[endToEndID]
-	tracker := s.transferTrackers[endToEndID]
-	s.transferScenariosMu.RUnlock()
-	if !exists {
-		s.recordRunError(fmt.Errorf("pacs.002 original %q has no generated transfer metadata", endToEndID))
-		return
-	}
+	state.pacs002Queued = true
+	s.paymentStates[endToEndID] = state
+	scenarioName := state.scenarioName
+	tracker := state.tracker
+	s.paymentStatesMu.Unlock()
 	if !s.addPhaseWork(tracker) {
 		return
 	}
@@ -1004,11 +994,7 @@ func (s *simulator) processNotificationPull(
 		}
 		extracted[index] = notifications
 	}
-	for index, notifications := range extracted {
-		communicationID := response.Notifications[index].GetCommunicationId()
-		if _, alreadyProcessed := s.processedCommunications.LoadOrStore(communicationID, struct{}{}); alreadyProcessed {
-			continue
-		}
+	for _, notifications := range extracted {
 		for _, notification := range notifications {
 			if !s.isCurrentTransfer(notification.EndToEndID) {
 				continue
@@ -1034,48 +1020,43 @@ func (s *simulator) processNotificationPull(
 					StatusCode:   notification.StatusCode,
 					ReasonCodes:  notification.ReasonCodes,
 				})
-				s.observeWarmupOutcome(notification.EndToEndID, session.ispb, notification.StatusCode, notification.ReasonCodes)
+				s.observePayerOutcome(notification.EndToEndID, session.ispb, notification.StatusCode, notification.ReasonCodes)
 			}
 		}
 	}
 	return nil
 }
 
-func (s *simulator) observeWarmupOutcome(endToEndID, ispb, statusCode string, reasonCodes []string) {
-	s.transferScenariosMu.Lock()
-	tracker := s.transferTrackers[endToEndID]
-	if tracker == nil {
-		s.transferScenariosMu.Unlock()
-		return
-	}
-	payerISPB := s.transferPayers[endToEndID]
-	scenarioName := s.transferScenarios[endToEndID]
-	if payerISPB != ispb {
-		s.transferScenariosMu.Unlock()
-		return
-	}
-	expectation, exists := s.payerNotificationExpectation(scenarioName)
+func (s *simulator) observePayerOutcome(endToEndID, ispb, statusCode string, reasonCodes []string) {
+	s.paymentStatesMu.Lock()
+	state, exists := s.paymentStates[endToEndID]
 	if !exists {
-		s.transferScenariosMu.Unlock()
+		s.paymentStatesMu.Unlock()
+		return
+	}
+	if state.payerISPB != ispb {
+		s.paymentStatesMu.Unlock()
+		return
+	}
+	expectation, exists := s.payerNotificationExpectation(state.scenarioName)
+	if !exists {
+		tracker := state.tracker
+		scenarioName := state.scenarioName
+		s.paymentStatesMu.Unlock()
 		s.failPhase(tracker, fmt.Errorf("warmup payment %q has unknown scenario %q", endToEndID, scenarioName))
 		return
 	}
 	if statusCode != expectation.Status || !sameReasonCodes(reasonCodes, expectation.ReasonCodes) {
-		s.transferScenariosMu.Unlock()
+		tracker := state.tracker
+		s.paymentStatesMu.Unlock()
 		s.failPhase(tracker, fmt.Errorf(
 			"warmup payment %q received contradictory payer outcome status=%q reasons=%v, want status=%q reasons=%v",
 			endToEndID, statusCode, reasonCodes, expectation.Status, expectation.ReasonCodes))
 		return
 	}
-	if s.completedOutcomes == nil {
-		s.completedOutcomes = make(map[string]struct{})
-	}
-	if _, completed := s.completedOutcomes[endToEndID]; completed {
-		s.transferScenariosMu.Unlock()
-		return
-	}
-	s.completedOutcomes[endToEndID] = struct{}{}
-	s.transferScenariosMu.Unlock()
+	tracker := state.tracker
+	delete(s.paymentStates, endToEndID)
+	s.paymentStatesMu.Unlock()
 	s.completePhaseWork(tracker)
 }
 
@@ -1105,10 +1086,7 @@ func sameReasonCodes(left, right []string) bool {
 }
 
 func (s *simulator) isCurrentTransfer(endToEndID string) bool {
-	s.transferScenariosMu.RLock()
-	defer s.transferScenariosMu.RUnlock()
-	_, exists := s.transferScenarios[endToEndID]
-	return exists
+	return s.runID != "" && strings.HasPrefix(endToEndID, s.runID+"-")
 }
 
 func (s *simulator) writeStart(row events.Start) {

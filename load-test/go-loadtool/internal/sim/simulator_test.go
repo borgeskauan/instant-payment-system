@@ -116,7 +116,7 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 		runID:                 "deadline-test",
 		originalPlanner:       planner,
 		pacs008ReplaySelector: selector,
-		transferScenarios:     make(map[string]string),
+		paymentStates:         make(map[string]paymentState),
 		buildPacs008Func: func(string, string, string, int64) []byte {
 			payloadsBuilt.Add(1)
 			return []byte("must not be built")
@@ -148,8 +148,8 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 	if s.started.Load() != 0 {
 		t.Fatalf("started originals = %d, want 0", s.started.Load())
 	}
-	if len(s.transferScenarios) != 0 {
-		t.Fatalf("transfer scenarios = %#v, want none", s.transferScenarios)
+	if len(s.paymentStates) != 0 {
+		t.Fatalf("payment states = %#v, want none", s.paymentStates)
 	}
 
 	job, _, ok := s.claimOriginal(originalSlot{createdAt: time.Now().UnixNano(), deadline: time.Now().Add(time.Second)})
@@ -200,11 +200,8 @@ func TestWarmupHTTPFailureDoesNotFailGateWhenExpectedOutcomeArrives(t *testing.T
 				return nil, errors.New("request timeout")
 			})},
 		},
-		startWriter:       startWriter,
-		transferScenarios: make(map[string]string),
-		transferPayers:    make(map[string]string),
-		transferTrackers:  make(map[string]*phaseTracker),
-		completedOutcomes: make(map[string]struct{}),
+		startWriter:   startWriter,
+		paymentStates: make(map[string]paymentState),
 		buildPacs008Func: func(string, string, string, int64) []byte {
 			return []byte("pacs.008")
 		},
@@ -217,7 +214,7 @@ func TestWarmupHTTPFailureDoesNotFailGateWhenExpectedOutcomeArrives(t *testing.T
 	}
 
 	s.sendPacs008At(context.Background(), job, time.Now())
-	s.observeWarmupOutcome("tx-1", "10000001", "ACSC", nil)
+	s.observePayerOutcome("tx-1", "10000001", "ACSC", nil)
 
 	if err := tracker.Wait(context.Background()); err != nil {
 		t.Fatalf("warmup gate failed after the expected outcome: %v", err)
@@ -320,10 +317,9 @@ func TestStatusWorkersProcessQueuedJobsWithBoundedConcurrency(t *testing.T) {
 
 func TestRepeatedPacs008NotificationQueuesOneOriginalPacs002(t *testing.T) {
 	s := &simulator{
-		statusJobs:      make(chan statusJob, 2),
-		statusQueuedIDs: make(map[string]struct{}),
-		transferScenarios: map[string]string{
-			"tx-1": "happy-path",
+		statusJobs: make(chan statusJob, 2),
+		paymentStates: map[string]paymentState{
+			"tx-1": {scenarioName: "happy-path"},
 		},
 	}
 
@@ -413,10 +409,10 @@ func TestNotificationPullAdvancesCursorOnlyAfterProcessingTheCompleteResponse(t 
 	now := time.Now()
 	s := &simulator{
 		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
+		runID:             "tx",
 		eventWriter:       writer,
 		activeStartedAt:   now.Add(-time.Second),
 		generationEndedAt: now.Add(time.Second),
-		transferScenarios: map[string]string{"tx-1": "happy-path"},
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -477,10 +473,9 @@ func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &simulator{
-		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
-		eventWriter:       writer,
-		statusQueuedIDs:   make(map[string]struct{}),
-		transferScenarios: make(map[string]string),
+		cfg:         Config{PullMetrics: pullmetrics.NewRecorder()},
+		runID:       "current-run",
+		eventWriter: writer,
 	}
 
 	err = s.processNotificationPull(
@@ -518,16 +513,30 @@ func TestNotificationPullIgnoresTransfersFromEarlierRuns(t *testing.T) {
 	}
 }
 
-func TestNotificationPullProcessesACommunicationOnlyOnce(t *testing.T) {
+func TestCurrentTransferIsIdentifiedByTheExactRunPrefix(t *testing.T) {
+	s := &simulator{runID: "go-123"}
+
+	if !s.isCurrentTransfer("go-123-42") {
+		t.Fatal("current transfer was not recognized")
+	}
+	if s.isCurrentTransfer("go-1234-42") {
+		t.Fatal("similar run prefix was recognized as the current run")
+	}
+	if s.isCurrentTransfer("earlier-run-42") {
+		t.Fatal("historical transfer was recognized as the current run")
+	}
+}
+
+func TestNotificationPullRecordsRepeatedPhysicalDelivery(t *testing.T) {
 	eventsPath := filepath.Join(t.TempDir(), "events.csv")
 	writer, err := events.NewNotificationWriter(eventsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &simulator{
-		cfg:               Config{PullMetrics: pullmetrics.NewRecorder()},
-		eventWriter:       writer,
-		transferScenarios: map[string]string{"tx-1": "happy-path"},
+		cfg:         Config{PullMetrics: pullmetrics.NewRecorder()},
+		runID:       "tx",
+		eventWriter: writer,
 	}
 	response := &notificationpb.PullResponse{Notifications: []*notificationpb.Notification{{
 		Payload:         payload.Pacs002("tx-1"),
@@ -551,8 +560,8 @@ func TestNotificationPullProcessesACommunicationOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || s.notifications.Load() != 1 {
-		t.Fatalf("logical notifications: rows=%d count=%d, want one", len(rows), s.notifications.Load())
+	if len(rows) != 2 || s.notifications.Load() != 2 {
+		t.Fatalf("physical notifications: rows=%d count=%d, want two", len(rows), s.notifications.Load())
 	}
 }
 
