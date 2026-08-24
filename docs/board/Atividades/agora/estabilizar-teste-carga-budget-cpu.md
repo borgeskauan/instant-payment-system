@@ -3457,8 +3457,9 @@ usavam o mesmo valor de `2.000 TPS`:
 continuam exigindo no mínimo `2.000 TPS`. A margem de 5% evita que jitter normal
 do gerador torne o experimento inconclusivo sem reduzir o contrato: qualquer
 rolling window abaixo de `2.000` continua invalidando o run, enquanto carga
-acima do piso é reportada como workload efetivamente exercitada. Os smokes
-mantêm oferta e piso iguais às taxas anteriores.
+acima do piso é reportada como workload efetivamente exercitada. O smoke
+funcional mixed-outcomes usa a mesma margem, oferecendo `105 TPS` para exigir
+`100 TPS`; o profile de compatibilidade `uniform-smoke` permanece inalterado.
 
 O `sla-report.json` registra ambos como `generation.offered_tps` e
 `generation.required_minimum_tps`; `sustained_minimum_met` compara o mínimo
@@ -3636,3 +3637,42 @@ um broker e replication factor 1: valida o contrato e o processo, mas não HA de
 broker, host ou volume. Indisponibilidade superior a sete dias é disaster
 recovery. Admission control do ingresso financeiro baseado na saúde do
 transporte continua fora deste recorte.
+
+#### Validação da migração para o log Kafka
+
+O smoke `kafka-log-smoke-margin/20260824_040851` partiu de stack e volumes
+novos. Os `1.300` pagamentos originais e os `115` replays tiveram HTTP aceito;
+os `1.040` PACS.002 foram enviados, os `1.300` outcomes esperados foram
+observados e não houve ausência, contradição ou violação de replay/Pull. O
+relatório foi válido, com mínimo rolling de `104 TPS` para piso `100`, p99 de
+`294,713 ms` e outbox final vazia.
+
+O benchmark obrigatório de 15 minutos
+`kafka-log-15m/20260824_041129` também partiu de stack e volumes novos. Todos os
+`2.044.468` pagamentos originais, `102.225` replays PACS.008, `81.770` replays
+PACS.002 e `1.635.574` status tiveram HTTP aceito. Todos os outcomes foram
+observados sem contradição, as `5.315.616` notificações foram consumidas sem
+violação de Pull e a outbox terminou vazia. O log Kafka terminou com
+`1.359.148` envelopes distribuídos nas oito partições.
+
+| sinal do run longo | híbrido ordenado | Kafka durável | variação |
+| --- | ---: | ---: | ---: |
+| TPS médio | `2.094,518` | `2.092,989` | `-0,07%` |
+| mínimo / máximo rolling | `1.837 / 2.121` | `1.564 / 2.121` | piso ainda não qualificado |
+| latência p50 | `235,087 ms` | `168,524 ms` | `-28,31%` |
+| latência p95 | `1.082,256 ms` | `355,026 ms` | `-67,20%` |
+| latência p99 | `1.767,027 ms` | `540,141 ms` | `-69,43%` |
+| latência máxima | `3.250,824 ms` | `1.386,061 ms` | `-57,36%` |
+| CPU média PostgreSQL no ativo | `80,768%` | `58,762%` | `-22,006 pp` |
+| SQL das queries exportadas | `904,641 s` | `348,389 s` | `-61,49%` |
+| WAL das queries exportadas | `4.603.208.389 B` | `3.596.780.178 B` | `-21,86%` |
+
+A troca removeu materialmente pressão e cauda do PostgreSQL, mas o relatório
+longo permaneceu inválido somente pelo piso de geração. A média ficou em
+`2.092,989 TPS` e toda a distribuição até p99 ficou abaixo de `1 s`, porém uma
+rolling window caiu a `1.564 TPS`. Em intervalos fixos alinhados ao active,
+houve 15 segundos abaixo de `2.000`, espalhados pela run; vários coincidiram
+com menor, e não maior, ocupação dos componentes. Não houve 4xx/5xx, POST
+perdido ou backlog de HTTP original no encerramento. A evidência aponta para
+buracos na carga efetivamente oferecida pelo gerador/host, não para rejeição do
+SPI, e deve ser tratada separadamente antes da qualificação final de throughput.
