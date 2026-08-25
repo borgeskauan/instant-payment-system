@@ -4,7 +4,27 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 )
+
+func TestWarmupWindowsKeepBootstrapAndSteadyStagesContiguous(t *testing.T) {
+	start := time.Unix(100, 0)
+	warmup := config.Warmup{
+		Bootstrap:         config.WarmupStage{OfferedTxRate: 500, Duration: time.Minute, RequestTimeout: 30 * time.Second},
+		Steady:            config.WarmupStage{OfferedTxRate: 1_500, Duration: time.Minute, RequestTimeout: 5 * time.Second},
+		CompletionTimeout: 2 * time.Minute,
+	}
+
+	windows := warmupWindows(start, warmup)
+
+	if windows[0].name != "bootstrap" || windows[0].offeredTxRate != 500 || windows[0].requestTimeout != 30*time.Second || !windows[0].start.Equal(start) || !windows[0].end.Equal(start.Add(time.Minute)) {
+		t.Fatalf("bootstrap window = %#v", windows[0])
+	}
+	if windows[1].name != "steady" || windows[1].offeredTxRate != 1_500 || windows[1].requestTimeout != 5*time.Second || !windows[1].start.Equal(windows[0].end) || !windows[1].end.Equal(start.Add(2*time.Minute)) {
+		t.Fatalf("steady window = %#v", windows[1])
+	}
+}
 
 func TestOriginalBucketCarriesExactBudgetForConfiguredRates(t *testing.T) {
 	start := time.Unix(100, 0)
@@ -122,7 +142,7 @@ func TestOriginalPhaseDoesNotQueueSlotPastItsDeadline(t *testing.T) {
 	done := make(chan struct{})
 	s := &simulator{runID: "expired-generation", originalPlanner: planner}
 	go func() {
-		s.generateOriginalPhase(context.Background(), jobs, phaseStart, phaseEnd, 1, nil)
+		s.generateOriginalPhase(context.Background(), jobs, phaseStart, phaseEnd, 1, defaultRequestTimeout, nil)
 		close(done)
 	}()
 

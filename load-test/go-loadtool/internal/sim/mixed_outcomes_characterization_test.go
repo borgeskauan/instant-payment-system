@@ -10,16 +10,20 @@ import (
 func TestMixedOutcomesSmokeCharacterizesWorkloadPopulations(t *testing.T) {
 	cfg := Config{
 		OfferedTxRate: 100,
-		Warmup:        config.Warmup{OfferedTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second},
-		Duration:      10 * time.Second,
-		Scenarios:     mixedPlannerScenarios(),
+		Warmup: config.Warmup{
+			Bootstrap:         config.WarmupStage{OfferedTxRate: 50, Duration: 2 * time.Second},
+			Steady:            config.WarmupStage{OfferedTxRate: 50, Duration: 3 * time.Second},
+			CompletionTimeout: 30 * time.Second,
+		},
+		Duration:  10 * time.Second,
+		Scenarios: mixedPlannerScenarios(),
 		Replay: config.Replay{
 			Pacs008: &config.Pacs008Replay{Share: 0.05, Delay: 10 * time.Second},
 			Pacs002: &config.Pacs002Replay{Share: 0.05, Delay: 10 * time.Second},
 		},
 	}
 
-	originalCount, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration)
+	originalCount, err := maximumGeneratedTransfers(cfg.Warmup, cfg.OfferedTxRate, cfg.Duration)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -150,7 +150,7 @@ func TestPrewarmRetainsClientForTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &simulator{httpClients: clients}
-	if result := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008")); result.HTTPStatus != http.StatusOK {
+	if result := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"), defaultRequestTimeout); result.HTTPStatus != http.StatusOK {
 		t.Fatalf("transfer status = %d, want 200", result.HTTPStatus)
 	}
 
@@ -229,7 +229,7 @@ func TestPrewarmReusesConfiguredHTTP2ClientForConcurrentTransfers(t *testing.T) 
 	results := make(chan httpAttemptResult, 2)
 	for range 2 {
 		go func() {
-			results <- s.post(context.Background(), "10000001", server.URL+"/transfer", []byte("pacs008"))
+			results <- s.post(context.Background(), "10000001", server.URL+"/transfer", []byte("pacs008"), defaultRequestTimeout)
 		}()
 	}
 	for range 2 {

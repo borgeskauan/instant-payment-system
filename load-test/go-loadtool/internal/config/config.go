@@ -67,9 +67,23 @@ type Load struct {
 }
 
 type Warmup struct {
-	OfferedTxRate     int
-	Duration          time.Duration
+	Bootstrap         WarmupStage
+	Steady            WarmupStage
 	CompletionTimeout time.Duration
+}
+
+type WarmupStage struct {
+	OfferedTxRate  int
+	Duration       time.Duration
+	RequestTimeout time.Duration
+}
+
+func (warmup Warmup) TotalDuration() time.Duration {
+	return warmup.Bootstrap.Duration + warmup.Steady.Duration
+}
+
+func (warmup Warmup) MaximumOfferedTxRate() int {
+	return max(warmup.Bootstrap.OfferedTxRate, warmup.Steady.OfferedTxRate)
 }
 
 type Replay struct {
@@ -172,9 +186,15 @@ type fileLoad struct {
 }
 
 type fileWarmup struct {
-	OfferedTxRate     int    `json:"offeredTxRate"`
-	Duration          string `json:"duration"`
-	CompletionTimeout string `json:"completionTimeout"`
+	Bootstrap         fileWarmupStage `json:"bootstrap"`
+	Steady            fileWarmupStage `json:"steady"`
+	CompletionTimeout string          `json:"completionTimeout"`
+}
+
+type fileWarmupStage struct {
+	OfferedTxRate  int    `json:"offeredTxRate"`
+	Duration       string `json:"duration"`
+	RequestTimeout string `json:"requestTimeout"`
 }
 
 type fileReplay struct {
@@ -305,9 +325,24 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			return Runtime{}, malformedProfile(name, required.field, errors.New("must be a non-empty string"))
 		}
 	}
-	warmupDuration, err := parseWholeSecondDuration(name, "load.warmup.duration", file.Load.Warmup.Duration, false)
+	warmupBootstrapDuration, err := parseWholeSecondDuration(name, "load.warmup.bootstrap.duration", file.Load.Warmup.Bootstrap.Duration, false)
 	if err != nil {
 		return Runtime{}, err
+	}
+	warmupSteadyDuration, err := parseWholeSecondDuration(name, "load.warmup.steady.duration", file.Load.Warmup.Steady.Duration, false)
+	if err != nil {
+		return Runtime{}, err
+	}
+	warmupBootstrapRequestTimeout, err := parseWholeSecondDuration(name, "load.warmup.bootstrap.requestTimeout", file.Load.Warmup.Bootstrap.RequestTimeout, false)
+	if err != nil {
+		return Runtime{}, err
+	}
+	warmupSteadyRequestTimeout, err := parseWholeSecondDuration(name, "load.warmup.steady.requestTimeout", file.Load.Warmup.Steady.RequestTimeout, false)
+	if err != nil {
+		return Runtime{}, err
+	}
+	if warmupBootstrapDuration > time.Duration(math.MaxInt64)-warmupSteadyDuration {
+		return Runtime{}, malformedProfile(name, "load.warmup", errors.New("combined duration is too large"))
 	}
 	warmupCompletionTimeout, err := parseWholeSecondDuration(name, "load.warmup.completionTimeout", file.Load.Warmup.CompletionTimeout, false)
 	if err != nil {
@@ -330,8 +365,11 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 	if file.Load.RequiredMinimumTxRate > file.Load.OfferedTxRate {
 		return Runtime{}, malformedProfile(name, "load.requiredMinimumTxRate", errors.New("must not exceed load.offeredTxRate"))
 	}
-	if file.Load.Warmup.OfferedTxRate <= 0 {
-		return Runtime{}, malformedProfile(name, "load.warmup.offeredTxRate", errors.New("must be positive"))
+	if file.Load.Warmup.Bootstrap.OfferedTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.warmup.bootstrap.offeredTxRate", errors.New("must be positive"))
+	}
+	if file.Load.Warmup.Steady.OfferedTxRate <= 0 {
+		return Runtime{}, malformedProfile(name, "load.warmup.steady.offeredTxRate", errors.New("must be positive"))
 	}
 	replay, err := decodeReplay(name, file.Replay)
 	if err != nil {
@@ -400,8 +438,16 @@ func buildRuntime(name string, file fileConfig) (Runtime, error) {
 			OfferedTxRate:         file.Load.OfferedTxRate,
 			RequiredMinimumTxRate: file.Load.RequiredMinimumTxRate,
 			Warmup: Warmup{
-				OfferedTxRate:     file.Load.Warmup.OfferedTxRate,
-				Duration:          warmupDuration,
+				Bootstrap: WarmupStage{
+					OfferedTxRate:  file.Load.Warmup.Bootstrap.OfferedTxRate,
+					Duration:       warmupBootstrapDuration,
+					RequestTimeout: warmupBootstrapRequestTimeout,
+				},
+				Steady: WarmupStage{
+					OfferedTxRate:  file.Load.Warmup.Steady.OfferedTxRate,
+					Duration:       warmupSteadyDuration,
+					RequestTimeout: warmupSteadyRequestTimeout,
+				},
 				CompletionTimeout: warmupCompletionTimeout,
 			},
 			Duration: duration,

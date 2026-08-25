@@ -29,8 +29,16 @@ const testProfile = `{
     "offeredTxRate": 1234,
     "requiredMinimumTxRate": 1234,
     "warmup": {
-      "offeredTxRate": 617,
-      "duration": "10s",
+      "bootstrap": {
+        "offeredTxRate": 300,
+        "duration": "4s",
+        "requestTimeout": "20s"
+      },
+      "steady": {
+        "offeredTxRate": 617,
+        "duration": "6s",
+        "requestTimeout": "5s"
+      },
       "completionTimeout": "30s"
     },
     "duration": "45s",
@@ -105,7 +113,11 @@ func TestLoadProfileReadsRuntimeSettingsWithoutSchemaVersion(t *testing.T) {
 	if cfg.Connections.NotificationGateway.Address != "127.0.0.1:9090" {
 		t.Fatalf("gateway Address = %q", cfg.Connections.NotificationGateway.Address)
 	}
-	if cfg.Load.OfferedTxRate != 1234 || cfg.Load.RequiredMinimumTxRate != 1234 || cfg.Load.Warmup.OfferedTxRate != 617 || cfg.Load.Warmup.Duration != 10*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
+	if cfg.Load.OfferedTxRate != 1234 || cfg.Load.RequiredMinimumTxRate != 1234 ||
+		cfg.Load.Warmup.Bootstrap.OfferedTxRate != 300 || cfg.Load.Warmup.Bootstrap.Duration != 4*time.Second || cfg.Load.Warmup.Bootstrap.RequestTimeout != 20*time.Second ||
+		cfg.Load.Warmup.Steady.OfferedTxRate != 617 || cfg.Load.Warmup.Steady.Duration != 6*time.Second || cfg.Load.Warmup.Steady.RequestTimeout != 5*time.Second ||
+		cfg.Load.Warmup.TotalDuration() != 10*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second ||
+		cfg.Load.Duration != 45*time.Second || cfg.Load.Drain != 12*time.Second {
 		t.Fatalf("Load = %#v", cfg.Load)
 	}
 	if cfg.Replay.Pacs008 == nil || cfg.Replay.Pacs008.Share != 0.25 || cfg.Replay.Pacs008.Delay != 7*time.Second {
@@ -190,7 +202,11 @@ func TestUniformSmokePreservesBaselineWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Load.OfferedTxRate != 2000 || cfg.Load.RequiredMinimumTxRate != 2000 || cfg.Load.Warmup.OfferedTxRate != 1000 || cfg.Load.Warmup.Duration != time.Minute || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
+	if cfg.Load.OfferedTxRate != 2000 || cfg.Load.RequiredMinimumTxRate != 2000 ||
+		cfg.Load.Warmup.Bootstrap.OfferedTxRate != 1000 || cfg.Load.Warmup.Bootstrap.Duration != 30*time.Second || cfg.Load.Warmup.Bootstrap.RequestTimeout != 5*time.Second ||
+		cfg.Load.Warmup.Steady.OfferedTxRate != 1000 || cfg.Load.Warmup.Steady.Duration != 30*time.Second || cfg.Load.Warmup.Steady.RequestTimeout != 5*time.Second ||
+		cfg.Load.Warmup.TotalDuration() != time.Minute || cfg.Load.Warmup.CompletionTimeout != 30*time.Second ||
+		cfg.Load.Duration != time.Minute || cfg.Load.Drain != 30*time.Second {
 		t.Fatalf("uniform-smoke Load = %#v", cfg.Load)
 	}
 	scenario := cfg.Scenarios[0]
@@ -372,8 +388,16 @@ func TestLoadProfileRejectsLegacyTargetRateContract(t *testing.T) {
 func TestLoadProfileRejectsLegacyStringWarmup(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Replace(testProfile, `"warmup": {
-      "offeredTxRate": 617,
-      "duration": "10s",
+      "bootstrap": {
+        "offeredTxRate": 300,
+        "duration": "4s",
+        "requestTimeout": "20s"
+      },
+      "steady": {
+        "offeredTxRate": 617,
+        "duration": "6s",
+        "requestTimeout": "5s"
+      },
       "completionTimeout": "30s"
     }`, `"warmup": "10s"`, 1)
 	writeProfile(t, dir, "legacy-warmup", content)
@@ -395,8 +419,12 @@ func TestLoadProfileRejectsInvalidSemanticValues(t *testing.T) {
 		{name: "offered rate", old: `"offeredTxRate": 1234`, new: `"offeredTxRate": 0`, wantMessage: "load.offeredTxRate"},
 		{name: "required minimum rate", old: `"requiredMinimumTxRate": 1234`, new: `"requiredMinimumTxRate": 0`, wantMessage: "load.requiredMinimumTxRate"},
 		{name: "required minimum above offered", old: `"requiredMinimumTxRate": 1234`, new: `"requiredMinimumTxRate": 1235`, wantMessage: "must not exceed load.offeredTxRate"},
-		{name: "warmup offered rate", old: `"offeredTxRate": 617`, new: `"offeredTxRate": 0`, wantMessage: "load.warmup.offeredTxRate"},
-		{name: "warmup duration", old: `"duration": "10s"`, new: `"duration": "0s"`, wantMessage: "load.warmup.duration"},
+		{name: "bootstrap offered rate", old: `"offeredTxRate": 300`, new: `"offeredTxRate": 0`, wantMessage: "load.warmup.bootstrap.offeredTxRate"},
+		{name: "bootstrap duration", old: `"duration": "4s"`, new: `"duration": "0s"`, wantMessage: "load.warmup.bootstrap.duration"},
+		{name: "bootstrap request timeout", old: `"requestTimeout": "20s"`, new: `"requestTimeout": "0s"`, wantMessage: "load.warmup.bootstrap.requestTimeout"},
+		{name: "steady offered rate", old: `"offeredTxRate": 617`, new: `"offeredTxRate": 0`, wantMessage: "load.warmup.steady.offeredTxRate"},
+		{name: "steady duration", old: `"duration": "6s"`, new: `"duration": "0s"`, wantMessage: "load.warmup.steady.duration"},
+		{name: "steady request timeout", old: `"requestTimeout": "5s"`, new: `"requestTimeout": "0s"`, wantMessage: "load.warmup.steady.requestTimeout"},
 		{name: "warmup completion timeout", old: `"completionTimeout": "30s"`, new: `"completionTimeout": "0s"`, wantMessage: "load.warmup.completionTimeout"},
 		{name: "whole seconds", old: `"drain": "12s"`, new: `"drain": "1500ms"`, wantMessage: "whole number of seconds"},
 		{name: "drain shorter than replay delay", old: `"drain": "12s"`, new: `"drain": "10s"`, wantMessage: "at least the largest replay delay"},
@@ -457,7 +485,11 @@ func TestMixedOutcomesSmokeLoadsGenericScenarios(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Load.OfferedTxRate != 105 || cfg.Load.RequiredMinimumTxRate != 100 || cfg.Load.Warmup.OfferedTxRate != 50 || cfg.Load.Warmup.Duration != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second || cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
+	if cfg.Load.OfferedTxRate != 105 || cfg.Load.RequiredMinimumTxRate != 100 ||
+		cfg.Load.Warmup.Bootstrap.OfferedTxRate != 50 || cfg.Load.Warmup.Bootstrap.Duration != 2*time.Second || cfg.Load.Warmup.Bootstrap.RequestTimeout != 5*time.Second ||
+		cfg.Load.Warmup.Steady.OfferedTxRate != 50 || cfg.Load.Warmup.Steady.Duration != 3*time.Second || cfg.Load.Warmup.Steady.RequestTimeout != 5*time.Second ||
+		cfg.Load.Warmup.TotalDuration() != 5*time.Second || cfg.Load.Warmup.CompletionTimeout != 30*time.Second ||
+		cfg.Load.Duration != 10*time.Second || cfg.Load.Drain != 10*time.Second {
 		t.Fatalf("mixed load = %#v", cfg.Load)
 	}
 	if len(cfg.Scenarios) != 2 || cfg.Scenarios[0].Name != "happy-path" || cfg.Scenarios[1].Name != "insufficient-funds" {
@@ -497,7 +529,11 @@ func TestMixedOutcomesLongProfileDefinesStabilizationWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if long.Load.OfferedTxRate != 2100 || long.Load.RequiredMinimumTxRate != 2000 || long.Load.Warmup.OfferedTxRate != 1500 || long.Load.Warmup.Duration != 2*time.Minute || long.Load.Warmup.CompletionTimeout != 2*time.Minute || long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
+	if long.Load.OfferedTxRate != 2100 || long.Load.RequiredMinimumTxRate != 2000 ||
+		long.Load.Warmup.Bootstrap.OfferedTxRate != 500 || long.Load.Warmup.Bootstrap.Duration != time.Minute || long.Load.Warmup.Bootstrap.RequestTimeout != 30*time.Second ||
+		long.Load.Warmup.Steady.OfferedTxRate != 1500 || long.Load.Warmup.Steady.Duration != time.Minute || long.Load.Warmup.Steady.RequestTimeout != 5*time.Second ||
+		long.Load.Warmup.TotalDuration() != 2*time.Minute || long.Load.Warmup.CompletionTimeout != 2*time.Minute ||
+		long.Load.Duration != 15*time.Minute || long.Load.Drain != 30*time.Second {
 		t.Fatalf("mixed-outcomes-2k-15m Load = %#v", long.Load)
 	}
 	if !reflect.DeepEqual(long.Replay, smoke.Replay) {
@@ -524,8 +560,13 @@ func TestMixedOutcomesDiagnosticProfileDefinesShortInvestigationWorkload(t *test
 
 	if diagnostic.Load.OfferedTxRate != 2100 ||
 		diagnostic.Load.RequiredMinimumTxRate != 2000 ||
-		diagnostic.Load.Warmup.OfferedTxRate != 1500 ||
-		diagnostic.Load.Warmup.Duration != 2*time.Minute ||
+		diagnostic.Load.Warmup.Bootstrap.OfferedTxRate != 500 ||
+		diagnostic.Load.Warmup.Bootstrap.Duration != time.Minute ||
+		diagnostic.Load.Warmup.Bootstrap.RequestTimeout != 30*time.Second ||
+		diagnostic.Load.Warmup.Steady.OfferedTxRate != 1500 ||
+		diagnostic.Load.Warmup.Steady.Duration != time.Minute ||
+		diagnostic.Load.Warmup.Steady.RequestTimeout != 5*time.Second ||
+		diagnostic.Load.Warmup.TotalDuration() != 2*time.Minute ||
 		diagnostic.Load.Warmup.CompletionTimeout != 2*time.Minute ||
 		diagnostic.Load.Duration != time.Minute ||
 		diagnostic.Load.Drain != 30*time.Second {

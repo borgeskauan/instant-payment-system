@@ -45,7 +45,12 @@ cat <<'JSON'
   "profile": "mixed-outcomes-smoke",
   "offeredTxRate": 100,
   "requiredMinimumTxRate": 100,
-  "warmupOfferedTxRate": 50,
+  "warmupBootstrapOfferedTxRate": 25,
+  "warmupBootstrapSeconds": 2,
+  "warmupBootstrapRequestTimeoutSeconds": 20,
+  "warmupSteadyOfferedTxRate": 50,
+  "warmupSteadySeconds": 3,
+  "warmupSteadyRequestTimeoutSeconds": 5,
   "warmupSeconds": 5,
   "warmupCompletionTimeoutSeconds": 30,
   "activeSeconds": 60,
@@ -136,7 +141,11 @@ LOADTOOL_BUILD_DIR="$tmp_dir"
 LOADTOOL_BIN="$tmp_dir/validating-loadtool"
 validate_profile_with_loadtool
 
-if [[ "$PROFILE_OFFERED_TX_RATE" != 100 || "$PROFILE_REQUIRED_MINIMUM_TX_RATE" != 100 || "$PROFILE_WARMUP_OFFERED_TX_RATE" != 50 || "$PROFILE_WARMUP_SECONDS" != 5 || "$PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS" != 30 || "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
+if [[ "$PROFILE_OFFERED_TX_RATE" != 100 || "$PROFILE_REQUIRED_MINIMUM_TX_RATE" != 100 ||
+      "$PROFILE_WARMUP_BOOTSTRAP_OFFERED_TX_RATE" != 25 || "$PROFILE_WARMUP_BOOTSTRAP_SECONDS" != 2 || "$PROFILE_WARMUP_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS" != 20 ||
+      "$PROFILE_WARMUP_STEADY_OFFERED_TX_RATE" != 50 || "$PROFILE_WARMUP_STEADY_SECONDS" != 3 || "$PROFILE_WARMUP_STEADY_REQUEST_TIMEOUT_SECONDS" != 5 ||
+      "$PROFILE_WARMUP_SECONDS" != 5 || "$PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS" != 30 ||
+      "$PROFILE_ACTIVE_SECONDS" != 60 || "$PROFILE_DRAIN_SECONDS" != 30 ]]; then
     echo "runner did not consume the normalized execution window" >&2
     exit 1
 fi

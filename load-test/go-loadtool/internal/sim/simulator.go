@@ -62,21 +62,24 @@ type transferJob struct {
 	ScenarioName   string
 	ReplaySelected bool
 	deadline       time.Time
+	requestTimeout time.Duration
 	tracker        *phaseTracker
 }
 
 type statusJob struct {
-	receiverISPB string
-	endToEndID   string
-	scenarioName string
-	tracker      *phaseTracker
+	receiverISPB   string
+	endToEndID     string
+	scenarioName   string
+	requestTimeout time.Duration
+	tracker        *phaseTracker
 }
 
 type paymentState struct {
-	payerISPB     string
-	scenarioName  string
-	tracker       *phaseTracker
-	pacs002Queued bool
+	payerISPB      string
+	scenarioName   string
+	requestTimeout time.Duration
+	tracker        *phaseTracker
+	pacs002Queued  bool
 }
 
 type simulator struct {
@@ -147,7 +150,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 	if cfg.PullMetrics == nil {
 		cfg.PullMetrics = pullmetrics.NewRecorder()
 	}
-	if _, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration); err != nil {
+	if _, err := maximumGeneratedTransfers(cfg.Warmup, cfg.OfferedTxRate, cfg.Duration); err != nil {
 		return err
 	}
 	planner, err := newWorkloadPlanner(cfg.Scenarios)
@@ -170,7 +173,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 	var s *simulator
 	recorder, err := newEventRecorder(
 		cfg.OutputDir,
-		eventQueueCapacity(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate)),
+		eventQueueCapacity(max(cfg.OfferedTxRate, cfg.Warmup.MaximumOfferedTxRate())),
 		func(err error) {
 			if s != nil {
 				s.abortRun(err)
@@ -266,14 +269,23 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 		}
 	}
 
-	statusWorkerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate))
+	statusWorkerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.MaximumOfferedTxRate()))
 	var statusWorkers sync.WaitGroup
 	s.startStatusWorkers(experimentCtx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
 	jobs := make(chan transferJob)
 	var workers sync.WaitGroup
-	workerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate))
-	logPhase("starting warmup: offered_rate=%d/s duration=%s completion_timeout=%s workers=%d status_workers=%d", cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.Warmup.CompletionTimeout, workerCount, statusWorkerCount)
+	workerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.MaximumOfferedTxRate()))
+	logPhase(
+		"starting warmup: bootstrap_rate=%d/s bootstrap_duration=%s steady_rate=%d/s steady_duration=%s completion_timeout=%s workers=%d status_workers=%d",
+		cfg.Warmup.Bootstrap.OfferedTxRate,
+		cfg.Warmup.Bootstrap.Duration,
+		cfg.Warmup.Steady.OfferedTxRate,
+		cfg.Warmup.Steady.Duration,
+		cfg.Warmup.CompletionTimeout,
+		workerCount,
+		statusWorkerCount,
+	)
 	for range workerCount {
 		workers.Add(1)
 		go s.transferWorker(experimentCtx, &workers, jobs)
@@ -303,8 +315,12 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 
 	warmupTracker := newPhaseTracker()
 	generationStartedAt := time.Now()
-	warmupEndedAt := generationStartedAt.Add(cfg.Warmup.Duration)
-	s.generateOriginalPhase(experimentCtx, jobs, generationStartedAt, warmupEndedAt, cfg.Warmup.OfferedTxRate, warmupTracker)
+	warmupSchedule := warmupWindows(generationStartedAt, cfg.Warmup)
+	for _, window := range warmupSchedule {
+		logPhase("starting warmup stage: name=%s offered_rate=%d/s duration=%s request_timeout=%s", window.name, window.offeredTxRate, window.end.Sub(window.start), window.requestTimeout)
+		s.generateOriginalPhase(experimentCtx, jobs, window.start, window.end, window.offeredTxRate, window.requestTimeout, warmupTracker)
+	}
+	warmupEndedAt := warmupSchedule[len(warmupSchedule)-1].end
 	warmupTracker.CloseGeneration()
 	logPhase("warmup generation finished; waiting for observable warmup work: timeout=%s", cfg.Warmup.CompletionTimeout)
 	warmupCtx, cancelWarmup := context.WithDeadline(experimentCtx, warmupEndedAt.Add(cfg.Warmup.CompletionTimeout))
@@ -338,7 +354,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 			return err
 		}
 		logPhase("warmup work completed; starting active load: offered_rate=%d/s duration=%s", cfg.OfferedTxRate, cfg.Duration)
-		s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.OfferedTxRate, nil)
+		s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.OfferedTxRate, defaultRequestTimeout, nil)
 		return nil
 	}); err != nil {
 		return err
@@ -410,7 +426,6 @@ func newHTTPClients(cfg Config, pairs []ids.Pair) (map[string]*http.Client, erro
 					RootCAs:      rootCAs,
 					Certificates: []tls.Certificate{certificate},
 				}),
-				Timeout: 5 * time.Second,
 			}
 		}
 	}
@@ -424,7 +439,7 @@ func closeHTTPClients(clients map[string]*http.Client) {
 }
 
 func workerCountForRate(rate int) int {
-	return max(16, min(512, rate/2))
+	return max(16, rate)
 }
 
 func statusQueueCapacity(rate int) int {
@@ -448,7 +463,7 @@ func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 	return pairs
 }
 
-func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- transferJob, phaseStart, phaseEnd time.Time, rate int, tracker *phaseTracker) {
+func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- transferJob, phaseStart, phaseEnd time.Time, rate int, requestTimeout time.Duration, tracker *phaseTracker) {
 	slotCount := originalPhaseSlotCount(rate, phaseEnd.Sub(phaseStart))
 	timer := time.NewTimer(time.Hour)
 	stopTimer(timer)
@@ -484,7 +499,7 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- trans
 			if !s.addPhaseWork(tracker) {
 				return
 			}
-			job := s.planOriginal(time.Now().UnixNano(), bucket.end, tracker)
+			job := s.planOriginal(time.Now().UnixNano(), bucket.end, requestTimeout, tracker)
 			select {
 			case jobs <- job:
 			case <-ctx.Done():
@@ -557,10 +572,11 @@ func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs
 	}
 }
 
-func (s *simulator) planOriginal(createdAt int64, deadline time.Time, tracker *phaseTracker) transferJob {
+func (s *simulator) planOriginal(createdAt int64, deadline time.Time, requestTimeout time.Duration, tracker *phaseTracker) transferJob {
 	planned := s.originalPlanner.Next()
 	job := s.transferJobForSequenceCreatedAt(s.nextOriginalSequence, planned, createdAt)
 	job.deadline = deadline
+	job.requestTimeout = requestTimeout
 	job.tracker = tracker
 	s.nextOriginalSequence++
 	if s.pacs008ReplaySelector != nil {
@@ -589,9 +605,10 @@ func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedA
 		s.paymentStates = make(map[string]paymentState)
 	}
 	s.paymentStates[job.ID] = paymentState{
-		payerISPB:    job.Pair.Payer,
-		scenarioName: job.ScenarioName,
-		tracker:      job.tracker,
+		payerISPB:      job.Pair.Payer,
+		scenarioName:   job.ScenarioName,
+		requestTimeout: job.requestTimeout,
+		tracker:        job.tracker,
 	}
 	s.paymentStatesMu.Unlock()
 	if job.ReplaySelected {
@@ -604,14 +621,15 @@ func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedA
 			s.completePhaseWork(job.tracker)
 		} else {
 			err := s.replayScheduler.Schedule(replayJob{
-				endToEndID:   job.ID,
-				senderISPB:   job.Pair.Payer,
-				scenarioName: job.ScenarioName,
-				messageType:  events.MessagePacs008,
-				endpoint:     "/transfer",
-				body:         body,
-				dueAt:        startedAtTime.Add(s.cfg.Replay.Pacs008.Delay),
-				tracker:      job.tracker,
+				endToEndID:     job.ID,
+				senderISPB:     job.Pair.Payer,
+				scenarioName:   job.ScenarioName,
+				messageType:    events.MessagePacs008,
+				endpoint:       "/transfer",
+				body:           body,
+				dueAt:          startedAtTime.Add(s.cfg.Replay.Pacs008.Delay),
+				requestTimeout: job.requestTimeout,
+				tracker:        job.tracker,
 			})
 			if err != nil {
 				s.failPhase(job.tracker, fmt.Errorf("schedule pacs.008 replay %q: %w", job.ID, err))
@@ -621,7 +639,7 @@ func (s *simulator) sendPacs008At(ctx context.Context, job transferJob, startedA
 			}
 		}
 	}
-	attempt := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body)
+	attempt := s.post(ctx, job.Pair.Payer, fmt.Sprintf("%s/transfer", s.cfg.BaseURL), body, job.requestTimeout)
 	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.started.Add(1)
@@ -651,7 +669,7 @@ func (s *simulator) sendReplay(ctx context.Context, job replayJob) {
 		return
 	}
 	startedAt := time.Now().UnixNano()
-	attempt := s.post(ctx, job.senderISPB, s.cfg.BaseURL+job.endpoint, job.body)
+	attempt := s.post(ctx, job.senderISPB, s.cfg.BaseURL+job.endpoint, job.body, job.requestTimeout)
 	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
 	s.replaysSent.Add(1)
@@ -711,14 +729,15 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 			s.failPhase(job.tracker, err)
 			s.completePhaseWork(job.tracker)
 		} else if err := s.replayScheduler.Schedule(replayJob{
-			endToEndID:   job.endToEndID,
-			senderISPB:   job.receiverISPB,
-			scenarioName: job.scenarioName,
-			messageType:  events.MessagePacs002,
-			endpoint:     "/transfer/status",
-			body:         body,
-			dueAt:        startedAtTime.Add(s.cfg.Replay.Pacs002.Delay),
-			tracker:      job.tracker,
+			endToEndID:     job.endToEndID,
+			senderISPB:     job.receiverISPB,
+			scenarioName:   job.scenarioName,
+			messageType:    events.MessagePacs002,
+			endpoint:       "/transfer/status",
+			body:           body,
+			dueAt:          startedAtTime.Add(s.cfg.Replay.Pacs002.Delay),
+			requestTimeout: job.requestTimeout,
+			tracker:        job.tracker,
 		}); err != nil {
 			s.failPhase(job.tracker, fmt.Errorf("schedule pacs.002 replay %q: %w", job.endToEndID, err))
 			s.completePhaseWork(job.tracker)
@@ -731,6 +750,7 @@ func (s *simulator) sendPacs002(ctx context.Context, job statusJob) {
 		job.receiverISPB,
 		fmt.Sprintf("%s/transfer/status", s.cfg.BaseURL),
 		body,
+		job.requestTimeout,
 	)
 	status := attempt.HTTPStatus
 	doneAt := time.Now().UnixNano()
@@ -765,13 +785,14 @@ func (s *simulator) enqueuePacs002(ctx context.Context, receiverISPB string, end
 	state.pacs002Queued = true
 	s.paymentStates[endToEndID] = state
 	scenarioName := state.scenarioName
+	requestTimeout := state.requestTimeout
 	tracker := state.tracker
 	s.paymentStatesMu.Unlock()
 	if !s.addPhaseWork(tracker) {
 		return
 	}
 	select {
-	case s.statusJobs <- statusJob{receiverISPB: receiverISPB, endToEndID: endToEndID, scenarioName: scenarioName, tracker: tracker}:
+	case s.statusJobs <- statusJob{receiverISPB: receiverISPB, endToEndID: endToEndID, scenarioName: scenarioName, requestTimeout: requestTimeout, tracker: tracker}:
 		s.statusJobsQueued.Add(1)
 	case <-ctx.Done():
 		s.completePhaseWork(tracker)

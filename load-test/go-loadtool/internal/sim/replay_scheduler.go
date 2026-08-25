@@ -9,14 +9,15 @@ import (
 )
 
 type replayJob struct {
-	endToEndID   string
-	senderISPB   string
-	scenarioName string
-	messageType  string
-	endpoint     string
-	body         []byte
-	dueAt        time.Time
-	tracker      *phaseTracker
+	endToEndID     string
+	senderISPB     string
+	scenarioName   string
+	messageType    string
+	endpoint       string
+	body           []byte
+	dueAt          time.Time
+	requestTimeout time.Duration
+	tracker        *phaseTracker
 }
 
 type replayJobHeap []replayJob

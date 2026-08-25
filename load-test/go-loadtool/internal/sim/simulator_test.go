@@ -27,16 +27,39 @@ func TestRunRejectsUnsafeRateBeforeCreatingOutput(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "run")
 	err := Run(Config{
 		OfferedTxRate: math.MaxInt/4 + 1,
-		Warmup:        config.Warmup{OfferedTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
-		Duration:      time.Second,
-		Scenarios:     mixedPlannerScenarios(),
-		OutputDir:     outputDir,
+		Warmup: config.Warmup{
+			Bootstrap:         config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+			Steady:            config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+			CompletionTimeout: time.Second,
+		},
+		Duration:  time.Second,
+		Scenarios: mixedPlannerScenarios(),
+		OutputDir: outputDir,
 	})
 	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
 		t.Fatalf("Run error = %v, want rate is too large", err)
 	}
 	if _, statErr := os.Stat(outputDir); !os.IsNotExist(statErr) {
 		t.Fatalf("output directory was created before rate validation: %v", statErr)
+	}
+}
+
+func TestWorkerPoolCanHoldOneSecondOfOfferedTraffic(t *testing.T) {
+	tests := []struct {
+		name string
+		rate int
+		want int
+	}{
+		{name: "minimum pool", rate: 1, want: 16},
+		{name: "replay traffic", rate: 210, want: 210},
+		{name: "original traffic", rate: 2_100, want: 2_100},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := workerCountForRate(test.rate); got != test.want {
+				t.Fatalf("workerCountForRate(%d) = %d, want %d", test.rate, got, test.want)
+			}
+		})
 	}
 }
 
@@ -56,7 +79,11 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 		ProfileName:   "prewarm-failure-test",
 		BaseURL:       "https://localhost:8001",
 		OfferedTxRate: 1,
-		Warmup:        config.Warmup{OfferedTxRate: 1, Duration: time.Second, CompletionTimeout: time.Second},
+		Warmup: config.Warmup{
+			Bootstrap:         config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+			Steady:            config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+			CompletionTimeout: time.Second,
+		},
 		Duration:      time.Second,
 		Scenarios:     mixedPlannerScenarios(),
 		OutputDir:     outputDir,
@@ -132,6 +159,7 @@ func TestExpiredPlannedOriginalHasNoPaymentEffects(t *testing.T) {
 	jobs <- s.planOriginal(
 		time.Now().Add(-time.Second).UnixNano(),
 		time.Now().Add(-time.Nanosecond),
+		30*time.Second,
 		tracker,
 	)
 	close(jobs)
@@ -170,7 +198,7 @@ func TestSchedulerPlansCompleteOriginalJobBeforeWorkerDispatch(t *testing.T) {
 	createdAt := time.Now().UnixNano()
 	deadline := time.Now().Add(time.Second)
 
-	job := s.planOriginal(createdAt, deadline, nil)
+	job := s.planOriginal(createdAt, deadline, 30*time.Second, nil)
 
 	if want := ids.TransactionID("scheduler-owned-planning", 0); job.ID != want {
 		t.Fatalf("transaction ID = %q, want %q", job.ID, want)
@@ -180,6 +208,9 @@ func TestSchedulerPlansCompleteOriginalJobBeforeWorkerDispatch(t *testing.T) {
 	}
 	if job.Created != createdAt || !job.deadline.Equal(deadline) {
 		t.Fatalf("planned timing = created %d deadline %s, want %d and %s", job.Created, job.deadline, createdAt, deadline)
+	}
+	if job.requestTimeout != 30*time.Second {
+		t.Fatalf("request timeout = %s, want 30s", job.requestTimeout)
 	}
 }
 
@@ -317,7 +348,7 @@ func TestRepeatedPacs008NotificationQueuesOneOriginalPacs002(t *testing.T) {
 	s := &simulator{
 		statusJobs: make(chan statusJob, 2),
 		paymentStates: map[string]paymentState{
-			"tx-1": {scenarioName: "happy-path"},
+			"tx-1": {scenarioName: "happy-path", requestTimeout: 30 * time.Second},
 		},
 	}
 
@@ -330,6 +361,9 @@ func TestRepeatedPacs008NotificationQueuesOneOriginalPacs002(t *testing.T) {
 	job := <-s.statusJobs
 	if job.scenarioName != "happy-path" {
 		t.Fatalf("scenario name = %q", job.scenarioName)
+	}
+	if job.requestTimeout != 30*time.Second {
+		t.Fatalf("PACS.002 request timeout = %s, want 30s", job.requestTimeout)
 	}
 }
 
@@ -377,12 +411,14 @@ func TestPostUsesClientForAuthenticatedIspb(t *testing.T) {
 		"10000001",
 		"https://localhost:8001/transfer",
 		[]byte("pacs008"),
+		defaultRequestTimeout,
 	).HTTPStatus
 	receiverStatus := s.post(
 		context.Background(),
 		"20000001",
 		"https://localhost:8001/transfer/status",
 		[]byte("pacs002"),
+		defaultRequestTimeout,
 	).HTTPStatus
 
 	if payerStatus != http.StatusOK || payerCalls.Load() != 1 {

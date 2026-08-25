@@ -139,7 +139,10 @@ func TestPlannerKeepsScenarioLocalPairAndAmountSequences(t *testing.T) {
 }
 
 func TestMaximumGeneratedTransfersExcludesFinalBoundaryTransfer(t *testing.T) {
-	got, err := maximumGeneratedTransfers(50, 5*time.Second, 100, 10*time.Second)
+	got, err := maximumGeneratedTransfers(config.Warmup{
+		Bootstrap: config.WarmupStage{OfferedTxRate: 20, Duration: 2 * time.Second},
+		Steady:    config.WarmupStage{OfferedTxRate: 70, Duration: 3 * time.Second},
+	}, 100, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,13 +151,16 @@ func TestMaximumGeneratedTransfersExcludesFinalBoundaryTransfer(t *testing.T) {
 	}
 }
 
-func TestMaximumGeneratedTransfersUsesExplicitWarmupRate(t *testing.T) {
-	got, err := maximumGeneratedTransfers(40, 5*time.Second, 100, 10*time.Second)
+func TestMaximumGeneratedTransfersUsesBothExplicitWarmupStages(t *testing.T) {
+	got, err := maximumGeneratedTransfers(config.Warmup{
+		Bootstrap: config.WarmupStage{OfferedTxRate: 20, Duration: 2 * time.Second},
+		Steady:    config.WarmupStage{OfferedTxRate: 60, Duration: 3 * time.Second},
+	}, 100, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 1200 {
-		t.Fatalf("maximumGeneratedTransfers = %d, want 1200", got)
+	if got != 1220 {
+		t.Fatalf("maximumGeneratedTransfers = %d, want 1220", got)
 	}
 }
 
@@ -195,14 +201,20 @@ func TestPacs008AndPacs002ReplaySelectorsUseDistinctDomains(t *testing.T) {
 }
 
 func TestMaximumGeneratedTransfersRejectsCountMultiplicationOverflow(t *testing.T) {
-	_, err := maximumGeneratedTransfers(1, time.Second, 1<<60, 16*time.Second)
+	_, err := maximumGeneratedTransfers(config.Warmup{
+		Bootstrap: config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+		Steady:    config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+	}, 1<<60, 16*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "too many transfers") {
 		t.Fatalf("maximumGeneratedTransfers error = %v, want too many transfers", err)
 	}
 }
 
 func TestMaximumGeneratedTransfersRejectsRateThatOverflowsQueueCapacity(t *testing.T) {
-	_, err := maximumGeneratedTransfers(1, time.Second, math.MaxInt/4+1, time.Second)
+	_, err := maximumGeneratedTransfers(config.Warmup{
+		Bootstrap: config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+		Steady:    config.WarmupStage{OfferedTxRate: 1, Duration: time.Second},
+	}, math.MaxInt/4+1, time.Second)
 	if err == nil || !strings.Contains(err.Error(), "rate is too large") {
 		t.Fatalf("maximumGeneratedTransfers error = %v, want rate is too large", err)
 	}
@@ -212,8 +224,8 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	cfg := Config{
 		OfferedTxRate: 100,
 		Warmup: config.Warmup{
-			OfferedTxRate:     50,
-			Duration:          5 * time.Second,
+			Bootstrap:         config.WarmupStage{OfferedTxRate: 50, Duration: 2 * time.Second},
+			Steady:            config.WarmupStage{OfferedTxRate: 50, Duration: 3 * time.Second},
 			CompletionTimeout: 30 * time.Second,
 		},
 		Duration:  10 * time.Second,
@@ -243,7 +255,7 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration)
+	transferCount, err := maximumGeneratedTransfers(cfg.Warmup, cfg.OfferedTxRate, cfg.Duration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +275,11 @@ func TestDerivedProvisioningFollowsExplicitFundingPolicies(t *testing.T) {
 }
 
 func TestDerivedProvisioningDoesNotDependOnScenarioName(t *testing.T) {
-	first := Config{OfferedTxRate: 100, Warmup: config.Warmup{OfferedTxRate: 50, Duration: 5 * time.Second, CompletionTimeout: 30 * time.Second}, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
+	first := Config{OfferedTxRate: 100, Warmup: config.Warmup{
+		Bootstrap:         config.WarmupStage{OfferedTxRate: 25, Duration: 2 * time.Second},
+		Steady:            config.WarmupStage{OfferedTxRate: 50, Duration: 3 * time.Second},
+		CompletionTimeout: 30 * time.Second,
+	}, Duration: 10 * time.Second, Scenarios: mixedPlannerScenarios()[:1]}
 	first.Scenarios[0].Share = 1
 	second := first
 	second.Scenarios = append([]config.Scenario(nil), first.Scenarios...)

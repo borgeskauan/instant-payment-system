@@ -128,25 +128,31 @@ func (random *splitMix64) next() uint64 {
 	return value ^ (value >> 31)
 }
 
-func maximumGeneratedTransfers(warmupRate int, warmup time.Duration, offeredTxRate int, duration time.Duration) (uint64, error) {
-	if warmupRate <= 0 || offeredTxRate <= 0 || warmup <= 0 || duration <= 0 || warmup%time.Second != 0 || duration%time.Second != 0 {
+func maximumGeneratedTransfers(warmup config.Warmup, offeredTxRate int, duration time.Duration) (uint64, error) {
+	if warmup.Bootstrap.OfferedTxRate <= 0 || warmup.Steady.OfferedTxRate <= 0 || offeredTxRate <= 0 ||
+		warmup.Bootstrap.Duration <= 0 || warmup.Steady.Duration <= 0 || duration <= 0 ||
+		warmup.Bootstrap.Duration%time.Second != 0 || warmup.Steady.Duration%time.Second != 0 || duration%time.Second != 0 {
 		return 0, fmt.Errorf("load window must use a positive rate and whole seconds")
 	}
-	if warmupRate > math.MaxInt/4 || offeredTxRate > math.MaxInt/4 {
+	if warmup.MaximumOfferedTxRate() > math.MaxInt/4 || offeredTxRate > math.MaxInt/4 {
 		return 0, fmt.Errorf("load window rate is too large to size simulator queues safely")
 	}
-	warmupCount, ok := checkedUint64Product(uint64(warmupRate), uint64(warmup/time.Second))
-	if !ok {
-		return 0, fmt.Errorf("load window generates too many transfers")
+	var total uint64
+	for _, stage := range [...]config.WarmupStage{warmup.Bootstrap, warmup.Steady} {
+		stageCount, ok := checkedUint64Product(uint64(stage.OfferedTxRate), uint64(stage.Duration/time.Second))
+		if !ok || math.MaxUint64-total < stageCount {
+			return 0, fmt.Errorf("load window generates too many transfers")
+		}
+		total += stageCount
 	}
 	activeCount, ok := checkedUint64Product(uint64(offeredTxRate), uint64(duration/time.Second))
 	if !ok {
 		return 0, fmt.Errorf("load window generates too many transfers")
 	}
-	if math.MaxUint64-warmupCount <= activeCount {
+	if math.MaxUint64-total < activeCount {
 		return 0, fmt.Errorf("load window generates too many transfers")
 	}
-	return warmupCount + activeCount, nil
+	return total + activeCount, nil
 }
 
 func checkedUint64Product(left, right uint64) (uint64, bool) {
@@ -157,7 +163,7 @@ func checkedUint64Product(left, right uint64) (uint64, bool) {
 }
 
 func DeriveProvisioning(cfg Config) ([]ProvisioningScenario, error) {
-	transferCount, err := maximumGeneratedTransfers(cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.OfferedTxRate, cfg.Duration)
+	transferCount, err := maximumGeneratedTransfers(cfg.Warmup, cfg.OfferedTxRate, cfg.Duration)
 	if err != nil {
 		return nil, err
 	}

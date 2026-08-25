@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
+
+const centralTransferPrewarmTimeout = 5 * time.Second
 
 func prewarmHTTP2Clients(ctx context.Context, baseURL string, clients map[string]*http.Client) error {
 	healthURL := strings.TrimRight(baseURL, "/") + "/health"
@@ -33,7 +36,9 @@ func prewarmHTTP2Clients(ctx context.Context, baseURL string, clients map[string
 }
 
 func prewarmHTTP2Client(ctx context.Context, healthURL, ispb string, client *http.Client) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	prewarmCtx, cancel := context.WithTimeout(ctx, centralTransferPrewarmTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(prewarmCtx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		return fmt.Errorf("create central transfer health request for ISPB %s: %w", ispb, err)
 	}

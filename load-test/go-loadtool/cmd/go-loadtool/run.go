@@ -125,7 +125,7 @@ func renderRunReport(layout runbundle.Layout, runtimeCfg config.Runtime, pullSna
 	window, err := runwindow.Resolve(
 		document,
 		runtimeCfg.Name,
-		runtimeCfg.Load.Warmup.Duration,
+		runtimeCfg.Load.Warmup.TotalDuration(),
 		runtimeCfg.Load.Duration,
 		runtimeCfg.Load.Drain,
 		runtimeCfg.Replay,

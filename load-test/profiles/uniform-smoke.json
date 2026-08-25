@@ -18,8 +18,16 @@
     "offeredTxRate": 2000,
     "requiredMinimumTxRate": 2000,
     "warmup": {
-      "offeredTxRate": 1000,
-      "duration": "1m",
+      "bootstrap": {
+        "offeredTxRate": 1000,
+        "duration": "30s",
+        "requestTimeout": "5s"
+      },
+      "steady": {
+        "offeredTxRate": 1000,
+        "duration": "30s",
+        "requestTimeout": "5s"
+      },
       "completionTimeout": "30s"
     },
     "duration": "1m",

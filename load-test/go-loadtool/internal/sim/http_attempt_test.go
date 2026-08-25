@@ -64,7 +64,7 @@ func TestPostRecordsProtocolViolation(t *testing.T) {
 		},
 	}}
 
-	attempt := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"))
+	attempt := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"), defaultRequestTimeout)
 
 	if attempt.HTTPStatus != 0 {
 		t.Fatalf("HTTPStatus = %d, want 0", attempt.HTTPStatus)
@@ -85,7 +85,7 @@ func TestPostDoesNotRetryTransportFailure(t *testing.T) {
 		},
 	}}
 
-	attempt := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"))
+	attempt := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"), defaultRequestTimeout)
 
 	if attempt.HTTPStatus != 0 {
 		t.Fatalf("HTTPStatus = %d, want 0", attempt.HTTPStatus)
@@ -95,6 +95,31 @@ func TestPostDoesNotRetryTransportFailure(t *testing.T) {
 	}
 	if err := s.currentRunError(); err != nil {
 		t.Fatalf("run error = %v, want nil", err)
+	}
+}
+
+func TestPostAppliesTheAttemptSpecificTimeout(t *testing.T) {
+	var remaining time.Duration
+	s := &simulator{httpClients: map[string]*http.Client{
+		"10000001": {
+			Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+				deadline, ok := request.Context().Deadline()
+				if !ok {
+					t.Fatal("request has no deadline")
+				}
+				remaining = time.Until(deadline)
+				return http2Response(http.StatusOK), nil
+			}),
+		},
+	}}
+
+	attempt := s.post(context.Background(), "10000001", "https://localhost:8001/transfer", []byte("pacs008"), 30*time.Second)
+
+	if attempt.HTTPStatus != http.StatusOK {
+		t.Fatalf("HTTPStatus = %d, want 200", attempt.HTTPStatus)
+	}
+	if remaining < 29*time.Second || remaining > 30*time.Second {
+		t.Fatalf("request deadline remaining = %s, want approximately 30s", remaining)
 	}
 }
 

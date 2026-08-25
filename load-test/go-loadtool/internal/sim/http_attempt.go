@@ -11,6 +11,7 @@ import (
 )
 
 const maxConnectionsPerPSP = 32
+const defaultRequestTimeout = 5 * time.Second
 
 type httpAttemptResult struct {
 	HTTPStatus int
@@ -29,8 +30,13 @@ func newHTTP2Transport(tlsConfig *tls.Config) *http.Transport {
 	}
 }
 
-func (s *simulator) post(ctx context.Context, ispb string, url string, body []byte) httpAttemptResult {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+func (s *simulator) post(ctx context.Context, ispb string, url string, body []byte, requestTimeout time.Duration) httpAttemptResult {
+	if requestTimeout <= 0 {
+		requestTimeout = defaultRequestTimeout
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return httpAttemptResult{}
 	}

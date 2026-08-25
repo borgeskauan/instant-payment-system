@@ -43,9 +43,11 @@ cd load-test
 
 Cada run de performance só abre a janela ativa depois que todo o trabalho de
 warmup observável pelo load-tool termina. Os perfis oficial de 15 minutos e
-diagnóstico usam 1.500 pagamentos/s durante 120 segundos, com gate de conclusão
-de até 120 segundos. O gate não tenta inferir quiescência interna por lag Kafka
-ou por sleeps fixos.
+diagnóstico usam um bootstrap de 500 pagamentos/s por 60 segundos e depois
+1.500 pagamentos/s por 60 segundos, com gate de conclusão de até 120 segundos.
+O bootstrap aceita até 30 segundos para concluir cada request enquanto a JVM
+está fria; steady e active mantêm o timeout normal de 5 segundos. O gate não
+tenta inferir quiescência interna por lag Kafka ou por sleeps fixos.
 
 O protocolo de pull retorna até `15` notificações por chamada; o tamanho não é
 configurável pelo PSP nem pelo profile. O relatório registra a distribuição dos

@@ -66,16 +66,21 @@ func simulatorConfig(runtimeCfg config.Runtime) sim.Config {
 }
 
 type profileValidation struct {
-	Profile                        string                      `json:"profile"`
-	OfferedTxRate                  int                         `json:"offeredTxRate"`
-	RequiredMinimumTxRate          int                         `json:"requiredMinimumTxRate"`
-	WarmupOfferedTxRate            int                         `json:"warmupOfferedTxRate"`
-	WarmupSeconds                  int64                       `json:"warmupSeconds"`
-	WarmupCompletionTimeoutSeconds int64                       `json:"warmupCompletionTimeoutSeconds"`
-	ActiveSeconds                  int64                       `json:"activeSeconds"`
-	DrainSeconds                   int64                       `json:"drainSeconds"`
-	Replay                         profileValidationReplay     `json:"replay"`
-	Scenarios                      []profileValidationScenario `json:"scenarios"`
+	Profile                              string                      `json:"profile"`
+	OfferedTxRate                        int                         `json:"offeredTxRate"`
+	RequiredMinimumTxRate                int                         `json:"requiredMinimumTxRate"`
+	WarmupBootstrapOfferedTxRate         int                         `json:"warmupBootstrapOfferedTxRate"`
+	WarmupBootstrapSeconds               int64                       `json:"warmupBootstrapSeconds"`
+	WarmupBootstrapRequestTimeoutSeconds int64                       `json:"warmupBootstrapRequestTimeoutSeconds"`
+	WarmupSteadyOfferedTxRate            int                         `json:"warmupSteadyOfferedTxRate"`
+	WarmupSteadySeconds                  int64                       `json:"warmupSteadySeconds"`
+	WarmupSteadyRequestTimeoutSeconds    int64                       `json:"warmupSteadyRequestTimeoutSeconds"`
+	WarmupSeconds                        int64                       `json:"warmupSeconds"`
+	WarmupCompletionTimeoutSeconds       int64                       `json:"warmupCompletionTimeoutSeconds"`
+	ActiveSeconds                        int64                       `json:"activeSeconds"`
+	DrainSeconds                         int64                       `json:"drainSeconds"`
+	Replay                               profileValidationReplay     `json:"replay"`
+	Scenarios                            []profileValidationScenario `json:"scenarios"`
 }
 
 type profileValidationReplay struct {
@@ -173,15 +178,20 @@ func parseValidateProfile(args []string, loadProfile profileLoader) (profileVali
 		return profileValidation{}, fmt.Errorf("derive provisioning for profile %q: %w", runtimeCfg.Name, err)
 	}
 	validation := profileValidation{
-		Profile:                        runtimeCfg.Name,
-		OfferedTxRate:                  runtimeCfg.Load.OfferedTxRate,
-		RequiredMinimumTxRate:          runtimeCfg.Load.RequiredMinimumTxRate,
-		WarmupOfferedTxRate:            runtimeCfg.Load.Warmup.OfferedTxRate,
-		WarmupSeconds:                  int64(runtimeCfg.Load.Warmup.Duration.Seconds()),
-		WarmupCompletionTimeoutSeconds: int64(runtimeCfg.Load.Warmup.CompletionTimeout.Seconds()),
-		ActiveSeconds:                  int64(runtimeCfg.Load.Duration.Seconds()),
-		DrainSeconds:                   int64(runtimeCfg.Load.Drain.Seconds()),
-		Scenarios:                      make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
+		Profile:                              runtimeCfg.Name,
+		OfferedTxRate:                        runtimeCfg.Load.OfferedTxRate,
+		RequiredMinimumTxRate:                runtimeCfg.Load.RequiredMinimumTxRate,
+		WarmupBootstrapOfferedTxRate:         runtimeCfg.Load.Warmup.Bootstrap.OfferedTxRate,
+		WarmupBootstrapSeconds:               int64(runtimeCfg.Load.Warmup.Bootstrap.Duration.Seconds()),
+		WarmupBootstrapRequestTimeoutSeconds: int64(runtimeCfg.Load.Warmup.Bootstrap.RequestTimeout.Seconds()),
+		WarmupSteadyOfferedTxRate:            runtimeCfg.Load.Warmup.Steady.OfferedTxRate,
+		WarmupSteadySeconds:                  int64(runtimeCfg.Load.Warmup.Steady.Duration.Seconds()),
+		WarmupSteadyRequestTimeoutSeconds:    int64(runtimeCfg.Load.Warmup.Steady.RequestTimeout.Seconds()),
+		WarmupSeconds:                        int64(runtimeCfg.Load.Warmup.TotalDuration().Seconds()),
+		WarmupCompletionTimeoutSeconds:       int64(runtimeCfg.Load.Warmup.CompletionTimeout.Seconds()),
+		ActiveSeconds:                        int64(runtimeCfg.Load.Duration.Seconds()),
+		DrainSeconds:                         int64(runtimeCfg.Load.Drain.Seconds()),
+		Scenarios:                            make([]profileValidationScenario, len(runtimeCfg.Scenarios)),
 	}
 	if runtimeCfg.Replay.Pacs008 != nil {
 		validation.Replay.Pacs008 = &profileValidationPacs008Replay{

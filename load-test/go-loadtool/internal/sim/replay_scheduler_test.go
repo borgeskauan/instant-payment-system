@@ -57,6 +57,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 	var callCount atomic.Int64
 	var bodiesMu sync.Mutex
 	var bodies [][]byte
+	var requestTimeouts []time.Duration
 	originalRelease := make(chan struct{})
 	replaySent := make(chan time.Time, 1)
 	httpClient := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
@@ -66,6 +67,9 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 		}
 		bodiesMu.Lock()
 		bodies = append(bodies, body)
+		if deadline, ok := request.Context().Deadline(); ok {
+			requestTimeouts = append(requestTimeouts, time.Until(deadline))
+		}
 		bodiesMu.Unlock()
 		call := callCount.Add(1)
 		if call == 1 {
@@ -100,6 +104,7 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 		Amount:         100,
 		ScenarioName:   "happy-path",
 		ReplaySelected: true,
+		requestTimeout: 30 * time.Second,
 	}
 	originalStartedAt := time.Now()
 	originalDone := make(chan struct{})
@@ -132,6 +137,9 @@ func TestSelectedReplayIsScheduledBeforeOriginalCompletesAndReusesExactBody(t *t
 	defer bodiesMu.Unlock()
 	if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
 		t.Fatalf("POST bodies differ: %q", bodies)
+	}
+	if len(requestTimeouts) != 2 || requestTimeouts[0] < 29*time.Second || requestTimeouts[1] < 29*time.Second {
+		t.Fatalf("request timeouts = %v, want original and replay near 30s", requestTimeouts)
 	}
 	starts, err := events.ReadStarts(filepath.Join(dir, "pacs008-starts.csv"))
 	if err != nil {

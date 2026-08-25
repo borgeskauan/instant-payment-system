@@ -2297,9 +2297,10 @@ contraditório falha o gate.
 validade de performance continua restrita à janela ativa e a correção continua
 avaliada no run inteiro. Os profiles declaram explicitamente taxa, duração e
 timeout de conclusão do warmup; não existe mais a regra implícita `target / 2`.
-Os profiles `mixed-outcomes-2k-15m` e `mixed-outcomes-2k-diagnostic` usam
-`1.500 TPS / 120 s / 120 s`, configuração validada pelo critério de aquecimento
-com JFR.
+Naquele checkpoint, os profiles `mixed-outcomes-2k-15m` e
+`mixed-outcomes-2k-diagnostic` usavam `1.500 TPS / 120 s / 120 s`, configuração
+validada pelo critério de aquecimento com JFR. A configuração vigente é
+registrada ao final desta task, depois da correção do warmup frio.
 
 A validação do aquecimento foi concluída com o warmup de `1.500 TPS / 120 s` e
 gate de até `120 s`; a Fase 2 da migração híbrida pode prosseguir. Para cada JVM,
@@ -3676,3 +3677,49 @@ com menor, e não maior, ocupação dos componentes. Não houve 4xx/5xx, POST
 perdido ou backlog de HTTP original no encerramento. A evidência aponta para
 buracos na carga efetivamente oferecida pelo gerador/host, não para rejeição do
 SPI, e deve ser tratada separadamente antes da qualificação final de throughput.
+
+### Warmup frio em duas etapas
+
+Depois de tornar o pool do gerador capaz de ofertar a carga completa, o warmup
+único de `1.500 TPS / 120 s` deixou exposto um efeito antes mascarado pelo
+próprio load-tool. Em stack recém-criada, requisições dos primeiros segundos
+excediam o timeout funcional de `5 s`; mesmo depois de as JVMs aquecerem, essas
+falhas tornavam impossível concluir as obrigações observáveis e abrir o active.
+
+O warmup vigente possui duas etapas contíguas e fixas:
+
+```text
+bootstrap: 500 TPS / 60 s / timeout HTTP de 30 s
+steady:  1.500 TPS / 60 s / timeout HTTP de 5 s
+gate: até 120 s para concluir as obrigações observáveis das duas etapas
+```
+
+O timeout acompanha causalmente o pagamento: original, PACS.002 e replays
+pertencentes ao bootstrap usam `30 s`; steady e active mantêm `5 s`. Isso não
+afrouxa o SLA medido, porque performance continua sendo calculada somente no
+active. As duas etapas compartilham um único tracker e o gate só pode abrir
+depois que a geração steady terminou e todas as obrigações conhecidas das duas
+etapas chegaram a estado terminal.
+
+O controle `warmup-two-stage-diagnostic/20260824_203010`, com a mesma forma de
+carga mas timeout uniforme de `5 s`, falhou ainda no gate. Foram `7.688`
+timeouts de PACS.008 original, todos concentrados nos primeiros `40 s` do
+bootstrap, `1.688` timeouts de PACS.002 e `3.159` outcomes ausentes. Em toda a
+etapa steady de `1.500 TPS / 60 s` não houve timeout original, demonstrando que
+o problema era a inicialização fria e não a taxa steady.
+
+O candidato `warmup-bootstrap-timeout-diagnostic/20260824_205605` partiu
+novamente de stack e volumes novos. A geração de warmup terminou no instante
+planejado e suas obrigações fecharam em `10,104 s`, bem dentro do gate de
+`120 s`. Todos os `241.590` pagamentos iniciados tiveram HTTP 2xx; todos os
+`21.733` replays foram enviados e aceitos; todos os `193.274` PACS.002 foram
+enviados; não houve outcome ausente/contraditório nem violação de replay ou
+Pull.
+
+No active, p50/p95/p99/máxima ficaram em
+`247,175 / 528,551 / 692,736 / 894,396 ms`, integralmente abaixo do SLA de
+`1 s`. O relatório foi inválido exclusivamente pela geração: média de
+`2.050,7 TPS` e mínimo rolling de `1.898 TPS` na janela
+`[active+23,882 s, active+24,882 s)`. Essa oscilação pertence ao scheduler/host
+e não invalida o resultado específico do experimento: o warmup frio agora
+conclui sem relaxar o contrato HTTP do steady ou do active.

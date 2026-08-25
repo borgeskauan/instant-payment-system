@@ -3,6 +3,8 @@ package sim
 import (
 	"math/bits"
 	"time"
+
+	"instant-payment-system/load-test/go-loadtool/internal/config"
 )
 
 const originalBucketDuration = 10 * time.Millisecond
@@ -12,6 +14,34 @@ type originalBucket struct {
 	end       time.Time
 	firstSlot uint64
 	endSlot   uint64
+}
+
+type warmupWindow struct {
+	name           string
+	start          time.Time
+	end            time.Time
+	offeredTxRate  int
+	requestTimeout time.Duration
+}
+
+func warmupWindows(start time.Time, warmup config.Warmup) [2]warmupWindow {
+	bootstrapEnd := start.Add(warmup.Bootstrap.Duration)
+	return [2]warmupWindow{
+		{
+			name:           "bootstrap",
+			start:          start,
+			end:            bootstrapEnd,
+			offeredTxRate:  warmup.Bootstrap.OfferedTxRate,
+			requestTimeout: warmup.Bootstrap.RequestTimeout,
+		},
+		{
+			name:           "steady",
+			start:          bootstrapEnd,
+			end:            bootstrapEnd.Add(warmup.Steady.Duration),
+			offeredTxRate:  warmup.Steady.OfferedTxRate,
+			requestTimeout: warmup.Steady.RequestTimeout,
+		},
+	}
 }
 
 func originalBucketAt(phaseStart, phaseEnd time.Time, rate int, index uint64) (originalBucket, bool) {
