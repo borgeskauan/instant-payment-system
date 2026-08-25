@@ -14,12 +14,6 @@ type originalBucket struct {
 	endSlot   uint64
 }
 
-type originalSlot struct {
-	createdAt int64
-	deadline  time.Time
-	tracker   *phaseTracker
-}
-
 func originalBucketAt(phaseStart, phaseEnd time.Time, rate int, index uint64) (originalBucket, bool) {
 	if rate <= 0 || !phaseStart.Before(phaseEnd) {
 		return originalBucket{}, false
@@ -51,7 +45,7 @@ func currentOriginalBucketIndex(phaseStart, now time.Time) uint64 {
 	return uint64(now.Sub(phaseStart) / originalBucketDuration)
 }
 
-func originalSlotCanStart(now, deadline time.Time) bool {
+func originalJobCanStart(now, deadline time.Time) bool {
 	return now.Before(deadline)
 }
 

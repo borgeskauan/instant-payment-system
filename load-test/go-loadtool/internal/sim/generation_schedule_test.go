@@ -91,7 +91,7 @@ func TestOriginalBucketUsesFixedPhaseBoundariesAndExclusiveDeadline(t *testing.T
 	if bucket.firstSlot != 2 || bucket.endSlot != 3 {
 		t.Fatalf("final bucket slots = [%d,%d), want [2,3)", bucket.firstSlot, bucket.endSlot)
 	}
-	if originalSlotCanStart(bucket.end, bucket.end) {
+	if originalJobCanStart(bucket.end, bucket.end) {
 		t.Fatal("slot was allowed to start at the exclusive bucket deadline")
 	}
 	if _, exists := originalBucketAt(start, phaseEnd, 100, 3); exists {
@@ -114,9 +114,13 @@ func TestOriginalPhaseHasExactConfiguredSlotCount(t *testing.T) {
 func TestOriginalPhaseDoesNotQueueSlotPastItsDeadline(t *testing.T) {
 	phaseStart := time.Now().Add(10 * time.Millisecond)
 	phaseEnd := phaseStart.Add(time.Second)
-	jobs := make(chan originalSlot)
+	planner, err := newWorkloadPlanner(mixedPlannerScenarios())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := make(chan transferJob)
 	done := make(chan struct{})
-	s := &simulator{}
+	s := &simulator{runID: "expired-generation", originalPlanner: planner}
 	go func() {
 		s.generateOriginalPhase(context.Background(), jobs, phaseStart, phaseEnd, 1, nil)
 		close(done)

@@ -61,6 +61,7 @@ type transferJob struct {
 	Amount         int64
 	ScenarioName   string
 	ReplaySelected bool
+	deadline       time.Time
 	tracker        *phaseTracker
 }
 
@@ -86,7 +87,6 @@ type simulator struct {
 	cancelRun                context.CancelFunc
 	replayScheduler          *replayScheduler
 	pacs002SelectorMu        sync.Mutex
-	originalMu               sync.Mutex
 	paymentStatesMu          sync.Mutex
 	runErrorMu               sync.Mutex
 	windowMu                 sync.RWMutex
@@ -270,7 +270,7 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 	var statusWorkers sync.WaitGroup
 	s.startStatusWorkers(experimentCtx, &statusWorkers, s.statusJobs, statusWorkerCount)
 
-	jobs := make(chan originalSlot)
+	jobs := make(chan transferJob)
 	var workers sync.WaitGroup
 	workerCount := workerCountForRate(max(cfg.OfferedTxRate, cfg.Warmup.OfferedTxRate))
 	logPhase("starting warmup: offered_rate=%d/s duration=%s completion_timeout=%s workers=%d status_workers=%d", cfg.Warmup.OfferedTxRate, cfg.Warmup.Duration, cfg.Warmup.CompletionTimeout, workerCount, statusWorkerCount)
@@ -448,7 +448,7 @@ func pairsForScenarios(scenarios []config.Scenario) []ids.Pair {
 	return pairs
 }
 
-func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- originalSlot, phaseStart, phaseEnd time.Time, rate int, tracker *phaseTracker) {
+func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- transferJob, phaseStart, phaseEnd time.Time, rate int, tracker *phaseTracker) {
 	slotCount := originalPhaseSlotCount(rate, phaseEnd.Sub(phaseStart))
 	timer := time.NewTimer(time.Hour)
 	stopTimer(timer)
@@ -471,7 +471,7 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 		if !waitUntil(ctx, timer, bucket.start, bucket.end) {
 			return
 		}
-		if !originalSlotCanStart(time.Now(), bucket.end) {
+		if !originalJobCanStart(time.Now(), bucket.end) {
 			if bucket.endSlot >= slotCount {
 				return
 			}
@@ -484,9 +484,9 @@ func (s *simulator) generateOriginalPhase(ctx context.Context, jobs chan<- origi
 			if !s.addPhaseWork(tracker) {
 				return
 			}
-			slot := originalSlot{createdAt: time.Now().UnixNano(), deadline: bucket.end, tracker: tracker}
+			job := s.planOriginal(time.Now().UnixNano(), bucket.end, tracker)
 			select {
-			case jobs <- slot:
+			case jobs <- job:
 			case <-ctx.Done():
 				s.completePhaseWork(tracker)
 				return
@@ -537,44 +537,36 @@ func (s *simulator) transferJobForSequenceCreatedAt(seq uint64, planned plannedT
 	}
 }
 
-func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan originalSlot) {
+func (s *simulator) transferWorker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan transferJob) {
 	defer wg.Done()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case slot, ok := <-jobs:
+		case job, ok := <-jobs:
 			if !ok {
 				return
 			}
-			job, startedAt, claimed := s.claimOriginal(slot)
-			if claimed {
-				s.sendPacs008At(ctx, job, startedAt)
-			} else {
-				s.completePhaseWork(slot.tracker)
+			startedAt := time.Now()
+			if !originalJobCanStart(startedAt, job.deadline) {
+				s.completePhaseWork(job.tracker)
+				continue
 			}
+			s.sendPacs008At(ctx, job, startedAt)
 		}
 	}
 }
 
-func (s *simulator) claimOriginal(slot originalSlot) (transferJob, time.Time, bool) {
-	if !originalSlotCanStart(time.Now(), slot.deadline) {
-		return transferJob{}, time.Time{}, false
-	}
-	s.originalMu.Lock()
-	defer s.originalMu.Unlock()
-	startedAt := time.Now()
-	if !originalSlotCanStart(startedAt, slot.deadline) {
-		return transferJob{}, time.Time{}, false
-	}
+func (s *simulator) planOriginal(createdAt int64, deadline time.Time, tracker *phaseTracker) transferJob {
 	planned := s.originalPlanner.Next()
-	job := s.transferJobForSequenceCreatedAt(s.nextOriginalSequence, planned, slot.createdAt)
-	job.tracker = slot.tracker
+	job := s.transferJobForSequenceCreatedAt(s.nextOriginalSequence, planned, createdAt)
+	job.deadline = deadline
+	job.tracker = tracker
 	s.nextOriginalSequence++
 	if s.pacs008ReplaySelector != nil {
 		job.ReplaySelected = s.pacs008ReplaySelector.Next()
 	}
-	return job, startedAt, true
+	return job
 }
 
 func (s *simulator) sendPacs008(ctx context.Context, job transferJob) {

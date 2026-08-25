@@ -101,7 +101,7 @@ func TestRunAbortsOnPrewarmFailureBeforeStreamsWindowOrBusinessTraffic(t *testin
 	}
 }
 
-func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
+func TestExpiredPlannedOriginalHasNoPaymentEffects(t *testing.T) {
 	planner, err := newWorkloadPlanner(mixedPlannerScenarios())
 	if err != nil {
 		t.Fatal(err)
@@ -128,12 +128,12 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker.CloseGeneration()
-	jobs := make(chan originalSlot, 1)
-	jobs <- originalSlot{
-		createdAt: time.Now().Add(-time.Second).UnixNano(),
-		deadline:  time.Now().Add(-time.Nanosecond),
-		tracker:   tracker,
-	}
+	jobs := make(chan transferJob, 1)
+	jobs <- s.planOriginal(
+		time.Now().Add(-time.Second).UnixNano(),
+		time.Now().Add(-time.Nanosecond),
+		tracker,
+	)
 	close(jobs)
 	var workers sync.WaitGroup
 	workers.Add(1)
@@ -151,29 +151,35 @@ func TestExpiredOriginalSlotHasNoPaymentEffects(t *testing.T) {
 	if len(s.paymentStates) != 0 {
 		t.Fatalf("payment states = %#v, want none", s.paymentStates)
 	}
+}
 
-	job, _, ok := s.claimOriginal(originalSlot{createdAt: time.Now().UnixNano(), deadline: time.Now().Add(time.Second)})
-	if !ok {
-		t.Fatal("first valid slot was not claimed")
-	}
-	if want := ids.TransactionID("deadline-test", 0); job.ID != want {
-		t.Fatalf("first valid transaction ID = %q, want %q", job.ID, want)
-	}
-	expectedSelector, err := newReplaySelector(0.10)
+func TestSchedulerPlansCompleteOriginalJobBeforeWorkerDispatch(t *testing.T) {
+	planner, err := newWorkloadPlanner(mixedPlannerScenarios())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := expectedSelector.Next(); job.ReplaySelected != want {
-		t.Fatalf("first valid replay selection = %t, want %t", job.ReplaySelected, want)
+	selector, err := newReplaySelector(0.10)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for index := 1; index < config.ScenarioSelectionBlockSize; index++ {
-		job, _, ok = s.claimOriginal(originalSlot{createdAt: time.Now().UnixNano(), deadline: time.Now().Add(time.Second)})
-		if !ok {
-			t.Fatalf("valid slot %d was not claimed", index)
-		}
-		if want := expectedSelector.Next(); job.ReplaySelected != want {
-			t.Fatalf("valid replay selection %d = %t, want %t", index, job.ReplaySelected, want)
-		}
+	s := &simulator{
+		runID:                 "scheduler-owned-planning",
+		originalPlanner:       planner,
+		pacs008ReplaySelector: selector,
+	}
+	createdAt := time.Now().UnixNano()
+	deadline := time.Now().Add(time.Second)
+
+	job := s.planOriginal(createdAt, deadline, nil)
+
+	if want := ids.TransactionID("scheduler-owned-planning", 0); job.ID != want {
+		t.Fatalf("transaction ID = %q, want %q", job.ID, want)
+	}
+	if job.Pair.Payer == "" || job.Pair.Receiver == "" || job.ScenarioName == "" || job.Amount <= 0 {
+		t.Fatalf("planned job is incomplete: %#v", job)
+	}
+	if job.Created != createdAt || !job.deadline.Equal(deadline) {
+		t.Fatalf("planned timing = created %d deadline %s, want %d and %s", job.Created, job.deadline, createdAt, deadline)
 	}
 }
 
