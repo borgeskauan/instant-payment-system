@@ -8,16 +8,17 @@ import (
 )
 
 type Layout struct {
-	Root          string
-	Profile       string
-	ExecutionPlan string
-	EventsDir     string
-	Pacs008Starts string
-	Pacs002Starts string
-	Notifications string
-	Replays       string
-	RunWindow     string
-	Report        string
+	Root           string
+	Profile        string
+	ExecutionPlan  string
+	EventsDir      string
+	DiagnosticsDir string
+	Pacs008Starts  string
+	Pacs002Starts  string
+	Notifications  string
+	Replays        string
+	RunWindow      string
+	Report         string
 }
 
 func Resolve(root string) (Layout, error) {
@@ -31,16 +32,17 @@ func Resolve(root string) (Layout, error) {
 	inputsDir := filepath.Join(absoluteRoot, "inputs")
 	eventsDir := filepath.Join(absoluteRoot, "events")
 	return Layout{
-		Root:          absoluteRoot,
-		Profile:       filepath.Join(inputsDir, "profile.json"),
-		ExecutionPlan: filepath.Join(inputsDir, "execution-plan.json"),
-		EventsDir:     eventsDir,
-		Pacs008Starts: filepath.Join(eventsDir, "pacs008-starts.csv"),
-		Pacs002Starts: filepath.Join(eventsDir, "pacs002-starts.csv"),
-		Notifications: filepath.Join(eventsDir, "notifications.csv"),
-		Replays:       filepath.Join(eventsDir, "replays.csv"),
-		RunWindow:     filepath.Join(absoluteRoot, "run-window.json"),
-		Report:        filepath.Join(absoluteRoot, "sla-report.json"),
+		Root:           absoluteRoot,
+		Profile:        filepath.Join(inputsDir, "profile.json"),
+		ExecutionPlan:  filepath.Join(inputsDir, "execution-plan.json"),
+		EventsDir:      eventsDir,
+		DiagnosticsDir: filepath.Join(absoluteRoot, "diagnostics"),
+		Pacs008Starts:  filepath.Join(eventsDir, "pacs008-starts.csv"),
+		Pacs002Starts:  filepath.Join(eventsDir, "pacs002-starts.csv"),
+		Notifications:  filepath.Join(eventsDir, "notifications.csv"),
+		Replays:        filepath.Join(eventsDir, "replays.csv"),
+		RunWindow:      filepath.Join(absoluteRoot, "run-window.json"),
+		Report:         filepath.Join(absoluteRoot, "sla-report.json"),
 	}, nil
 }
 

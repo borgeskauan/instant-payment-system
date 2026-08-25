@@ -55,6 +55,11 @@ JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
 `--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
 experimento precisar desativá-los.
 
+Para diagnosticar o próprio processo Go, use `--diagnose-loadtool`. A flag
+grava CPU, alocações, mutexes e métricas do runtime em
+`diagnostics/loadtool/` somente durante a janela ativa; essa execução não deve
+ser usada para qualificar capacidade.
+
 O workload oficial oferece 2.100 pagamentos originais por segundo durante 15
 minutos, além dos replays configurados. O relatório qualifica a capacidade
 contra o contrato separado de pelo menos 2.000 pagamentos originais em toda

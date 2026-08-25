@@ -43,12 +43,24 @@ fi
 RUN_TAG=""
 PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
+ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=false
 parse_args --profile uniform-smoke explicit-profile
 resolve_profile
 if [[ "$PROFILE_NAME" != "uniform-smoke" || "$PROFILE_PATH" != "${ROOT_DIR}/profiles/uniform-smoke.json" ]]; then
     echo "explicit --profile uniform-smoke did not resolve correctly" >&2
     exit 1
 fi
+
+RUN_TAG=""
+PROFILE_NAME="uniform-smoke"
+PROFILE_PATH=""
+ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=false
+parse_args --diagnose-loadtool diagnostic-profile
+if [[ "$ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS" != true ]]; then
+    echo "--diagnose-loadtool did not enable Go runtime diagnostics" >&2
+    exit 1
+fi
+resolve_profile
 
 mkdir -p "$tmp_dir/invalid-run" "$tmp_dir/unknown-run"
 if (cd "$tmp_dir/invalid-run" && "$ROOT_DIR/run-load-test.sh" --profile ../escape invalid-tag) >"$tmp_dir/invalid.log" 2>&1; then
@@ -131,6 +143,21 @@ for required in (
     "--gateway-server-name",
 ):
     assert required in command, command
+PY
+
+: > "$LOADTOOL_COMMAND_LOG"
+ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=true
+run_loadtool "$tmp_dir/result"
+
+python3 - "$LOADTOOL_COMMAND_LOG" <<'PY'
+import shlex
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    commands = [shlex.split(line) for line in handle if line.strip()]
+
+assert len(commands) == 1, commands
+assert "--runtime-diagnostics" in commands[0], commands
 PY
 
 export LOADTOOL_FAKE_EXIT_CODE=23

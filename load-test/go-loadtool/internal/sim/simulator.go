@@ -51,6 +51,7 @@ type Config struct {
 	Scenarios                     []config.Scenario
 	OutputDir                     string
 	RunWindowPath                 string
+	RuntimeDiagnosticsDir         string
 }
 
 type transferJob struct {
@@ -319,16 +320,29 @@ func runWithDependencies(cfg Config, dependencies runDependencies) (runErr error
 		return err
 	}
 
-	activeStartedAt := time.Now()
-	generationEndedAt := activeStartedAt.Add(cfg.Duration)
-	replayDeadlineAt := generationEndedAt.Add(cfg.Drain)
-	s.setExecutionWindow(activeStartedAt, generationEndedAt, replayDeadlineAt)
-	windowDocument := runwindow.New(cfg.ProfileName, generationStartedAt, warmupEndedAt, activeStartedAt, cfg.Duration, cfg.Drain, cfg.Replay)
-	if err := runwindow.Write(windowPath, windowDocument); err != nil {
+	var diagnostics activeWindowDiagnostics
+	if cfg.RuntimeDiagnosticsDir != "" {
+		diagnostics = newRuntimeDiagnostics(cfg.RuntimeDiagnosticsDir, runtimeDiagnosticsSampleInterval)
+		logPhase("Go runtime diagnostics requested for active window: output=%s", cfg.RuntimeDiagnosticsDir)
+	}
+	var activeStartedAt time.Time
+	var generationEndedAt time.Time
+	var replayDeadlineAt time.Time
+	if err := runActiveWindow(diagnostics, func() error {
+		activeStartedAt = time.Now()
+		generationEndedAt = activeStartedAt.Add(cfg.Duration)
+		replayDeadlineAt = generationEndedAt.Add(cfg.Drain)
+		s.setExecutionWindow(activeStartedAt, generationEndedAt, replayDeadlineAt)
+		windowDocument := runwindow.New(cfg.ProfileName, generationStartedAt, warmupEndedAt, activeStartedAt, cfg.Duration, cfg.Drain, cfg.Replay)
+		if err := runwindow.Write(windowPath, windowDocument); err != nil {
+			return err
+		}
+		logPhase("warmup work completed; starting active load: offered_rate=%d/s duration=%s", cfg.OfferedTxRate, cfg.Duration)
+		s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.OfferedTxRate, nil)
+		return nil
+	}); err != nil {
 		return err
 	}
-	logPhase("warmup work completed; starting active load: offered_rate=%d/s duration=%s", cfg.OfferedTxRate, cfg.Duration)
-	s.generateOriginalPhase(experimentCtx, jobs, activeStartedAt, generationEndedAt, cfg.OfferedTxRate, nil)
 	closeJobs()
 	logPhase("load generation finished; waiting for in-flight HTTP requests")
 	workers.Wait()

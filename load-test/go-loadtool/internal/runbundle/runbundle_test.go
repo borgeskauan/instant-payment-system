@@ -16,16 +16,17 @@ func TestResolveReturnsFixedAbsoluteLayout(t *testing.T) {
 	}
 
 	want := Layout{
-		Root:          root,
-		Profile:       filepath.Join(root, "inputs", "profile.json"),
-		ExecutionPlan: filepath.Join(root, "inputs", "execution-plan.json"),
-		EventsDir:     filepath.Join(root, "events"),
-		Pacs008Starts: filepath.Join(root, "events", "pacs008-starts.csv"),
-		Pacs002Starts: filepath.Join(root, "events", "pacs002-starts.csv"),
-		Notifications: filepath.Join(root, "events", "notifications.csv"),
-		Replays:       filepath.Join(root, "events", "replays.csv"),
-		RunWindow:     filepath.Join(root, "run-window.json"),
-		Report:        filepath.Join(root, "sla-report.json"),
+		Root:           root,
+		Profile:        filepath.Join(root, "inputs", "profile.json"),
+		ExecutionPlan:  filepath.Join(root, "inputs", "execution-plan.json"),
+		EventsDir:      filepath.Join(root, "events"),
+		DiagnosticsDir: filepath.Join(root, "diagnostics"),
+		Pacs008Starts:  filepath.Join(root, "events", "pacs008-starts.csv"),
+		Pacs002Starts:  filepath.Join(root, "events", "pacs002-starts.csv"),
+		Notifications:  filepath.Join(root, "events", "notifications.csv"),
+		Replays:        filepath.Join(root, "events", "replays.csv"),
+		RunWindow:      filepath.Join(root, "run-window.json"),
+		Report:         filepath.Join(root, "sla-report.json"),
 	}
 	if layout != want {
 		t.Fatalf("Resolve() = %#v, want %#v", layout, want)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"instant-payment-system/load-test/go-loadtool/internal/config"
 	"instant-payment-system/load-test/go-loadtool/internal/pullmetrics"
@@ -71,9 +72,11 @@ func executeRun(args []string, dependencies runDependencies) error {
 
 func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, error) {
 	var runDir string
+	var runtimeDiagnostics bool
 	var overrides mTLSOverrides
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.StringVar(&runDir, "run-dir", "", "prepared run directory")
+	flags.BoolVar(&runtimeDiagnostics, "runtime-diagnostics", false, "profile the Go load-tool during the active window")
 	registerMTLSOverrides(flags, &overrides)
 	if err := flags.Parse(args); err != nil {
 		return runConfig{}, err
@@ -101,6 +104,9 @@ func parseRunConfig(args []string, loadProfile runProfileLoader) (runConfig, err
 	simulator.ProfileName = runtimeCfg.Name
 	simulator.OutputDir = layout.EventsDir
 	simulator.RunWindowPath = layout.RunWindow
+	if runtimeDiagnostics {
+		simulator.RuntimeDiagnosticsDir = filepath.Join(layout.DiagnosticsDir, "loadtool")
+	}
 	applyMTLSOverrides(flags, &simulator, overrides)
 
 	return runConfig{

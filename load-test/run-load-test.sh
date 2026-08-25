@@ -47,6 +47,7 @@ PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
 ENABLE_JFR=true
 ENABLE_SPI_TRACE=true
 ENABLE_POSTGRES_STATEMENTS=true
+ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=false
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
@@ -65,9 +66,10 @@ LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
 LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--profile NAME] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] <run-tag>"
+    echo "Usage: $(basename "$0") [--profile NAME] [--diagnose-loadtool] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] <run-tag>"
     echo "Examples:"
     echo "  $(basename "$0") --profile uniform-smoke smoke-run"
+    echo "  $(basename "$0") --diagnose-loadtool --profile mixed-outcomes-2k-diagnostic loadtool-diagnostic"
     echo "  $(basename "$0") smoke-run  # defaults to uniform-smoke"
 }
 
@@ -175,6 +177,10 @@ parse_args() {
                 ;;
             --no-postgres-statements)
                 ENABLE_POSTGRES_STATEMENTS=false
+                shift
+                ;;
+            --diagnose-loadtool)
+                ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=true
                 shift
                 ;;
             --profile)
@@ -687,6 +693,9 @@ log_selected_options() {
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         log_phase "Postgres statement, activity, I/O, lock-wait logs, and container stats enabled"
     fi
+    if [[ "$ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS" == true ]]; then
+        log_phase "Go load-tool runtime diagnostics enabled; this run does not qualify capacity"
+    fi
 }
 
 prepare_loadtool_binary() {
@@ -818,20 +827,28 @@ run_loadtool() {
     local target_dir="$1"
     local absolute_target_dir
     local -a pipeline_status
+    local -a loadtool_args
 
     absolute_target_dir="$(cd "$target_dir" && pwd)"
+
+    loadtool_args=(
+        run
+        --run-dir "$absolute_target_dir"
+        --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT"
+        --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT"
+        --central-transfer-server-name "$LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME"
+        --gateway-ca-cert "$LOADTOOL_GATEWAY_CA_CERT"
+        --gateway-client-cert-root "$LOADTOOL_CERT_ROOT"
+        --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
+    )
+    if [[ "$ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS" == true ]]; then
+        loadtool_args+=(--runtime-diagnostics)
+    fi
 
     log_phase "starting load-tool run"
     (
         cd go-loadtool
-        "$LOADTOOL_BIN" run \
-            --run-dir "$absolute_target_dir" \
-            --central-transfer-ca-cert "$LOADTOOL_CENTRAL_TRANSFER_CA_CERT" \
-            --central-transfer-client-cert-root "$LOADTOOL_CERT_ROOT" \
-            --central-transfer-server-name "$LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME" \
-            --gateway-ca-cert "$LOADTOOL_GATEWAY_CA_CERT" \
-            --gateway-client-cert-root "$LOADTOOL_CERT_ROOT" \
-            --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
+        "$LOADTOOL_BIN" "${loadtool_args[@]}"
     ) 2>&1 | tee "${target_dir}/logs/loadtool.log"
     pipeline_status=("${PIPESTATUS[@]}")
     if ((pipeline_status[0] != 0)); then

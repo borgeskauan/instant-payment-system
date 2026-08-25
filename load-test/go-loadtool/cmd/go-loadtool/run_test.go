@@ -52,6 +52,24 @@ func TestParseRunConfigUsesRunProfileAndFixedBundlePaths(t *testing.T) {
 	}
 }
 
+func TestParseRunConfigEnablesRuntimeDiagnosticsInsideTheRunBundle(t *testing.T) {
+	runDir := preparedRunDirectory(t)
+	runtimeCfg := commandTestRuntime()
+
+	command, err := parseRunConfig([]string{
+		"--run-dir", runDir,
+		"--runtime-diagnostics",
+	}, func(string) (config.Runtime, error) { return runtimeCfg, nil })
+	if err != nil {
+		t.Fatalf("parseRunConfig() error = %v", err)
+	}
+
+	want := filepath.Join(runDir, "diagnostics", "loadtool")
+	if command.simulator.RuntimeDiagnosticsDir != want {
+		t.Fatalf("simulator RuntimeDiagnosticsDir = %q, want %q", command.simulator.RuntimeDiagnosticsDir, want)
+	}
+}
+
 func TestParseRunConfigAppliesExplicitMTLSOverrides(t *testing.T) {
 	runDir := preparedRunDirectory(t)
 	runtimeCfg := commandTestRuntime()
