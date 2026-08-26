@@ -11,7 +11,7 @@ pub enum MessageKind {
 }
 
 impl MessageKind {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Pacs008 => "pacs.008",
             Self::Pacs002 => "pacs.002",
@@ -27,7 +27,7 @@ pub enum NotificationKind {
 }
 
 impl NotificationKind {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Pacs008Received => "pacs008_received",
             Self::Pacs002Received => "pacs002_received",
@@ -45,7 +45,7 @@ pub enum NotificationStatus {
 }
 
 impl NotificationStatus {
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::None => "",
             Self::Acsc => "ACSC",

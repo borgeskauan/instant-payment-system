@@ -8,9 +8,10 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 
 use crate::clock::RunClock;
-use crate::event::{Event, Participant};
-use crate::generator_metrics::{DurationHistogram, HistogramSummary};
+use crate::histogram::DurationHistogram;
 use crate::planner::{Planner, RunIdentity};
+use loadtool_contract::event::{Event, Participant};
+use loadtool_contract::generator_metrics::HistogramSummary;
 
 const BUFFER_SIZE: usize = 4 * 1024 * 1024;
 

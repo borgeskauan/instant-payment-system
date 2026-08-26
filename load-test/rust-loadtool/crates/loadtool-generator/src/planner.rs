@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
-use crate::model::{ExecutionPlan, Scenario};
 use crate::replay::{ReplayDomain, stable_rotation};
+use loadtool_contract::model::{ExecutionPlan, Scenario};
 
 const BLOCK_SIZE: u64 = 100;
 

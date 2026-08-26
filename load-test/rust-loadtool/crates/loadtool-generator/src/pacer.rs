@@ -8,7 +8,9 @@ use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-use crate::generator_metrics::{DurationHistogram, HistogramSummary, PacerDeadlineMisses};
+use loadtool_contract::generator_metrics::{HistogramSummary, PacerDeadlineMisses};
+
+use crate::histogram::DurationHistogram;
 
 const BUCKET: Duration = Duration::from_millis(10);
 const SPIN_TAIL: Duration = Duration::from_micros(50);

@@ -1,5 +1,5 @@
-use rust_loadtool::notification::{NotificationPayload, parse_notifications};
-use rust_loadtool::pull::{GatewayNotification, PullBatch, PullState};
+use loadtool_generator::notification::{NotificationPayload, parse_notifications};
+use loadtool_generator::pull::{GatewayNotification, PullBatch, PullState};
 
 #[test]
 fn parser_accepts_all_current_pacs008_and_pacs002_shapes() {

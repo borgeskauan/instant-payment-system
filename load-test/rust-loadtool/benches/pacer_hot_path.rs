@@ -11,8 +11,8 @@ use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use rust_loadtool::payload::pacs008;
-use rust_loadtool::payment_state::PaymentStates;
+use loadtool_generator::payload::pacs008;
+use loadtool_generator::payment_state::PaymentStates;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 

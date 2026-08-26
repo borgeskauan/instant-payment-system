@@ -3,10 +3,10 @@ use std::mem::size_of;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use rust_loadtool::model::ExecutionPlan;
-use rust_loadtool::payment_state::{OutcomeObservation, PaymentStates};
-use rust_loadtool::planner::{Planner, requests_in_bucket};
-use rust_loadtool::replay::{ReplayDomain, ReplaySelector, stable_rotation};
+use loadtool_contract::model::ExecutionPlan;
+use loadtool_generator::payment_state::{OutcomeObservation, PaymentStates};
+use loadtool_generator::planner::{Planner, requests_in_bucket};
+use loadtool_generator::replay::{ReplayDomain, ReplaySelector, stable_rotation};
 
 const PLAN: &str = r#"{
   "profile":"mixed",
@@ -172,7 +172,7 @@ fn payment_state_claims_once_and_accepts_at_least_once_outcomes() {
 
 #[test]
 fn foreign_or_malformed_ids_do_not_resolve_to_a_sequence() {
-    let identity = rust_loadtool::planner::RunIdentity::new("rust-123");
+    let identity = loadtool_generator::planner::RunIdentity::new("rust-123");
 
     assert_eq!(identity.end_to_end_id(42), "rust-123-42");
     assert_eq!(identity.sequence("rust-123-42"), Some(42));

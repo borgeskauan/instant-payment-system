@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rust_loadtool::bundle::Bundle;
+use loadtool_contract::bundle::Bundle;
 
 const PROFILE: &str = r#"{
   "name": "contract-test",

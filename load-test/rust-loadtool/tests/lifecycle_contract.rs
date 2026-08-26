@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rust_loadtool::phase_tracker::PhaseTracker;
+use loadtool_generator::phase_tracker::PhaseTracker;
 
 #[tokio::test(flavor = "current_thread")]
 async fn warmup_waits_for_registered_continuations_after_generation_closes() {
@@ -72,7 +72,7 @@ async fn failure_or_deadline_prevents_warmup_completion() {
 fn hard_deadline_is_the_minimum_of_request_timeout_and_phase_end() {
     let start = Instant::now();
     assert_eq!(
-        rust_loadtool::simulator::http_deadline(
+        loadtool_generator::simulator::http_deadline(
             start,
             Duration::from_secs(30),
             start + Duration::from_secs(5)
@@ -80,7 +80,7 @@ fn hard_deadline_is_the_minimum_of_request_timeout_and_phase_end() {
         start + Duration::from_secs(5)
     );
     assert_eq!(
-        rust_loadtool::simulator::http_deadline(
+        loadtool_generator::simulator::http_deadline(
             start,
             Duration::from_secs(2),
             start + Duration::from_secs(5)

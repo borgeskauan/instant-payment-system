@@ -1,4 +1,4 @@
-use rust_loadtool::payload::{pacs002, pacs008};
+use loadtool_generator::payload::{pacs002, pacs008};
 
 #[test]
 fn pacs008_matches_the_existing_semantic_payload() {

@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rust_loadtool::clock::RunClock;
-use rust_loadtool::pacer::{PhaseSchedule, PreparedBucket, advance_cursor, spawn_prepared_pacer};
+use loadtool_generator::clock::RunClock;
+use loadtool_generator::pacer::{
+    PhaseSchedule, PreparedBucket, advance_cursor, spawn_prepared_pacer,
+};
 
 #[test]
 fn prepared_buckets_are_admitted_by_the_native_pacer_at_their_own_boundary() {

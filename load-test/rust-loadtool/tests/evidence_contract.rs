@@ -2,16 +2,18 @@ use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use rust_loadtool::clock::RunClock;
-use rust_loadtool::event::{Event, MessageKind, NotificationKind, NotificationStatus, Participant};
-use rust_loadtool::generator_metrics::{
+use loadtool_contract::event::{
+    Event, MessageKind, NotificationKind, NotificationStatus, Participant,
+};
+use loadtool_contract::generator_metrics::{
     GeneratorMetrics, HistogramSummary, PacerDeadlineMisses, PacerMisses, PullMetrics,
     SemanticAdmissionMisses, SlotMetrics, write_generator_metrics_atomic,
 };
-use rust_loadtool::model::ExecutionPlan;
-use rust_loadtool::planner::{Planner, RunIdentity};
-use rust_loadtool::recorder::EventRecorder;
-use rust_loadtool::run_window::{RunWindow, write_run_window_atomic};
+use loadtool_contract::model::ExecutionPlan;
+use loadtool_contract::run_window::{RunWindow, write_run_window_atomic};
+use loadtool_generator::clock::RunClock;
+use loadtool_generator::planner::{Planner, RunIdentity};
+use loadtool_generator::recorder::EventRecorder;
 
 const PLAN: &str = r#"{
   "profile":"evidence-test","offeredTxRate":2100,"requiredMinimumTxRate":2000,

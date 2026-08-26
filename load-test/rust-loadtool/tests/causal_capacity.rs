@@ -1,4 +1,4 @@
-use rust_loadtool::causal::{CausalCapacity, CausalKind};
+use loadtool_generator::causal::{CausalCapacity, CausalKind};
 
 #[test]
 fn originals_and_replays_share_one_nonblocking_capacity() {

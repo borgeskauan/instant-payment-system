@@ -5,11 +5,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use bytes::Bytes;
-use rust_loadtool::http2::{
+use loadtool_generator::http2::{
     Http2Client, Http2Config, Http2Reservation, HttpAttempt, PreparedHttp2Request,
 };
-use rust_loadtool::original::{AdmissionMiss, AdmissionOutcome, admit_original, prepare_original};
-use rust_loadtool::payment_state::PaymentStates;
+use loadtool_generator::original::{
+    AdmissionMiss, AdmissionOutcome, admit_original, prepare_original,
+};
+use loadtool_generator::payment_state::PaymentStates;
 
 #[derive(Clone)]
 struct FakeClient {
