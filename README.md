@@ -41,9 +41,20 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
 
+Para investigar pausas esporádicas do próprio gerador sem pagar o custo do run
+oficial, use o profile intermediário de seis minutos com o diagnóstico Go:
+
+```bash
+./run-load-test.sh --diagnose-loadtool --profile mixed-outcomes-2k-6m loadtool-diagnostic-6m
+```
+
+O profile de um minuto continua sendo o feedback rápido; o de seis minutos
+serve para diagnóstico de estabilidade; somente o de quinze minutos qualifica
+a capacidade oficial.
+
 Cada run de performance só abre a janela ativa depois que todo o trabalho de
-warmup observável pelo load-tool termina. Os perfis oficial de 15 minutos e
-diagnóstico usam um bootstrap de 500 pagamentos/s por 60 segundos e depois
+warmup observável pelo load-tool termina. Os perfis de performance usam um
+bootstrap de 500 pagamentos/s por 60 segundos e depois
 1.500 pagamentos/s por 60 segundos, com gate de conclusão de até 120 segundos.
 O bootstrap aceita até 30 segundos para concluir cada request enquanto a JVM
 está fria; steady e active mantêm o timeout normal de 5 segundos. O gate não

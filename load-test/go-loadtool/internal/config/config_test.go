@@ -580,6 +580,27 @@ func TestMixedOutcomesDiagnosticProfileDefinesShortInvestigationWorkload(t *test
 	}
 }
 
+func TestMixedOutcomesSixMinuteProfileDefinesIntermediateInvestigationWorkload(t *testing.T) {
+	profilesDir := filepath.Join("..", "..", "..", "profiles")
+	intermediate, err := loadProfileFromDir(profilesDir, "mixed-outcomes-2k-6m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := loadProfileFromDir(profilesDir, "mixed-outcomes-2k-15m")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if intermediate.Load.Duration != 6*time.Minute {
+		t.Fatalf("mixed-outcomes-2k-6m duration = %s, want 6m", intermediate.Load.Duration)
+	}
+	intermediate.Name = long.Name
+	intermediate.Load.Duration = long.Load.Duration
+	if !reflect.DeepEqual(intermediate, long) {
+		t.Fatal("six-minute workload differs from mixed-outcomes-2k-15m outside its name and active duration")
+	}
+}
+
 func TestLoadProfileAllocatesConsecutiveScenarioRanges(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "profiles", "mixed-outcomes-smoke.json"))
 	if err != nil {

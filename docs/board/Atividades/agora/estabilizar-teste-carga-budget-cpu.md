@@ -47,10 +47,14 @@ duas stacks compartilhando o mesmo PostgreSQL.
   e espera readiness; ele não gera tráfego nem tenta inferir quiescência interna.
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
-- Os profiles oficial de 15 minutos e diagnóstico usam warmup explícito de
-  `1.500 TPS` por `120 s`, com timeout de conclusão de `120 s`. O ativo só
-  começa depois que as obrigações de warmup observáveis pelo load-tool terminam.
-- Durante o ativo, ambos oferecem `2.100 TPS`; essa margem pertence ao gerador
+- Para investigar pausas intermitentes do gerador, usar `cd load-test &&
+  ./run-load-test.sh --diagnose-loadtool --profile mixed-outcomes-2k-6m
+  <run-tag>`. O profile de seis minutos não substitui a qualificação oficial.
+- Os profiles de performance usam o mesmo warmup em duas etapas: bootstrap de
+  `500 TPS / 60 s / timeout 30 s`, steady de `1.500 TPS / 60 s / timeout 5 s`
+  e gate de conclusão de até `120 s`. O ativo só começa depois que as
+  obrigações de warmup observáveis pelo load-tool terminam.
+- Durante o ativo, todos oferecem `2.100 TPS`; essa margem pertence ao gerador
   e não altera o piso contratual de `2.000 TPS` validado pelo relatório.
 - Meta: pelo menos 2.000 pagamentos originais iniciados em toda rolling window
   de um segundo integralmente contida nos 15 minutos ativos.
@@ -108,6 +112,17 @@ artefatos já existentes, o bundle inclui:
 O objetivo desta execução é classificar a limitação do ingresso como CPU, I/O,
 lock, conexão ou combinação desses fatores. O run é diagnóstico, pode resultar
 em `valid: false` e não autoriza tuning nem mudança dos buckets por si só.
+
+O profile `mixed-outcomes-2k-6m` ocupa a fronteira entre esse feedback rápido e
+o run oficial. Ele preserva integralmente workload, warmup, replays, drain e
+SLAs do profile de quinze minutos, alterando somente a duração ativa para seis
+minutos. A duração foi escolhida porque o run limpo
+`loadtool-performance-clean-15m/20260824_221747` teve seu primeiro vale
+relevante em `active+314,5 s`; um recorte exato de cinco minutos teria terminado
+antes de observar o fenômeno. Com `--diagnose-loadtool`, esse profile serve para
+correlacionar as pausas com GC, scheduler e mutexes do processo Go. Seus
+resultados são diagnósticos e nunca substituem os quinze minutos de
+qualificação.
 
 - [x] Identificar o primeiro serviço, recurso ou estágio que satura quando o
   budget é respeitado.
@@ -3454,13 +3469,14 @@ usavam o mesmo valor de `2.000 TPS`:
 - `load.requiredMinimumTxRate` é exclusivamente o piso contratual validado pelo
   relatório em toda rolling window contínua de um segundo.
 
-`mixed-outcomes-2k-diagnostic` e `mixed-outcomes-2k-15m` oferecem `2.100 TPS` e
-continuam exigindo no mínimo `2.000 TPS`. A margem de 5% evita que jitter normal
-do gerador torne o experimento inconclusivo sem reduzir o contrato: qualquer
-rolling window abaixo de `2.000` continua invalidando o run, enquanto carga
-acima do piso é reportada como workload efetivamente exercitada. O smoke
-funcional mixed-outcomes usa a mesma margem, oferecendo `105 TPS` para exigir
-`100 TPS`; o profile de compatibilidade `uniform-smoke` permanece inalterado.
+`mixed-outcomes-2k-diagnostic`, `mixed-outcomes-2k-6m` e
+`mixed-outcomes-2k-15m` oferecem `2.100 TPS` e continuam exigindo no mínimo
+`2.000 TPS`. A margem de 5% evita que jitter normal do gerador torne o
+experimento inconclusivo sem reduzir o contrato: qualquer rolling window abaixo
+de `2.000` continua invalidando o run, enquanto carga acima do piso é reportada
+como workload efetivamente exercitada. O smoke funcional mixed-outcomes usa a
+mesma margem, oferecendo `105 TPS` para exigir `100 TPS`; o profile de
+compatibilidade `uniform-smoke` permanece inalterado.
 
 O `sla-report.json` registra ambos como `generation.offered_tps` e
 `generation.required_minimum_tps`; `sustained_minimum_met` compara o mínimo
