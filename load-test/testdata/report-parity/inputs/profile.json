@@ -13,5 +13,6 @@
       "clientCertRoot": "certs",
       "serverName": "localhost"
     }
-  }
+  },
+  "reporting": { "slaThresholdMs": 1000 }
 }

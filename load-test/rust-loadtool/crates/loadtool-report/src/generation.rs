@@ -1,6 +1,6 @@
 use loadtool_contract::event::Pacs008Start;
 use loadtool_contract::run_window::ResolvedWindow;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 const ROLLING_WINDOW_NS: i64 = 1_000_000_000;
 
@@ -10,6 +10,7 @@ pub struct GenerationSummary {
     pub required_minimum_tps: u64,
     pub started: usize,
     pub rolling_window_seconds: u8,
+    #[serde(serialize_with = "serialize_metric")]
     pub average_tps: f64,
     pub minimum_observed_tps: usize,
     pub maximum_observed_tps: usize,
@@ -187,4 +188,15 @@ fn request_started_at(start: &Pacs008Start) -> i64 {
 
 fn round_three(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
+}
+
+fn serialize_metric<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value <= i64::MAX as f64 {
+        serializer.serialize_i64(*value as i64)
+    } else {
+        serializer.serialize_f64(*value)
+    }
 }

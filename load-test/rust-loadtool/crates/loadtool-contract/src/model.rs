@@ -8,6 +8,13 @@ use serde::Deserialize;
 pub struct ProfileSnapshot {
     pub name: String,
     pub connections: Connections,
+    pub reporting: Reporting,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reporting {
+    pub sla_threshold_ms: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

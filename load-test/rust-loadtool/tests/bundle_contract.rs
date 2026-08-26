@@ -19,6 +19,7 @@ const PROFILE: &str = r#"{
       "serverName": "localhost"
     }
   },
+  "reporting": {"slaThresholdMs": 1000},
   "load": {"ignored": true},
   "scenarios": []
 }"#;
