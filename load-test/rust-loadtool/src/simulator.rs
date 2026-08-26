@@ -17,14 +17,19 @@ use crate::clock::RunClock;
 use crate::event::{Event, MessageKind, NotificationKind, NotificationStatus, Participant};
 use crate::generator_metrics::{
     DurationHistogram, FlowInFlight, GeneratorMetrics, HistogramSummary, InFlightMetrics,
-    ProcessMetrics, PullMetrics, SlotMetrics, write_generator_metrics_atomic,
+    PacerDeadlineMisses, PacerMisses, ProcessMetrics, PullMetrics, SemanticAdmissionMisses,
+    SlotMetrics, write_generator_metrics_atomic,
 };
-use crate::http2::{Http2Config, PersistentHttp2Client};
+use crate::http2::{Http2Config, PersistentHttp2Client, PersistentPreparedRequest};
 use crate::model::{ExecutionPlan, ReplayRule};
 use crate::notification::NotificationPayload;
-use crate::original::{AdmissionResult, submit_original};
-use crate::pacer::BucketGate;
-use crate::pacer::{PREPARATION_LEAD, PacerMetrics, PhaseSchedule, spawn_pacer};
+use crate::original::{
+    AdmissionMiss, AdmissionOutcome, PreparedOriginal, StartedOriginal, admit_original,
+    prepare_original,
+};
+use crate::pacer::{
+    PREPARATION_LEAD, PacerMetrics, PhaseSchedule, PreparedBucket, spawn_prepared_pacer,
+};
 use crate::payload::{pacs002, pacs008};
 use crate::payment_state::{OutcomeObservation, PaymentStates};
 use crate::phase_tracker::PhaseTracker;
@@ -35,7 +40,7 @@ use crate::replay::{ReplayDomain, ReplaySelector};
 use crate::replay_task::{send_causal_admitted, send_replay};
 use crate::run_window::{RunWindow, write_run_window_atomic};
 
-const PACER_CHANNEL_CAPACITY: usize = 1;
+const PACER_CHANNEL_CAPACITY: usize = 2;
 const RECORDER_CAPACITY: usize = 65_536;
 const CAUSAL_HTTP_CAPACITY: usize = 16_384;
 const ACTIVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -74,9 +79,23 @@ struct PlannedOriginal {
     pacs002_replay: bool,
     bucket_start: Instant,
     bucket_deadline: Instant,
-    bucket_gate: Arc<BucketGate>,
     request_timeout: Duration,
     hard_deadline: Instant,
+}
+
+struct PreparedOriginalJob {
+    job: PlannedOriginal,
+    request: PreparedOriginal<PersistentPreparedRequest>,
+    tracker: Option<Arc<PhaseTracker>>,
+    work: PhaseWork,
+    obligations: PreparedWarmupObligations,
+}
+
+struct StartedOriginalJob<F> {
+    job: PlannedOriginal,
+    started: StartedOriginal<F>,
+    tracker: Option<Arc<PhaseTracker>>,
+    work: PhaseWork,
 }
 
 struct PullSession {
@@ -113,12 +132,47 @@ struct RuntimeMetrics {
     dispatch: Mutex<Vec<HistogramSummary>>,
     original_started: AtomicU64,
     original_completed: AtomicU64,
-    late_semantic_admissions: AtomicU64,
+    semantic_admission_misses: SemanticAdmissionMissCounters,
     causal_capacity_violations: AtomicU64,
     original_in_flight: FlowCounter,
     replay_in_flight: FlowCounter,
     pull_empty: AtomicU64,
     pull_batches: [AtomicU64; 16],
+}
+
+#[derive(Default)]
+struct SemanticAdmissionMissCounters {
+    before_preparation: AtomicU64,
+    http2_readiness: AtomicU64,
+    before_commit: AtomicU64,
+}
+
+impl SemanticAdmissionMissCounters {
+    fn record(&self, reason: AdmissionMiss) {
+        let counter = match reason {
+            AdmissionMiss::BeforePreparation => &self.before_preparation,
+            AdmissionMiss::Http2Readiness => &self.http2_readiness,
+            AdmissionMiss::BeforeCommit => &self.before_commit,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_count(&self, reason: AdmissionMiss, count: u64) {
+        let counter = match reason {
+            AdmissionMiss::BeforePreparation => &self.before_preparation,
+            AdmissionMiss::Http2Readiness => &self.http2_readiness,
+            AdmissionMiss::BeforeCommit => &self.before_commit,
+        };
+        counter.fetch_add(count, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> SemanticAdmissionMisses {
+        SemanticAdmissionMisses {
+            before_preparation: self.before_preparation.load(Ordering::Acquire),
+            http2_readiness: self.http2_readiness.load(Ordering::Acquire),
+            before_commit: self.before_commit.load(Ordering::Acquire),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -202,6 +256,59 @@ impl Drop for PhaseWork {
     }
 }
 
+struct PreparedWarmupObligations {
+    tracker: Option<Arc<PhaseTracker>>,
+    rollback_count: u8,
+}
+
+impl PreparedWarmupObligations {
+    fn register(tracker: Option<Arc<PhaseTracker>>, job: &PlannedOriginal) -> Result<Self> {
+        let Some(tracker) = tracker else {
+            return Ok(Self {
+                tracker: None,
+                rollback_count: 0,
+            });
+        };
+        let count = 1
+            + u8::from(job.pacs008_replay)
+            + u8::from(job.pacs002_ordinal.is_some())
+            + u8::from(job.pacs002_replay);
+        let mut registered = 0u8;
+        while registered < count {
+            if let Err(error) = tracker.add() {
+                rollback_tracker(&tracker, registered);
+                return Err(error);
+            }
+            registered += 1;
+        }
+        Ok(Self {
+            tracker: Some(tracker),
+            rollback_count: count,
+        })
+    }
+
+    fn transfer(&mut self) {
+        self.rollback_count = 0;
+    }
+}
+
+impl Drop for PreparedWarmupObligations {
+    fn drop(&mut self) {
+        if let Some(tracker) = &self.tracker {
+            rollback_tracker(tracker, self.rollback_count);
+        }
+    }
+}
+
+fn rollback_tracker(tracker: &PhaseTracker, count: u8) {
+    for _ in 0..count {
+        if let Err(error) = tracker.done() {
+            tracker.fail(error.to_string());
+            break;
+        }
+    }
+}
+
 pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     let PreparedRun { profile, plan } = bundle.load_prepared()?;
     bundle.prepare_outputs()?;
@@ -280,7 +387,6 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         RECORDER_CAPACITY,
     )?;
     let recorder_sender = recorder.sender()?;
-
     let warmup_slots = warmup_slots(&plan)?;
     let warmup_start = Instant::now()
         .checked_add(PREPARATION_LEAD)
@@ -406,10 +512,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
 
     let operational_error = runtime.failure.operational_error();
     let mut generator_violations = runtime.failure.generator_violations();
-    let late_semantic_admissions = runtime
-        .metrics
-        .late_semantic_admissions
-        .load(Ordering::Acquire);
+    let late_semantic_admissions = runtime.metrics.semantic_admission_misses.snapshot().total();
     if late_semantic_admissions > 0 {
         generator_violations.push(format!(
             "{late_semantic_admissions} original payments missed their bucket admission deadline"
@@ -462,7 +565,16 @@ async fn run_generation_phase(
 ) -> Result<()> {
     let schedule = PhaseSchedule::new(start, duration, rate, first_sequence)?;
     let (sender, mut receiver) = tokio::sync::mpsc::channel(PACER_CHANNEL_CAPACITY);
-    let pacer = spawn_pacer(schedule, sender)?;
+    let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
+    let admission_runtime = Arc::clone(&runtime);
+    let runtime_handle = tokio::runtime::Handle::current();
+    let pacer = spawn_prepared_pacer(schedule, sender, prepared_receiver, move |bucket| {
+        admit_prepared_bucket(
+            Arc::clone(&admission_runtime),
+            bucket.payload,
+            &runtime_handle,
+        );
+    })?;
     let planner = Planner::new(&runtime.plan)?;
     let mut dispatch = DurationHistogram::new();
 
@@ -470,6 +582,9 @@ async fn run_generation_phase(
         dispatch.record_ns(nanos(
             Instant::now().saturating_duration_since(descriptor.preparation_start),
         ));
+        let mut jobs = Vec::with_capacity(
+            usize::try_from(descriptor.request_count).expect("bucket request count fits usize"),
+        );
         for offset in 0..descriptor.request_count {
             let sequence = descriptor.first_sequence + offset;
             let payment = planner.payment(sequence)?;
@@ -495,16 +610,20 @@ async fn run_generation_phase(
                 pacs002_replay,
                 bucket_start: descriptor.bucket_start,
                 bucket_deadline: descriptor.bucket_deadline,
-                bucket_gate: Arc::clone(&descriptor.gate),
                 request_timeout,
                 hard_deadline,
             };
-            let runtime_for_task = Arc::clone(&runtime);
-            runtime.tasks.spawn(async move {
-                run_original(runtime_for_task, job, warmup).await;
-            });
+            jobs.push(job);
         }
+        let runtime_for_bucket = Arc::clone(&runtime);
+        let prepared_for_bucket = prepared_sender.clone();
+        let bucket_index = descriptor.bucket_index;
+        runtime.tasks.spawn(async move {
+            let prepared = prepare_original_bucket(runtime_for_bucket, jobs, warmup).await;
+            let _ = prepared_for_bucket.send(PreparedBucket::new(bucket_index, prepared));
+        });
     }
+    drop(prepared_sender);
     let pacer_metrics = pacer
         .join()
         .map_err(|_| anyhow!("load-tool pacer thread panicked"))?;
@@ -529,44 +648,38 @@ async fn run_generation_phase(
     check_operational(&runtime)
 }
 
-async fn run_original(runtime: Arc<Runtime>, job: PlannedOriginal, warmup: bool) {
-    let tracker = warmup.then(|| Arc::clone(&runtime.warmup_tracker));
-    let _root = PhaseWork(tracker.clone());
-    let _in_flight = runtime.metrics.original_in_flight.enter();
-    let pair = match runtime.pairs.get(&job.pair_number) {
-        Some(pair) => Arc::clone(pair),
-        None => {
-            runtime.failure.operational(
-                &runtime.cancellation,
-                format!("unknown pair {}", job.pair_number),
-            );
-            return;
-        }
-    };
-    let client = match runtime.http_clients.get(&pair.payer) {
-        Some(client) => Arc::clone(client),
-        None => {
-            runtime.failure.operational(
-                &runtime.cancellation,
-                format!("missing HTTP/2 client for {}", pair.payer),
-            );
-            return;
-        }
-    };
-    let end_to_end_id = runtime.identity.end_to_end_id(job.sequence);
-    let created_at = rfc3339_now();
-    let register_tracker = tracker.clone();
-    let start_runtime = Arc::clone(&runtime);
-    let start_tracker = tracker.clone();
-    let result = submit_original(
-        client.as_ref(),
-        &runtime.states,
-        job.sequence,
-        job.bucket_gate.as_ref(),
-        job.bucket_deadline,
-        job.request_timeout,
-        job.hard_deadline,
-        || {
+async fn prepare_original_bucket(
+    runtime: Arc<Runtime>,
+    jobs: Vec<PlannedOriginal>,
+    warmup: bool,
+) -> Vec<PreparedOriginalJob> {
+    let mut prepared = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let tracker = warmup.then(|| Arc::clone(&runtime.warmup_tracker));
+        let work = PhaseWork(tracker.clone());
+        let pair = match runtime.pairs.get(&job.pair_number) {
+            Some(pair) => Arc::clone(pair),
+            None => {
+                runtime.failure.operational(
+                    &runtime.cancellation,
+                    format!("unknown pair {}", job.pair_number),
+                );
+                continue;
+            }
+        };
+        let client = match runtime.http_clients.get(&pair.payer) {
+            Some(client) => Arc::clone(client),
+            None => {
+                runtime.failure.operational(
+                    &runtime.cancellation,
+                    format!("missing HTTP/2 client for {}", pair.payer),
+                );
+                continue;
+            }
+        };
+        let end_to_end_id = runtime.identity.end_to_end_id(job.sequence);
+        let created_at = rfc3339_now();
+        let result = prepare_original(client.as_ref(), job.sequence, job.bucket_deadline, || {
             pacs008(
                 &end_to_end_id,
                 &pair.payer,
@@ -574,84 +687,162 @@ async fn run_original(runtime: Arc<Runtime>, job: PlannedOriginal, warmup: bool)
                 job.amount_cents,
                 &created_at,
             )
-        },
-        move |_, _| {
-            if let Some(tracker) = &register_tracker {
-                tracker.add()?;
-                if job.pacs008_replay {
-                    tracker.add()?;
-                }
-                if job.pacs002_ordinal.is_some() {
-                    tracker.add()?;
-                    if job.pacs002_replay {
-                        tracker.add()?;
-                    }
+        })
+        .await;
+        match result {
+            Ok(AdmissionOutcome::Admitted(request)) => {
+                match PreparedWarmupObligations::register(tracker.clone(), &job) {
+                    Ok(obligations) => prepared.push(PreparedOriginalJob {
+                        job,
+                        request,
+                        tracker,
+                        work,
+                        obligations,
+                    }),
+                    Err(error) => runtime.failure.operational(&runtime.cancellation, error),
                 }
             }
-            Ok(())
-        },
-        move |_, body, started_at| {
-            if job.pacs008_replay {
-                let delay = start_runtime
-                    .pacs008_replay
-                    .as_ref()
-                    .expect("selected replay has a rule")
-                    .1;
-                spawn_replay(
-                    Arc::clone(&start_runtime),
-                    job.sequence,
-                    Participant::Payer,
-                    MessageKind::Pacs008,
-                    "/transfer",
-                    body,
-                    started_at,
-                    job.hard_deadline,
-                    delay,
-                    false,
-                    start_tracker.clone(),
-                );
+            Ok(AdmissionOutcome::Missed(reason)) => {
+                runtime.metrics.semantic_admission_misses.record(reason);
             }
-            Ok(())
-        },
-    )
-    .await;
-
-    match result {
-        Ok(AdmissionResult::Missed) => {
-            runtime
-                .metrics
-                .late_semantic_admissions
-                .fetch_add(1, Ordering::Relaxed);
+            Err(error) => runtime.failure.operational(&runtime.cancellation, error),
         }
-        Ok(AdmissionResult::Completed(completion)) => {
-            runtime
+    }
+    prepared
+}
+
+fn admit_prepared_bucket(
+    runtime: Arc<Runtime>,
+    prepared: Vec<PreparedOriginalJob>,
+    runtime_handle: &tokio::runtime::Handle,
+) {
+    let mut started = Vec::with_capacity(prepared.len());
+    let mut missed = 0u64;
+    for prepared in prepared {
+        let PreparedOriginalJob {
+            job,
+            request,
+            tracker,
+            work,
+            mut obligations,
+        } = prepared;
+        match admit_original(
+            request,
+            &runtime.states,
+            job.request_timeout,
+            job.hard_deadline,
+        ) {
+            Ok(AdmissionOutcome::Missed(_)) => missed += 1,
+            Ok(AdmissionOutcome::Admitted(request)) => {
+                obligations.transfer();
+                started.push(StartedOriginalJob {
+                    job,
+                    started: request,
+                    tracker,
+                    work,
+                });
+            }
+            Err(error) => runtime.failure.operational(&runtime.cancellation, error),
+        }
+    }
+    if missed > 0 {
+        runtime
+            .metrics
+            .semantic_admission_misses
+            .record_count(AdmissionMiss::BeforeCommit, missed);
+    }
+    if started.is_empty() {
+        return;
+    }
+    let task_runtime = Arc::clone(&runtime);
+    runtime.tasks.spawn_on(
+        async move {
+            task_runtime
                 .metrics
                 .original_started
-                .fetch_add(1, Ordering::Relaxed);
-            runtime
-                .metrics
-                .original_completed
-                .fetch_add(1, Ordering::Relaxed);
-            if let Err(error) = runtime.recorder.record(Event::Pacs008Completed {
-                sequence: job.sequence,
-                created_offset_ns: offset_ns(runtime.clock, job.bucket_start),
-                request_started_offset_ns: offset_ns(runtime.clock, completion.request_started_at),
-                request_done_offset_ns: offset_ns(runtime.clock, completion.request_done_at),
-                http_status: completion.attempt.status,
-                replay_selected: job.pacs008_replay,
-            }) {
-                runtime.failure.operational(&runtime.cancellation, error);
+                .fetch_add(started.len() as u64, Ordering::Relaxed);
+            for started in started {
+                handoff_started_original(Arc::clone(&task_runtime), started);
             }
-            if !(200..300).contains(&completion.attempt.status)
-                && let Some(tracker) = tracker
-            {
-                tracker.fail(format!(
-                    "warmup payment {} returned HTTP {}",
-                    job.sequence, completion.attempt.status
-                ));
-            }
+        },
+        runtime_handle,
+    );
+}
+
+fn handoff_started_original<F>(runtime: Arc<Runtime>, started: StartedOriginalJob<F>)
+where
+    F: std::future::Future<Output = crate::http2::HttpAttempt> + Send + 'static,
+{
+    let StartedOriginalJob {
+        job,
+        started,
+        tracker,
+        work,
+    } = started;
+    if job.pacs008_replay {
+        let delay = runtime
+            .pacs008_replay
+            .as_ref()
+            .expect("selected replay has a rule")
+            .1;
+        spawn_replay(
+            Arc::clone(&runtime),
+            job.sequence,
+            Participant::Payer,
+            MessageKind::Pacs008,
+            "/transfer",
+            started.body().clone(),
+            started.request_started_at(),
+            job.hard_deadline,
+            delay,
+            false,
+            tracker.clone(),
+        );
+    }
+    let response_runtime = Arc::clone(&runtime);
+    runtime.tasks.spawn(async move {
+        finish_original(response_runtime, job, tracker, work, started).await;
+    });
+}
+
+async fn finish_original<F>(
+    runtime: Arc<Runtime>,
+    job: PlannedOriginal,
+    tracker: Option<Arc<PhaseTracker>>,
+    _work: PhaseWork,
+    started: StartedOriginal<F>,
+) where
+    F: std::future::Future<Output = crate::http2::HttpAttempt> + Send,
+{
+    let _in_flight = runtime.metrics.original_in_flight.enter();
+    let completion = match started.finish().await {
+        Ok(completion) => completion,
+        Err(error) => {
+            runtime.failure.operational(&runtime.cancellation, error);
+            return;
         }
-        Err(error) => runtime.failure.operational(&runtime.cancellation, error),
+    };
+    runtime
+        .metrics
+        .original_completed
+        .fetch_add(1, Ordering::Relaxed);
+    if let Err(error) = runtime.recorder.record(Event::Pacs008Completed {
+        sequence: job.sequence,
+        created_offset_ns: offset_ns(runtime.clock, job.bucket_start),
+        request_started_offset_ns: offset_ns(runtime.clock, completion.request_started_at),
+        request_done_offset_ns: offset_ns(runtime.clock, completion.request_done_at),
+        http_status: completion.attempt.status,
+        replay_selected: job.pacs008_replay,
+    }) {
+        runtime.failure.operational(&runtime.cancellation, error);
+    }
+    if !(200..300).contains(&completion.attempt.status)
+        && let Some(tracker) = tracker
+    {
+        tracker.fail(format!(
+            "warmup payment {} returned HTTP {}",
+            job.sequence, completion.attempt.status
+        ));
     }
 }
 
@@ -1192,10 +1383,8 @@ fn snapshot_runtime_metrics(runtime: &Runtime, violations: &[String]) -> Generat
     let planned = pacers.iter().map(|value| value.planned_slots).sum();
     let dispatched = pacers.iter().map(|value| value.dispatched_slots).sum();
     let pacer_missed: u64 = pacers.iter().map(|value| value.missed_slots).sum();
-    let late = runtime
-        .metrics
-        .late_semantic_admissions
-        .load(Ordering::Acquire);
+    let semantic_admission_misses = runtime.metrics.semantic_admission_misses.snapshot();
+    let late = semantic_admission_misses.total();
     let mut pull_counts = [0u64; 16];
     for (index, value) in pull_counts.iter_mut().enumerate().skip(1) {
         *value = runtime.metrics.pull_batches[index].load(Ordering::Acquire);
@@ -1210,7 +1399,37 @@ fn snapshot_runtime_metrics(runtime: &Runtime, violations: &[String]) -> Generat
             completed: runtime.metrics.original_completed.load(Ordering::Acquire),
             missed: pacer_missed + late,
         },
+        pacer_misses: PacerMisses {
+            cursor_skip: pacers.iter().map(|value| value.missed_cursor_skip).sum(),
+            expired_before_dispatch: pacers
+                .iter()
+                .map(|value| value.missed_expired_before_dispatch)
+                .sum(),
+            channel_full: pacers.iter().map(|value| value.missed_channel_full).sum(),
+            preparation_not_ready: pacers
+                .iter()
+                .map(|value| value.missed_preparation_not_ready)
+                .sum(),
+        },
+        pacer_deadline_misses: PacerDeadlineMisses {
+            entered_after_deadline: pacers
+                .iter()
+                .map(|value| value.deadline_misses.entered_after_deadline)
+                .sum(),
+            sleep_returned_after_deadline: pacers
+                .iter()
+                .map(|value| value.deadline_misses.sleep_returned_after_deadline)
+                .sum(),
+            spin_completed_after_deadline: pacers
+                .iter()
+                .map(|value| value.deadline_misses.spin_completed_after_deadline)
+                .sum(),
+        },
+        semantic_admission_misses,
         pacer_lateness: combine_histograms(pacers.iter().map(|value| value.pacer_lateness)),
+        pacer_sleep_wake_lateness: combine_histograms(
+            pacers.iter().map(|value| value.sleep_wake_lateness),
+        ),
         dispatch_lateness: combine_histograms(
             runtime
                 .metrics
@@ -1360,6 +1579,11 @@ pub fn http_deadline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pacer_channel_holds_the_complete_preparation_window() {
+        assert_eq!(PACER_CHANNEL_CAPACITY, 2);
+    }
 
     #[test]
     fn only_payer_notifications_participate_in_business_outcome_matching() {

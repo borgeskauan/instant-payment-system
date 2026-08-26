@@ -9,6 +9,10 @@ autobins = false
 name = "rust-loadtool"
 path = "src/main.rs"
 
+[[bench]]
+name = "pacer_hot_path"
+harness = false
+
 [dependencies]
 anyhow = "1.0"
 bytes = "1.10"
@@ -34,4 +38,5 @@ tonic = { version = "0.12", features = ["tls", "transport"] }
 tonic-build = "0.12"
 
 [dev-dependencies]
+hyper = { version = "1.6", features = ["server"] }
 tempfile = "3.20"

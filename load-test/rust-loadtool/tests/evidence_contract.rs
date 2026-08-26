@@ -5,7 +5,8 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use rust_loadtool::clock::RunClock;
 use rust_loadtool::event::{Event, MessageKind, NotificationKind, NotificationStatus, Participant};
 use rust_loadtool::generator_metrics::{
-    GeneratorMetrics, HistogramSummary, PullMetrics, SlotMetrics, write_generator_metrics_atomic,
+    GeneratorMetrics, HistogramSummary, PacerDeadlineMisses, PacerMisses, PullMetrics,
+    SemanticAdmissionMisses, SlotMetrics, write_generator_metrics_atomic,
 };
 use rust_loadtool::model::ExecutionPlan;
 use rust_loadtool::planner::RunIdentity;
@@ -209,10 +210,10 @@ fn generator_metrics_are_published_atomically_with_bounded_summaries() {
         violations: vec!["one missed original slot".to_owned()],
         slots: SlotMetrics {
             planned: 210,
-            dispatched: 209,
-            started: 209,
-            completed: 209,
-            missed: 1,
+            dispatched: 204,
+            started: 204,
+            completed: 204,
+            missed: 6,
         },
         pacer_lateness: HistogramSummary {
             count: 100,
@@ -221,6 +222,30 @@ fn generator_metrics_are_published_atomically_with_bounded_summaries() {
             p99_ns: 30,
             max_ns: 40,
         },
+        pacer_misses: PacerMisses {
+            cursor_skip: 1,
+            expired_before_dispatch: 2,
+            channel_full: 3,
+            preparation_not_ready: 4,
+        },
+        pacer_deadline_misses: PacerDeadlineMisses {
+            entered_after_deadline: 1,
+            sleep_returned_after_deadline: 2,
+            spin_completed_after_deadline: 3,
+        },
+        pacer_sleep_wake_lateness: HistogramSummary {
+            count: 100,
+            p50_ns: 50,
+            p95_ns: 60,
+            p99_ns: 70,
+            max_ns: 80,
+        },
+        semantic_admission_misses: SemanticAdmissionMisses {
+            before_preparation: 1,
+            http2_readiness: 2,
+            before_commit: 3,
+        },
+        late_semantic_admissions: 6,
         pull: PullMetrics {
             count: 4,
             empty_responses: 1,
@@ -233,7 +258,25 @@ fn generator_metrics_are_published_atomically_with_bounded_summaries() {
     let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
 
     assert_eq!(value["valid"], false);
-    assert_eq!(value["slots"]["missed"], 1);
+    assert_eq!(value["slots"]["missed"], 6);
+    assert_eq!(value["pacerMisses"]["cursorSkip"], 1);
+    assert_eq!(value["pacerMisses"]["expiredBeforeDispatch"], 2);
+    assert_eq!(value["pacerMisses"]["channelFull"], 3);
+    assert_eq!(value["pacerMisses"]["preparationNotReady"], 4);
+    assert_eq!(value["pacerDeadlineMisses"]["enteredAfterDeadline"], 1);
+    assert_eq!(
+        value["pacerDeadlineMisses"]["sleepReturnedAfterDeadline"],
+        2
+    );
+    assert_eq!(
+        value["pacerDeadlineMisses"]["spinCompletedAfterDeadline"],
+        3
+    );
+    assert_eq!(value["pacerSleepWakeLateness"]["p99Ns"], 70);
+    assert_eq!(value["semanticAdmissionMisses"]["beforePreparation"], 1);
+    assert_eq!(value["semanticAdmissionMisses"]["http2Readiness"], 2);
+    assert_eq!(value["semanticAdmissionMisses"]["beforeCommit"], 3);
+    assert_eq!(value["lateSemanticAdmissions"], 6);
     assert_eq!(value["pacerLateness"]["p99Ns"], 30);
     assert_eq!(value["pull"]["batchSizeCounts"]["3"], 1);
     assert!(!temp.path().join(".generator-metrics.json.tmp").exists());

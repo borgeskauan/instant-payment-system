@@ -60,12 +60,42 @@ pub trait Http2Client: Send + Sync {
 }
 
 pub trait Http2Reservation: Send {
+    type Prepared: PreparedHttp2Request;
+
+    fn prepare(self, path: &str, body: Bytes) -> Result<Self::Prepared>;
+
+    fn start(
+        self,
+        path: &str,
+        body: Bytes,
+        deadline: Instant,
+    ) -> impl Future<Output = HttpAttempt> + Send
+    where
+        Self: Sized,
+    {
+        async move {
+            match self.prepare(path, body) {
+                Ok(prepared) => prepared.start(deadline).await,
+                Err(_) => HttpAttempt::failed(),
+            }
+        }
+    }
+
     fn send(
         self,
         path: &str,
         body: Bytes,
         deadline: Instant,
-    ) -> impl Future<Output = HttpAttempt> + Send;
+    ) -> impl Future<Output = HttpAttempt> + Send
+    where
+        Self: Sized,
+    {
+        self.start(path, body, deadline)
+    }
+}
+
+pub trait PreparedHttp2Request: Send {
+    fn start(self, deadline: Instant) -> impl Future<Output = HttpAttempt> + Send;
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +221,11 @@ pub struct PersistentReservation {
     sender: SendRequest<Full<Bytes>>,
 }
 
+pub struct PersistentPreparedRequest {
+    sender: SendRequest<Full<Bytes>>,
+    request: Request<Full<Bytes>>,
+}
+
 impl Http2Client for PersistentHttp2Client {
     type Reservation = PersistentReservation;
 
@@ -213,49 +248,70 @@ impl Http2Client for PersistentHttp2Client {
 }
 
 impl Http2Reservation for PersistentReservation {
-    async fn send(self, path: &str, body: Bytes, deadline: Instant) -> HttpAttempt {
-        self.send_method(Method::POST, path, body, deadline).await
+    type Prepared = PersistentPreparedRequest;
+
+    fn prepare(self, path: &str, body: Bytes) -> Result<Self::Prepared> {
+        self.prepare_method(Method::POST, path, body)
     }
 }
 
 impl PersistentReservation {
     async fn send_method(
-        mut self,
+        self,
         method: Method,
         path: &str,
         body: Bytes,
         deadline: Instant,
     ) -> HttpAttempt {
-        let uri = match format!("https://{}{path}", self.authority).parse::<Uri>() {
-            Ok(uri) => uri,
-            Err(_) => return HttpAttempt::failed(),
-        };
-        let request = match Request::builder()
+        match self.prepare_method(method, path, body) {
+            Ok(prepared) => prepared.start(deadline).await,
+            Err(_) => HttpAttempt::failed(),
+        }
+    }
+
+    fn prepare_method(
+        self,
+        method: Method,
+        path: &str,
+        body: Bytes,
+    ) -> Result<PersistentPreparedRequest> {
+        let uri = format!("https://{}{path}", self.authority)
+            .parse::<Uri>()
+            .context("build central transfer request URI")?;
+        let request = Request::builder()
             .method(method)
             .uri(uri)
             .header("content-type", "application/octet-stream")
             .body(Full::new(body))
-        {
-            Ok(request) => request,
-            Err(_) => return HttpAttempt::failed(),
-        };
-        let response = self.sender.send_request(request);
+            .context("build central transfer request")?;
+        Ok(PersistentPreparedRequest {
+            sender: self.sender,
+            request,
+        })
+    }
+}
+
+impl PreparedHttp2Request for PersistentPreparedRequest {
+    fn start(mut self, deadline: Instant) -> impl Future<Output = HttpAttempt> + Send {
+        let response = self.sender.send_request(self.request);
         drop(self.sender);
-        let Ok(Ok(response)) = timeout_at(deadline.into(), response).await else {
-            return HttpAttempt::failed();
-        };
-        let version = response.version();
-        let status = response.status().as_u16();
-        if !matches!(
-            timeout_at(deadline.into(), response.into_body().collect()).await,
-            Ok(Ok(_))
-        ) {
-            return HttpAttempt::failed();
-        }
-        if version == Version::HTTP_2 {
-            HttpAttempt::http2(status)
-        } else {
-            HttpAttempt::http1(status)
+        async move {
+            let Ok(Ok(response)) = timeout_at(deadline.into(), response).await else {
+                return HttpAttempt::failed();
+            };
+            let version = response.version();
+            let status = response.status().as_u16();
+            if !matches!(
+                timeout_at(deadline.into(), response.into_body().collect()).await,
+                Ok(Ok(_))
+            ) {
+                return HttpAttempt::failed();
+            }
+            if version == Version::HTTP_2 {
+                HttpAttempt::http2(status)
+            } else {
+                HttpAttempt::http1(status)
+            }
         }
     }
 }

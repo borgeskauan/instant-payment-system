@@ -26,11 +26,13 @@ oráculo temporário de compatibilidade.
   ativa, mantendo os SLAs funcionais e temporais.
 - Tratar os 2.000 TPS como PACS.008 originais. Replays, PACS.002 e Pulls gRPC
   são carga adicional.
-- Produzir pacing suave, inicialmente em buckets de 1 ms com aproximadamente
-  duas requisições por bucket.
+- Produzir pacing suave em buckets de 10 ms com aproximadamente vinte
+  requisições por bucket a 2.000 TPS.
 - Usar deadlines absolutos no pacing e nunca recuperar slots PACS.008 originais
   atrasados.
-- Isolar o pacer do networking e da persistência de evidências.
+- Isolar o pacer da preparação e da conclusão assíncrona do networking e da
+  persistência de evidências; somente o `send_request` já preparado cruza a
+  fronteira temporal nativa.
 - Usar Tokio para HTTP/gRPC assíncrono e uma thread nativa dedicada ao pacing.
 - Minimizar alocações no hot path e reutilizar conexões durante todo o run.
 - Medir jitter, atraso até dispatch, slots perdidos, duração HTTP e overhead do
@@ -52,6 +54,23 @@ oráculo temporário de compatibilidade.
 - A implementação mais simples que preserve o contrato é o padrão; otimizações
   só entram após profiling ou benchmark demonstrar necessidade material.
 
+## Ambiente de execução do MVP
+
+Para a qualificação final de performance, o load-tool deve preferencialmente
+rodar em uma máquina separada da stack medida. Isso evita que o pacer, o
+networking e a gravação de evidências disputem CPU com SPI, Kafka, PostgreSQL e
+Notification Gateway. Execução no mesmo host continua adequada para
+desenvolvimento e diagnósticos funcionais, mas um atraso do gerador causado por
+contenção local invalida a medição de performance.
+
+Quando a plataforma oferecer esse controle, recomenda-se também executar a
+thread do pacer com prioridade de escalonamento apropriada e, idealmente, CPU
+isolada. No Linux isso pode ser feito com políticas como `SCHED_FIFO` ou
+`SCHED_RR`, mediante configuração cuidadosa e `CAP_SYS_NICE`; outras plataformas
+possuem mecanismos diferentes. Essa configuração é responsabilidade do
+ambiente de benchmark, não faz parte do profile e não é requisito de corretude
+do load-tool no MVP.
+
 ## Pacer
 
 Uma única thread nativa é responsável exclusivamente pelo relógio da geração
@@ -70,22 +89,25 @@ mede lateness
         ↓
 deadline aceitável?
    ↙             ↘
-dispatch          missed slots
+consome bucket    missed slots
+preparado
    ↓
-canal bounded
+COMMITTED + send_request
    ↓
-Tokio
+handoff único para Tokio
 ```
 
-Ela não gera payloads, não acessa estado de pagamentos, não escreve artefatos
-e não executa HTTP/gRPC.
+Ela não gera payloads, não constrói requests, não aguarda I/O, não agenda
+replays e não escreve artefatos. Seu acesso ao estado limita-se ao `COMMITTED`
+atômico, e sua participação no HTTP termina na chamada síncrona de
+`send_request` já preparada.
 
 ### Distribuição inteira
 
 Para taxa `TPS` e bucket `i`, zero-based:
 
 ```text
-cumulative(i) = floor(i * TPS / 1000)
+cumulative(i) = floor(i * TPS / 100)
 
 requests(i) =
     cumulative(i + 1)
@@ -95,20 +117,18 @@ requests(i) =
 Assim, 2.100 TPS produzem exatamente:
 
 ```text
-900 buckets × 2 = 1.800
-100 buckets × 3 =   300
-total             2.100
+100 buckets × 21 = 2.100
 ```
 
 Não há ponto flutuante, acumulador mutável ou drift. A implementação usa
 aritmética inteira larga e verificada. Durações de geração são múltiplas de
-1 ms.
+10 ms.
 
 ### Deadlines
 
 ```text
-bucketStart = phaseStart + i * 1 ms
-bucketEnd   = bucketStart + 1 ms
+bucketStart = phaseStart + i * 10 ms
+bucketEnd   = bucketStart + 10 ms
 ```
 
 O pacer avança diretamente ao bucket temporalmente vigente quando acorda
@@ -135,17 +155,23 @@ BucketDescriptor {
 }
 ```
 
-O canal é bounded com capacidade para um único descritor pendente. Sua função é
-somente desacoplar a thread nativa do pacer do runtime Tokio; ele não autoriza
-backlog. Se o descritor não cabe no instante de preparação, seus slots são
-perdidos; o pacer nunca move esse trabalho para outro bucket. Todo descritor
-conserva seu deadline absoluto. Uma fila maior apenas conservaria trabalho
-obsoleto, portanto sua capacidade não é um parâmetro de tuning.
+O canal é bounded somente para cobrir a janela fixa de preparação; ele não
+autoriza backlog. Se o descritor não cabe no instante de preparação, seus slots
+são perdidos; o pacer nunca move esse trabalho para outro bucket. Todo descritor
+conserva seu deadline absoluto e a capacidade do canal não é parâmetro do
+profile.
 
-Cada descritor preparado carrega um gate próprio. A thread nativa libera o gate
-em `bucketStart`; somente as tasks daquele bucket acordam. Tokio não mantém um
-timer de pacing por request. O gate não admite trabalho: após acordar, cada task
-ainda precisa passar pelo deadline check final antes do `COMMIT`.
+Tokio materializa payload, `Request` e reserva HTTP/2, registra as obrigações
+causais determináveis e devolve um `PreparedBucket` ao pacer. O retorno pode
+chegar fora de ordem, mas cada bucket só pode ser consumido em sua própria
+fronteira temporal. Se ainda não estiver pronto em `bucketStart`, o pacer pode
+aguardá-lo somente até `bucketDeadline`; depois disso seus slots são perdidos.
+
+Na fronteira, a thread nativa executa apenas deadline check, publicação atômica
+de `COMMITTED`, `send_request` já preparado e um único handoff do bucket para
+Tokio. Replays, conclusão HTTP, evidências e bookkeeping permanecem no runtime
+assíncrono. Isso elimina o reagendamento Tokio provocado pelo antigo gate sem
+transformar o pacer em worker de aplicação.
 
 O desenho recomendado para a primeira implementação é uma task Tokio por
 request iniciado. Isso oferece elasticidade natural sem manter milhares de
@@ -197,13 +223,17 @@ materialização mínima do PACS.008
 aguarda readiness/capacidade HTTP/2
 somente até bucketDeadline
     ↓
-aguarda bucketStart, se a preparação terminou cedo
+constrói Request e devolve PreparedBucket
+    ↓
+pacer aguarda bucketStart
     ↓
 deadline check final
     ↓
 COMMIT do pagamento e das obrigações causais
     ↓
 send_request
+    ↓
+um handoff do bucket para Tokio
 ```
 
 `COMMIT` é a publicação semântica do pagamento como `COMMITTED` em
@@ -477,7 +507,7 @@ Distribuições temporais:
 `http_start_lateness` é reconstruído por:
 
 ```text
-plannedOffset = bucketIndex * 1 ms
+plannedOffset = bucketIndex * 10 ms
 startLateness = actualStartOffset - plannedOffset
 ```
 
@@ -748,8 +778,9 @@ Rust final medido depois das correções funcionais produziu média de
 slots planejados.
 
 As métricas separaram `15.819` slots não despachados pelo pacer de `15.058`
-admissões que acordaram depois do deadline. O p99 de lateness da thread nativa
-foi `2,177 ms`, maior que o envelope inteiro de `1 ms`. Não houve violação da
+admissões que acordaram depois do deadline. Na versão então testada, o p99 de
+lateness da thread nativa foi `2,177 ms`, maior que o envelope inteiro de
+`1 ms` usado por aquela implementação. Não houve violação da
 capacidade HTTP causal, e todos os pagamentos efetivamente iniciados tiveram
 outcome funcional válido; o defeito está na previsibilidade do gerador sob esse
 envelope, não na semântica dos cenários.

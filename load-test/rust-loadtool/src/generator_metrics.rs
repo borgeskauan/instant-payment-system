@@ -29,6 +29,39 @@ pub struct SlotMetrics {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PacerMisses {
+    pub cursor_skip: u64,
+    pub expired_before_dispatch: u64,
+    pub channel_full: u64,
+    pub preparation_not_ready: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PacerDeadlineMisses {
+    pub entered_after_deadline: u64,
+    pub sleep_returned_after_deadline: u64,
+    pub spin_completed_after_deadline: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticAdmissionMisses {
+    pub before_preparation: u64,
+    pub http2_readiness: u64,
+    pub before_commit: u64,
+}
+
+impl SemanticAdmissionMisses {
+    pub fn total(self) -> u64 {
+        self.before_preparation
+            .saturating_add(self.http2_readiness)
+            .saturating_add(self.before_commit)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FlowInFlight {
     pub current: u64,
     pub maximum: u64,
@@ -65,7 +98,11 @@ pub struct GeneratorMetrics {
     pub valid: bool,
     pub violations: Vec<String>,
     pub slots: SlotMetrics,
+    pub pacer_misses: PacerMisses,
+    pub pacer_deadline_misses: PacerDeadlineMisses,
+    pub semantic_admission_misses: SemanticAdmissionMisses,
     pub pacer_lateness: HistogramSummary,
+    pub pacer_sleep_wake_lateness: HistogramSummary,
     pub dispatch_lateness: HistogramSummary,
     pub http_start_lateness: HistogramSummary,
     pub http_duration: HistogramSummary,
