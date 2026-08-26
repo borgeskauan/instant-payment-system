@@ -1,5 +1,10 @@
 # Rust Load-tool Simulator Implementation Plan
 
+> **Superseded:** this intermediate migration plan was replaced by
+> `2026-08-26-rust-load-tool-boundaries.md`. The final cutover has no Go
+> adapter: Rust validates profiles, generates the workload and renders the
+> report behind the single public `run` command.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan.
 
 **Goal:** Replace the active Go simulator with a greenfield Rust simulator that preserves the current prepared-run bundle, observable workload, CSV evidence, run window, and Go-generated SLA report while providing predictable 1 ms pacing with no catch-up and low generator overhead.

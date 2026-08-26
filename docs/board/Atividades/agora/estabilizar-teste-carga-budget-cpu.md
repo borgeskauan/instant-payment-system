@@ -48,7 +48,7 @@ duas stacks compartilhando o mesmo PostgreSQL.
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
 - Para investigar pausas intermitentes do gerador, usar `cd load-test &&
-  ./run-load-test.sh --diagnose-loadtool --profile mixed-outcomes-2k-6m
+  ./run-load-test.sh --profile mixed-outcomes-2k-6m
   <run-tag>`. O profile de seis minutos não substitui a qualificação oficial.
 - Os profiles de performance usam o mesmo warmup em duas etapas: bootstrap de
   `500 TPS / 60 s / timeout 30 s`, steady de `1.500 TPS / 60 s / timeout 5 s`
@@ -119,10 +119,10 @@ SLAs do profile de quinze minutos, alterando somente a duração ativa para seis
 minutos. A duração foi escolhida porque o run limpo
 `loadtool-performance-clean-15m/20260824_221747` teve seu primeiro vale
 relevante em `active+314,5 s`; um recorte exato de cinco minutos teria terminado
-antes de observar o fenômeno. Com `--diagnose-loadtool`, esse profile serve para
-correlacionar as pausas com GC, scheduler e mutexes do processo Go. Seus
-resultados são diagnósticos e nunca substituem os quinze minutos de
-qualificação.
+antes de observar o fenômeno. As métricas próprias do gerador Rust são
+registradas em todo run; esse profile serve para correlacionar pausas com o
+pacer, dispatch, admissão HTTP/2 e recursos do processo. Seus resultados são
+diagnósticos e nunca substituem os quinze minutos de qualificação.
 
 - [x] Identificar o primeiro serviço, recurso ou estágio que satura quando o
   budget é respeitado.
@@ -3771,3 +3771,48 @@ retirado. O protótipo Rust fica preservado, mas uma nova tentativa precisa
 primeiro decidir entre granularidade temporal menos estrita e outra definição
 de validade; o benchmark de 15 minutos e o cutover foram deliberadamente
 cancelados.
+
+### Estado vigente — cutover completo para Rust
+
+A conclusão anterior registra o primeiro protótipo e foi superada pela revisão
+arquitetural seguinte. O pacer passou a usar buckets absolutos de `10 ms`, sem
+carry-over, com preparação antecipada e admissão HTTP/2 concluída dentro do
+deadline do próprio bucket. O gerador foi separado fisicamente do report em
+crates distintos; o bundle persistido é a única fronteira entre os dois.
+
+O comando público agora constrói e executa somente o `rust-loadtool`. Uma única
+chamada `run --run-dir` valida o bundle preparado, executa e encerra todo o
+runtime do gerador e, somente depois, lê os artefatos para publicar
+`sla-report.json`. Rust também é o validador autoritativo dos profiles. Os
+comandos intermediários `simulate` e `report`, o adaptador e toda a
+implementação Go foram removidos.
+
+O smoke limpo
+`rust-public-smoke-clean/20260826_190548` validou esse caminho público de ponta
+a ponta: `1.300/1.300` pagamentos originais concluídos, zero slots perdidos,
+zero violação do gerador, outcomes happy-path e insufficient-funds completos,
+replays PACS.008/PACS.002 válidos, Pull válido e `sla-report.json` válido. Na
+janela ativa, a média foi `105 TPS`, o mínimo/máximo rolling foi `103/107 TPS`
+para piso `100` e o p99 de outcome foi `274,655 ms`.
+
+Uma tentativa anterior sobre stack reutilizada falhou corretamente no gate de
+warmup: o Gateway entrou no fallback histórico sobre Kafka antigo e esgotou
+memória direta, portanto nenhuma notificação chegou ao load-tool. Depois da
+preparação limpa exigida pelo README, o mesmo código e profile qualificaram.
+Isso reforça a tarefa pós-projeto já registrada para separar inequivocamente a
+preparação integral do ambiente da execução medida.
+
+O diagnóstico final
+`rust-final-diagnostic/20260826_190913`, já sem qualquer código Go no caminho,
+também qualificou. Foram `246.000/246.000` slots planejados, iniciados e
+concluídos, com zero miss de pacer, preparação, admissão HTTP/2 ou capacidade.
+Na janela ativa, os `126.000` originais produziram média exata de `2.100 TPS`
+e mínimo/máximo rolling de `2.079/2.121 TPS`. Todos os `246.000` outcomes
+esperados foram observados sem ausência ou contradição; `12.300` replays
+PACS.008 e `9.832` replays PACS.002 foram aceitos sem violação. O p99 global
+foi `253,867 ms`, com máximo de `317,210 ms`, ambos abaixo do SLA de `1 s`.
+
+O próprio gerador usou RSS máximo de aproximadamente `59,6 MiB`; seu pacer teve
+p99 de lateness de `0,322 ms`, o início HTTP p99 de `0,288 ms` e somente
+`9,949 ms` acumulados em spin ao longo do run. Esses sinais confirmam que a
+fronteira final mantém overhead próprio pequeno e não mascara o workload.

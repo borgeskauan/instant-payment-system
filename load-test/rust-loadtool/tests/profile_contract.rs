@@ -1,5 +1,6 @@
 use std::fs;
-use std::process::Command;
+
+use loadtool_contract::model::ExecutionPlan;
 
 const PROFILES: [&str; 5] = [
     "uniform-smoke",
@@ -10,32 +11,67 @@ const PROFILES: [&str; 5] = [
 ];
 
 #[test]
-fn every_checked_in_profile_normalizes_identically_to_go() {
+fn every_checked_in_profile_compiles_to_its_stable_execution_shape() {
     let profiles = profiles_dir();
-    for name in PROFILES {
+    let expected = [
+        ("uniform-smoke", 2000, 2000, 60, 60, 30, 1, "131497920.00"),
+        ("mixed-outcomes-smoke", 105, 100, 5, 10, 10, 2, "10400.00"),
+        (
+            "mixed-outcomes-2k-diagnostic",
+            2100,
+            2000,
+            120,
+            60,
+            30,
+            2,
+            "155294092.80",
+        ),
+        (
+            "mixed-outcomes-2k-6m",
+            2100,
+            2000,
+            120,
+            360,
+            30,
+            2,
+            "561160089.60",
+        ),
+        (
+            "mixed-outcomes-2k-15m",
+            2100,
+            2000,
+            120,
+            900,
+            30,
+            2,
+            "1283118849.60",
+        ),
+    ];
+    assert_eq!(PROFILES, expected.map(|entry| entry.0));
+
+    for (name, offered, required, warmup, active, drain, scenarios, payer_balance) in expected {
         let plan = rust_loadtool::profile::compile(&profiles, name).unwrap();
-        let rust: serde_json::Value =
-            serde_json::from_slice(&plan.encode_pretty().unwrap()).unwrap();
-        let output = Command::new("go")
-            .args([
-                "run",
-                "./cmd/go-loadtool",
-                "validate-profile",
-                "--profile",
-                name,
-            ])
-            .current_dir(profiles.join("../go-loadtool"))
-            .env("GOCACHE", "/tmp/go-build-cache")
-            .env("GOPATH", "/tmp/go")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        assert_eq!(plan.profile, name);
+        assert_eq!(plan.load.offered_tx_rate, offered);
+        assert_eq!(plan.load.required_minimum_tx_rate, required);
+        assert_eq!(
+            plan.load.warmup.bootstrap.duration.as_secs()
+                + plan.load.warmup.steady.duration.as_secs(),
+            warmup
         );
-        let go: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(rust, go, "normalized profile {name}");
+        assert_eq!(plan.load.active_duration.as_secs(), active);
+        assert_eq!(plan.load.drain.as_secs(), drain);
+        assert_eq!(plan.scenarios.len(), scenarios);
+        assert_eq!(plan.scenarios[0].participants.pair_number_start, 1);
+        assert_eq!(plan.scenarios[0].provisioning.payer_balance, payer_balance);
+
+        let encoded = plan.encode_pretty().unwrap();
+        let decoded = ExecutionPlan::decode(&encoded).unwrap();
+        assert_eq!(decoded.profile, plan.profile);
+        assert_eq!(
+            decoded.maximum_planned_slots().unwrap(),
+            plan.maximum_planned_slots().unwrap()
+        );
     }
 }
 

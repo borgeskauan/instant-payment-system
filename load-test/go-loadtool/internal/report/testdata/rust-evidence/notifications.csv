@@ -1,2 +1,0 @@
-end_to_end_id,ispb,event_type,received_at_ns,status_code,reason_codes
-rust-test-0,10000003,pacs002_received,10000000006,ACSC,[]

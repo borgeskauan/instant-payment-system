@@ -3,7 +3,7 @@ use std::fs;
 use loadtool_contract::bundle::Bundle;
 
 #[test]
-fn rust_report_deep_matches_the_go_oracle() {
+fn report_deep_matches_the_frozen_contract_fixture() {
     let root = fixture_root();
     let completed = Bundle::resolve(&root).unwrap().load_completed().unwrap();
     let actual = serde_json::to_value(loadtool_report::build(completed).unwrap()).unwrap();

@@ -39,7 +39,7 @@ fn recorder(temp: &tempfile::TempDir, capacity: usize) -> EventRecorder {
 }
 
 #[test]
-fn recorder_writes_the_exact_go_csv_contract() {
+fn recorder_writes_the_exact_persisted_csv_contract() {
     let temp = tempfile::tempdir().expect("temp dir");
     let recorder = recorder(&temp, 16);
 

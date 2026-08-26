@@ -1,2 +1,0 @@
-end_to_end_id,payer_ispb,receiver_ispb,created_at_ns,request_started_at_ns,request_done_at_ns,http_status,scenario_name,pacs008_replay_selected
-rust-test-0,10000003,20000003,10000000001,10000000002,10000000003,200,happy-path,false

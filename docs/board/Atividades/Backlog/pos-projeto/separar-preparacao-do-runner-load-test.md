@@ -75,7 +75,7 @@ ausente ou incompleta.
 ## Fora de escopo
 
 - alterar o contrato dos profiles ou os workloads;
-- mudar geração, scheduler, validação funcional ou relatório do Go load-tool;
+- mudar geração, scheduler, validação funcional ou relatório do load-tool;
 - corrigir retenção de memória ou pressão de GC do simulador;
 - fazer tuning de SPI, Kafka, PostgreSQL ou `notification-gateway`;
 - adicionar novas heurísticas de quiescência interna.
