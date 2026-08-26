@@ -69,7 +69,6 @@ pub struct EventSender {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RecorderSummary {
     pub http_start_lateness: HistogramSummary,
-    pub http_duration: HistogramSummary,
 }
 
 impl EventRecorder {
@@ -168,7 +167,6 @@ fn record_loop(
     clock: RunClock,
 ) -> Result<RecorderSummary> {
     let mut http_start_lateness = DurationHistogram::new();
-    let mut http_duration = DurationHistogram::new();
     for event in receiver {
         write_event(
             &mut outputs,
@@ -177,13 +175,11 @@ fn record_loop(
             clock,
             event,
             &mut http_start_lateness,
-            &mut http_duration,
         )?;
     }
     outputs.finish()?;
     Ok(RecorderSummary {
         http_start_lateness: http_start_lateness.summary(),
-        http_duration: http_duration.summary(),
     })
 }
 
@@ -194,7 +190,6 @@ fn write_event(
     clock: RunClock,
     event: Event,
     http_start_lateness: &mut DurationHistogram,
-    http_duration: &mut DurationHistogram,
 ) -> Result<()> {
     match event {
         Event::Pacs008Completed {
@@ -207,8 +202,6 @@ fn write_event(
         } => {
             http_start_lateness
                 .record_ns(request_started_offset_ns.saturating_sub(created_offset_ns));
-            http_duration
-                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (payer, receiver) = pair(payment.pair_number);
             outputs.pacs008.write_record([
@@ -232,8 +225,6 @@ fn write_event(
             http_status,
             replay_selected,
         } => {
-            http_duration
-                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (_, receiver) = pair(payment.pair_number);
             outputs.pacs002.write_record([
@@ -276,8 +267,6 @@ fn write_event(
             request_done_offset_ns,
             http_status,
         } => {
-            http_duration
-                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (payer, receiver) = pair(payment.pair_number);
             outputs.replays.write_record([

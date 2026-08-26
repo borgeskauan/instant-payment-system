@@ -86,8 +86,6 @@ fn recorder_writes_the_exact_go_csv_contract() {
 
     assert_eq!(summary.http_start_lateness.count, 1);
     assert_eq!(summary.http_start_lateness.max_ns, 1);
-    assert_eq!(summary.http_duration.count, 3);
-    assert_eq!(summary.http_duration.max_ns, 1);
 
     assert_eq!(
         fs::read_to_string(temp.path().join("pacs008-starts.csv")).unwrap(),

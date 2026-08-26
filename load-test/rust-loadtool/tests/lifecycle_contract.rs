@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use loadtool_generator::phase_tracker::PhaseTracker;
+use loadtool_generator::phase_tracker::{PhaseTracker, WarmupObservation, WarmupOutcomes};
 
 #[tokio::test(flavor = "current_thread")]
 async fn warmup_waits_for_registered_continuations_after_generation_closes() {
@@ -86,5 +86,46 @@ fn hard_deadline_is_the_minimum_of_request_timeout_and_phase_end() {
             start + Duration::from_secs(5)
         ),
         start + Duration::from_secs(2)
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn only_warmup_outcomes_can_complete_or_fail_the_gate() {
+    let tracker = PhaseTracker::new();
+    let outcomes = WarmupOutcomes::new(1);
+    tracker.add().unwrap();
+    tracker.close_generation();
+
+    assert_eq!(outcomes.observe(1, false), None);
+    assert_eq!(
+        tracker.pending(),
+        1,
+        "active outcome must not affect warmup"
+    );
+
+    assert_eq!(
+        outcomes.observe(0, true),
+        Some(WarmupObservation::MatchedFirst)
+    );
+    tracker.done().unwrap();
+    tracker
+        .wait(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("matching warmup outcome completes the gate");
+
+    let failed = PhaseTracker::new();
+    let outcomes = WarmupOutcomes::new(1);
+    failed.add().unwrap();
+    failed.close_generation();
+    assert_eq!(
+        outcomes.observe(0, false),
+        Some(WarmupObservation::ContradictionFirst)
+    );
+    failed.fail("contradictory warmup outcome");
+    assert!(
+        failed
+            .wait(Instant::now() + Duration::from_secs(1))
+            .await
+            .is_err()
     );
 }

@@ -104,7 +104,6 @@ pub struct GeneratorMetrics {
     pub pacer_sleep_wake_lateness: HistogramSummary,
     pub dispatch_lateness: HistogramSummary,
     pub http_start_lateness: HistogramSummary,
-    pub http_duration: HistogramSummary,
     pub late_semantic_admissions: u64,
     pub generator_capacity_violations: u64,
     pub spin_wall_time_ns: u64,

@@ -24,8 +24,8 @@ use crate::pacer::{
     PREPARATION_LEAD, PacerMetrics, PhaseSchedule, PreparedBucket, spawn_prepared_pacer,
 };
 use crate::payload::{pacs002, pacs008};
-use crate::payment_state::{OutcomeObservation, PaymentStates};
-use crate::phase_tracker::PhaseTracker;
+use crate::payment_state::PaymentStates;
+use crate::phase_tracker::{PhaseTracker, WarmupObservation, WarmupOutcomes};
 use crate::planner::{Planner, RunIdentity};
 use crate::pull::{ProcessedNotification, PullClient, PullClientConfig, PullState};
 use crate::recorder::{EventRecorder, EventSender};
@@ -119,6 +119,7 @@ struct Runtime {
     tasks: TaskTracker,
     cancellation: CancellationToken,
     warmup_tracker: Arc<PhaseTracker>,
+    warmup_outcomes: WarmupOutcomes,
     warmup_slots: u64,
     warmup_hard_deadline: Instant,
     active_window: RwLock<Option<ActiveWindow>>,
@@ -420,6 +421,10 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         tasks: TaskTracker::new(),
         cancellation: CancellationToken::new(),
         warmup_tracker: Arc::new(PhaseTracker::new()),
+        warmup_outcomes: WarmupOutcomes::new(
+            usize::try_from(warmup_slots)
+                .context("warmup outcome state does not fit memory index")?,
+        ),
         warmup_slots,
         warmup_hard_deadline,
         active_window: RwLock::new(None),
@@ -544,7 +549,6 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     )?;
     let mut metrics = metrics_snapshot;
     metrics.http_start_lateness = recorder_summary.http_start_lateness;
-    metrics.http_duration = recorder_summary.http_duration;
     metrics.process = process_metrics();
     write_generator_metrics_atomic(bundle.generator_metrics(), &metrics)?;
     println!(
@@ -1070,6 +1074,9 @@ fn process_pulled_notification(
                     status: notification_status(status),
                     reason_codes: reason_codes.clone(),
                 })?;
+                if sequence >= runtime.warmup_slots || !runtime.states.is_committed(sequence) {
+                    continue;
+                }
                 let payment = runtime.planner.payment(sequence)?;
                 let expectation = &runtime.plan.scenarios[payment.scenario_index]
                     .expectations
@@ -1083,22 +1090,22 @@ fn process_pulled_notification(
                 ) else {
                     continue;
                 };
-                match runtime.states.observe_outcome(sequence, matches) {
-                    OutcomeObservation::MatchedFirst => {
+                match runtime.warmup_outcomes.observe(sequence, matches) {
+                    Some(WarmupObservation::MatchedFirst) => {
                         if let Some(tracker) = runtime.tracker_for(sequence) {
                             tracker.done()?;
                         }
                     }
-                    OutcomeObservation::ContradictionFirst => {
+                    Some(WarmupObservation::ContradictionFirst) => {
                         if let Some(tracker) = runtime.tracker_for(sequence) {
                             tracker.fail(format!(
                                 "warmup payment {sequence} received contradictory payer outcome"
                             ));
                         }
                     }
-                    OutcomeObservation::IgnoredUncommitted
-                    | OutcomeObservation::MatchedAgain
-                    | OutcomeObservation::ContradictionAgain => {}
+                    Some(WarmupObservation::MatchedAgain)
+                    | Some(WarmupObservation::ContradictionAgain)
+                    | None => {}
                 }
             }
         }

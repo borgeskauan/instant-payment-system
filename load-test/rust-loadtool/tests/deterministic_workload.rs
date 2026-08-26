@@ -4,7 +4,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use loadtool_contract::model::ExecutionPlan;
-use loadtool_generator::payment_state::{OutcomeObservation, PaymentStates};
+use loadtool_generator::payment_state::PaymentStates;
 use loadtool_generator::planner::{Planner, requests_in_bucket};
 use loadtool_generator::replay::{ReplayDomain, ReplaySelector, stable_rotation};
 
@@ -125,7 +125,7 @@ fn planner_owns_its_plan_and_is_shared_across_runtime_threads() {
 }
 
 #[test]
-fn payment_state_claims_once_and_accepts_at_least_once_outcomes() {
+fn payment_state_claims_pacs002_once() {
     assert_eq!(size_of::<std::sync::atomic::AtomicU8>(), 1);
     let states = Arc::new(PaymentStates::new(1));
     assert!(!states.claim_pacs002(0));
@@ -150,23 +150,6 @@ fn payment_state_claims_once_and_accepts_at_least_once_outcomes() {
             .filter(|claimed| *claimed)
             .count(),
         1
-    );
-
-    assert_eq!(
-        states.observe_outcome(0, true),
-        OutcomeObservation::MatchedFirst
-    );
-    assert_eq!(
-        states.observe_outcome(0, true),
-        OutcomeObservation::MatchedAgain
-    );
-    assert_eq!(
-        states.observe_outcome(0, false),
-        OutcomeObservation::ContradictionFirst
-    );
-    assert_eq!(
-        states.observe_outcome(0, false),
-        OutcomeObservation::ContradictionAgain
     );
 }
 

@@ -1,9 +1,58 @@
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow, bail};
 use tokio::sync::Notify;
 use tokio::time::timeout_at;
+
+const EXPECTED_OUTCOME_SEEN: u8 = 1 << 0;
+const CONTRADICTION_SEEN: u8 = 1 << 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WarmupObservation {
+    MatchedFirst,
+    MatchedAgain,
+    ContradictionFirst,
+    ContradictionAgain,
+}
+
+#[derive(Debug)]
+pub struct WarmupOutcomes {
+    states: Vec<AtomicU8>,
+}
+
+impl WarmupOutcomes {
+    pub fn new(slots: usize) -> Self {
+        Self {
+            states: (0..slots).map(|_| AtomicU8::new(0)).collect(),
+        }
+    }
+
+    pub fn observe(&self, sequence: u64, matches_expected: bool) -> Option<WarmupObservation> {
+        let state = usize::try_from(sequence)
+            .ok()
+            .and_then(|index| self.states.get(index))?;
+        let (flag, first, repeated) = if matches_expected {
+            (
+                EXPECTED_OUTCOME_SEEN,
+                WarmupObservation::MatchedFirst,
+                WarmupObservation::MatchedAgain,
+            )
+        } else {
+            (
+                CONTRADICTION_SEEN,
+                WarmupObservation::ContradictionFirst,
+                WarmupObservation::ContradictionAgain,
+            )
+        };
+        Some(if state.fetch_or(flag, Ordering::AcqRel) & flag == 0 {
+            first
+        } else {
+            repeated
+        })
+    }
+}
 
 #[derive(Debug, Default)]
 struct State {
