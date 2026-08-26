@@ -106,6 +106,7 @@ struct PullSession {
 
 struct Runtime {
     plan: Arc<ExecutionPlan>,
+    planner: Arc<Planner>,
     identity: RunIdentity,
     clock: RunClock,
     pairs: BTreeMap<u32, Arc<Pair>>,
@@ -313,6 +314,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     let PreparedRun { profile, plan } = bundle.load_prepared()?;
     bundle.prepare_outputs()?;
     let plan = Arc::new(plan);
+    let planner = Arc::new(Planner::new(Arc::clone(&plan))?);
     let pairs = build_pairs(&plan)?;
     let participant_ispbs = participant_ispbs(&pairs);
 
@@ -381,7 +383,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     let identity = RunIdentity::new(format!("rust-{run_id}"));
     let recorder = EventRecorder::start(
         bundle.events_dir(),
-        Arc::clone(&plan),
+        Arc::clone(&planner),
         identity.clone(),
         clock,
         RECORDER_CAPACITY,
@@ -406,6 +408,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         pacs008_replay: replay_selector(plan.replay.pacs008.as_ref(), ReplayDomain::Pacs008)?,
         pacs002_replay: replay_selector(plan.replay.pacs002.as_ref(), ReplayDomain::Pacs002)?,
         plan: Arc::clone(&plan),
+        planner,
         identity,
         clock,
         pairs,
@@ -575,7 +578,7 @@ async fn run_generation_phase(
             &runtime_handle,
         );
     })?;
-    let planner = Planner::new(&runtime.plan)?;
+    let planner = Arc::clone(&runtime.planner);
     let mut dispatch = DurationHistogram::new();
 
     while let Some(descriptor) = receiver.recv().await {
@@ -1064,8 +1067,7 @@ fn process_pulled_notification(
                     status: notification_status(status),
                     reason_codes: reason_codes.clone(),
                 })?;
-                let planner = Planner::new(&runtime.plan)?;
-                let payment = planner.payment(sequence)?;
+                let payment = runtime.planner.payment(sequence)?;
                 let expectation = &runtime.plan.scenarios[payment.scenario_index]
                     .expectations
                     .payer_notification;
@@ -1149,14 +1151,14 @@ async fn run_pacs002(
             return;
         }
     };
-    let planner = match Planner::new(&runtime.plan).and_then(|value| value.payment(sequence)) {
+    let payment = match runtime.planner.payment(sequence) {
         Ok(payment) => payment,
         Err(error) => {
             runtime.failure.operational(&runtime.cancellation, error);
             return;
         }
     };
-    let replay_selected = planner.pacs002_ordinal.is_some_and(|ordinal| {
+    let replay_selected = payment.pacs002_ordinal.is_some_and(|ordinal| {
         runtime
             .pacs002_replay
             .as_ref()
@@ -1229,8 +1231,7 @@ async fn run_pacs002(
 
 impl Runtime {
     fn pair_for_sequence(&self, sequence: u64) -> Result<Arc<Pair>> {
-        let planner = Planner::new(&self.plan)?;
-        let payment = planner.payment(sequence)?;
+        let payment = self.planner.payment(sequence)?;
         self.pairs
             .get(&payment.pair_number)
             .cloned()

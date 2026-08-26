@@ -83,8 +83,8 @@ fn stable_replay_vectors_and_quota_do_not_drift() {
 
 #[test]
 fn planner_preserves_scenario_populations_and_derives_dense_status_ordinals() {
-    let plan = ExecutionPlan::decode(PLAN.as_bytes()).unwrap();
-    let planner = Planner::new(&plan).unwrap();
+    let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).unwrap());
+    let planner = Planner::new(plan).unwrap();
     let mut counts = HashMap::new();
     let mut status_ordinals = Vec::new();
 
@@ -101,6 +101,27 @@ fn planner_preserves_scenario_populations_and_derives_dense_status_ordinals() {
     assert_eq!(counts["happy-path"], 160);
     assert_eq!(counts["insufficient-funds"], 40);
     assert_eq!(status_ordinals, (0..160).collect::<Vec<_>>());
+}
+
+#[test]
+fn planner_owns_its_plan_and_is_shared_across_runtime_threads() {
+    let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).unwrap());
+    let planner = Arc::new(Planner::new(Arc::clone(&plan)).unwrap());
+    let mut threads = Vec::new();
+
+    for sequence in 0..16 {
+        let planner = Arc::clone(&planner);
+        threads.push(thread::spawn(move || {
+            let payment = planner.payment(sequence).unwrap();
+            (payment.sequence, payment.scenario_name.to_owned())
+        }));
+    }
+
+    for (sequence, thread) in threads.into_iter().enumerate() {
+        let payment = thread.join().unwrap();
+        assert_eq!(payment.0, sequence as u64);
+        assert!(!payment.1.is_empty());
+    }
 }
 
 #[test]

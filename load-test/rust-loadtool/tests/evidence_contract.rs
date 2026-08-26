@@ -9,7 +9,7 @@ use rust_loadtool::generator_metrics::{
     SemanticAdmissionMisses, SlotMetrics, write_generator_metrics_atomic,
 };
 use rust_loadtool::model::ExecutionPlan;
-use rust_loadtool::planner::RunIdentity;
+use rust_loadtool::planner::{Planner, RunIdentity};
 use rust_loadtool::recorder::EventRecorder;
 use rust_loadtool::run_window::{RunWindow, write_run_window_atomic};
 
@@ -24,10 +24,11 @@ const PLAN: &str = r#"{
 
 fn recorder(temp: &tempfile::TempDir, capacity: usize) -> EventRecorder {
     let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).expect("plan"));
+    let planner = Arc::new(Planner::new(plan).expect("planner"));
     let clock = RunClock::new(Instant::now(), UNIX_EPOCH + Duration::from_secs(10));
     EventRecorder::start(
         temp.path(),
-        plan,
+        planner,
         RunIdentity::new("rust-test"),
         clock,
         capacity,
@@ -149,10 +150,11 @@ fn recorder_rejects_preexisting_outputs() {
     let temp = tempfile::tempdir().expect("temp dir");
     fs::write(temp.path().join("notifications.csv"), "do not overwrite").unwrap();
     let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).expect("plan"));
+    let planner = Arc::new(Planner::new(plan).expect("planner"));
 
     let error = EventRecorder::start(
         temp.path(),
-        plan,
+        planner,
         RunIdentity::new("rust-test"),
         RunClock::new(Instant::now(), UNIX_EPOCH),
         16,

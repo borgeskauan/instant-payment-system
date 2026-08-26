@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Result, anyhow, bail};
 
 use crate::model::{ExecutionPlan, Scenario};
@@ -19,8 +21,8 @@ struct Assignment {
 }
 
 #[derive(Debug)]
-pub struct Planner<'a> {
-    plan: &'a ExecutionPlan,
+pub struct Planner {
+    plan: Arc<ExecutionPlan>,
     quotas: Vec<u64>,
     pacs002_per_block: u64,
     layouts: Vec<Vec<Assignment>>,
@@ -37,8 +39,8 @@ pub struct PlannedPayment<'a> {
     pub pacs002_ordinal: Option<u64>,
 }
 
-impl<'a> Planner<'a> {
-    pub fn new(plan: &'a ExecutionPlan) -> Result<Self> {
+impl Planner {
+    pub fn new(plan: Arc<ExecutionPlan>) -> Result<Self> {
         if plan.scenarios.is_empty() {
             bail!("execution plan needs at least one scenario");
         }
@@ -71,7 +73,7 @@ impl<'a> Planner<'a> {
             .map(|(_, quota)| quota)
             .sum();
         for rotation in 0..BLOCK_SIZE {
-            layouts.push(build_layout(plan, &quotas, rotation));
+            layouts.push(build_layout(&plan, &quotas, rotation));
         }
         Ok(Self {
             plan,
@@ -81,7 +83,7 @@ impl<'a> Planner<'a> {
         })
     }
 
-    pub fn payment(&self, sequence: u64) -> Result<PlannedPayment<'a>> {
+    pub fn payment(&self, sequence: u64) -> Result<PlannedPayment<'_>> {
         let block = sequence / BLOCK_SIZE;
         let position = sequence % BLOCK_SIZE;
         let rotation = stable_rotation(ReplayDomain::Scenario, block) as usize;

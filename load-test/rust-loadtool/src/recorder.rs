@@ -10,7 +10,6 @@ use anyhow::{Context, Result, anyhow};
 use crate::clock::RunClock;
 use crate::event::{Event, Participant};
 use crate::generator_metrics::{DurationHistogram, HistogramSummary};
-use crate::model::ExecutionPlan;
 use crate::planner::{Planner, RunIdentity};
 
 const BUFFER_SIZE: usize = 4 * 1024 * 1024;
@@ -75,7 +74,7 @@ pub struct RecorderSummary {
 impl EventRecorder {
     pub fn start(
         events_dir: &Path,
-        plan: Arc<ExecutionPlan>,
+        planner: Arc<Planner>,
         identity: RunIdentity,
         clock: RunClock,
         capacity: usize,
@@ -94,7 +93,7 @@ impl EventRecorder {
         let worker = thread::Builder::new()
             .name("loadtool-recorder".to_owned())
             .spawn(move || {
-                let result = record_loop(receiver, outputs, &plan, &identity, clock);
+                let result = record_loop(receiver, outputs, &planner, &identity, clock);
                 if let Err(error) = &result {
                     set_failure(&worker_failure, error.to_string());
                 }
@@ -163,17 +162,16 @@ impl EventSender {
 fn record_loop(
     receiver: mpsc::Receiver<Event>,
     mut outputs: CsvOutputs,
-    plan: &ExecutionPlan,
+    planner: &Planner,
     identity: &RunIdentity,
     clock: RunClock,
 ) -> Result<RecorderSummary> {
-    let planner = Planner::new(plan)?;
     let mut http_start_lateness = DurationHistogram::new();
     let mut http_duration = DurationHistogram::new();
     for event in receiver {
         write_event(
             &mut outputs,
-            &planner,
+            planner,
             identity,
             clock,
             event,
@@ -190,7 +188,7 @@ fn record_loop(
 
 fn write_event(
     outputs: &mut CsvOutputs,
-    planner: &Planner<'_>,
+    planner: &Planner,
     identity: &RunIdentity,
     clock: RunClock,
     event: Event,
