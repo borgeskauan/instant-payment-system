@@ -112,8 +112,10 @@ bucketEnd   = bucketStart + 1 ms
 ```
 
 O pacer avança diretamente ao bucket temporalmente vigente quando acorda
-atrasado. Ele usa `try_send`; nunca espera o consumidor e nunca percorre
-buckets expirados um a um.
+atrasado e nunca percorre buckets expirados um a um. O descritor é entregue
+com uma antecedência interna fixa para que Tokio possa materializar o payload e
+reservar o stream antes do início do bucket. Essa preparação não altera estado,
+não escreve evidência e não inicia HTTP.
 
 O spin final será pequeno e seu custo será medido. O valor inicial considerado
 é 50 us, mas ele ainda precisa ser validado empiricamente antes de virar
@@ -135,10 +137,15 @@ BucketDescriptor {
 
 O canal é bounded com capacidade para um único descritor pendente. Sua função é
 somente desacoplar a thread nativa do pacer do runtime Tokio; ele não autoriza
-backlog. Todo descritor conserva seu deadline absoluto. Se o descritor anterior
-ainda estiver pendente quando o próximo bucket começar, sua janela já expirou e
-o run registra uma falha de geração. Uma fila maior apenas conservaria trabalho
+backlog. Se o descritor não cabe no instante de preparação, seus slots são
+perdidos; o pacer nunca move esse trabalho para outro bucket. Todo descritor
+conserva seu deadline absoluto. Uma fila maior apenas conservaria trabalho
 obsoleto, portanto sua capacidade não é um parâmetro de tuning.
+
+Cada descritor preparado carrega um gate próprio. A thread nativa libera o gate
+em `bucketStart`; somente as tasks daquele bucket acordam. Tokio não mantém um
+timer de pacing por request. O gate não admite trabalho: após acordar, cada task
+ainda precisa passar pelo deadline check final antes do `COMMIT`.
 
 O desenho recomendado para a primeira implementação é uma task Tokio por
 request iniciado. Isso oferece elasticidade natural sem manter milhares de
@@ -189,6 +196,8 @@ materialização mínima do PACS.008
     ↓
 aguarda readiness/capacidade HTTP/2
 somente até bucketDeadline
+    ↓
+aguarda bucketStart, se a preparação terminou cedo
     ↓
 deadline check final
     ↓
@@ -682,7 +691,7 @@ completos.
 
 ## Migração
 
-### Etapa intermediária
+### Protótipo de qualificação
 
 O Rust implementa somente o simulador. Ele consome o bundle preparado atual:
 
@@ -708,11 +717,12 @@ Rust
 └─ executa exclusivamente o simulador
 ```
 
-Um adaptador Go interno e temporário renderiza o relatório imediatamente após
-o run Rust. Ele não será documentado como suporte a relatórios históricos e
-será removido no cutover.
+Um adaptador Go interno e temporário foi usado somente para o A/B e removido
+depois que o candidato não atingiu o piso de geração. O caminho público
+permanece integralmente no Go; não há engine selector nem suporte permanente a
+dois simuladores.
 
-### Estado final
+### Estado final condicionado
 
 Depois de o simulador Rust provar equivalência funcional e vantagem operacional,
 Rust também assume:
@@ -725,12 +735,33 @@ report
 run
 ```
 
-O runner então chama somente Rust, o adaptador temporário desaparece e o
-load-tool Go é removido. Não permanece suporte permanente a duas engines.
+O runner chamará somente Rust e o load-tool Go será removido apenas se uma
+qualificação futura satisfizer esses critérios. O A/B de 26 de agosto de 2026
+não autorizou esse cutover.
 
-## Qualificação e implementação ainda pendentes
+## Resultado da qualificação de 26 de agosto de 2026
 
-- Ambiente oficial de qualificação e limites de portabilidade do pacer.
-- Valor final da cauda de spin.
-- Tratamento detalhado de cancelamento e falhas de infraestrutura.
-- Estratégia de testes diferenciais e critérios quantitativos do A/B.
+No mesmo profile diagnóstico e com stack recriada para cada candidato, o Go
+produziu média de `2.098,967 TPS` e mínimo rolling de `2.058 TPS`. O candidato
+Rust final medido depois das correções funcionais produziu média de
+`1.748,433 TPS`, mínimo rolling de `1.496 TPS` e perdeu `30.877` dos `246.000`
+slots planejados.
+
+As métricas separaram `15.819` slots não despachados pelo pacer de `15.058`
+admissões que acordaram depois do deadline. O p99 de lateness da thread nativa
+foi `2,177 ms`, maior que o envelope inteiro de `1 ms`. Não houve violação da
+capacidade HTTP causal, e todos os pagamentos efetivamente iniciados tiveram
+outcome funcional válido; o defeito está na previsibilidade do gerador sob esse
+envelope, não na semântica dos cenários.
+
+A inspeção do transporte também mostrou que `hyper::http2::SendRequest::ready`
+valida o dispatcher, mas não reserva de forma observável um stream HTTP/2; seu
+dispatcher interno é unbounded. Não houve sinal de saturação causal neste A/B,
+mas o protótipo também não provou a invariante de ausência de backlog escondido
+no cliente. Uma retomada precisa resolver ou limitar explicitamente essa
+fronteira, em vez de assumir que `ready()` equivale a stream reservado.
+
+Decisão: o protótipo Rust é preservado para estudo, o Go continua sendo a
+implementação ativa e o run de 15 minutos/cutover não é executado. Uma retomada
+precisa primeiro rever, explicitamente, a granularidade de pacing ou a regra de
+validade de misses; não deve esconder a deficiência com catch-up.

@@ -1,23 +1,74 @@
+use std::collections::VecDeque;
 use std::hint::spin_loop;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
+use tokio::sync::Notify;
 use tokio::sync::mpsc;
 
 use crate::generator_metrics::{DurationHistogram, HistogramSummary};
 
 const BUCKET: Duration = Duration::from_millis(1);
 const SPIN_TAIL: Duration = Duration::from_micros(50);
+pub const PREPARATION_LEAD: Duration = Duration::from_millis(20);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
+pub struct BucketGate {
+    released: AtomicBool,
+    notify: Notify,
+}
+
+impl BucketGate {
+    fn new() -> Self {
+        Self {
+            released: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    pub fn pending() -> Arc<Self> {
+        Arc::new(Self::new())
+    }
+
+    pub fn released() -> Arc<Self> {
+        let gate = Self::pending();
+        gate.release();
+        gate
+    }
+
+    pub fn release(&self) {
+        if !self.released.swap(true, Ordering::AcqRel) {
+            self.notify.notify_waiters();
+        }
+    }
+
+    pub async fn wait(&self) {
+        loop {
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+            let notified = self.notify.notified();
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct BucketDescriptor {
     pub bucket_index: u64,
     pub first_sequence: u64,
     pub request_count: u64,
+    pub preparation_start: Instant,
     pub bucket_start: Instant,
     pub bucket_deadline: Instant,
+    pub gate: Arc<BucketGate>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,8 +137,12 @@ impl PhaseSchedule {
             bucket_index,
             first_sequence: self.first_sequence.checked_add(preceding)?,
             request_count: through - preceding,
+            preparation_start: bucket_start
+                .checked_sub(PREPARATION_LEAD)
+                .unwrap_or(bucket_start),
             bucket_start,
             bucket_deadline: bucket_start.checked_add(BUCKET)?,
+            gate: Arc::new(BucketGate::new()),
         })
     }
 
@@ -157,52 +212,129 @@ fn run_pacer(schedule: PhaseSchedule, sender: mpsc::Sender<BucketDescriptor>) ->
         ..PacerMetrics::default()
     };
     let mut lateness = DurationHistogram::new();
+    let lead_buckets =
+        u64::try_from(PREPARATION_LEAD.as_millis()).expect("fixed preparation lead fits u64");
+    let mut next_prepare = 0u64;
     let mut cursor = 0u64;
+    let mut gates = VecDeque::<(u64, Arc<BucketGate>)>::with_capacity(
+        usize::try_from(lead_buckets).expect("fixed preparation lead fits usize"),
+    );
 
-    while cursor < schedule.buckets {
+    prepare_through(
+        &schedule,
+        lead_buckets.min(schedule.buckets),
+        &sender,
+        &mut next_prepare,
+        &mut gates,
+        &mut metrics,
+    );
+
+    while cursor < schedule.buckets && !metrics.channel_closed {
         let advance = advance_cursor(&schedule, cursor, Instant::now());
-        metrics.missed_slots += advance.missed_slots;
         let Some(bucket) = advance.next_bucket else {
+            if next_prepare < schedule.buckets {
+                metrics.missed_slots += schedule.slots_between(next_prepare, schedule.buckets);
+            }
             break;
         };
+        if bucket > next_prepare {
+            metrics.missed_slots += schedule.slots_between(next_prepare, bucket);
+            next_prepare = bucket;
+        }
+        release_before(&mut gates, bucket);
         cursor = bucket;
-        let descriptor = schedule
+
+        let timing = schedule
             .descriptor(bucket)
             .expect("live bucket has a descriptor");
-
         metrics.spin_wall_time_ns = metrics
             .spin_wall_time_ns
-            .saturating_add(wait_until(descriptor.bucket_start));
-        let dispatch_time = Instant::now();
-        if dispatch_time >= descriptor.bucket_deadline {
-            metrics.missed_slots += descriptor.request_count;
-            cursor += 1;
+            .saturating_add(wait_until(timing.bucket_start));
+        let released_at = Instant::now();
+        release_through(&mut gates, bucket);
+        if timing.request_count > 0 {
+            lateness.record_ns(nanos(
+                released_at.saturating_duration_since(timing.bucket_start),
+            ));
+        }
+        cursor += 1;
+
+        prepare_through(
+            &schedule,
+            cursor.saturating_add(lead_buckets).min(schedule.buckets),
+            &sender,
+            &mut next_prepare,
+            &mut gates,
+            &mut metrics,
+        );
+    }
+
+    gates.iter().for_each(|(_, gate)| gate.release());
+
+    metrics.pacer_lateness = lateness.summary();
+    metrics
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_through(
+    schedule: &PhaseSchedule,
+    target: u64,
+    sender: &mpsc::Sender<BucketDescriptor>,
+    next_prepare: &mut u64,
+    gates: &mut VecDeque<(u64, Arc<BucketGate>)>,
+    metrics: &mut PacerMetrics,
+) {
+    while *next_prepare < target && !metrics.channel_closed {
+        let descriptor = schedule
+            .descriptor(*next_prepare)
+            .expect("prepared bucket has a descriptor");
+        *next_prepare += 1;
+        if descriptor.request_count == 0 {
             continue;
         }
-
-        let late_ns = u64::try_from(
-            dispatch_time
-                .saturating_duration_since(descriptor.bucket_start)
-                .as_nanos(),
-        )
-        .unwrap_or(u64::MAX);
-        lateness.record_ns(late_ns);
+        metrics.spin_wall_time_ns = metrics
+            .spin_wall_time_ns
+            .saturating_add(wait_until(descriptor.preparation_start));
+        if Instant::now() >= descriptor.bucket_deadline {
+            metrics.missed_slots += descriptor.request_count;
+            continue;
+        }
+        let gate = Arc::clone(&descriptor.gate);
+        let request_count = descriptor.request_count;
         match sender.try_send(descriptor) {
-            Ok(()) => metrics.dispatched_slots += descriptor.request_count,
-            Err(mpsc::error::TrySendError::Full(_)) => {
+            Ok(()) => {
+                metrics.dispatched_slots += request_count;
+                gates.push_back((*next_prepare - 1, gate));
+            }
+            Err(mpsc::error::TrySendError::Full(descriptor)) => {
                 metrics.missed_slots += descriptor.request_count;
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 metrics.channel_closed = true;
-                metrics.missed_slots += schedule.slots_between(cursor, schedule.buckets);
-                break;
+                metrics.missed_slots += schedule.slots_between(*next_prepare - 1, schedule.buckets);
             }
         }
-        cursor += 1;
     }
+}
 
-    metrics.pacer_lateness = lateness.summary();
-    metrics
+fn release_before(gates: &mut VecDeque<(u64, Arc<BucketGate>)>, bucket: u64) {
+    while gates.front().is_some_and(|(index, _)| *index < bucket) {
+        if let Some((_, gate)) = gates.pop_front() {
+            gate.release();
+        }
+    }
+}
+
+fn release_through(gates: &mut VecDeque<(u64, Arc<BucketGate>)>, bucket: u64) {
+    while gates.front().is_some_and(|(index, _)| *index <= bucket) {
+        if let Some((_, gate)) = gates.pop_front() {
+            gate.release();
+        }
+    }
+}
+
+fn nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn wait_until(target: Instant) -> u64 {

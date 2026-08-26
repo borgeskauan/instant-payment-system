@@ -7,6 +7,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use rust_loadtool::http2::{Http2Client, Http2Config, Http2Reservation, HttpAttempt};
 use rust_loadtool::original::{AdmissionResult, submit_original};
+use rust_loadtool::pacer::BucketGate;
 use rust_loadtool::payment_state::PaymentStates;
 
 #[derive(Clone)]
@@ -103,11 +104,13 @@ async fn expired_initial_deadline_has_no_payload_state_or_request() {
         Arc::clone(&states),
     );
     let builds = AtomicUsize::new(0);
+    let gate = BucketGate::released();
 
     let result = submit_original(
         &client,
         &states,
         0,
+        gate.as_ref(),
         Instant::now() - Duration::from_millis(1),
         Duration::from_secs(5),
         Instant::now() + Duration::from_secs(1),
@@ -135,10 +138,12 @@ async fn unavailable_or_late_stream_capacity_remains_unobserved() {
     ] {
         let states = Arc::new(PaymentStates::new(1));
         let client = client(mode, Arc::clone(&states));
+        let gate = BucketGate::released();
         let result = submit_original(
             &client,
             &states,
             0,
+            gate.as_ref(),
             Instant::now() + Duration::from_millis(1),
             Duration::from_secs(5),
             Instant::now() + Duration::from_secs(1),
@@ -161,12 +166,20 @@ async fn committed_http_failure_is_observed_and_never_becomes_missed() {
     let client = client(HttpAttempt::failed().into(), Arc::clone(&states));
     let obligation = Arc::clone(&client.obligation_registered);
     let replay_started = Arc::clone(&client.replay_started);
+    let bucket_start = Instant::now() + Duration::from_millis(20);
+    let gate = BucketGate::pending();
+    let release_gate = Arc::clone(&gate);
+    std::thread::spawn(move || {
+        std::thread::sleep(bucket_start.saturating_duration_since(Instant::now()));
+        release_gate.release();
+    });
 
     let result = submit_original(
         &client,
         &states,
         0,
-        Instant::now() + Duration::from_secs(1),
+        gate.as_ref(),
+        bucket_start + Duration::from_millis(10),
         Duration::from_secs(5),
         Instant::now() + Duration::from_secs(2),
         || Ok(Bytes::from_static(b"body")),
@@ -187,6 +200,7 @@ async fn committed_http_failure_is_observed_and_never_becomes_missed() {
         panic!("committed request became missed");
     };
     assert_eq!(completion.attempt, HttpAttempt::failed());
+    assert!(completion.request_started_at >= bucket_start);
     assert!(completion.request_done_at >= completion.request_started_at);
     assert!(states.is_committed(0));
     assert_eq!(client.sends.load(Ordering::Relaxed), 1);
@@ -201,11 +215,13 @@ async fn non_http2_response_is_an_operational_error_after_commit() {
     );
     let obligation = Arc::clone(&client.obligation_registered);
     let replay_started = Arc::clone(&client.replay_started);
+    let gate = BucketGate::released();
 
     let error = submit_original(
         &client,
         &states,
         0,
+        gate.as_ref(),
         Instant::now() + Duration::from_secs(1),
         Duration::from_secs(5),
         Instant::now() + Duration::from_secs(2),

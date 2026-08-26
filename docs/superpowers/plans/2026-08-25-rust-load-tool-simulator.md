@@ -332,7 +332,8 @@ Test:
 - absolute `bucket_start`/`bucket_deadline` calculations;
 - a late cursor jumps directly to the currently valid bucket;
 - expired buckets increment missed slots without emitting descriptors;
-- a full one-element channel marks the next bucket missed and never blocks;
+- a full one-element channel marks that future descriptor missed and never
+  carries it into another bucket;
 - no request count is moved into a later bucket;
 - bootstrap and steady remain contiguous while active receives a later explicit phase start;
 - wall-clock projection uses one immutable monotonic/wall origin pair.
@@ -365,7 +366,8 @@ Implement one native thread with:
 - sleep while farther than 50 us;
 - short final spin;
 - O(1) jump over expired buckets;
-- `try_send` to a Tokio MPSC channel of capacity 1;
+- early preparation through a Tokio MPSC channel of capacity 1, preserving the
+  absolute bucket deadline;
 - one compact `BucketDescriptor` per current bucket.
 
 It must not build payloads, touch payment state, perform network I/O, or write files.
@@ -510,7 +512,11 @@ Use the direct Hyper HTTP/2 sender readiness contract so capacity is awaited onl
 
 - [ ] **Step 5: Implement PACS.008 task admission**
 
-Tokio receives a descriptor and spawns one task per planned request. Apply the two deadline checks, derive immutable payment data, commit state/causal obligations, send `/transfer`, and emit a completion event.
+Tokio receives a descriptor before its bucket and spawns one task per planned
+request. Apply the initial deadline check, derive immutable payment data,
+reserve HTTP/2 readiness, wait until `bucketStart` when preparation completes
+early, apply the final deadline check, commit state/causal obligations, send
+`/transfer`, and emit a completion event.
 
 - [ ] **Step 6: Run focused tests**
 
@@ -841,6 +847,20 @@ Expected: every automated check passes; status contains only intended implementa
 - [ ] **Step 7: Commit any final evidence-backed corrections separately**
 
 Use a message describing the concrete correction; do not create a generic “cleanup” commit.
+
+### Qualification outcome
+
+Task 10 did not meet its acceptance criteria. The clean Go baseline sustained
+`2,098.967 TPS` with a `2,058 TPS` rolling minimum. The final Rust candidate
+sustained `1,748.433 TPS`, reached a `1,496 TPS` rolling minimum, and missed
+`30,877 / 246,000` planned slots. Functional outcomes remained correct for all
+started payments, but lower latency was not comparable because the candidate
+offered materially less load.
+
+Therefore Task 9's temporary adapter was removed, the public runner remains on
+Go, the 15-minute Rust run was skipped, and Task 11 is not authorized by this
+execution. Exact paths and metrics are recorded in the active performance task
+and the architecture spec.
 
 ---
 

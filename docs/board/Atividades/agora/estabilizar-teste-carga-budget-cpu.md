@@ -3739,3 +3739,35 @@ No active, p50/p95/p99/máxima ficaram em
 `[active+23,882 s, active+24,882 s)`. Essa oscilação pertence ao scheduler/host
 e não invalida o resultado específico do experimento: o warmup frio agora
 conclui sem relaxar o contrato HTTP do steady ou do active.
+
+### A/B do protótipo greenfield em Rust
+
+O controle Go limpo
+`rust-migration-go-baseline-clean/20260826_000647` qualificou o profile
+`mixed-outcomes-2k-diagnostic`: média de `2.098,967 TPS`, mínimo/máximo rolling
+de `2.058/2.121 TPS`, todos os outcomes válidos e nenhuma violação de replay ou
+Pull.
+
+O candidato Rust final
+`rust-greenfield-ab-b4-gated/20260826_014029` preservou a corretude funcional de
+todos os pagamentos iniciados, mas não qualificou o gerador:
+
+| sinal | Go | Rust |
+| --- | ---: | ---: |
+| originais iniciados no active | `125.938` | `104.906` |
+| TPS médio | `2.098,967` | `1.748,433` |
+| mínimo / máximo rolling | `2.058 / 2.121` | `1.496 / 1.917` |
+| slots planejados / perdidos | não instrumentado | `246.000 / 30.877` |
+| p99 de latência happy-path | `453,353 ms` | `357,081 ms` |
+
+A cauda menor do Rust não representa ganho: ele ofereceu carga materialmente
+menor. Dos slots perdidos, `15.819` não chegaram ao runtime e `15.058` falharam
+no deadline final; o p99 de lateness do pacer foi `2,177 ms` para buckets de
+`1 ms`. A capacidade HTTP causal não saturou.
+
+Conforme o critério definido antes da implementação, o Go permanece como
+caminho público e não foi removido. O adaptador temporário Go→Rust também foi
+retirado. O protótipo Rust fica preservado, mas uma nova tentativa precisa
+primeiro decidir entre granularidade temporal menos estrita e outra definição
+de validade; o benchmark de 15 minutos e o cutover foram deliberadamente
+cancelados.

@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use bytes::Bytes;
 
 use crate::http2::{Http2Client, Http2Reservation, HttpAttempt};
+use crate::pacer::BucketGate;
 use crate::payment_state::PaymentStates;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub async fn submit_original<C, Build, Register, Start>(
     client: &C,
     states: &PaymentStates,
     sequence: u64,
+    bucket_gate: &BucketGate,
     bucket_deadline: Instant,
     request_timeout: Duration,
     hard_deadline: Instant,
@@ -44,6 +46,7 @@ where
     let Some(reservation) = client.reserve_until(bucket_deadline).await? else {
         return Ok(AdmissionResult::Missed);
     };
+    bucket_gate.wait().await;
     if Instant::now() >= bucket_deadline {
         return Ok(AdmissionResult::Missed);
     }

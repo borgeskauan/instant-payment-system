@@ -23,7 +23,8 @@ use crate::http2::{Http2Config, PersistentHttp2Client};
 use crate::model::{ExecutionPlan, ReplayRule};
 use crate::notification::NotificationPayload;
 use crate::original::{AdmissionResult, submit_original};
-use crate::pacer::{PacerMetrics, PhaseSchedule, spawn_pacer};
+use crate::pacer::BucketGate;
+use crate::pacer::{PREPARATION_LEAD, PacerMetrics, PhaseSchedule, spawn_pacer};
 use crate::payload::{pacs002, pacs008};
 use crate::payment_state::{OutcomeObservation, PaymentStates};
 use crate::phase_tracker::PhaseTracker;
@@ -63,7 +64,7 @@ struct Pair {
     receiver: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct PlannedOriginal {
     sequence: u64,
     pair_number: u32,
@@ -73,6 +74,7 @@ struct PlannedOriginal {
     pacs002_replay: bool,
     bucket_start: Instant,
     bucket_deadline: Instant,
+    bucket_gate: Arc<BucketGate>,
     request_timeout: Duration,
     hard_deadline: Instant,
 }
@@ -280,7 +282,10 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     let recorder_sender = recorder.sender()?;
 
     let warmup_slots = warmup_slots(&plan)?;
-    let warmup_planned_end = monotonic_origin
+    let warmup_start = Instant::now()
+        .checked_add(PREPARATION_LEAD)
+        .context("warmup preparation deadline overflows Instant")?;
+    let warmup_planned_end = warmup_start
         .checked_add(plan.load.warmup.bootstrap.duration)
         .and_then(|value| value.checked_add(plan.load.warmup.steady.duration))
         .context("warmup deadline overflows Instant")?;
@@ -325,7 +330,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     );
     run_generation_phase(
         Arc::clone(&runtime),
-        monotonic_origin,
+        warmup_start,
         plan.load.warmup.bootstrap.duration,
         plan.load.warmup.bootstrap.offered_tx_rate,
         0,
@@ -338,7 +343,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         plan.load.warmup.bootstrap.offered_tx_rate * plan.load.warmup.bootstrap.duration.as_secs();
     run_generation_phase(
         Arc::clone(&runtime),
-        monotonic_origin + plan.load.warmup.bootstrap.duration,
+        warmup_start + plan.load.warmup.bootstrap.duration,
         plan.load.warmup.steady.duration,
         plan.load.warmup.steady.offered_tx_rate,
         bootstrap_slots,
@@ -356,7 +361,9 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         .context("warmup completion gate")?;
     check_operational(&runtime)?;
 
-    let active_start = Instant::now();
+    let active_start = Instant::now()
+        .checked_add(PREPARATION_LEAD)
+        .context("active preparation deadline overflows Instant")?;
     let generation_end = active_start
         .checked_add(plan.load.active_duration)
         .context("active generation deadline overflows Instant")?;
@@ -398,7 +405,16 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     runtime.tasks.wait().await;
 
     let operational_error = runtime.failure.operational_error();
-    let generator_violations = runtime.failure.generator_violations();
+    let mut generator_violations = runtime.failure.generator_violations();
+    let late_semantic_admissions = runtime
+        .metrics
+        .late_semantic_admissions
+        .load(Ordering::Acquire);
+    if late_semantic_admissions > 0 {
+        generator_violations.push(format!(
+            "{late_semantic_admissions} original payments missed their bucket admission deadline"
+        ));
+    }
     let metrics_snapshot = snapshot_runtime_metrics(&runtime, &generator_violations);
     drop(runtime);
     let recorder_summary = recorder.close()?;
@@ -410,7 +426,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         bundle.run_window(),
         &RunWindow::new(
             &plan.profile,
-            clock.unix_nanos(monotonic_origin)?,
+            clock.unix_nanos(warmup_start)?,
             clock.unix_nanos(warmup_planned_end)?,
             clock.unix_nanos(active_start)?,
             clock.unix_nanos(generation_end)?,
@@ -452,7 +468,7 @@ async fn run_generation_phase(
 
     while let Some(descriptor) = receiver.recv().await {
         dispatch.record_ns(nanos(
-            Instant::now().saturating_duration_since(descriptor.bucket_start),
+            Instant::now().saturating_duration_since(descriptor.preparation_start),
         ));
         for offset in 0..descriptor.request_count {
             let sequence = descriptor.first_sequence + offset;
@@ -479,6 +495,7 @@ async fn run_generation_phase(
                 pacs002_replay,
                 bucket_start: descriptor.bucket_start,
                 bucket_deadline: descriptor.bucket_deadline,
+                bucket_gate: Arc::clone(&descriptor.gate),
                 request_timeout,
                 hard_deadline,
             };
@@ -545,6 +562,7 @@ async fn run_original(runtime: Arc<Runtime>, job: PlannedOriginal, warmup: bool)
         client.as_ref(),
         &runtime.states,
         job.sequence,
+        job.bucket_gate.as_ref(),
         job.bucket_deadline,
         job.request_timeout,
         job.hard_deadline,
@@ -604,10 +622,6 @@ async fn run_original(runtime: Arc<Runtime>, job: PlannedOriginal, warmup: bool)
                 .metrics
                 .late_semantic_admissions
                 .fetch_add(1, Ordering::Relaxed);
-            runtime.failure.generator(format!(
-                "original sequence {} missed its bucket admission deadline",
-                job.sequence
-            ));
         }
         Ok(AdmissionResult::Completed(completion)) => {
             runtime
@@ -864,9 +878,15 @@ fn process_pulled_notification(
                 let expectation = &runtime.plan.scenarios[payment.scenario_index]
                     .expectations
                     .payer_notification;
-                let matches = participant == Participant::Payer
-                    && status == &expectation.status
-                    && same_reasons(reason_codes, &expectation.reason_codes);
+                let Some(matches) = payer_outcome_match(
+                    participant,
+                    status,
+                    reason_codes,
+                    &expectation.status,
+                    &expectation.reason_codes,
+                ) else {
+                    continue;
+                };
                 match runtime.states.observe_outcome(sequence, matches) {
                     OutcomeObservation::MatchedFirst => {
                         if let Some(tracker) = runtime.tracker_for(sequence) {
@@ -1289,6 +1309,17 @@ fn same_reasons(left: &[String], right: &[String]) -> bool {
     left == right
 }
 
+fn payer_outcome_match(
+    participant: Participant,
+    status: &str,
+    reason_codes: &[String],
+    expected_status: &str,
+    expected_reason_codes: &[String],
+) -> Option<bool> {
+    (participant == Participant::Payer)
+        .then(|| status == expected_status && same_reasons(reason_codes, expected_reason_codes))
+}
+
 fn check_operational(runtime: &Runtime) -> Result<()> {
     if let Some(error) = runtime.failure.operational_error() {
         Err(anyhow!(error))
@@ -1324,4 +1355,31 @@ pub fn http_deadline(
         .checked_add(request_timeout)
         .unwrap_or(hard_deadline)
         .min(hard_deadline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_payer_notifications_participate_in_business_outcome_matching() {
+        assert_eq!(
+            payer_outcome_match(Participant::Receiver, "ACSC", &[], "ACSC", &[],),
+            None
+        );
+        assert_eq!(
+            payer_outcome_match(Participant::Payer, "ACSC", &[], "ACSC", &[]),
+            Some(true)
+        );
+        assert_eq!(
+            payer_outcome_match(
+                Participant::Payer,
+                "RJCT",
+                &["AM04".to_owned()],
+                "ACSC",
+                &[],
+            ),
+            Some(false)
+        );
+    }
 }

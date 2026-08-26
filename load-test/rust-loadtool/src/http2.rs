@@ -14,7 +14,6 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, RootCertStore};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, OwnedMutexGuard};
 use tokio::time::timeout_at;
 use tokio_rustls::TlsConnector;
 
@@ -147,17 +146,14 @@ impl Http2Config {
             }
         });
 
-        Ok(PersistentHttp2Client {
-            authority,
-            sender: Arc::new(Mutex::new(sender)),
-        })
+        Ok(PersistentHttp2Client { authority, sender })
     }
 }
 
 #[derive(Clone)]
 pub struct PersistentHttp2Client {
     authority: String,
-    sender: Arc<Mutex<SendRequest<Full<Bytes>>>>,
+    sender: SendRequest<Full<Bytes>>,
 }
 
 impl std::fmt::Debug for PersistentHttp2Client {
@@ -192,18 +188,17 @@ impl PersistentHttp2Client {
 
 pub struct PersistentReservation {
     authority: String,
-    sender: OwnedMutexGuard<SendRequest<Full<Bytes>>>,
+    sender: SendRequest<Full<Bytes>>,
 }
 
 impl Http2Client for PersistentHttp2Client {
     type Reservation = PersistentReservation;
 
     async fn reserve_until(&self, deadline: Instant) -> Result<Option<Self::Reservation>> {
-        let sender = Arc::clone(&self.sender);
-        let result = timeout_at(deadline.into(), async move {
-            let mut guard = sender.lock_owned().await;
-            guard.ready().await.context("HTTP/2 sender is not ready")?;
-            Ok::<_, anyhow::Error>(guard)
+        let mut sender = self.sender.clone();
+        let result = timeout_at(deadline.into(), async {
+            sender.ready().await.context("HTTP/2 sender is not ready")?;
+            Ok::<_, anyhow::Error>(sender)
         })
         .await;
         match result {

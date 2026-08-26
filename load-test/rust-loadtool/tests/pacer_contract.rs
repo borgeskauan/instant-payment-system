@@ -13,6 +13,7 @@ fn descriptors_keep_absolute_bucket_boundaries_and_sequence_positions() {
     assert_eq!(first.bucket_index, 0);
     assert_eq!(first.first_sequence, 17);
     assert_eq!(first.request_count, 2);
+    assert_eq!(first.preparation_start, start - Duration::from_millis(20));
     assert_eq!(first.bucket_start, start);
     assert_eq!(first.bucket_deadline, start + Duration::from_millis(1));
 
@@ -115,6 +116,48 @@ fn real_clock_pacing_preserves_the_one_millisecond_envelope() {
     assert_eq!(metrics.dispatched_slots + metrics.missed_slots, 210);
     assert!(metrics.pacer_lateness.count > 0);
     assert!(metrics.spin_wall_time_ns > 0);
+}
+
+#[test]
+fn descriptors_arrive_before_the_bucket_for_non_observable_preparation() {
+    let start = Instant::now() + Duration::from_millis(50);
+    let schedule =
+        PhaseSchedule::new(start, Duration::from_millis(5), 2_000, 0).expect("valid phase");
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let handle = spawn_pacer(schedule, sender).expect("pacer thread");
+
+    let first = receiver.blocking_recv().expect("first descriptor");
+    let received_at = Instant::now();
+    while receiver.blocking_recv().is_some() {}
+    let metrics = handle.join().expect("pacer did not panic");
+
+    assert!(received_at < first.bucket_start);
+    assert_eq!(metrics.dispatched_slots, metrics.planned_slots);
+    assert_eq!(metrics.missed_slots, 0);
+}
+
+#[test]
+fn rates_below_one_thousand_do_not_dispatch_empty_buckets() {
+    let start = Instant::now() + Duration::from_millis(20);
+    let schedule =
+        PhaseSchedule::new(start, Duration::from_millis(100), 50, 0).expect("valid low-rate phase");
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let handle = spawn_pacer(schedule, sender).expect("pacer thread");
+
+    let mut descriptors = Vec::new();
+    while let Some(descriptor) = receiver.blocking_recv() {
+        descriptors.push(descriptor);
+    }
+    let metrics = handle.join().expect("pacer did not panic");
+
+    assert_eq!(descriptors.len(), 5);
+    assert!(
+        descriptors
+            .iter()
+            .all(|descriptor| descriptor.request_count == 1)
+    );
+    assert_eq!(metrics.dispatched_slots, 5);
+    assert_eq!(metrics.missed_slots, 0);
 }
 
 #[test]
