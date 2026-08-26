@@ -71,7 +71,7 @@ run_loadtool() {
         malformed-report)
             printf '%s\n' '{' > "${target_dir}/sla-report.json"
             ;;
-        go-failure)
+        loadtool-failure)
             return 23
             ;;
         *)
@@ -82,7 +82,7 @@ run_loadtool() {
 
 collect_optional_diagnostics() {
     printf '%s\n' diagnostics >> "$RUNNER_FLOW_LOG"
-    if [[ "$RUNNER_TEST_MODE" == go-failure || "$RUNNER_TEST_MODE" == diagnostics-failure ]]; then
+    if [[ "$RUNNER_TEST_MODE" == loadtool-failure || "$RUNNER_TEST_MODE" == diagnostics-failure ]]; then
         return 19
     fi
 }
@@ -135,19 +135,19 @@ if [[ "$malformed_report_status" -ne 2 ]]; then
 fi
 
 set +e
-run_driver go-failure >"$tmp_dir/go-failure.log" 2>&1
-go_failure_status=$?
+run_driver loadtool-failure >"$tmp_dir/loadtool-failure.log" 2>&1
+loadtool_failure_status=$?
 set -e
-if [[ "$go_failure_status" -ne 2 ]]; then
-    echo "runner returned $go_failure_status, want operational exit code 2" >&2
+if [[ "$loadtool_failure_status" -ne 2 ]]; then
+    echo "runner returned $loadtool_failure_status, want operational exit code 2" >&2
     exit 1
 fi
-cat > "$tmp_dir/go-failure.expected" <<'EOF'
+cat > "$tmp_dir/loadtool-failure.expected" <<'EOF'
 prepare-environment
 run
 diagnostics
 EOF
-diff -u "$tmp_dir/go-failure.expected" "$tmp_dir/go-failure.flow"
+diff -u "$tmp_dir/loadtool-failure.expected" "$tmp_dir/loadtool-failure.flow"
 
 set +e
 run_driver diagnostics-failure >"$tmp_dir/diagnostics-failure.log" 2>&1

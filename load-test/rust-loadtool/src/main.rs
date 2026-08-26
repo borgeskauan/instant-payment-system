@@ -15,7 +15,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     ValidateProfile(ValidateProfileArgs),
-    Simulate(SimulateArgs),
+    Run(RunArgs),
 }
 
 #[derive(Debug, Args)]
@@ -25,7 +25,7 @@ struct ValidateProfileArgs {
 }
 
 #[derive(Debug, Args)]
-struct SimulateArgs {
+struct RunArgs {
     #[arg(long)]
     run_dir: PathBuf,
     #[arg(long, hide = true)]
@@ -62,7 +62,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Simulate(args) => {
+        Command::Run(args) => {
             let options = SimulationOptions {
                 central_transfer_ca_cert: args.central_transfer_ca_cert,
                 central_transfer_client_cert_root: args.central_transfer_client_cert_root,
@@ -71,11 +71,15 @@ async fn main() -> ExitCode {
                 gateway_client_cert_root: args.gateway_client_cert_root,
                 gateway_server_name: args.gateway_server_name,
             };
-            let result = rust_loadtool::simulate(&args.run_dir, options).await;
+            let result = rust_loadtool::run(rust_loadtool::RunOptions {
+                run_dir: args.run_dir,
+                generator: options,
+            })
+            .await;
             match result {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("Rust simulation failed: {error:#}");
+                    eprintln!("load-tool run failed: {error:#}");
                     ExitCode::FAILURE
                 }
             }

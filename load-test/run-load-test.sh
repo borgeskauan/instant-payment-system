@@ -4,7 +4,7 @@ set -euo pipefail
 
 readonly RESULTS_DIR="results"
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly GO_LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/profiles"
+readonly LOADTOOL_PROFILES_DIR="${LOAD_TEST_DIR}/profiles"
 readonly PROFILE_SNAPSHOT_RELATIVE_PATH="inputs/profile.json"
 readonly EXECUTION_PLAN_RELATIVE_PATH="inputs/execution-plan.json"
 readonly SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
@@ -52,7 +52,6 @@ PROFILE_SCENARIO_COLD_PAIR_COUNTS=()
 ENABLE_JFR=true
 ENABLE_SPI_TRACE=true
 ENABLE_POSTGRES_STATEMENTS=true
-ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=false
 SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
@@ -71,10 +70,10 @@ LOADTOOL_CENTRAL_TRANSFER_CA_CERT=""
 LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME="${LOADTOOL_CENTRAL_TRANSFER_SERVER_NAME:-localhost}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--profile NAME] [--diagnose-loadtool] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] <run-tag>"
+    echo "Usage: $(basename "$0") [--profile NAME] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] <run-tag>"
     echo "Examples:"
     echo "  $(basename "$0") --profile uniform-smoke smoke-run"
-    echo "  $(basename "$0") --diagnose-loadtool --profile mixed-outcomes-2k-diagnostic loadtool-diagnostic"
+    echo "  $(basename "$0") --profile mixed-outcomes-2k-diagnostic loadtool-diagnostic"
     echo "  $(basename "$0") smoke-run  # defaults to uniform-smoke"
 }
 
@@ -184,10 +183,6 @@ parse_args() {
                 ENABLE_POSTGRES_STATEMENTS=false
                 shift
                 ;;
-            --diagnose-loadtool)
-                ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS=true
-                shift
-                ;;
             --profile)
                 if [[ $# -lt 2 ]]; then
                     usage
@@ -254,7 +249,7 @@ resolve_profile() {
         return 2
     fi
 
-    local candidate="${GO_LOADTOOL_PROFILES_DIR}/${PROFILE_NAME}.json"
+    local candidate="${LOADTOOL_PROFILES_DIR}/${PROFILE_NAME}.json"
     if [[ ! -f "$candidate" ]]; then
         echo "Profile '${PROFILE_NAME}' not found." >&2
         return 2
@@ -273,9 +268,9 @@ validate_profile_with_loadtool() {
     local -a records
 
     LOADTOOL_VALIDATION_FILE="${LOADTOOL_BUILD_DIR}/profile-validation.json"
-    log_phase "validating profile with Go loadtool"
+    log_phase "validating profile with Rust loadtool"
     (
-        cd go-loadtool
+        cd rust-loadtool
         "$LOADTOOL_BIN" validate-profile --profile "$PROFILE_NAME"
     ) > "$LOADTOOL_VALIDATION_FILE"
 
@@ -323,12 +318,12 @@ PY
 
     local record_kind returned_profile
     if [[ "${#records[@]}" -lt 2 ]]; then
-        echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
+        echo "Rust loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
     IFS=$'\t' read -r record_kind returned_profile PROFILE_OFFERED_TX_RATE PROFILE_REQUIRED_MINIMUM_TX_RATE PROFILE_WARMUP_BOOTSTRAP_OFFERED_TX_RATE PROFILE_WARMUP_BOOTSTRAP_SECONDS PROFILE_WARMUP_BOOTSTRAP_REQUEST_TIMEOUT_SECONDS PROFILE_WARMUP_STEADY_OFFERED_TX_RATE PROFILE_WARMUP_STEADY_SECONDS PROFILE_WARMUP_STEADY_REQUEST_TIMEOUT_SECONDS PROFILE_WARMUP_SECONDS PROFILE_WARMUP_COMPLETION_TIMEOUT_SECONDS PROFILE_ACTIVE_SECONDS PROFILE_DRAIN_SECONDS PROFILE_PACS008_REPLAY_SHARE PROFILE_PACS008_REPLAY_DELAY_SECONDS PROFILE_PACS002_REPLAY_SHARE PROFILE_PACS002_REPLAY_DELAY_SECONDS <<< "${records[0]}"
     if [[ "$record_kind" != metadata || "$returned_profile" != "$PROFILE_NAME" ]]; then
-        echo "Go loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
+        echo "Rust loadtool returned invalid normalized metadata for profile '${PROFILE_NAME}'." >&2
         return 1
     fi
 
@@ -343,7 +338,7 @@ PY
     for record in "${records[@]:1}"; do
         IFS=$'\t' read -r record_kind scenario_name scenario_share pair_number_start hot_pair_count cold_pair_count <<< "$record"
         if [[ "$record_kind" != scenario || -z "$scenario_name" || -z "$pair_number_start" || -z "$hot_pair_count" || -z "$cold_pair_count" ]]; then
-            echo "Go loadtool returned invalid normalized scenario metadata for profile '${PROFILE_NAME}'." >&2
+            echo "Rust loadtool returned invalid normalized scenario metadata for profile '${PROFILE_NAME}'." >&2
             return 1
         fi
         PROFILE_SCENARIO_NAMES+=("$scenario_name")
@@ -666,13 +661,16 @@ stop_jfr_recordings() {
 
 build_loadtool() {
     local output_bin="$1"
+    local target_dir="${RUST_LOADTOOL_TARGET_DIR:-/tmp/rust-loadtool-target}"
 
-    log_phase "building Go loadtool"
-    (
-        cd go-loadtool
-        GOPATH="${GOPATH:-/tmp/go}" GOCACHE="${GOCACHE:-/tmp/go-build-cache}" go build -o "$output_bin" ./cmd/go-loadtool
-    )
-    log_phase "Go loadtool built"
+    log_phase "building Rust loadtool"
+    cargo build \
+        --locked \
+        --release \
+        --manifest-path "${LOAD_TEST_DIR}/rust-loadtool/Cargo.toml" \
+        --target-dir "$target_dir"
+    cp "${target_dir}/release/rust-loadtool" "$output_bin"
+    log_phase "Rust loadtool built"
 }
 
 log_selected_options() {
@@ -703,14 +701,11 @@ log_selected_options() {
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         log_phase "Postgres statement, activity, I/O, lock-wait logs, and container stats enabled"
     fi
-    if [[ "$ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS" == true ]]; then
-        log_phase "Go load-tool runtime diagnostics enabled; this run does not qualify capacity"
-    fi
 }
 
 prepare_loadtool_binary() {
     LOADTOOL_BUILD_DIR="$(mktemp -d)"
-    LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/go-loadtool"
+    LOADTOOL_BIN="${LOADTOOL_BUILD_DIR}/rust-loadtool"
 }
 
 prepare_run_workspace() {
@@ -851,13 +846,9 @@ run_loadtool() {
         --gateway-client-cert-root "$LOADTOOL_CERT_ROOT"
         --gateway-server-name "$LOADTOOL_GATEWAY_SERVER_NAME"
     )
-    if [[ "$ENABLE_LOADTOOL_RUNTIME_DIAGNOSTICS" == true ]]; then
-        loadtool_args+=(--runtime-diagnostics)
-    fi
-
     log_phase "starting load-tool run"
     (
-        cd go-loadtool
+        cd rust-loadtool
         "$LOADTOOL_BIN" "${loadtool_args[@]}"
     ) 2>&1 | tee "${target_dir}/logs/loadtool.log"
     pipeline_status=("${PIPESTATUS[@]}")

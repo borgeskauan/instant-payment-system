@@ -41,11 +41,11 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
 
-Para investigar pausas esporádicas do próprio gerador sem pagar o custo do run
-oficial, use o profile intermediário de seis minutos com o diagnóstico Go:
+Para investigar estabilidade sem pagar o custo do run oficial, use o profile
+intermediário de seis minutos:
 
 ```bash
-./run-load-test.sh --diagnose-loadtool --profile mixed-outcomes-2k-6m loadtool-diagnostic-6m
+./run-load-test.sh --profile mixed-outcomes-2k-6m loadtool-diagnostic-6m
 ```
 
 O profile de um minuto continua sendo o feedback rápido; o de seis minutos
@@ -68,10 +68,8 @@ JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
 `--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
 experimento precisar desativá-los.
 
-Para diagnosticar o próprio processo Go, use `--diagnose-loadtool`. A flag
-grava CPU, alocações, mutexes e métricas do runtime em
-`diagnostics/loadtool/` somente durante a janela ativa; essa execução não deve
-ser usada para qualificar capacidade.
+As métricas do próprio gerador Rust são coletadas em todas as execuções em
+`diagnostics/loadtool/`.
 
 O workload oficial oferece 2.100 pagamentos originais por segundo durante 15
 minutos, além dos replays configurados. O relatório qualifica a capacidade

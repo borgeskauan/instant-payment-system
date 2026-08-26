@@ -26,7 +26,7 @@ pub struct CompletedRun {
     pub events: RunEvents,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Bundle {
     root: PathBuf,
     profile: PathBuf,
