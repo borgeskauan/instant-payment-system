@@ -640,6 +640,7 @@ name = "loadtool-contract"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "csv",
  "serde",
  "serde_json",
  "time",
@@ -669,6 +670,16 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "loadtool-report"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "loadtool-contract",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -987,6 +998,7 @@ dependencies = [
  "hyper-util",
  "loadtool-contract",
  "loadtool-generator",
+ "loadtool-report",
  "serde_json",
  "tempfile",
  "tokio",

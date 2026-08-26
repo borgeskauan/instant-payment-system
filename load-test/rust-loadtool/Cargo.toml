@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/loadtool-contract",
     "crates/loadtool-generator",
+    "crates/loadtool-report",
 ]
 resolver = "2"
 
@@ -26,6 +27,7 @@ anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 loadtool-contract = { path = "crates/loadtool-contract" }
 loadtool-generator = { path = "crates/loadtool-generator" }
+loadtool-report = { path = "crates/loadtool-report" }
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]

@@ -1,0 +1,79 @@
+{
+  "profile": "report-parity",
+  "offeredTxRate": 2,
+  "requiredMinimumTxRate": 1,
+  "warmupBootstrapOfferedTxRate": 1,
+  "warmupBootstrapSeconds": 1,
+  "warmupBootstrapRequestTimeoutSeconds": 30,
+  "warmupSteadyOfferedTxRate": 1,
+  "warmupSteadySeconds": 0,
+  "warmupSteadyRequestTimeoutSeconds": 5,
+  "warmupSeconds": 1,
+  "warmupCompletionTimeoutSeconds": 120,
+  "activeSeconds": 2,
+  "drainSeconds": 10,
+  "replay": {
+    "pacs008": { "share": 0.5, "delaySeconds": 1 },
+    "pacs002": { "share": 0.5, "delaySeconds": 1 }
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 0.5,
+      "participants": {
+        "pairNumberStart": 1,
+        "hotPairCount": 1,
+        "coldPairCount": 1,
+        "hotTrafficShare": 0.8
+      },
+      "amount": { "minimum": 100, "maximum": 200 },
+      "funding": {
+        "payer": { "mode": "cover-generated-debits" },
+        "receiver": { "mode": "fixed", "balance": "0.00" },
+        "resetIfExists": true
+      },
+      "provisioning": {
+        "payerBalance": "1000.00",
+        "receiverBalance": "0.00",
+        "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "ACSC",
+          "reasonCodes": []
+        }
+      }
+    },
+    {
+      "name": "insufficient-funds",
+      "share": 0.5,
+      "participants": {
+        "pairNumberStart": 3,
+        "hotPairCount": 1,
+        "coldPairCount": 1,
+        "hotTrafficShare": 0.8
+      },
+      "amount": { "minimum": 100, "maximum": 200 },
+      "funding": {
+        "payer": { "mode": "fixed", "balance": "0.00" },
+        "receiver": { "mode": "fixed", "balance": "0.00" },
+        "resetIfExists": true
+      },
+      "provisioning": {
+        "payerBalance": "0.00",
+        "receiverBalance": "0.00",
+        "resetIfExists": true
+      },
+      "expectations": {
+        "httpStatus": "2xx",
+        "payerNotification": {
+          "deliverySemantics": "at-least-once",
+          "status": "RJCT",
+          "reasonCodes": ["AM04"]
+        }
+      }
+    }
+  ]
+}

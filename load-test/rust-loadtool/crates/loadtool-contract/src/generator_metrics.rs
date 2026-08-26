@@ -4,10 +4,10 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HistogramSummary {
     pub count: u64,
     pub p50_ns: u64,
@@ -16,8 +16,8 @@ pub struct HistogramSummary {
     pub max_ns: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SlotMetrics {
     pub planned: u64,
     pub dispatched: u64,
@@ -26,8 +26,8 @@ pub struct SlotMetrics {
     pub missed: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PacerMisses {
     pub cursor_skip: u64,
     pub expired_before_dispatch: u64,
@@ -35,16 +35,16 @@ pub struct PacerMisses {
     pub preparation_not_ready: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PacerDeadlineMisses {
     pub entered_after_deadline: u64,
     pub sleep_returned_after_deadline: u64,
     pub spin_completed_after_deadline: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SemanticAdmissionMisses {
     pub before_preparation: u64,
     pub http2_readiness: u64,
@@ -59,40 +59,43 @@ impl SemanticAdmissionMisses {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FlowInFlight {
     pub current: u64,
     pub maximum: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InFlightMetrics {
     pub original: FlowInFlight,
     pub pacs008_replay: FlowInFlight,
     pub causal_http: FlowInFlight,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ProcessMetrics {
     pub user_cpu_ns: u64,
     pub system_cpu_ns: u64,
     pub maximum_rss_bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PullMetrics {
     pub count: u64,
     pub empty_responses: u64,
-    #[serde(serialize_with = "serialize_batch_counts")]
+    #[serde(
+        serialize_with = "serialize_batch_counts",
+        deserialize_with = "deserialize_batch_counts"
+    )]
     pub batch_size_counts: [u64; 16],
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GeneratorMetrics {
     pub valid: bool,
     pub violations: Vec<String>,
@@ -153,4 +156,24 @@ where
         .map(|size| (size.to_string(), counts[size]))
         .collect();
     values.serialize(serializer)
+}
+
+fn deserialize_batch_counts<'de, D>(deserializer: D) -> std::result::Result<[u64; 16], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let mut values = BTreeMap::<String, u64>::deserialize(deserializer)?;
+    let mut counts = [0; 16];
+    for (size, count) in counts.iter_mut().enumerate().skip(1) {
+        let key = size.to_string();
+        *count = values
+            .remove(&key)
+            .ok_or_else(|| serde::de::Error::custom(format!("missing Pull batch size {size}")))?;
+    }
+    if let Some(key) = values.keys().next() {
+        return Err(serde::de::Error::custom(format!(
+            "unsupported Pull batch size {key}"
+        )));
+    }
+    Ok(counts)
 }

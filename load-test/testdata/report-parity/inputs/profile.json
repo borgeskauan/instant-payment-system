@@ -1,0 +1,17 @@
+{
+  "name": "report-parity",
+  "connections": {
+    "centralTransfer": {
+      "baseUrl": "https://localhost:8443",
+      "caCert": "certs/ca.crt",
+      "clientCertRoot": "certs",
+      "serverName": "localhost"
+    },
+    "notificationGateway": {
+      "address": "https://localhost:50051",
+      "caCert": "certs/ca.crt",
+      "clientCertRoot": "certs",
+      "serverName": "localhost"
+    }
+  }
+}

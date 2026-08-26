@@ -3,12 +3,27 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 
+use crate::event::{
+    RunEvents, read_notifications, read_pacs002_starts, read_pacs008_starts, read_replays,
+};
+use crate::generator_metrics::GeneratorMetrics;
 use crate::model::{ExecutionPlan, ProfileSnapshot};
+use crate::run_window::{ResolvedWindow, RunWindow};
 
 #[derive(Debug)]
 pub struct PreparedRun {
     pub profile: ProfileSnapshot,
     pub plan: ExecutionPlan,
+}
+
+#[derive(Debug)]
+pub struct CompletedRun {
+    pub profile: ProfileSnapshot,
+    pub plan: ExecutionPlan,
+    pub run_window: RunWindow,
+    pub window: ResolvedWindow,
+    pub generator_metrics: GeneratorMetrics,
+    pub events: RunEvents,
 }
 
 #[derive(Debug)]
@@ -62,8 +77,50 @@ impl Bundle {
         &self.generator_metrics
     }
 
+    pub fn report(&self) -> &Path {
+        &self.report
+    }
+
     pub fn load_prepared(&self) -> Result<PreparedRun> {
         self.validate_prepared()?;
+        self.load_inputs()
+    }
+
+    pub fn load_completed(&self) -> Result<CompletedRun> {
+        require_regular_file(&self.profile, "profile.json")?;
+        require_regular_file(&self.execution_plan, "execution-plan.json")?;
+        require_directory(&self.events_dir, "events")?;
+        require_regular_file(&self.run_window, "run-window.json")?;
+        require_regular_file(&self.generator_metrics, "generator-metrics.json")?;
+        require_absent(&self.report, "sla-report.json")?;
+
+        let prepared = self.load_inputs()?;
+        let window_data = fs::read(&self.run_window)
+            .with_context(|| format!("read {}", self.run_window.display()))?;
+        let run_window = RunWindow::decode(&window_data)
+            .with_context(|| format!("decode {}", self.run_window.display()))?;
+        let window = run_window.resolve(&prepared.profile.name, &prepared.plan)?;
+        let metrics_data = fs::read(&self.generator_metrics)
+            .with_context(|| format!("read {}", self.generator_metrics.display()))?;
+        let generator_metrics: GeneratorMetrics = serde_json::from_slice(&metrics_data)
+            .with_context(|| format!("decode {}", self.generator_metrics.display()))?;
+        let events = RunEvents {
+            pacs008: read_pacs008_starts(&self.events_dir.join("pacs008-starts.csv"))?,
+            pacs002: read_pacs002_starts(&self.events_dir.join("pacs002-starts.csv"))?,
+            notifications: read_notifications(&self.events_dir.join("notifications.csv"))?,
+            replays: read_replays(&self.events_dir.join("replays.csv"))?,
+        };
+        Ok(CompletedRun {
+            profile: prepared.profile,
+            plan: prepared.plan,
+            run_window,
+            window,
+            generator_metrics,
+            events,
+        })
+    }
+
+    fn load_inputs(&self) -> Result<PreparedRun> {
         let profile_data =
             fs::read(&self.profile).with_context(|| format!("read {}", self.profile.display()))?;
         let profile: ProfileSnapshot = serde_json::from_slice(&profile_data)
@@ -118,6 +175,18 @@ fn require_regular_file(path: &Path, name: &str) -> Result<()> {
     if !metadata.is_file() {
         return Err(anyhow!(
             "required {name} is not a regular file at {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn require_directory(path: &Path, name: &str) -> Result<()> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("required {name} is missing at {}", path.display()))?;
+    if !metadata.is_dir() {
+        return Err(anyhow!(
+            "required {name} is not a directory at {}",
             path.display()
         ));
     }

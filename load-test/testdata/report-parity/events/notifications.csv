@@ -1,0 +1,8 @@
+end_to_end_id,ispb,event_type,received_at_ns,status_code,reason_codes
+fixture-0,20000001,pacs008_received,1767225601050000000,,[]
+fixture-2,20000002,pacs008_received,1767225602050000000,,[]
+fixture-0,10000001,pacs002_received,1767225601200000000,ACSC,[]
+fixture-0,10000001,pacs002_received,1767225601250000000,ACSC,[]
+fixture-1,10000003,pacs002_received,1767225601500000000,RJCT,"[""AM04""]"
+fixture-2,10000002,pacs002_received,1767225602200000000,ACSC,[]
+fixture-3,10000004,pacs002_received,1767225602500000000,RJCT,"[""AM04""]"

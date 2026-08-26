@@ -1,0 +1,26 @@
+{
+  "valid": true,
+  "violations": [],
+  "slots": { "planned": 5, "dispatched": 5, "started": 5, "completed": 5, "missed": 0 },
+  "pacerMisses": { "cursorSkip": 0, "expiredBeforeDispatch": 0, "channelFull": 0, "preparationNotReady": 0 },
+  "pacerDeadlineMisses": { "enteredAfterDeadline": 0, "sleepReturnedAfterDeadline": 0, "spinCompletedAfterDeadline": 0 },
+  "semanticAdmissionMisses": { "beforePreparation": 0, "http2Readiness": 0, "beforeCommit": 0 },
+  "pacerLateness": { "count": 5, "p50Ns": 1000, "p95Ns": 2000, "p99Ns": 2000, "maxNs": 2000 },
+  "pacerSleepWakeLateness": { "count": 5, "p50Ns": 1000, "p95Ns": 2000, "p99Ns": 2000, "maxNs": 2000 },
+  "dispatchLateness": { "count": 5, "p50Ns": 1000, "p95Ns": 2000, "p99Ns": 2000, "maxNs": 2000 },
+  "httpStartLateness": { "count": 5, "p50Ns": 1000, "p95Ns": 2000, "p99Ns": 2000, "maxNs": 2000 },
+  "lateSemanticAdmissions": 0,
+  "generatorCapacityViolations": 0,
+  "spinWallTimeNs": 10000,
+  "inFlight": {
+    "original": { "current": 0, "maximum": 4 },
+    "pacs008Replay": { "current": 0, "maximum": 1 },
+    "causalHttp": { "current": 0, "maximum": 2 }
+  },
+  "process": { "userCpuNs": 1000000, "systemCpuNs": 100000, "maximumRssBytes": 1048576 },
+  "pull": {
+    "count": 8,
+    "emptyResponses": 1,
+    "batchSizeCounts": { "1": 5, "2": 1, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 0, "10": 0, "11": 0, "12": 0, "13": 0, "14": 0, "15": 0 }
+  }
+}
