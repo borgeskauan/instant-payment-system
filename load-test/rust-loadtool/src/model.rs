@@ -3,21 +3,21 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileSnapshot {
     pub name: String,
     pub connections: Connections,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connections {
     pub central_transfer: CentralTransferConnection,
     pub notification_gateway: NotificationGatewayConnection,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CentralTransferConnection {
     pub base_url: String,
@@ -26,7 +26,7 @@ pub struct CentralTransferConnection {
     pub server_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationGatewayConnection {
     pub address: String,
@@ -35,7 +35,7 @@ pub struct NotificationGatewayConnection {
     pub server_name: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExecutionPlan {
     pub profile: String,
     pub load: LoadPlan,
@@ -43,7 +43,7 @@ pub struct ExecutionPlan {
     pub scenarios: Vec<Scenario>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LoadPlan {
     pub offered_tx_rate: u64,
     pub required_minimum_tx_rate: u64,
@@ -52,35 +52,35 @@ pub struct LoadPlan {
     pub drain: Duration,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WarmupPlan {
     pub bootstrap: WarmupStage,
     pub steady: WarmupStage,
     pub completion_timeout: Duration,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WarmupStage {
     pub offered_tx_rate: u64,
     pub duration: Duration,
     pub request_timeout: Duration,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReplayPlan {
     pub pacs008: Option<ReplayRule>,
     pub pacs002: Option<ReplayRule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReplayRule {
     pub share: f64,
     pub delay_seconds: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Scenario {
     pub name: String,
@@ -92,7 +92,7 @@ pub struct Scenario {
     pub expectations: Expectations,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Participants {
     pub pair_number_start: u32,
@@ -101,14 +101,14 @@ pub struct Participants {
     pub hot_traffic_share: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AmountRange {
     pub minimum: i64,
     pub maximum: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Funding {
     pub payer: FundingAccount,
@@ -116,14 +116,14 @@ pub struct Funding {
     pub reset_if_exists: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FundingAccount {
     pub mode: String,
     pub balance: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Provisioning {
     pub payer_balance: String,
@@ -131,14 +131,14 @@ pub struct Provisioning {
     pub reset_if_exists: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Expectations {
     pub http_status: String,
     pub payer_notification: PayerNotification,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PayerNotification {
     pub delivery_semantics: String,
@@ -146,7 +146,7 @@ pub struct PayerNotification {
     pub reason_codes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RawExecutionPlan {
     profile: String,

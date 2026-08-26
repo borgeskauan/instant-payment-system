@@ -9,6 +9,7 @@ use anyhow::{Context, Result, anyhow};
 
 use crate::clock::RunClock;
 use crate::event::{Event, Participant};
+use crate::generator_metrics::{DurationHistogram, HistogramSummary};
 use crate::model::ExecutionPlan;
 use crate::planner::{Planner, RunIdentity};
 
@@ -56,7 +57,19 @@ const REPLAY_HEADER: &[&str] = &[
 pub struct EventRecorder {
     sender: Option<SyncSender<Event>>,
     failure: Arc<Mutex<Option<String>>>,
-    worker: Option<JoinHandle<Result<()>>>,
+    worker: Option<JoinHandle<Result<RecorderSummary>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EventSender {
+    sender: SyncSender<Event>,
+    failure: Arc<Mutex<Option<String>>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RecorderSummary {
+    pub http_start_lateness: HistogramSummary,
+    pub http_duration: HistogramSummary,
 }
 
 impl EventRecorder {
@@ -96,30 +109,21 @@ impl EventRecorder {
     }
 
     pub fn record(&self, event: Event) -> Result<()> {
-        if let Some(error) = current_failure(&self.failure) {
-            return Err(anyhow!(error));
-        }
-        let sender = self
-            .sender
-            .as_ref()
-            .ok_or_else(|| anyhow!("recorder is closed"))?;
-        match sender.try_send(event) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                let error = "event recorder queue is full".to_owned();
-                set_failure(&self.failure, error.clone());
-                Err(anyhow!(error))
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                let error = current_failure(&self.failure)
-                    .unwrap_or_else(|| "event recorder thread stopped".to_owned());
-                set_failure(&self.failure, error.clone());
-                Err(anyhow!(error))
-            }
-        }
+        self.sender()?.record(event)
     }
 
-    pub fn close(mut self) -> Result<()> {
+    pub fn sender(&self) -> Result<EventSender> {
+        Ok(EventSender {
+            sender: self
+                .sender
+                .as_ref()
+                .ok_or_else(|| anyhow!("recorder is closed"))?
+                .clone(),
+            failure: Arc::clone(&self.failure),
+        })
+    }
+
+    pub fn close(mut self) -> Result<RecorderSummary> {
         self.sender.take();
         let worker_result = self
             .worker
@@ -134,18 +138,54 @@ impl EventRecorder {
     }
 }
 
+impl EventSender {
+    pub fn record(&self, event: Event) -> Result<()> {
+        if let Some(error) = current_failure(&self.failure) {
+            return Err(anyhow!(error));
+        }
+        match self.sender.try_send(event) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                let error = "event recorder queue is full".to_owned();
+                set_failure(&self.failure, error.clone());
+                Err(anyhow!(error))
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                let error = current_failure(&self.failure)
+                    .unwrap_or_else(|| "event recorder thread stopped".to_owned());
+                set_failure(&self.failure, error.clone());
+                Err(anyhow!(error))
+            }
+        }
+    }
+}
+
 fn record_loop(
     receiver: mpsc::Receiver<Event>,
     mut outputs: CsvOutputs,
     plan: &ExecutionPlan,
     identity: &RunIdentity,
     clock: RunClock,
-) -> Result<()> {
+) -> Result<RecorderSummary> {
     let planner = Planner::new(plan)?;
+    let mut http_start_lateness = DurationHistogram::new();
+    let mut http_duration = DurationHistogram::new();
     for event in receiver {
-        write_event(&mut outputs, &planner, identity, clock, event)?;
+        write_event(
+            &mut outputs,
+            &planner,
+            identity,
+            clock,
+            event,
+            &mut http_start_lateness,
+            &mut http_duration,
+        )?;
     }
-    outputs.finish()
+    outputs.finish()?;
+    Ok(RecorderSummary {
+        http_start_lateness: http_start_lateness.summary(),
+        http_duration: http_duration.summary(),
+    })
 }
 
 fn write_event(
@@ -154,6 +194,8 @@ fn write_event(
     identity: &RunIdentity,
     clock: RunClock,
     event: Event,
+    http_start_lateness: &mut DurationHistogram,
+    http_duration: &mut DurationHistogram,
 ) -> Result<()> {
     match event {
         Event::Pacs008Completed {
@@ -164,6 +206,10 @@ fn write_event(
             http_status,
             replay_selected,
         } => {
+            http_start_lateness
+                .record_ns(request_started_offset_ns.saturating_sub(created_offset_ns));
+            http_duration
+                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (payer, receiver) = pair(payment.pair_number);
             outputs.pacs008.write_record([
@@ -187,6 +233,8 @@ fn write_event(
             http_status,
             replay_selected,
         } => {
+            http_duration
+                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (_, receiver) = pair(payment.pair_number);
             outputs.pacs002.write_record([
@@ -229,6 +277,8 @@ fn write_event(
             request_done_offset_ns,
             http_status,
         } => {
+            http_duration
+                .record_ns(request_done_offset_ns.saturating_sub(request_started_offset_ns));
             let payment = planner.payment(sequence)?;
             let (payer, receiver) = pair(payment.pair_number);
             outputs.replays.write_record([

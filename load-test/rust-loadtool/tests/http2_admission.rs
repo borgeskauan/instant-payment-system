@@ -15,6 +15,7 @@ struct FakeClient {
     sends: Arc<AtomicUsize>,
     states: Arc<PaymentStates>,
     obligation_registered: Arc<AtomicBool>,
+    replay_started: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Copy)]
@@ -29,6 +30,7 @@ struct FakeReservation {
     sends: Arc<AtomicUsize>,
     states: Arc<PaymentStates>,
     obligation_registered: Arc<AtomicBool>,
+    replay_started: Arc<AtomicBool>,
 }
 
 impl Http2Client for FakeClient {
@@ -62,6 +64,7 @@ impl FakeClient {
             sends: Arc::clone(&self.sends),
             states: Arc::clone(&self.states),
             obligation_registered: Arc::clone(&self.obligation_registered),
+            replay_started: Arc::clone(&self.replay_started),
         }
     }
 }
@@ -72,6 +75,10 @@ impl Http2Reservation for FakeReservation {
         assert!(
             self.obligation_registered.load(Ordering::Acquire),
             "send happened before replay registration"
+        );
+        assert!(
+            self.replay_started.load(Ordering::Acquire),
+            "send happened before the committed replay task was created"
         );
         self.sends.fetch_add(1, Ordering::Relaxed);
         self.attempt
@@ -84,6 +91,7 @@ fn client(mode: FakeMode, states: Arc<PaymentStates>) -> FakeClient {
         sends: Arc::new(AtomicUsize::new(0)),
         states,
         obligation_registered: Arc::new(AtomicBool::new(false)),
+        replay_started: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -101,12 +109,14 @@ async fn expired_initial_deadline_has_no_payload_state_or_request() {
         &states,
         0,
         Instant::now() - Duration::from_millis(1),
+        Duration::from_secs(5),
         Instant::now() + Duration::from_secs(1),
         || {
             builds.fetch_add(1, Ordering::Relaxed);
             Ok(Bytes::from_static(b"body"))
         },
         |_, _| Ok(()),
+        |_, _, _| Ok(()),
     )
     .await
     .unwrap();
@@ -130,9 +140,11 @@ async fn unavailable_or_late_stream_capacity_remains_unobserved() {
             &states,
             0,
             Instant::now() + Duration::from_millis(1),
+            Duration::from_secs(5),
             Instant::now() + Duration::from_secs(1),
             || Ok(Bytes::from_static(b"body")),
             |_, _| Ok(()),
+            |_, _, _| Ok(()),
         )
         .await
         .unwrap();
@@ -148,12 +160,14 @@ async fn committed_http_failure_is_observed_and_never_becomes_missed() {
     let states = Arc::new(PaymentStates::new(1));
     let client = client(HttpAttempt::failed().into(), Arc::clone(&states));
     let obligation = Arc::clone(&client.obligation_registered);
+    let replay_started = Arc::clone(&client.replay_started);
 
     let result = submit_original(
         &client,
         &states,
         0,
         Instant::now() + Duration::from_secs(1),
+        Duration::from_secs(5),
         Instant::now() + Duration::from_secs(2),
         || Ok(Bytes::from_static(b"body")),
         move |_, body| {
@@ -161,11 +175,19 @@ async fn committed_http_failure_is_observed_and_never_becomes_missed() {
             obligation.store(true, Ordering::Release);
             Ok(())
         },
+        move |_, _, _| {
+            replay_started.store(true, Ordering::Release);
+            Ok(())
+        },
     )
     .await
     .unwrap();
 
-    assert_eq!(result, AdmissionResult::Completed(HttpAttempt::failed()));
+    let AdmissionResult::Completed(completion) = result else {
+        panic!("committed request became missed");
+    };
+    assert_eq!(completion.attempt, HttpAttempt::failed());
+    assert!(completion.request_done_at >= completion.request_started_at);
     assert!(states.is_committed(0));
     assert_eq!(client.sends.load(Ordering::Relaxed), 1);
 }
@@ -178,16 +200,22 @@ async fn non_http2_response_is_an_operational_error_after_commit() {
         Arc::clone(&states),
     );
     let obligation = Arc::clone(&client.obligation_registered);
+    let replay_started = Arc::clone(&client.replay_started);
 
     let error = submit_original(
         &client,
         &states,
         0,
         Instant::now() + Duration::from_secs(1),
+        Duration::from_secs(5),
         Instant::now() + Duration::from_secs(2),
         || Ok(Bytes::from_static(b"body")),
         move |_, _| {
             obligation.store(true, Ordering::Release);
+            Ok(())
+        },
+        move |_, _, _| {
+            replay_started.store(true, Ordering::Release);
             Ok(())
         },
     )

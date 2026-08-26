@@ -20,7 +20,7 @@ impl ReplayDomain {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ReplaySelector {
     quota: u64,
     domain: ReplayDomain,

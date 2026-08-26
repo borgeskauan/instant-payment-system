@@ -41,7 +41,7 @@ fn unsupported_commands_and_extra_arguments_are_rejected() {
 }
 
 #[test]
-fn valid_simulate_shape_reaches_the_unimplemented_boundary() {
+fn valid_simulate_shape_validates_the_prepared_run() {
     let run_dir = tempfile::tempdir().expect("temporary run directory");
     let output = run(&[
         "simulate",
@@ -50,5 +50,5 @@ fn valid_simulate_shape_reaches_the_unimplemented_boundary() {
     ]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(stderr(&output).contains("simulation is not implemented"));
+    assert!(stderr(&output).contains("required profile.json is missing"));
 }

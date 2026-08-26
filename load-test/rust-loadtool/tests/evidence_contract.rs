@@ -78,7 +78,12 @@ fn recorder_writes_the_exact_go_csv_contract() {
             http_status: 200,
         })
         .unwrap();
-    recorder.close().expect("close recorder");
+    let summary = recorder.close().expect("close recorder");
+
+    assert_eq!(summary.http_start_lateness.count, 1);
+    assert_eq!(summary.http_start_lateness.max_ns, 1);
+    assert_eq!(summary.http_duration.count, 3);
+    assert_eq!(summary.http_duration.max_ns, 1);
 
     assert_eq!(
         fs::read_to_string(temp.path().join("pacs008-starts.csv")).unwrap(),
