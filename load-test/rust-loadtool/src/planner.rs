@@ -172,7 +172,7 @@ fn scenario_produces_pacs002(scenario: &Scenario) -> bool {
     scenario.expectations.payer_notification.status == "ACSC"
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RunIdentity {
     prefix: String,
     id_prefix: String,

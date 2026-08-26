@@ -1,4 +1,4 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -32,5 +32,13 @@ impl RunClock {
             .duration_since(UNIX_EPOCH)
             .context("projected wall clock is before Unix epoch")?;
         u64::try_from(since_epoch.as_nanos()).context("projected Unix nanoseconds overflow u64")
+    }
+
+    pub fn unix_nanos_offset(&self, offset_ns: u64) -> Result<u64> {
+        let instant = self
+            .monotonic_origin
+            .checked_add(Duration::from_nanos(offset_ns))
+            .ok_or_else(|| anyhow!("event monotonic offset overflows Instant"))?;
+        self.unix_nanos(instant)
     }
 }
