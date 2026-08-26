@@ -999,6 +999,7 @@ dependencies = [
  "loadtool-contract",
  "loadtool-generator",
  "loadtool-report",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

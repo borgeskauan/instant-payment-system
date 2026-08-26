@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,24 +73,28 @@ pub struct WarmupStage {
     pub request_timeout: Duration,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReplayPlan {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pacs008: Option<ReplayRule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pacs002: Option<ReplayRule>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReplayRule {
+    #[serde(serialize_with = "serialize_metric")]
     pub share: f64,
     pub delay_seconds: u64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Scenario {
     pub name: String,
+    #[serde(serialize_with = "serialize_metric")]
     pub share: f64,
     pub participants: Participants,
     pub amount: AmountRange,
@@ -99,23 +103,35 @@ pub struct Scenario {
     pub expectations: Expectations,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Participants {
     pub pair_number_start: u32,
     pub hot_pair_count: u32,
     pub cold_pair_count: u32,
+    #[serde(serialize_with = "serialize_metric")]
     pub hot_traffic_share: f64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+fn serialize_metric<S>(value: &f64, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value <= i64::MAX as f64 {
+        serializer.serialize_i64(*value as i64)
+    } else {
+        serializer.serialize_f64(*value)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AmountRange {
     pub minimum: i64,
     pub maximum: i64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Funding {
     pub payer: FundingAccount,
@@ -123,14 +139,15 @@ pub struct Funding {
     pub reset_if_exists: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FundingAccount {
     pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub balance: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Provisioning {
     pub payer_balance: String,
@@ -138,14 +155,14 @@ pub struct Provisioning {
     pub reset_if_exists: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Expectations {
     pub http_status: String,
     pub payer_notification: PayerNotification,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PayerNotification {
     pub delivery_semantics: String,
@@ -153,7 +170,7 @@ pub struct PayerNotification {
     pub reason_codes: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RawExecutionPlan {
     profile: String,
@@ -236,5 +253,45 @@ impl ExecutionPlan {
             .checked_add(steady)
             .and_then(|total| total.checked_add(active))
             .ok_or_else(|| anyhow!("total slot count overflows"))
+    }
+
+    pub fn encode_pretty(&self) -> Result<Vec<u8>> {
+        let raw = RawExecutionPlan {
+            profile: self.profile.clone(),
+            offered_tx_rate: self.load.offered_tx_rate,
+            required_minimum_tx_rate: self.load.required_minimum_tx_rate,
+            warmup_bootstrap_offered_tx_rate: self.load.warmup.bootstrap.offered_tx_rate,
+            warmup_bootstrap_seconds: self.load.warmup.bootstrap.duration.as_secs(),
+            warmup_bootstrap_request_timeout_seconds: self
+                .load
+                .warmup
+                .bootstrap
+                .request_timeout
+                .as_secs(),
+            warmup_steady_offered_tx_rate: self.load.warmup.steady.offered_tx_rate,
+            warmup_steady_seconds: self.load.warmup.steady.duration.as_secs(),
+            warmup_steady_request_timeout_seconds: self
+                .load
+                .warmup
+                .steady
+                .request_timeout
+                .as_secs(),
+            warmup_seconds: self
+                .load
+                .warmup
+                .bootstrap
+                .duration
+                .checked_add(self.load.warmup.steady.duration)
+                .context("warmup duration overflows")?
+                .as_secs(),
+            warmup_completion_timeout_seconds: self.load.warmup.completion_timeout.as_secs(),
+            active_seconds: self.load.active_duration.as_secs(),
+            drain_seconds: self.load.drain.as_secs(),
+            replay: self.replay.clone(),
+            scenarios: self.scenarios.clone(),
+        };
+        let mut encoded = serde_json::to_vec_pretty(&raw)?;
+        encoded.push(b'\n');
+        Ok(encoded)
     }
 }

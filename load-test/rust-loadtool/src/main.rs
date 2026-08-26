@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::{io, io::Write};
 
 use clap::{Args, Parser, Subcommand};
 use loadtool_generator::simulator::SimulationOptions;
@@ -13,7 +14,14 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    ValidateProfile(ValidateProfileArgs),
     Simulate(SimulateArgs),
+}
+
+#[derive(Debug, Args)]
+struct ValidateProfileArgs {
+    #[arg(long, default_value = "uniform-smoke")]
+    profile: String,
 }
 
 #[derive(Debug, Args)]
@@ -37,6 +45,23 @@ struct SimulateArgs {
 #[tokio::main]
 async fn main() -> ExitCode {
     match Cli::parse().command {
+        Command::ValidateProfile(args) => {
+            let result =
+                rust_loadtool::profile::compile(&PathBuf::from("../profiles"), &args.profile)
+                    .and_then(|plan| plan.encode_pretty())
+                    .and_then(|encoded| {
+                        io::stdout()
+                            .write_all(&encoded)
+                            .map_err(anyhow::Error::from)
+                    });
+            match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("validate-profile failed: {error:#}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Simulate(args) => {
             let options = SimulationOptions {
                 central_transfer_ca_cert: args.central_transfer_ca_cert,

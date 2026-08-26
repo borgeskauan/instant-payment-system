@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 
 use crate::replay::{ReplayDomain, stable_rotation};
-use loadtool_contract::model::{ExecutionPlan, Scenario};
+use loadtool_contract::model::{ExecutionPlan, Provisioning, Scenario};
 
 const BLOCK_SIZE: u64 = 100;
+const FUNDING_SAFETY_MULTIPLIER: i64 = 16;
 
 pub fn requests_in_bucket(rate: u64, bucket: u64) -> u64 {
     let current = u128::from(bucket) * u128::from(rate) / 1000;
@@ -121,6 +123,79 @@ impl Planner {
             pacs002_ordinal,
         })
     }
+}
+
+pub fn derive_provisioning(plan: Arc<ExecutionPlan>) -> Result<Vec<Provisioning>> {
+    let transfer_count = plan.maximum_planned_slots()?;
+    let planner = Planner::new(Arc::clone(&plan))?;
+    let mut debits_by_scenario: Vec<HashMap<u32, i64>> =
+        (0..plan.scenarios.len()).map(|_| HashMap::new()).collect();
+    for sequence in 0..transfer_count {
+        let payment = planner.payment(sequence)?;
+        let scenario = &plan.scenarios[payment.scenario_index];
+        if scenario.funding.payer.mode != "cover-generated-debits" {
+            continue;
+        }
+        let debit = debits_by_scenario[payment.scenario_index]
+            .entry(payment.pair_number)
+            .or_default();
+        *debit = debit.checked_add(payment.amount_cents).ok_or_else(|| {
+            anyhow!(
+                "derived debit total overflows for scenario {:?} payer pair {}",
+                scenario.name,
+                payment.pair_number
+            )
+        })?;
+    }
+
+    plan.scenarios
+        .iter()
+        .enumerate()
+        .map(|(index, scenario)| {
+            let payer_balance = match scenario.funding.payer.mode.as_str() {
+                "cover-generated-debits" => {
+                    let maximum = debits_by_scenario[index]
+                        .values()
+                        .copied()
+                        .max()
+                        .unwrap_or_default();
+                    format_balance(maximum.checked_mul(FUNDING_SAFETY_MULTIPLIER).ok_or_else(
+                        || {
+                            anyhow!(
+                                "derived payer funding overflows for scenario {:?}",
+                                scenario.name
+                            )
+                        },
+                    )?)
+                }
+                "fixed" => scenario.funding.payer.balance.clone().ok_or_else(|| {
+                    anyhow!(
+                        "scenario {:?} fixed payer funding requires a balance",
+                        scenario.name
+                    )
+                })?,
+                mode => bail!(
+                    "scenario {:?} has unsupported payer funding mode {mode:?}",
+                    scenario.name
+                ),
+            };
+            let receiver_balance = scenario.funding.receiver.balance.clone().ok_or_else(|| {
+                anyhow!(
+                    "scenario {:?} requires fixed receiver funding",
+                    scenario.name
+                )
+            })?;
+            Ok(Provisioning {
+                payer_balance,
+                receiver_balance,
+                reset_if_exists: scenario.funding.reset_if_exists,
+            })
+        })
+        .collect()
+}
+
+fn format_balance(cents: i64) -> String {
+    format!("{}.{:02}", cents / 100, cents % 100)
 }
 
 fn build_layout(plan: &ExecutionPlan, quotas: &[u64], rotation: u64) -> Vec<Assignment> {

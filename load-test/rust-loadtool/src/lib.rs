@@ -6,6 +6,8 @@ use anyhow::Result;
 use loadtool_contract::bundle::Bundle;
 use loadtool_generator::simulator::{self, SimulationOptions};
 
+pub mod profile;
+
 pub async fn simulate(run_dir: &Path, options: SimulationOptions) -> Result<()> {
     let bundle = Bundle::resolve(run_dir)?;
     simulator::run(bundle, options).await

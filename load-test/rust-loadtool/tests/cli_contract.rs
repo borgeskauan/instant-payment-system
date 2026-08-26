@@ -31,12 +31,43 @@ fn simulate_requires_run_dir() {
 fn unsupported_commands_and_extra_arguments_are_rejected() {
     for args in [
         vec!["report"],
-        vec!["validate-profile"],
+        vec!["validate-profile", "extra"],
         vec!["simulate", "--run-dir", "/tmp/run", "extra"],
         vec!["simulate", "--run-dir", "/tmp/run", "--engine", "go"],
     ] {
         let output = run(&args);
         assert_eq!(output.status.code(), Some(2), "args={args:?}");
+    }
+}
+
+#[test]
+fn validate_profile_defaults_and_accepts_an_explicit_internal_name() {
+    for args in [
+        vec!["validate-profile"],
+        vec!["validate-profile", "--profile", "mixed-outcomes-smoke"],
+    ] {
+        let output = run(&args);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let expected = if args.len() == 1 {
+            "uniform-smoke"
+        } else {
+            "mixed-outcomes-smoke"
+        };
+        assert_eq!(document["profile"], expected);
+    }
+}
+
+#[test]
+fn validate_profile_rejects_invalid_and_unknown_names() {
+    for name in ["../escape", "missing-profile"] {
+        let output = run(&["validate-profile", "--profile", name]);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(stderr(&output).contains(if name == "../escape" {
+            "invalid profile name"
+        } else {
+            "not found"
+        }));
     }
 }
 
