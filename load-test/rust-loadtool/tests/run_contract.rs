@@ -86,7 +86,7 @@ async fn invalid_generation_still_produces_an_invalid_report() {
             .unwrap();
             Ok(fixture_window())
         },
-        |bundle, window| loadtool_report::write(bundle, window),
+        loadtool_report::write,
     )
     .await
     .unwrap();
