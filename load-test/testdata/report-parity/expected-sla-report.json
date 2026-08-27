@@ -1,15 +1,11 @@
 {
   "valid": true,
   "generation": {
-    "offered_tps": 2,
+    "planned_originals": 4,
+    "executed_originals": 4,
     "required_minimum_tps": 1,
-    "started": 4,
-    "rolling_window_seconds": 1,
-    "average_tps": 2,
-    "minimum_observed_tps": 2,
-    "maximum_observed_tps": 2,
-    "sustained_minimum_met": true,
-    "outside_window": 0
+    "minimum_rolling_tps": 2,
+    "valid": true
   },
   "scenarios": [
     {
@@ -56,17 +52,6 @@
   "replays": {
     "pacs008": { "started": 1, "accepted": 1, "violations": 0 },
     "pacs002": { "started": 1, "accepted": 1, "violations": 0 }
-  },
-  "notification_pull": {
-    "batches": {
-      "count": 6,
-      "empty_responses": 1,
-      "mean": 1.167,
-      "p50": 1,
-      "p95": 2,
-      "max": 2
-    },
-    "violations": 0
   },
   "performance": {
     "threshold_ms": 1000,

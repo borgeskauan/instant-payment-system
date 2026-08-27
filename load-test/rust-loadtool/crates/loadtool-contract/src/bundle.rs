@@ -6,9 +6,8 @@ use anyhow::{Context, Result, anyhow};
 use crate::event::{
     RunEvents, read_notifications, read_pacs002_starts, read_pacs008_starts, read_replays,
 };
-use crate::generator_metrics::GeneratorMetrics;
+use crate::generation_window::GenerationWindow;
 use crate::model::{ExecutionPlan, ProfileSnapshot};
-use crate::run_window::{ResolvedWindow, RunWindow};
 
 #[derive(Debug)]
 pub struct PreparedRun {
@@ -20,9 +19,7 @@ pub struct PreparedRun {
 pub struct CompletedRun {
     pub profile: ProfileSnapshot,
     pub plan: ExecutionPlan,
-    pub run_window: RunWindow,
-    pub window: ResolvedWindow,
-    pub generator_metrics: GeneratorMetrics,
+    pub window: GenerationWindow,
     pub events: RunEvents,
 }
 
@@ -86,24 +83,14 @@ impl Bundle {
         self.load_inputs()
     }
 
-    pub fn load_completed(&self) -> Result<CompletedRun> {
+    pub fn load_completed(&self, window: GenerationWindow) -> Result<CompletedRun> {
         require_regular_file(&self.profile, "profile.json")?;
         require_regular_file(&self.execution_plan, "execution-plan.json")?;
         require_directory(&self.events_dir, "events")?;
-        require_regular_file(&self.run_window, "run-window.json")?;
-        require_regular_file(&self.generator_metrics, "generator-metrics.json")?;
         require_absent(&self.report, "sla-report.json")?;
 
         let prepared = self.load_inputs()?;
-        let window_data = fs::read(&self.run_window)
-            .with_context(|| format!("read {}", self.run_window.display()))?;
-        let run_window = RunWindow::decode(&window_data)
-            .with_context(|| format!("decode {}", self.run_window.display()))?;
-        let window = run_window.resolve(&prepared.profile.name, &prepared.plan)?;
-        let metrics_data = fs::read(&self.generator_metrics)
-            .with_context(|| format!("read {}", self.generator_metrics.display()))?;
-        let generator_metrics: GeneratorMetrics = serde_json::from_slice(&metrics_data)
-            .with_context(|| format!("decode {}", self.generator_metrics.display()))?;
+        window.validate(&prepared.plan)?;
         let events = RunEvents {
             pacs008: read_pacs008_starts(&self.events_dir.join("pacs008-starts.csv"))?,
             pacs002: read_pacs002_starts(&self.events_dir.join("pacs002-starts.csv"))?,
@@ -113,9 +100,7 @@ impl Bundle {
         Ok(CompletedRun {
             profile: prepared.profile,
             plan: prepared.plan,
-            run_window,
             window,
-            generator_metrics,
             events,
         })
     }

@@ -1,11 +1,15 @@
 use std::fs;
 
 use loadtool_contract::bundle::Bundle;
+use loadtool_contract::generation_window::GenerationWindow;
 
 #[test]
 fn report_deep_matches_the_frozen_contract_fixture() {
     let root = fixture_root();
-    let completed = Bundle::resolve(&root).unwrap().load_completed().unwrap();
+    let completed = Bundle::resolve(&root)
+        .unwrap()
+        .load_completed(fixture_window())
+        .unwrap();
     let actual = serde_json::to_value(loadtool_report::build(completed).unwrap()).unwrap();
     let expected: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("expected-sla-report.json")).unwrap()).unwrap();
@@ -14,23 +18,26 @@ fn report_deep_matches_the_frozen_contract_fixture() {
 }
 
 #[test]
-fn invalid_generation_forces_the_final_report_invalid() {
+fn incomplete_planned_generation_forces_the_final_report_invalid() {
     let temp = copy_fixture();
-    let metrics = temp
-        .path()
-        .join("diagnostics/loadtool/generator-metrics.json");
-    let value = fs::read_to_string(&metrics)
-        .unwrap()
-        .replace("\"valid\": true", "\"valid\": false");
-    fs::write(metrics, value).unwrap();
+    rewrite(&temp.path().join("events/pacs008-starts.csv"), |contents| {
+        contents
+            .lines()
+            .filter(|line| !line.starts_with("fixture-3,"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
+    });
 
     let completed = Bundle::resolve(temp.path())
         .unwrap()
-        .load_completed()
+        .load_completed(fixture_window())
         .unwrap();
     let report = loadtool_report::build(completed).unwrap();
     assert!(!report.valid);
-    assert!(report.generation.sustained_minimum_met);
+    assert_eq!(report.generation.planned_originals, 4);
+    assert_eq!(report.generation.executed_originals, 3);
+    assert!(!report.generation.valid);
     assert!(report.performance.within_sla);
 }
 
@@ -38,12 +45,12 @@ fn invalid_generation_forces_the_final_report_invalid() {
 fn report_publication_is_atomic_and_never_overwrites() {
     let temp = copy_fixture();
     let bundle = Bundle::resolve(temp.path()).unwrap();
-    let report = loadtool_report::write(&bundle).unwrap();
+    let report = loadtool_report::write(&bundle, fixture_window()).unwrap();
     assert!(report.valid);
     let bytes = fs::read(temp.path().join("sla-report.json")).unwrap();
     assert_eq!(*bytes.last().unwrap(), b'\n');
 
-    let error = loadtool_report::write(&bundle).unwrap_err();
+    let error = loadtool_report::write(&bundle, fixture_window()).unwrap_err();
     assert!(format!("{error:#}").contains("already exists"));
 }
 
@@ -117,26 +124,12 @@ fn ingress_and_replay_defects_are_reported_as_violations() {
 }
 
 #[test]
-fn late_pacs002_and_pull_protocol_violations_invalidate_the_run() {
+fn late_pacs002_invalidates_the_run() {
     let late = copy_fixture();
     rewrite(&late.path().join("events/pacs002-starts.csv"), |contents| {
         contents.replace("1767225601100000000", "1767225603000000000")
     });
     assert!(build_fixture(late.path()).replays.pacs002.violations > 0);
-
-    let pull = copy_fixture();
-    let metrics = pull
-        .path()
-        .join("diagnostics/loadtool/generator-metrics.json");
-    let mut document: serde_json::Value =
-        serde_json::from_slice(&fs::read(&metrics).unwrap()).unwrap();
-    document["valid"] = false.into();
-    document["violations"] =
-        serde_json::json!(["notification Pull returned 16 messages above protocol maximum"]);
-    fs::write(&metrics, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
-    let report = build_fixture(pull.path());
-    assert_eq!(report.notification_pull.violations, 1);
-    assert!(!report.valid);
 }
 
 fn fixture_root() -> std::path::PathBuf {
@@ -150,8 +143,20 @@ fn copy_fixture() -> tempfile::TempDir {
 }
 
 fn build_fixture(root: &std::path::Path) -> loadtool_report::SlaReport {
-    let completed = Bundle::resolve(root).unwrap().load_completed().unwrap();
+    let completed = Bundle::resolve(root)
+        .unwrap()
+        .load_completed(fixture_window())
+        .unwrap();
     loadtool_report::build(completed).unwrap()
+}
+
+fn fixture_window() -> GenerationWindow {
+    GenerationWindow {
+        generation_started_at_ns: 1_767_225_600_000_000_000,
+        active_started_at_ns: 1_767_225_601_000_000_000,
+        generation_ended_at_ns: 1_767_225_603_000_000_000,
+        replay_deadline_at_ns: 1_767_225_613_000_000_000,
+    }
 }
 
 fn rewrite(path: &std::path::Path, transform: impl FnOnce(String) -> String) {

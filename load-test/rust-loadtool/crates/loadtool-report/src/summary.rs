@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow, bail};
 use loadtool_contract::bundle::CompletedRun;
 use loadtool_contract::event::{Pacs002Start, Pacs008Start, Replay};
-use loadtool_contract::generator_metrics::PullMetrics;
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_contract::model::Scenario;
-use loadtool_contract::run_window::ResolvedWindow;
 use serde::{Serialize, Serializer};
 
 use crate::generation::{self, GenerationSummary};
@@ -18,25 +17,7 @@ pub struct SlaReport {
     pub generation: GenerationSummary,
     pub scenarios: Vec<ScenarioSummary>,
     pub replays: ReplaySummary,
-    pub notification_pull: NotificationPullSummary,
     pub performance: PerformanceSummary,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct NotificationPullSummary {
-    pub batches: NotificationPullBatchSummary,
-    pub violations: usize,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct NotificationPullBatchSummary {
-    pub count: usize,
-    pub empty_responses: usize,
-    #[serde(serialize_with = "serialize_metric")]
-    pub mean: f64,
-    pub p50: usize,
-    pub p95: usize,
-    pub max: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -156,10 +137,6 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
                 &run.window,
             ),
         },
-        notification_pull: summarize_pull(
-            &run.generator_metrics.pull,
-            &run.generator_metrics.violations,
-        ),
         performance: PerformanceSummary {
             threshold_ms: run.profile.reporting.sla_threshold_ms,
             ..PerformanceSummary::default()
@@ -216,7 +193,8 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
         as f64
         / 1_000_000_000.0;
     if duration_seconds > 0.0 {
-        report.performance.active_tps.payments = report.generation.average_tps;
+        report.performance.active_tps.payments =
+            round_three(measured_starts.len() as f64 / duration_seconds);
         report.performance.active_tps.pacs002 =
             round_three(measured_statuses.len() as f64 / duration_seconds);
         report.performance.active_tps.pacs008_replays =
@@ -271,12 +249,9 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     {
         summary.performance.latency_ms = summarize_latency(values);
     }
-    report.valid = run.generator_metrics.valid
-        && report.generation.sustained_minimum_met
-        && report.generation.outside_window == 0
+    report.valid = report.generation.valid
         && report.replays.pacs008.violations == 0
         && report.replays.pacs002.violations == 0
-        && report.notification_pull.violations == 0
         && report
             .scenarios
             .iter()
@@ -348,51 +323,9 @@ fn validate_scenarios(
     Ok(())
 }
 
-fn summarize_pull(metrics: &PullMetrics, violations: &[String]) -> NotificationPullSummary {
-    let mut summary = NotificationPullSummary {
-        batches: NotificationPullBatchSummary {
-            empty_responses: metrics.empty_responses as usize,
-            ..NotificationPullBatchSummary::default()
-        },
-        violations: usize::from(
-            violations
-                .iter()
-                .any(|value| value.contains("above protocol maximum")),
-        ),
-    };
-    let mut weighted = 0u64;
-    for size in 1..metrics.batch_size_counts.len() {
-        let count = metrics.batch_size_counts[size];
-        summary.batches.count += count as usize;
-        weighted += size as u64 * count;
-        if count > 0 {
-            summary.batches.max = size;
-        }
-    }
-    if summary.batches.count > 0 {
-        summary.batches.mean = round_three(weighted as f64 / summary.batches.count as f64);
-        summary.batches.p50 = histogram_percentile(&metrics.batch_size_counts, 0.50);
-        summary.batches.p95 = histogram_percentile(&metrics.batch_size_counts, 0.95);
-    }
-    summary
-}
-
-fn histogram_percentile(counts: &[u64; 16], quantile: f64) -> usize {
-    let total: u64 = counts.iter().sum();
-    let target = (total as f64 * quantile).ceil() as u64;
-    let mut cumulative = 0;
-    for (size, count) in counts.iter().enumerate().skip(1) {
-        cumulative += count;
-        if cumulative >= target {
-            return size;
-        }
-    }
-    0
-}
-
 fn measured_starts<'a>(
     starts: &'a [Pacs008Start],
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
 ) -> Vec<&'a Pacs008Start> {
     starts
         .iter()
@@ -402,7 +335,7 @@ fn measured_starts<'a>(
 
 fn measured_statuses<'a>(
     starts: &'a [Pacs002Start],
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
 ) -> Vec<&'a Pacs002Start> {
     starts
         .iter()
@@ -413,7 +346,7 @@ fn measured_statuses<'a>(
 fn measured_replays<'a>(
     replays: &'a [Replay],
     message: &str,
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
 ) -> Vec<&'a Replay> {
     replays
         .iter()
@@ -423,7 +356,7 @@ fn measured_replays<'a>(
         .collect()
 }
 
-fn in_active(timestamp: i64, window: &ResolvedWindow) -> bool {
+fn in_active(timestamp: i64, window: &GenerationWindow) -> bool {
     timestamp >= window.active_started_at_ns && timestamp < window.generation_ended_at_ns
 }
 

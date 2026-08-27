@@ -3,6 +3,7 @@ use std::io::Write;
 
 use anyhow::{Context, Result, anyhow};
 use loadtool_contract::bundle::{Bundle, CompletedRun};
+use loadtool_contract::generation_window::GenerationWindow;
 
 pub mod generation;
 mod outcome;
@@ -15,8 +16,8 @@ pub fn build(completed: CompletedRun) -> Result<SlaReport> {
     summary::build(completed)
 }
 
-pub fn write(bundle: &Bundle) -> Result<SlaReport> {
-    let completed = bundle.load_completed()?;
+pub fn write(bundle: &Bundle, window: GenerationWindow) -> Result<SlaReport> {
+    let completed = bundle.load_completed(window)?;
     let report = build(completed)?;
     let path = bundle.report();
     let parent = path.parent().context("report path has no parent")?;

@@ -35,6 +35,7 @@ use loadtool_contract::bundle::{Bundle, PreparedRun};
 use loadtool_contract::event::{
     Event, MessageKind, NotificationKind, NotificationStatus, Participant,
 };
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_contract::generator_metrics::{
     FlowInFlight, GeneratorMetrics, HistogramSummary, InFlightMetrics, PacerDeadlineMisses,
     PacerMisses, ProcessMetrics, PullMetrics, SemanticAdmissionMisses, SlotMetrics,
@@ -314,7 +315,7 @@ fn rollback_tracker(tracker: &PhaseTracker, count: u8) {
     }
 }
 
-pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
+pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<GenerationWindow> {
     let PreparedRun { profile, plan } = bundle.load_prepared()?;
     bundle.prepare_outputs()?;
     let plan = Arc::new(plan);
@@ -536,6 +537,16 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
     if let Some(error) = operational_error {
         return Err(anyhow!(error));
     }
+    let window = GenerationWindow {
+        generation_started_at_ns: i64::try_from(clock.unix_nanos(warmup_start)?)
+            .context("generation start exceeds i64 nanoseconds")?,
+        active_started_at_ns: i64::try_from(clock.unix_nanos(active_start)?)
+            .context("active start exceeds i64 nanoseconds")?,
+        generation_ended_at_ns: i64::try_from(clock.unix_nanos(generation_end)?)
+            .context("generation end exceeds i64 nanoseconds")?,
+        replay_deadline_at_ns: i64::try_from(clock.unix_nanos(hard_deadline)?)
+            .context("replay deadline exceeds i64 nanoseconds")?,
+    };
     write_run_window_atomic(
         bundle.run_window(),
         &RunWindow::new(
@@ -559,7 +570,7 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<()> {
         metrics.valid,
         bundle.events_dir().display()
     );
-    Ok(())
+    Ok(window)
 }
 
 #[allow(clippy::too_many_arguments)]

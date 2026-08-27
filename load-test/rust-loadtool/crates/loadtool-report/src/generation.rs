@@ -1,69 +1,55 @@
 use loadtool_contract::event::Pacs008Start;
-use loadtool_contract::run_window::ResolvedWindow;
-use serde::{Serialize, Serializer};
+use loadtool_contract::generation_window::GenerationWindow;
+use serde::Serialize;
 
 const ROLLING_WINDOW_NS: i64 = 1_000_000_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct GenerationSummary {
-    pub offered_tps: u64,
+    pub planned_originals: u64,
+    pub executed_originals: usize,
     pub required_minimum_tps: u64,
-    pub started: usize,
-    pub rolling_window_seconds: u8,
-    #[serde(serialize_with = "serialize_metric")]
-    pub average_tps: f64,
-    pub minimum_observed_tps: usize,
-    pub maximum_observed_tps: usize,
-    pub sustained_minimum_met: bool,
-    pub outside_window: usize,
+    pub minimum_rolling_tps: usize,
+    pub valid: bool,
 }
 
 pub fn summarize(
     starts: &[Pacs008Start],
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
     offered_tps: u64,
     required_minimum_tps: u64,
 ) -> GenerationSummary {
     let mut summary = GenerationSummary {
-        offered_tps,
+        planned_originals: offered_tps.saturating_mul(
+            u64::try_from(
+                (window.generation_ended_at_ns - window.active_started_at_ns) / ROLLING_WINDOW_NS,
+            )
+            .unwrap_or_default(),
+        ),
         required_minimum_tps,
-        rolling_window_seconds: 1,
         ..GenerationSummary::default()
     };
     let mut timestamps = Vec::with_capacity(starts.len());
     for start in starts {
         let started_at = request_started_at(start);
-        if started_at < window.generation_started_at_ns
-            || started_at >= window.generation_ended_at_ns
-        {
-            summary.outside_window += 1;
-        }
         if started_at >= window.active_started_at_ns && started_at < window.generation_ended_at_ns {
             timestamps.push(started_at);
         }
     }
-    summary.started = timestamps.len();
+    summary.executed_originals = timestamps.len();
     let duration_ns = window.generation_ended_at_ns - window.active_started_at_ns;
-    if duration_ns > 0 {
-        summary.average_tps =
-            round_three(summary.started as f64 / (duration_ns as f64 / ROLLING_WINDOW_NS as f64));
-    }
     if duration_ns < ROLLING_WINDOW_NS || timestamps.is_empty() {
         return summary;
     }
 
     timestamps.sort_unstable();
-    summary.minimum_observed_tps = minimum_rolling_count(
+    summary.minimum_rolling_tps = minimum_rolling_count(
         &timestamps,
         window.active_started_at_ns,
         window.generation_ended_at_ns,
     );
-    summary.maximum_observed_tps = maximum_rolling_count(
-        &timestamps,
-        window.active_started_at_ns,
-        window.generation_ended_at_ns,
-    );
-    summary.sustained_minimum_met = summary.minimum_observed_tps >= required_minimum_tps as usize;
+    summary.valid = summary.executed_originals as u64 == summary.planned_originals
+        && summary.minimum_rolling_tps >= required_minimum_tps as usize;
     summary
 }
 
@@ -111,49 +97,6 @@ fn minimum_rolling_count(timestamps: &[i64], active_start: i64, active_end: i64)
     minimum
 }
 
-fn maximum_rolling_count(timestamps: &[i64], active_start: i64, active_end: i64) -> usize {
-    let last_start = active_end - ROLLING_WINDOW_NS;
-    let mut left = 0;
-    let mut right = 0;
-    let mut maximum = 0;
-    observe(
-        timestamps,
-        active_start,
-        &mut left,
-        &mut right,
-        &mut maximum,
-        true,
-    );
-    let mut last_candidate = Some(active_start);
-    for &timestamp in timestamps {
-        if timestamp > last_start {
-            break;
-        }
-        if Some(timestamp) != last_candidate {
-            observe(
-                timestamps,
-                timestamp,
-                &mut left,
-                &mut right,
-                &mut maximum,
-                true,
-            );
-            last_candidate = Some(timestamp);
-        }
-    }
-    if last_candidate != Some(last_start) {
-        observe(
-            timestamps,
-            last_start,
-            &mut left,
-            &mut right,
-            &mut maximum,
-            true,
-        );
-    }
-    maximum
-}
-
 fn observe(
     timestamps: &[i64],
     start: i64,
@@ -183,20 +126,5 @@ fn request_started_at(start: &Pacs008Start) -> i64 {
         start.created_at_ns
     } else {
         start.request_started_at_ns
-    }
-}
-
-fn round_three(value: f64) -> f64 {
-    (value * 1000.0).round() / 1000.0
-}
-
-fn serialize_metric<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value <= i64::MAX as f64 {
-        serializer.serialize_i64(*value as i64)
-    } else {
-        serializer.serialize_f64(*value)
     }
 }

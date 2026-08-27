@@ -4,7 +4,7 @@ use loadtool_contract::bundle::Bundle;
 use loadtool_contract::event::{
     Pacs008Start, read_notifications, read_pacs002_starts, read_pacs008_starts, read_replays,
 };
-use loadtool_contract::run_window::ResolvedWindow;
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_report::generation;
 
 #[test]
@@ -26,9 +26,8 @@ fn strict_csv_readers_accept_the_checked_in_fixture() {
 
 #[test]
 fn rolling_windows_find_unaligned_gaps_and_do_not_credit_later_spikes() {
-    let window = ResolvedWindow {
+    let window = GenerationWindow {
         generation_started_at_ns: 0,
-        warmup_ended_at_ns: 1_000_000_000,
         active_started_at_ns: 1_000_000_000,
         generation_ended_at_ns: 3_000_000_000,
         replay_deadline_at_ns: 4_000_000_000,
@@ -48,11 +47,11 @@ fn rolling_windows_find_unaligned_gaps_and_do_not_credit_later_spikes() {
         .collect();
 
     let summary = generation::summarize(&starts, &window, 3, 3);
-    assert_eq!(summary.started, 6);
-    assert_eq!(summary.average_tps, 3.0);
-    assert_eq!(summary.minimum_observed_tps, 1);
-    assert_eq!(summary.maximum_observed_tps, 3);
-    assert!(!summary.sustained_minimum_met);
+    assert_eq!(summary.planned_originals, 6);
+    assert_eq!(summary.executed_originals, 6);
+    assert_eq!(summary.required_minimum_tps, 3);
+    assert_eq!(summary.minimum_rolling_tps, 1);
+    assert!(!summary.valid);
 }
 
 fn start(index: usize, timestamp: i64) -> Pacs008Start {
@@ -108,45 +107,28 @@ fn strict_csv_readers_reject_schema_and_value_drift() {
 #[test]
 fn completed_bundle_requires_every_artifact_and_matching_profile() {
     let bundle = Bundle::resolve(&fixture_root()).unwrap();
-    let completed = bundle.load_completed().expect("valid completed fixture");
+    let completed = bundle
+        .load_completed(fixture_window())
+        .expect("valid completed fixture");
     assert_eq!(completed.plan.profile, "report-parity");
-    assert!(completed.generator_metrics.valid);
     assert_eq!(completed.events.pacs008.len(), 4);
 
     let temp = copy_fixture();
     fs::remove_file(temp.path().join("events/replays.csv")).unwrap();
     let error = Bundle::resolve(temp.path())
         .unwrap()
-        .load_completed()
+        .load_completed(fixture_window())
         .unwrap_err();
     assert!(error.to_string().contains("replays.csv"));
+}
 
-    let temp = copy_fixture();
-    let window = temp.path().join("run-window.json");
-    let contents = fs::read_to_string(&window)
-        .unwrap()
-        .replace("report-parity", "wrong-profile");
-    fs::write(window, contents).unwrap();
-    assert!(
-        Bundle::resolve(temp.path())
-            .unwrap()
-            .load_completed()
-            .is_err()
-    );
-
-    let temp = copy_fixture();
-    fs::write(
-        temp.path()
-            .join("diagnostics/loadtool/generator-metrics.json"),
-        "{not-json}",
-    )
-    .unwrap();
-    assert!(
-        Bundle::resolve(temp.path())
-            .unwrap()
-            .load_completed()
-            .is_err()
-    );
+fn fixture_window() -> GenerationWindow {
+    GenerationWindow {
+        generation_started_at_ns: 1_767_225_600_000_000_000,
+        active_started_at_ns: 1_767_225_601_000_000_000,
+        generation_ended_at_ns: 1_767_225_603_000_000_000,
+        replay_deadline_at_ns: 1_767_225_613_000_000_000,
+    }
 }
 
 fn fixture_root() -> std::path::PathBuf {

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use loadtool_contract::event::{Pacs002Start, Pacs008Start, Replay};
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_contract::model::ReplayRule;
-use loadtool_contract::run_window::ResolvedWindow;
 use serde::Serialize;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -22,7 +22,7 @@ pub(crate) fn pacs008(
     starts: &[Pacs008Start],
     replays: &[Replay],
     configured: Option<&ReplayRule>,
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
 ) -> ReplayTypeSummary {
     let starts_by_id: HashMap<_, _> = starts
         .iter()
@@ -79,7 +79,7 @@ pub(crate) fn pacs002(
     starts: &[Pacs002Start],
     replays: &[Replay],
     configured: Option<&ReplayRule>,
-    window: &ResolvedWindow,
+    window: &GenerationWindow,
 ) -> ReplayTypeSummary {
     let starts_by_id: HashMap<_, _> = starts
         .iter()

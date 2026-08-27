@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use loadtool_contract::bundle::Bundle;
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_generator::simulator::{self, SimulationOptions};
 
 pub mod profile;
@@ -20,7 +21,7 @@ pub async fn run(options: RunOptions) -> Result<()> {
         &options.run_dir,
         options.generator,
         simulator::run,
-        |bundle| loadtool_report::write(bundle).map(|_| ()),
+        |bundle, window| loadtool_report::write(bundle, window).map(|_| ()),
     )
     .await
 }
@@ -34,11 +35,11 @@ pub async fn run_with<G, F, R>(
 ) -> Result<()>
 where
     G: FnOnce(Bundle, SimulationOptions) -> F,
-    F: Future<Output = Result<()>>,
-    R: FnOnce(&Bundle) -> Result<()>,
+    F: Future<Output = Result<GenerationWindow>>,
+    R: FnOnce(&Bundle, GenerationWindow) -> Result<()>,
 {
     let bundle = Bundle::resolve(run_dir)?;
     bundle.load_prepared()?;
-    generator(bundle.clone(), options).await?;
-    reporter(&bundle)
+    let window = generator(bundle.clone(), options).await?;
+    reporter(&bundle, window)
 }
