@@ -5,10 +5,28 @@ set -euo pipefail
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPOSITORY_ROOT="$(cd "${LOAD_TEST_DIR}/.." && pwd)"
 readonly COMPOSE_FILE="${REPOSITORY_ROOT}/infra/docker-compose.yml"
+readonly LOADTOOL_PROFILES_DIR="${LOADTOOL_PROFILES_DIR:-${LOAD_TEST_DIR}/profiles}"
+readonly PREPARED_ENVIRONMENT_ROOT="${PREPARED_ENVIRONMENT_ROOT:-${LOAD_TEST_DIR}/.prepared-environment}"
+readonly RUST_LOADTOOL_TARGET_DIR="${RUST_LOADTOOL_TARGET_DIR:-/tmp/rust-loadtool-target}"
 readonly STACK_READINESS_SCRIPT="${STACK_READINESS_SCRIPT:-${LOAD_TEST_DIR}/scripts/wait-for-performance-stack.sh}"
+readonly PROVISION_PROFILE_FUNDS_SCRIPT="${PROVISION_PROFILE_FUNDS_SCRIPT:-${LOAD_TEST_DIR}/scripts/provision-profile-funds.sh}"
+readonly PARTICIPANTS_SCRIPT="${PARTICIPANTS_SCRIPT:-${LOAD_TEST_DIR}/scripts/execution-plan-participants.py}"
+readonly LOADTOOL_CERT_SCRIPT="${LOADTOOL_CERT_SCRIPT:-${REPOSITORY_ROOT}/infra/certs/generate-local-mtls-certs.sh}"
+readonly LOADTOOL_CA_CERT="${LOADTOOL_CA_CERT:-${REPOSITORY_ROOT}/infra/certs/local/ca/ca.crt}"
+
+PROFILE_NAME="uniform-smoke"
+PROFILE_PATH=""
+STAGING_DIR=""
+FINAL_DIR=""
+LOADTOOL_BIN=""
 
 usage() {
-    echo "Usage: $(basename "$0")"
+    cat <<EOF
+Usage: $(basename "$0") [--profile NAME]
+
+Prepare a fresh stack, funds, and certificates for one load-test profile.
+The default profile is uniform-smoke.
+EOF
 }
 
 log_phase() {
@@ -16,26 +34,78 @@ log_phase() {
 }
 
 parse_args() {
-    if [[ $# -eq 0 ]]; then
-        return 0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile)
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    echo "--profile requires a profile name." >&2
+                    return 2
+                fi
+                PROFILE_NAME="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Unknown argument: $1" >&2
+                usage >&2
+                return 2
+                ;;
+        esac
+    done
+    if [[ ! "$PROFILE_NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+        echo "Invalid profile name '$PROFILE_NAME'." >&2
+        return 2
     fi
-    if [[ $# -eq 1 && ("$1" == -h || "$1" == --help) ]]; then
-        usage
-        exit 0
+    PROFILE_PATH="${LOADTOOL_PROFILES_DIR}/${PROFILE_NAME}.json"
+    if [[ ! -f "$PROFILE_PATH" ]]; then
+        echo "Profile '$PROFILE_NAME' not found." >&2
+        return 2
     fi
-    usage >&2
-    return 2
 }
 
 validate_dependencies() {
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "docker is required." >&2
+    command -v cargo >/dev/null 2>&1 || { echo "cargo is required." >&2; return 1; }
+    command -v docker >/dev/null 2>&1 || { echo "docker is required." >&2; return 1; }
+    for script in "$STACK_READINESS_SCRIPT" "$PROVISION_PROFILE_FUNDS_SCRIPT" "$PARTICIPANTS_SCRIPT" "$LOADTOOL_CERT_SCRIPT"; do
+        if [[ ! -x "$script" ]]; then
+            echo "Required script is not executable: $script" >&2
+            return 1
+        fi
+    done
+}
+
+cleanup() {
+    local status=$?
+    trap - EXIT INT TERM
+    if [[ -n "$STAGING_DIR" && -e "$STAGING_DIR" ]]; then
+        rm -rf "$STAGING_DIR"
+    fi
+    exit "$status"
+}
+
+build_and_validate_profile() {
+    log_phase "building Rust load-tool"
+    cargo build \
+        --locked \
+        --release \
+        --manifest-path "${LOAD_TEST_DIR}/rust-loadtool/Cargo.toml" \
+        --target-dir "$RUST_LOADTOOL_TARGET_DIR"
+    LOADTOOL_BIN="${RUST_LOADTOOL_TARGET_DIR}/release/rust-loadtool"
+    if [[ ! -x "$LOADTOOL_BIN" ]]; then
+        echo "Rust load-tool binary was not produced: $LOADTOOL_BIN" >&2
         return 1
     fi
-    if [[ ! -x "$STACK_READINESS_SCRIPT" ]]; then
-        echo "Performance stack readiness script does not exist or is not executable: $STACK_READINESS_SCRIPT" >&2
-        return 1
-    fi
+
+    mkdir -p "${STAGING_DIR}/inputs"
+    cp "$PROFILE_PATH" "${STAGING_DIR}/inputs/profile.json"
+    log_phase "validating profile $PROFILE_NAME"
+    (
+        cd "${LOAD_TEST_DIR}/rust-loadtool"
+        "$LOADTOOL_BIN" validate-profile --profile "$PROFILE_NAME"
+    ) > "${STAGING_DIR}/inputs/execution-plan.json"
 }
 
 reset_and_start_stack() {
@@ -44,27 +114,56 @@ reset_and_start_stack() {
     local_gid="$(id -g)"
 
     log_phase "removing the previous performance stack and volumes"
-    if ! docker compose -f "$COMPOSE_FILE" down -v --remove-orphans; then
-        return 1
-    fi
-
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans
     log_phase "building and starting the performance stack"
-    if ! LOCAL_UID="$local_uid" LOCAL_GID="$local_gid" \
-        docker compose -f "$COMPOSE_FILE" up -d --build; then
+    LOCAL_UID="$local_uid" LOCAL_GID="$local_gid" \
+        docker compose -f "$COMPOSE_FILE" up -d --build
+}
+
+generate_certificates() {
+    local plan="${STAGING_DIR}/inputs/execution-plan.json"
+    local normalized record first hot cold count pair suffix
+
+    if [[ ! -f "$LOADTOOL_CA_CERT" ]]; then
+        echo "Local mTLS CA not found after stack startup: $LOADTOOL_CA_CERT" >&2
         return 1
     fi
+    if ! normalized="$("$PARTICIPANTS_SCRIPT" "$plan")"; then
+        return 1
+    fi
+    mkdir -p "${STAGING_DIR}/certs"
+    while IFS=$'\t' read -r first hot cold _; do
+        count=$((hot + cold))
+        for ((pair = first; pair < first + count; pair++)); do
+            suffix="$(printf '%06d' "$pair")"
+            "$LOADTOOL_CERT_SCRIPT" --psp-root "${STAGING_DIR}/certs" psp "10${suffix}" >/dev/null
+            "$LOADTOOL_CERT_SCRIPT" --psp-root "${STAGING_DIR}/certs" psp "20${suffix}" >/dev/null
+        done
+    done <<< "$normalized"
 }
 
 main() {
-    parse_args "$@" || return $?
-    validate_dependencies || return 1
-    reset_and_start_stack || return 1
+    parse_args "$@"
+    validate_dependencies
+    mkdir -p "$PREPARED_ENVIRONMENT_ROOT"
+    STAGING_DIR="${PREPARED_ENVIRONMENT_ROOT}/.${PROFILE_NAME}.staging"
+    FINAL_DIR="${PREPARED_ENVIRONMENT_ROOT}/${PROFILE_NAME}"
+    rm -rf "$STAGING_DIR"
+    rm -rf "$FINAL_DIR"
+    trap cleanup EXIT
+    trap 'exit 130' INT TERM
 
+    build_and_validate_profile
+    reset_and_start_stack
     log_phase "waiting for the performance stack to become ready"
-    "$STACK_READINESS_SCRIPT" || return 1
-    log_phase "performance environment is ready"
-    echo "Start a measured run with:"
-    echo "  ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic <run-tag>"
+    "$STACK_READINESS_SCRIPT"
+    log_phase "provisioning profile funds"
+    "$PROVISION_PROFILE_FUNDS_SCRIPT" --execution-plan "${STAGING_DIR}/inputs/execution-plan.json"
+    log_phase "generating PSP certificates"
+    generate_certificates
+    mv "$STAGING_DIR" "$FINAL_DIR"
+    STAGING_DIR=""
+    log_phase "prepared environment published: ${FINAL_DIR}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
