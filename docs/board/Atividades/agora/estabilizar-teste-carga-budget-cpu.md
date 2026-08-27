@@ -483,12 +483,12 @@ SLA final.
 - [ ] Definir memória alvo por serviço junto com CPU para evitar OOM ou swap.
 - [ ] Ajustar concorrência de consumers/producers apenas quando a comparação
   demonstrar benefício dentro do budget final.
-- [ ] Sustentar o piso de 2.000 pagamentos originais em toda rolling window de
+- [x] Sustentar o piso de 2.000 pagamentos originais em toda rolling window de
   um segundo, dentro do SLA e com outcomes/replays corretos.
 - [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência
   de degradação progressiva e ambiente quiescente ao final. Lag Kafka zero não
   basta enquanto outbox e deliveries persistidas puderem continuar pendentes.
-- [ ] Verificar repetibilidade com cada execução medida partindo de volumes
+- [x] Verificar repetibilidade com cada execução medida partindo de volumes
   novos. Reutilizar uma única preparação entre runs somente depois de existir
   uma fronteira confiável de quiescência ou limpeza end-to-end.
 - [ ] Atualizar o load-test para registrar automaticamente o perfil efetivo de
@@ -3817,3 +3817,43 @@ O próprio gerador usou RSS máximo de aproximadamente `59,6 MiB`; seu pacer tev
 p99 de lateness de `0,322 ms`, o início HTTP p99 de `0,288 ms` e somente
 `9,949 ms` acumulados em spin ao longo do run. Esses sinais confirmam que a
 fronteira final mantém overhead próprio pequeno e não mascara o workload.
+
+### Qualificação longa repetida da stack única
+
+Depois do cutover completo para Rust, duas execuções consecutivas do profile
+oficial `mixed-outcomes-2k-15m` partiram de stacks e volumes novos preparados
+pelo comando público. Código, profile, recursos e instrumentação permaneceram
+idênticos:
+
+* `rust-qualification-15m-clean/20260827_030742`;
+* `rust-qualification-15m-repeat-clean/20260827_033639`.
+
+| sinal | primeira execução | repetição |
+| --- | ---: | ---: |
+| originais planejados / executados | `1.890.000 / 1.890.000` | `1.890.000 / 1.890.000` |
+| TPS médio ativo | `2.100` | `2.100` |
+| mínimo rolling de 1 segundo | `2.079` | `2.079` |
+| latência p50 / p95 | `144,418 / 236,033 ms` | `146,514 / 236,939 ms` |
+| latência p99 / máxima | `268,134 / 928,778 ms` | `259,956 / 606,208 ms` |
+| CPU média aproximada da stack | `1,18 vCPU` | `1,16 vCPU` |
+
+Nas duas execuções, todos os outcomes happy-path e insufficient-funds foram
+observados sem ausência ou contradição. Todos os replays PACS.008 e PACS.002
+iniciados receberam HTTP 2xx, e nenhuma latência ativa excedeu o threshold de
+`1 s`.
+
+A CPU média por componente também permaneceu estável:
+
+| componente | primeira execução | repetição |
+| --- | ---: | ---: |
+| PostgreSQL | `41,09%` | `39,78%` |
+| ingresso HTTP | `30,23%` | `30,20%` |
+| notification-gateway | `23,95%` | `23,63%` |
+| Kafka | `12,26%` | `12,22%` |
+| SPI | `10,26%` | `10,27%` |
+
+Essas evidências qualificam a capacidade e a repetibilidade de uma stack única
+no workload oficial, com ampla margem dentro do budget de aproximadamente
+`3 vCPUs`. Elas encerram a necessidade de tuning adicional nessa configuração,
+mas não concluem esta task: o perfil final de recursos para Kubernetes e a
+avaliação de duas stacks com PostgreSQL compartilhado permanecem pendentes.
