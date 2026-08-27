@@ -124,17 +124,23 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
             .map(scenario_summary)
             .collect::<Result<_>>()?,
         replays: ReplaySummary {
-            pacs008: replay::pacs008(
-                &run.events.pacs008,
+            pacs008: replay::summarize(
                 &run.events.replays,
-                run.plan.replay.pacs008.as_ref(),
-                &run.window,
+                "pacs.008",
+                run.events
+                    .pacs008
+                    .iter()
+                    .filter(|start| start.replay_selected)
+                    .count(),
             ),
-            pacs002: replay::pacs002(
-                &run.events.pacs002,
+            pacs002: replay::summarize(
                 &run.events.replays,
-                run.plan.replay.pacs002.as_ref(),
-                &run.window,
+                "pacs.002",
+                run.events
+                    .pacs002
+                    .iter()
+                    .filter(|start| start.replay_selected)
+                    .count(),
             ),
         },
         performance: PerformanceSummary {

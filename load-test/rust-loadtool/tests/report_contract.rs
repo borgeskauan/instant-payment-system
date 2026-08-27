@@ -87,7 +87,7 @@ fn missing_or_contradictory_payer_outcomes_are_violations() {
 }
 
 #[test]
-fn ingress_and_replay_defects_are_reported_as_violations() {
+fn ingress_and_aggregate_replay_failures_are_reported_as_violations() {
     let bad_http = copy_fixture();
     rewrite(
         &bad_http.path().join("events/pacs008-starts.csv"),
@@ -104,7 +104,6 @@ fn ingress_and_replay_defects_are_reported_as_violations() {
                 .join("\n")
                 + "\n"
         },
-        |contents| contents.replace("1767225602100000000", "1767225601999999999"),
         |contents| {
             let row = contents
                 .lines()
@@ -113,6 +112,7 @@ fn ingress_and_replay_defects_are_reported_as_violations() {
                 .to_owned();
             format!("{contents}{row}\n")
         },
+        |contents| contents.replacen("1767225602110000000,200", "1767225602110000000,500", 1),
     ];
     for mutate in mutations {
         let temp = copy_fixture();
@@ -124,12 +124,21 @@ fn ingress_and_replay_defects_are_reported_as_violations() {
 }
 
 #[test]
-fn late_pacs002_invalidates_the_run() {
+fn replay_identity_and_timing_are_not_report_qualification_rules() {
+    let replay = copy_fixture();
+    rewrite(&replay.path().join("events/replays.csv"), |contents| {
+        contents.replace(
+            "fixture-0,10000001,happy-path,pacs.008,1767225602100000000",
+            "unknown,99999999,unknown,pacs.008,1767225601999999999",
+        )
+    });
+    assert!(build_fixture(replay.path()).valid);
+
     let late = copy_fixture();
     rewrite(&late.path().join("events/pacs002-starts.csv"), |contents| {
         contents.replace("1767225601100000000", "1767225603000000000")
     });
-    assert!(build_fixture(late.path()).replays.pacs002.violations > 0);
+    assert!(build_fixture(late.path()).valid);
 }
 
 fn fixture_root() -> std::path::PathBuf {

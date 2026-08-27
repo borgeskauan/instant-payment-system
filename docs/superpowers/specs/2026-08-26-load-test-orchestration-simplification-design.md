@@ -299,9 +299,11 @@ batches de Pull, CPU e RSS do processo. Contadores estritamente necessários ao
 lifecycle ou à corretude concorrente podem continuar internos, mas não formam
 uma segunda interpretação da run e não são serializados.
 
-As validações de outcomes, replays e latência do SPI permanecem no report. Elas
-não são telemetria interna do gerador e continuam necessárias para qualificar a
-workload e seus SLAs.
+As validações de outcomes e latência do SPI permanecem no report. Para replays,
+o report conserva somente a integridade agregada da workload: quantidade
+selecionada igual à iniciada e todas as tentativas iniciadas aceitas via HTTP.
+Identidade, timing e igualdade byte a byte permanecem responsabilidade dos
+testes do gerador, não da qualificação de uma execução.
 
 ## Simplificação interna do Rust
 

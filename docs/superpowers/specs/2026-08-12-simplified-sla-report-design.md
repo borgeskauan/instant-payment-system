@@ -109,7 +109,7 @@ Scenario traffic and correctness cover the entire run, including warmup and drai
 
 Scenario `violations` aggregates that scenario's payment HTTP failures, original `pacs.002` HTTP/deadline failures, missing outcomes and contradictory outcomes. It remains a validation count, not a count of unique payments.
 
-Replay selection and accounting remain global because replay shares apply to their respective global populations. Replay `started`, `accepted` and `violations` preserve all existing checks for missing, excess, early, late, incompatible, unconfigured and non-`2xx` attempts.
+Replay selection and accounting remain global because replay shares apply to their respective global populations. Replay `started`, `accepted` and `violations` qualify only aggregate workload integrity: selected and started counts must match, and every started attempt must receive HTTP `2xx`. Identity, sender, scenario, timing and byte equality are generator properties covered by its focused tests rather than revalidated from its own evidence.
 
 Performance metrics remain active-window-only. Global and per-scenario latency use the earliest compatible payer notification for each accepted original payment started in the active window. Repeated compatible deliveries do not inflate rates or latency populations. Floating-point metrics are rounded to three decimal places in the published JSON.
 

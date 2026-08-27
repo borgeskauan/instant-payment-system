@@ -33,7 +33,11 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
 - `sla-report.json` é centrado nos cenários: cada cenário reúne seu tráfego de pagamentos e `pacs.002` originais, seu outcome lógico e suas métricas, enquanto geração de originais e replays permanecem globais;
 - no relatório, `started` significa tentativa HTTP iniciada e `accepted` significa resposta HTTP `2xx`; aceitação HTTP permanece distinta do outcome assíncrono de negócio;
-- o relatório valida tráfego, outcomes de negócio e replays no run inteiro; throughput, latência e threshold permanecem restritos à janela ativa;
+- o relatório valida tráfego e outcomes de negócio no run inteiro; para replays,
+  qualifica somente a quantidade agregada selecionada/iniciada e a aceitação
+  HTTP, enquanto identidade, timing e igualdade do payload permanecem nos
+  testes do gerador; throughput, latência e threshold permanecem restritos à
+  janela ativa;
 - o runner público executa uma única chamada `go-loadtool run --run-dir`, coleta diagnósticos mesmo quando essa chamada falha e preserva o exit code original do Go;
 - `loadtool_finished_at` registra o fim da chamada única, enquanto `replay_deadline_at` permanece o fim autoritativo da janela experimental;
 - o relatório publica `valid` como decisão agregada, verdadeira somente quando geração, todos os cenários e os dois tipos de replay têm zero violações; o runner retorna zero somente para `valid: true`;
@@ -252,7 +256,9 @@ Simulação e relatório continuam funcionalmente iguais para o contrato vigente
 - [x] Manter geração de pagamentos originais como contrato global, com target, esperado, iniciado, TPS efetivo e violações da janela autoritativa.
 - [x] Agrupar por cenário os pagamentos e `pacs.002` originais iniciados/aceitos, o outcome esperado/observado e as métricas da janela ativa.
 - [x] Preservar semântica `at-least-once`: entregas compatíveis repetidas contam como um resultado lógico; ausência ou qualquer entrega contraditória invalida o cenário.
-- [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas, com tentativas iniciadas, aceitas e violações.
+- [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas,
+  com tentativas iniciadas, aceitas e violações agregadas de quantidade/HTTP;
+  propriedades internas de cada replay ficam nos testes do gerador.
 - [x] Consolidar performance global em threshold, TPS ativo por tipo de tráfego, notificações posteriores à janela ativa e percentis de latência arredondados.
 - [x] Remover os blocos redundantes `run`, `transactions`, `status_messages`, `load_generation`, `throughput_per_second`, `payer_notification_latency_ms` e `diagnostics`.
 - [x] Manter `run-window.json`, `inputs/profile.json` e os quatro CSVs de `events/` como fontes autoritativas de janela, configuração e evidência detalhada.

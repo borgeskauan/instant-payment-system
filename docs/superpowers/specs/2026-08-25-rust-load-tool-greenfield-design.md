@@ -716,8 +716,10 @@ report
 tasks já concluídas. Assim é possível esperar todos os produtores antes de
 fechar o recorder sem acumular milhões de `JoinHandle`s. Ele não determina
 corretude, conclusão de obrigação ou validade do run. Na janela ativa, outcomes
-e replays ausentes são determinados pelo report a partir dos artefatos
-completos.
+ausentes e divergências entre a quantidade selecionada e executada de replays
+são determinados pelo report a partir dos artefatos completos. Identidade,
+timing e igualdade do payload de cada replay pertencem aos testes do gerador,
+não à qualificação de uma execução.
 
 ## Migração
 
