@@ -224,7 +224,6 @@ results/<tag>/<timestamp>/
 │   ├── notifications.csv
 │   └── replays.csv
 ├── diagnostics/
-│   └── loadtool/generator-metrics.json
 ├── logs/
 └── sla-report.json
 ```
@@ -232,22 +231,22 @@ results/<tag>/<timestamp>/
 `profile.json` e `execution-plan.json` são cópias byte a byte do estado
 preparado. Certificados não fazem parte do resultado.
 
-`run-window.json` e todo seu módulo de contrato são removidos. A janela
-autoritativa passa a fazer parte de `generator-metrics.json`:
+`run-window.json`, `generator-metrics.json` e seus módulos de contrato são
+removidos. O gerador devolve ao coordenador Rust somente um valor
+`GenerationWindow` em memória:
 
-```json
-{
-  "window": {
-    "generationStartedAtNs": 0,
-    "activeStartedAtNs": 0,
-    "generationEndedAtNs": 0,
-    "replayDeadlineAtNs": 0
-  }
-}
+```text
+GenerationWindow
+  generationStartedAtNs
+  activeStartedAtNs
+  generationEndedAtNs
+  replayDeadlineAtNs
 ```
 
 Os valores são timestamps Unix em nanossegundos projetados a partir da origem
-monotônica do gerador, na mesma base temporal dos CSVs. O report valida:
+monotônica do gerador, na mesma base temporal dos CSVs. O coordenador entrega
+esse valor diretamente ao reporter depois que o recorder foi fechado e os CSVs
+foram publicados. O report valida:
 
 - `activeStartedAtNs` não antecede o fim planejado do warmup;
 - `generationEndedAtNs = activeStartedAtNs + activeDuration`;
@@ -257,36 +256,52 @@ monotônica do gerador, na mesma base temporal dos CSVs. O report valida:
 Não existe `warmupEndedAt`: o fim planejado é derivado do execution plan e o
 início efetivo do active já está registrado.
 
-## Telemetria reduzida do gerador
+Como rerun histórico do report não existe, a janela não precisa sobreviver ao
+processo. Uma queda entre o fim da geração e a publicação do report torna a run
+operacionalmente inválida; não será criado artefato intermediário para tentar
+recuperá-la.
 
-`generator-metrics.json` mantém somente sinais necessários para qualificar o
-próprio gerador:
+## Qualificação mínima da geração
 
-- validade e violações do gerador;
-- slots planejados, iniciados, concluídos e perdidos;
-- motivos de misses do pacer e da admissão semântica;
-- histograma de lateness do pacer;
-- histograma de lateness do início HTTP;
-- violações de capacidade;
-- máximo de HTTP causal in-flight;
-- CPU e RSS máximo do processo;
-- distribuição dos batches de Pull;
-- janela autoritativa da execução.
+Não existe telemetria persistida do gerador. O report precisa responder somente
+duas perguntas sobre a carga original da janela ativa:
 
-São removidos do contrato e do hot path:
+1. todos os PACS.008 originais planejados foram executados;
+2. o piso sustentado de throughput foi cumprido em qualquer janela contínua de
+   um segundo.
 
-- slots `dispatched` como métrica persistida intermediária;
-- decomposição de deadline entre entrada, retorno do sleep e fim do spin;
-- lateness isolada do retorno do sleep;
-- dispatch lateness intermediária;
-- tempo total de spin;
-- in-flight separado de PACS.008 original e replay;
-- valor atual de in-flight causal ao final;
-- campos derivados que apenas repetem a soma de outros contadores.
+O execution plan determina `plannedOriginals` como `offeredTxRate ×
+activeDuration`. Os registros de `pacs008-starts.csv` cujo
+`request_started_at_ns` pertence a `[activeStartedAtNs, generationEndedAtNs)`
+determinam `executedOriginals` e a série usada no rolling scan.
 
-Essa poda remove atomics e observações introduzidas para diagnósticos pontuais
-já encerrados. Nenhum dado individual necessário para auditoria, gráficos ou
-reconstrução do report é removido dos CSVs.
+O relatório expõe somente:
+
+```json
+"generation": {
+  "plannedOriginals": 1890000,
+  "executedOriginals": 1890000,
+  "requiredMinimumTps": 2000,
+  "minimumRollingTps": 2003,
+  "valid": true
+}
+```
+
+`generation.valid` exige igualdade entre planejados e executados e
+`minimumRollingTps >= requiredMinimumTps`. Picos posteriores não compensam uma
+janela abaixo do piso. Registros ausentes, inclusive uma tentativa iniciada que
+não chegou ao artefato terminal, tornam a observação conservadoramente menor e
+invalidam a geração.
+
+Somem do contrato e do hot path todos os histogramas, motivos e estágios de
+misses, métricas de sleep/spin/dispatch, contadores de in-flight, capacidade,
+batches de Pull, CPU e RSS do processo. Contadores estritamente necessários ao
+lifecycle ou à corretude concorrente podem continuar internos, mas não formam
+uma segunda interpretação da run e não são serializados.
+
+As validações de outcomes, replays e latência do SPI permanecem no report. Elas
+não são telemetria interna do gerador e continuam necessárias para qualificar a
+workload e seus SLAs.
 
 ## Simplificação interna do Rust
 
@@ -300,7 +315,9 @@ rust-loadtool CLI
 ```
 
 Não pode existir dependência de `loadtool-generator` para `loadtool-report`.
-O bundle em disco continua sendo o único handoff entre geração e reporting.
+O handoff consiste nos eventos fechados no bundle e no pequeno
+`GenerationWindow` neutro devolvido ao coordenador. O reporter não recebe
+callbacks, canais, estado de runtime nem acumuladores do gerador.
 
 O `simulator.rs` deixa de concentrar lifecycle, HTTP e tratamento de
 notificações. A divisão lógica alvo é:
@@ -325,6 +342,7 @@ Simplificações locais permitidas nesta passagem:
 - manter cabeçalhos CSV junto das respectivas representações de eventos;
 - compartilhar uma única implementação de escrita JSON atômica;
 - calcular valores derivados do profile durante a compilação do execution plan;
+- remover toda a infraestrutura de generator metrics e histogramas internos;
 - remover locks, campos e parâmetros que perderem todos os consumidores.
 
 O comportamento de pacing, workload, Pull, PACS.002, replay, warmup gate e drain
@@ -363,10 +381,13 @@ Testes shell devem provar:
 Testes devem provar:
 
 - o bundle concluído não depende de `run-window.json`;
-- o report usa exclusivamente a janela de generator metrics;
+- o gerador devolve somente `GenerationWindow` ao coordenador;
+- o report usa a janela em memória e os eventos fechados;
 - fronteiras incompatíveis com o execution plan são rejeitadas;
 - os três resultados normais da CLI mapeiam para os exit codes públicos;
-- o contrato reduzido de generator metrics é escrito e consumido;
+- igualdade e diferença entre `plannedOriginals` e `executedOriginals` são
+  cobertas;
+- o rolling mínimo considera qualquer janela contínua de um segundo;
 - os fluxos PACS.008, Pull, PACS.002, replay e warmup preservam seus testes de
   comportamento após a divisão interna.
 
@@ -389,11 +410,8 @@ Depois da suíte automatizada:
 1. preparar `uniform-smoke`;
 2. executar uma run curta candidata à qualificação;
 3. executar uma segunda run exploratória sem nova preparação;
-4. confirmar zero misses e registrar CPU/RSS para comparação informativa.
-
-Esta simplificação não cria um novo gate numérico de CPU/RSS. Uma regressão de
-corretude temporal, como misses novos, bloqueia a mudança; oscilações de recurso
-sem impacto funcional são apenas evidência para análise.
+4. confirmar `plannedOriginals = executedOriginals` e rolling mínimo dentro do
+   requisito.
 
 Uma run de 15 minutos não é necessária para validar esta simplificação.
 
@@ -431,6 +449,6 @@ provisionamento que realiza: `provision-profile-funds.sh`.
 O sistema termina com um preparador integral para cada profile, um runner curto
 que apenas delimita a execução e um Rust load-tool que possui sozinho o
 contrato funcional do resultado. A redução remove validação duplicada, parsing
-Python do report, artefatos redundantes e instrumentação de investigação do hot
-path, sem eliminar runs exploratórias nem as evidências individuais necessárias
-para analisar cada pagamento.
+Python do report, artefatos redundantes e toda a telemetria de investigação do
+hot path, sem eliminar runs exploratórias nem as evidências individuais
+necessárias para analisar cada pagamento.
