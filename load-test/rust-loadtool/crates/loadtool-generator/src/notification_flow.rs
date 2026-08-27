@@ -6,7 +6,7 @@ use anyhow::Result;
 use bytes::Bytes;
 
 use crate::causal::{CausalKind, CausalPermit};
-use crate::lifecycle::{http_deadline, offset_ns, rfc3339_now};
+use crate::lifecycle::{offset_ns, rfc3339_now};
 use crate::notification::NotificationPayload;
 use crate::payload::pacs002;
 use crate::phase_tracker::{PhaseTracker, WarmupObservation};
@@ -357,13 +357,7 @@ async fn run_pacs002(
             return;
         }
     };
-    let started_at = Instant::now();
     let hard_deadline = runtime.hard_deadline_for(sequence);
-    let request_deadline = http_deadline(
-        started_at,
-        runtime.request_timeout_for(sequence),
-        hard_deadline,
-    );
     let body = match pacs002(&runtime.identity.end_to_end_id(sequence), &rfc3339_now()) {
         Ok(body) => body,
         Err(error) => {
@@ -378,61 +372,61 @@ async fn run_pacs002(
             return;
         }
     };
-    let replay_selected = payment.pacs002_ordinal.is_some_and(|ordinal| {
+    let replay_delay = payment.pacs002_ordinal.and_then(|ordinal| {
         runtime
             .pacs002_replay
             .as_ref()
-            .is_some_and(|(selector, _)| {
-                selector.selected(ordinal) && runtime.before_generation_end(started_at)
-            })
+            .and_then(|(selector, delay)| selector.selected(ordinal).then_some(*delay))
     });
-    if replay_selected {
-        let delay = runtime
-            .pacs002_replay
-            .as_ref()
-            .expect("selected PACS.002 replay has a rule")
-            .1;
-        spawn_replay(
-            Arc::clone(&runtime),
-            sequence,
-            Participant::Receiver,
-            MessageKind::Pacs002,
-            "/transfer/status",
-            body.clone(),
-            started_at,
-            hard_deadline,
-            delay,
-            true,
-            tracker.clone(),
-        );
-    }
-    let attempt = send_causal_admitted(
+    let mut replay_body = replay_delay.map(|_| body.clone());
+    let mut replay_selected = false;
+    let completion = send_causal_admitted(
         client.as_ref(),
         permit,
         "/transfer/status",
         body,
-        request_deadline,
+        runtime.request_timeout_for(sequence),
+        hard_deadline,
+        |started_at| {
+            replay_selected = replay_delay.is_some() && runtime.before_generation_end(started_at);
+            if replay_selected {
+                spawn_replay(
+                    Arc::clone(&runtime),
+                    sequence,
+                    Participant::Receiver,
+                    MessageKind::Pacs002,
+                    "/transfer/status",
+                    replay_body
+                        .take()
+                        .expect("selected PACS.002 replay retained its body"),
+                    started_at,
+                    hard_deadline,
+                    replay_delay.expect("selected PACS.002 replay retained its delay"),
+                    true,
+                    tracker.clone(),
+                );
+            }
+        },
     )
     .await;
-    let done_at = Instant::now();
-    match attempt {
-        Ok(attempt) => {
+    match completion {
+        Ok(completion) => {
             if let Err(error) = runtime.recorder.record(Event::Pacs002Completed {
                 sequence,
-                request_started_offset_ns: offset_ns(runtime.clock, started_at),
-                request_done_offset_ns: offset_ns(runtime.clock, done_at),
-                http_status: attempt.status,
+                request_started_offset_ns: offset_ns(runtime.clock, completion.request_started_at),
+                request_done_offset_ns: offset_ns(runtime.clock, completion.request_done_at),
+                http_status: completion.attempt.status,
                 replay_selected,
             }) {
                 runtime.failure.operational(&runtime.cancellation, error);
                 return;
             }
-            if (200..300).contains(&attempt.status) {
+            if (200..300).contains(&completion.attempt.status) {
                 if let Err(error) = runtime.recorder.record(Event::Notification {
                     sequence,
                     participant: Participant::Receiver,
                     kind: NotificationKind::Pacs002Sent,
-                    received_offset_ns: offset_ns(runtime.clock, done_at),
+                    received_offset_ns: offset_ns(runtime.clock, completion.request_done_at),
                     status: NotificationStatus::None,
                     reason_codes: Vec::new(),
                 }) {
@@ -441,7 +435,7 @@ async fn run_pacs002(
             } else if let Some(tracker) = tracker {
                 tracker.fail(format!(
                     "warmup PACS.002 for sequence {sequence} returned HTTP {}",
-                    attempt.status
+                    completion.attempt.status
                 ));
             }
         }

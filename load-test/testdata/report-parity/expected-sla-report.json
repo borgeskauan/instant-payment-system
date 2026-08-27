@@ -58,7 +58,6 @@
     "within_sla": true,
     "active_tps": {
       "payments": 2,
-      "pacs002": 1,
       "pacs008_replays": 0.5,
       "pacs002_replays": 0.5,
       "payer_notifications": 2

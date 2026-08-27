@@ -1,10 +1,18 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use bytes::Bytes;
 
 use crate::causal::{CausalCapacity, CausalKind, CausalPermit};
-use crate::http2::{Http2Client, Http2Reservation, HttpAttempt};
+use crate::http2::{Http2Client, Http2Reservation, HttpAttempt, PreparedHttp2Request};
+use crate::lifecycle::http_deadline;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CausalCompletion {
+    pub attempt: HttpAttempt,
+    pub request_started_at: Instant,
+    pub request_done_at: Instant,
+}
 
 pub async fn send_causal<C: Http2Client>(
     client: &C,
@@ -15,24 +23,49 @@ pub async fn send_causal<C: Http2Client>(
     hard_deadline: Instant,
 ) -> Result<HttpAttempt> {
     let permit = capacity.try_acquire(kind)?;
-    send_causal_admitted(client, permit, path, body, hard_deadline).await
+    Ok(send_causal_admitted(
+        client,
+        permit,
+        path,
+        body,
+        Duration::MAX,
+        hard_deadline,
+        |_| {},
+    )
+    .await?
+    .attempt)
 }
 
-pub async fn send_causal_admitted<C: Http2Client>(
+pub async fn send_causal_admitted<C, BeforeStart>(
     client: &C,
     _permit: CausalPermit,
     path: &str,
     body: Bytes,
+    request_timeout: Duration,
     hard_deadline: Instant,
-) -> Result<HttpAttempt> {
+    before_start: BeforeStart,
+) -> Result<CausalCompletion>
+where
+    C: Http2Client,
+    BeforeStart: FnOnce(Instant),
+{
     let Some(reservation) = client.reserve_until(hard_deadline).await? else {
         bail!("causal HTTP reached the experiment deadline before sender readiness");
     };
-    let attempt = reservation.send(path, body, hard_deadline).await;
+    let request = reservation.prepare(path, body)?;
+    let request_started_at = Instant::now();
+    before_start(request_started_at);
+    let request_deadline = http_deadline(request_started_at, request_timeout, hard_deadline);
+    let attempt = request.start(request_deadline).await;
+    let request_done_at = Instant::now();
     if attempt.used_http1() {
         bail!("causal central transfer response did not use HTTP/2");
     }
-    Ok(attempt)
+    Ok(CausalCompletion {
+        attempt,
+        request_started_at,
+        request_done_at,
+    })
 }
 
 pub async fn send_replay<C: Http2Client>(

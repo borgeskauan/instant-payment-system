@@ -385,8 +385,10 @@ rank 80..99 → insufficient-funds
 ```
 
 O ordinal interno do cenário permite derivar hot/cold, par e valor com
-aritmética inteira. Payer, receiver, fase, timeout e expectativa não são
-copiados para cada pagamento.
+aritmética inteira. `hotTrafficShare` aceita pontos percentuais inteiros e cada
+bloco completo de 100 pagamentos daquele cenário respeita exatamente essa
+proporção, sem estado mutável ou aleatoriedade. Payer, receiver, fase, timeout e
+expectativa não são copiados para cada pagamento.
 
 Slots perdidos nunca são ativados. Em um run inválido, a proporção efetivamente
 iniciada pode variar levemente por causa desses buracos; o relatório deve
@@ -462,6 +464,12 @@ O avanço do cursor não espera a conclusão HTTP dos PACS.002 já registrados. 
 capacidade HTTP causal limita esse trabalho assíncrono sem bloquear o loop de
 Pull. O timeout do PACS.002 é derivado da fase do pagamento original. Pulls
 permanecem ativos durante warmup, active e drain.
+
+O `requestStarted` do PACS.002 é capturado somente depois que o stream HTTP/2
+está disponível e o request foi preparado. Nesse ponto, a obrigação de replay
+aplicável é registrada e, imediatamente depois, o `send_request` começa. Assim,
+a espera por readiness não contamina o timestamp e o replay continua existindo
+antes do efeito observável do status original.
 
 ## Payloads, buffers e conexões
 

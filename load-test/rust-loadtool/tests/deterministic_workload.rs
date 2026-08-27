@@ -104,6 +104,56 @@ fn planner_preserves_scenario_populations_and_derives_dense_status_ordinals() {
 }
 
 #[test]
+fn hot_traffic_share_is_exact_within_each_scenario_population() {
+    let source = PLAN.replace("\"hotTrafficShare\":0.8", "\"hotTrafficShare\":0.73");
+    let plan = Arc::new(ExecutionPlan::decode(source.as_bytes()).unwrap());
+    let planner = Planner::new(plan).unwrap();
+    let mut counts = HashMap::new();
+
+    for sequence in 0..500 {
+        let payment = planner.payment(sequence).unwrap();
+        let is_hot = match payment.scenario_name {
+            "happy-path" => (1..=8).contains(&payment.pair_number),
+            "insufficient-funds" => (41..=42).contains(&payment.pair_number),
+            name => panic!("unexpected scenario {name}"),
+        };
+        let count = counts
+            .entry(payment.scenario_name)
+            .or_insert((0usize, 0usize));
+        if is_hot {
+            count.0 += 1;
+        } else {
+            count.1 += 1;
+        }
+    }
+
+    assert_eq!(counts["happy-path"], (292, 108));
+    assert_eq!(counts["insufficient-funds"], (73, 27));
+}
+
+#[test]
+fn eighty_twenty_hot_traffic_keeps_the_existing_pair_sequence() {
+    let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).unwrap());
+    let planner = Planner::new(plan).unwrap();
+
+    for sequence in 0..500 {
+        let payment = planner.payment(sequence).unwrap();
+        let (pair_start, hot_pairs, cold_pairs) = match payment.scenario_name {
+            "happy-path" => (1, 8, 32),
+            "insufficient-funds" => (41, 2, 8),
+            name => panic!("unexpected scenario {name}"),
+        };
+        let expected_offset = if payment.scenario_ordinal % 5 == 0 {
+            hot_pairs + payment.scenario_ordinal as u32 % cold_pairs
+        } else {
+            payment.scenario_ordinal as u32 % hot_pairs
+        };
+
+        assert_eq!(payment.pair_number, pair_start + expected_offset);
+    }
+}
+
+#[test]
 fn planner_owns_its_plan_and_is_shared_across_runtime_threads() {
     let plan = Arc::new(ExecutionPlan::decode(PLAN.as_bytes()).unwrap());
     let planner = Arc::new(Planner::new(Arc::clone(&plan)).unwrap());

@@ -26,6 +26,7 @@ struct Assignment {
 pub struct Planner {
     plan: Arc<ExecutionPlan>,
     quotas: Vec<u64>,
+    hot_quotas: Vec<u64>,
     pacs002_per_block: u64,
     layouts: Vec<Vec<Assignment>>,
 }
@@ -47,6 +48,7 @@ impl Planner {
             bail!("execution plan needs at least one scenario");
         }
         let mut quotas = Vec::with_capacity(plan.scenarios.len());
+        let mut hot_quotas = Vec::with_capacity(plan.scenarios.len());
         let mut total = 0u64;
         for scenario in &plan.scenarios {
             let exact = scenario.share * BLOCK_SIZE as f64;
@@ -60,7 +62,7 @@ impl Planner {
                 .checked_add(quota)
                 .ok_or_else(|| anyhow!("scenario quota overflows"))?;
             quotas.push(quota);
-            validate_scenario(scenario)?;
+            hot_quotas.push(validate_scenario(scenario)?);
         }
         if total != BLOCK_SIZE {
             bail!("scenario shares must fill a 100-payment block");
@@ -80,6 +82,7 @@ impl Planner {
         Ok(Self {
             plan,
             quotas,
+            hot_quotas,
             pacs002_per_block,
             layouts,
         })
@@ -96,12 +99,14 @@ impl Planner {
             .and_then(|value| value.checked_add(assignment.local_ordinal))
             .ok_or_else(|| anyhow!("scenario ordinal overflows"))?;
         let participants = &scenario.participants;
-        let cold_every = ((1.0 / (1.0 - participants.hot_traffic_share)) as u64).max(2);
-        let pair_offset = if scenario_ordinal % cold_every == 0 {
+        let pair_offset = if selected_by_cumulative_quota(
+            scenario_ordinal,
+            self.hot_quotas[assignment.scenario_index],
+        ) {
+            u32::try_from(scenario_ordinal % u64::from(participants.hot_pair_count))?
+        } else {
             participants.hot_pair_count
                 + u32::try_from(scenario_ordinal % u64::from(participants.cold_pair_count))?
-        } else {
-            u32::try_from(scenario_ordinal % u64::from(participants.hot_pair_count))?
         };
         let amount_count = u64::try_from(scenario.amount.maximum - scenario.amount.minimum + 1)?;
         let amount_cents = scenario.amount.minimum
@@ -230,19 +235,31 @@ fn build_layout(plan: &ExecutionPlan, quotas: &[u64], rotation: u64) -> Vec<Assi
         .collect()
 }
 
-fn validate_scenario(scenario: &Scenario) -> Result<()> {
+fn validate_scenario(scenario: &Scenario) -> Result<u64> {
     if scenario.participants.hot_pair_count == 0 || scenario.participants.cold_pair_count == 0 {
         bail!("scenario {} needs hot and cold pairs", scenario.name);
     }
-    if !(scenario.participants.hot_traffic_share > 0.0
-        && scenario.participants.hot_traffic_share < 1.0)
-    {
-        bail!("scenario {} has invalid hot traffic share", scenario.name);
-    }
+    let hot_quota = whole_percentage_quota(scenario.participants.hot_traffic_share)
+        .filter(|quota| *quota > 0 && *quota < BLOCK_SIZE)
+        .ok_or_else(|| anyhow!("scenario {} has invalid hot traffic share", scenario.name))?;
     if scenario.amount.minimum <= 0 || scenario.amount.maximum < scenario.amount.minimum {
         bail!("scenario {} has invalid amount range", scenario.name);
     }
-    Ok(())
+    Ok(hot_quota)
+}
+
+fn whole_percentage_quota(share: f64) -> Option<u64> {
+    let exact = share * BLOCK_SIZE as f64;
+    let quota = exact.round();
+    (share.is_finite() && (exact - quota).abs() <= f64::EPSILON * BLOCK_SIZE as f64)
+        .then_some(quota as u64)
+}
+
+fn selected_by_cumulative_quota(ordinal: u64, quota: u64) -> bool {
+    let position = ordinal % BLOCK_SIZE;
+    let selected_before = position * quota / BLOCK_SIZE;
+    let selected_after = (position + 1) * quota / BLOCK_SIZE;
+    selected_after > selected_before
 }
 
 fn scenario_produces_pacs002(scenario: &Scenario) -> bool {

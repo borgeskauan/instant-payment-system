@@ -81,7 +81,6 @@ The report does not repeat the run manifest, detailed event history, or configur
     "threshold_ms": 1000,
     "active_tps": {
       "payments": 100,
-      "pacs002": 99.7,
       "pacs008_replays": 2.6,
       "pacs002_replays": 2.5,
       "payer_notifications": 98.9
@@ -111,7 +110,7 @@ Scenario `violations` aggregates that scenario's payment HTTP failures, original
 
 Replay selection and accounting remain global because replay shares apply to their respective global populations. Replay `started`, `accepted` and `violations` qualify only aggregate workload integrity: selected and started counts must match, and every started attempt must receive HTTP `2xx`. Identity, sender, scenario, timing and byte equality are generator properties covered by its focused tests rather than revalidated from its own evidence.
 
-Performance metrics remain active-window-only. Global and per-scenario latency use the earliest compatible payer notification for each accepted original payment started in the active window. Repeated compatible deliveries do not inflate rates or latency populations. Floating-point metrics are rounded to three decimal places in the published JSON.
+Performance metrics remain active-window-only. `active_tps` does not publish a rate for original `pacs.002`: those messages are causal work whose timing depends on SPI progress, not part of the offered-throughput contract. Their total started/accepted counts remain under each scenario. Global and per-scenario latency use the earliest compatible payer notification for each accepted original payment started in the active window. Repeated compatible deliveries do not inflate rates or latency populations. Floating-point metrics are rounded to three decimal places in the published JSON.
 
 ## Validity and runner behavior
 

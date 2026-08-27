@@ -135,6 +135,10 @@ fn invalid_rates_durations_shares_funding_and_expectations_are_rejected() {
             original.replace("\"share\": 1.0", "\"share\": 0.333"),
         ),
         (
+            "inexact-hot-traffic-share",
+            original.replace("\"hotTrafficShare\": 0.8", "\"hotTrafficShare\": 0.735"),
+        ),
+        (
             "bad-funding",
             original.replace(
                 "\"mode\": \"cover-generated-debits\"",

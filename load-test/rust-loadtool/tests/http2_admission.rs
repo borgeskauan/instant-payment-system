@@ -1,10 +1,12 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use bytes::Bytes;
+use loadtool_generator::causal::{CausalCapacity, CausalKind};
 use loadtool_generator::http2::{
     Http2Client, Http2Config, Http2Reservation, HttpAttempt, PreparedHttp2Request,
 };
@@ -12,6 +14,7 @@ use loadtool_generator::original::{
     AdmissionMiss, AdmissionOutcome, admit_original, prepare_original,
 };
 use loadtool_generator::payment_state::PaymentStates;
+use loadtool_generator::replay_task::send_causal_admitted;
 
 #[derive(Clone)]
 struct FakeClient {
@@ -20,6 +23,8 @@ struct FakeClient {
     sends: Arc<AtomicUsize>,
     states: Arc<PaymentStates>,
     obligation_registered: Arc<AtomicBool>,
+    ready_at: Arc<Mutex<Option<Instant>>>,
+    require_uncommitted_preparation: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -35,6 +40,7 @@ struct FakeReservation {
     sends: Arc<AtomicUsize>,
     states: Arc<PaymentStates>,
     obligation_registered: Arc<AtomicBool>,
+    require_uncommitted_preparation: bool,
 }
 
 struct FakePreparedRequest {
@@ -53,17 +59,19 @@ impl Http2Client for FakeClient {
     ) -> impl Future<Output = Result<Option<Self::Reservation>>> + Send {
         let client = self.clone();
         async move {
-            match client.mode {
-                FakeMode::Ready(attempt) => Ok(Some(client.reservation(attempt))),
+            let attempt = match client.mode {
+                FakeMode::Ready(attempt) => attempt,
                 FakeMode::Unavailable => {
                     tokio::time::sleep_until(deadline.into()).await;
-                    Ok(None)
+                    return Ok(None);
                 }
                 FakeMode::Late(attempt) => {
                     tokio::time::sleep(Duration::from_millis(3)).await;
-                    Ok(Some(client.reservation(attempt)))
+                    attempt
                 }
-            }
+            };
+            *client.ready_at.lock().unwrap() = Some(Instant::now());
+            Ok(Some(client.reservation(attempt)))
         }
     }
 }
@@ -76,6 +84,7 @@ impl FakeClient {
             sends: Arc::clone(&self.sends),
             states: Arc::clone(&self.states),
             obligation_registered: Arc::clone(&self.obligation_registered),
+            require_uncommitted_preparation: self.require_uncommitted_preparation,
         }
     }
 }
@@ -84,10 +93,12 @@ impl Http2Reservation for FakeReservation {
     type Prepared = FakePreparedRequest;
 
     fn prepare(self, _path: &str, _body: Bytes) -> Result<Self::Prepared> {
-        assert!(
-            !self.states.is_committed(0),
-            "request construction happened after commit"
-        );
+        if self.require_uncommitted_preparation {
+            assert!(
+                !self.states.is_committed(0),
+                "request construction happened after commit"
+            );
+        }
         self.preparations.fetch_add(1, Ordering::Relaxed);
         Ok(FakePreparedRequest {
             attempt: self.attempt,
@@ -117,7 +128,43 @@ fn client(mode: FakeMode, states: Arc<PaymentStates>) -> FakeClient {
         sends: Arc::new(AtomicUsize::new(0)),
         states,
         obligation_registered: Arc::new(AtomicBool::new(false)),
+        ready_at: Arc::new(Mutex::new(None)),
+        require_uncommitted_preparation: true,
     }
+}
+
+impl FakeClient {
+    fn causal(mut self) -> Self {
+        self.require_uncommitted_preparation = false;
+        self
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn causal_http_timestamp_starts_after_stream_readiness() {
+    let states = Arc::new(PaymentStates::new(1));
+    assert!(states.commit(0));
+    let client = client(FakeMode::Late(HttpAttempt::http2(200)), states).causal();
+    let capacity = CausalCapacity::new(1).unwrap();
+    let permit = capacity.try_acquire(CausalKind::Original).unwrap();
+
+    let obligation = Arc::clone(&client.obligation_registered);
+    let completion = send_causal_admitted(
+        &client,
+        permit,
+        "/transfer/status",
+        Bytes::from_static(b"body"),
+        Duration::from_secs(1),
+        Instant::now() + Duration::from_secs(2),
+        move |_| obligation.store(true, Ordering::Release),
+    )
+    .await
+    .unwrap();
+
+    let ready_at = client.ready_at.lock().unwrap().unwrap();
+    assert!(completion.request_started_at >= ready_at);
+    assert_eq!(completion.attempt.status, 200);
+    assert!(completion.request_done_at >= completion.request_started_at);
 }
 
 #[tokio::test(flavor = "current_thread")]

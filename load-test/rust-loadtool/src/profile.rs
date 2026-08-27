@@ -399,11 +399,13 @@ fn scenario(
             "hotPairCount and coldPairCount must be positive",
         ));
     }
-    if !(participants.hot_traffic_share > 0.0 && participants.hot_traffic_share < 1.0) {
+    if !(participants.hot_traffic_share > 0.0 && participants.hot_traffic_share < 1.0)
+        || block_quota(participants.hot_traffic_share).is_none()
+    {
         return Err(invalid(
             profile,
             &format!("{prefix}.participants.hotTrafficShare"),
-            "must be greater than 0 and less than 1",
+            "must be greater than 0, less than 1, and expressible in whole percentage points",
         ));
     }
     let pair_count = participants

@@ -259,7 +259,10 @@ Simulação e relatório continuam funcionalmente iguais para o contrato vigente
 - [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas,
   com tentativas iniciadas, aceitas e violações agregadas de quantidade/HTTP;
   propriedades internas de cada replay ficam nos testes do gerador.
-- [x] Consolidar performance global em threshold, TPS ativo por tipo de tráfego, notificações posteriores à janela ativa e percentis de latência arredondados.
+- [x] Consolidar performance global em threshold, TPS ativo de originais,
+  replays e notificações ao pagador, notificações posteriores à janela ativa e
+  percentis de latência arredondados; `pacs.002` causal mantém somente contagens
+  totais iniciadas/aceitas por cenário.
 - [x] Remover os blocos redundantes `run`, `transactions`, `status_messages`, `load_generation`, `throughput_per_second`, `payer_notification_latency_ms` e `diagnostics`.
 - [x] Manter `run-window.json`, `inputs/profile.json` e os quatro CSVs de `events/` como fontes autoritativas de janela, configuração e evidência detalhada.
 

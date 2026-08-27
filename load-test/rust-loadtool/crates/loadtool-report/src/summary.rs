@@ -78,8 +78,6 @@ pub struct ActiveTpsSummary {
     #[serde(serialize_with = "serialize_metric")]
     pub payments: f64,
     #[serde(serialize_with = "serialize_metric")]
-    pub pacs002: f64,
-    #[serde(serialize_with = "serialize_metric")]
     pub pacs008_replays: f64,
     #[serde(serialize_with = "serialize_metric")]
     pub pacs002_replays: f64,
@@ -192,7 +190,6 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     }
 
     let measured_starts = measured_starts(&run.events.pacs008, &run.window);
-    let measured_statuses = measured_statuses(&run.events.pacs002, &run.window);
     let measured_pacs008_replays = measured_replays(&run.events.replays, "pacs.008", &run.window);
     let measured_pacs002_replays = measured_replays(&run.events.replays, "pacs.002", &run.window);
     let duration_seconds = (run.window.generation_ended_at_ns - run.window.active_started_at_ns)
@@ -201,8 +198,6 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     if duration_seconds > 0.0 {
         report.performance.active_tps.payments =
             round_three(measured_starts.len() as f64 / duration_seconds);
-        report.performance.active_tps.pacs002 =
-            round_three(measured_statuses.len() as f64 / duration_seconds);
         report.performance.active_tps.pacs008_replays =
             round_three(measured_pacs008_replays.len() as f64 / duration_seconds);
         report.performance.active_tps.pacs002_replays =
@@ -336,16 +331,6 @@ fn measured_starts<'a>(
     starts
         .iter()
         .filter(|start| in_active(request_started_at(start), window))
-        .collect()
-}
-
-fn measured_statuses<'a>(
-    starts: &'a [Pacs002Start],
-    window: &GenerationWindow,
-) -> Vec<&'a Pacs002Start> {
-    starts
-        .iter()
-        .filter(|start| in_active(start.request_started_at_ns, window))
         .collect()
 }
 
