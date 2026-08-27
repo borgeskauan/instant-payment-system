@@ -28,18 +28,8 @@ struct ValidateProfileArgs {
 struct RunArgs {
     #[arg(long)]
     run_dir: PathBuf,
-    #[arg(long, hide = true)]
-    central_transfer_ca_cert: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    central_transfer_client_cert_root: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    central_transfer_server_name: Option<String>,
-    #[arg(long, hide = true)]
-    gateway_ca_cert: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    gateway_client_cert_root: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    gateway_server_name: Option<String>,
+    #[arg(long)]
+    client_cert_root: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -64,12 +54,7 @@ async fn main() -> ExitCode {
         }
         Command::Run(args) => {
             let options = SimulationOptions {
-                central_transfer_ca_cert: args.central_transfer_ca_cert,
-                central_transfer_client_cert_root: args.central_transfer_client_cert_root,
-                central_transfer_server_name: args.central_transfer_server_name,
-                gateway_ca_cert: args.gateway_ca_cert,
-                gateway_client_cert_root: args.gateway_client_cert_root,
-                gateway_server_name: args.gateway_server_name,
+                client_cert_root: args.client_cert_root,
             };
             let result = rust_loadtool::run(rust_loadtool::RunOptions {
                 run_dir: args.run_dir,

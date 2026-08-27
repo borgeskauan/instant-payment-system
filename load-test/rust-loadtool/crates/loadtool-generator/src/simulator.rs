@@ -42,12 +42,7 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Default)]
 pub struct SimulationOptions {
-    pub central_transfer_ca_cert: Option<PathBuf>,
-    pub central_transfer_client_cert_root: Option<PathBuf>,
-    pub central_transfer_server_name: Option<String>,
-    pub gateway_ca_cert: Option<PathBuf>,
-    pub gateway_client_cert_root: Option<PathBuf>,
-    pub gateway_server_name: Option<String>,
+    pub client_cert_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -224,17 +219,11 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
     );
     let central = Http2Config::new(
         &profile.connections.central_transfer.base_url,
-        options
-            .central_transfer_ca_cert
-            .unwrap_or_else(|| PathBuf::from(&profile.connections.central_transfer.ca_cert)),
-        options
-            .central_transfer_client_cert_root
-            .unwrap_or_else(|| {
-                PathBuf::from(&profile.connections.central_transfer.client_cert_root)
-            }),
-        options
-            .central_transfer_server_name
-            .unwrap_or_else(|| profile.connections.central_transfer.server_name.clone()),
+        PathBuf::from(&profile.connections.central_transfer.ca_cert),
+        options.client_cert_root.clone().unwrap_or_else(|| {
+            PathBuf::from(&profile.connections.central_transfer.client_cert_root)
+        }),
+        profile.connections.central_transfer.server_name.clone(),
     );
     let mut http_clients = HashMap::with_capacity(participant_ispbs.len());
     for ispb in &participant_ispbs {
@@ -250,15 +239,11 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
     );
     let gateway = PullClientConfig::new(
         &profile.connections.notification_gateway.address,
-        options
-            .gateway_ca_cert
-            .unwrap_or_else(|| PathBuf::from(&profile.connections.notification_gateway.ca_cert)),
-        options.gateway_client_cert_root.unwrap_or_else(|| {
+        PathBuf::from(&profile.connections.notification_gateway.ca_cert),
+        options.client_cert_root.unwrap_or_else(|| {
             PathBuf::from(&profile.connections.notification_gateway.client_cert_root)
         }),
-        options
-            .gateway_server_name
-            .unwrap_or_else(|| profile.connections.notification_gateway.server_name.clone()),
+        profile.connections.notification_gateway.server_name.clone(),
     );
     let mut pull_sessions = Vec::with_capacity(participant_ispbs.len());
     for (ispb, receiver_role) in pull_specs(&pairs) {

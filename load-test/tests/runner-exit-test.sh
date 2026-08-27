@@ -3,176 +3,41 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNNER="$ROOT_DIR/run-load-test.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-source "${ROOT_DIR}/run-load-test.sh"
+mkdir -p "$tmp_dir/prepared/uniform-smoke/inputs" "$tmp_dir/prepared/uniform-smoke/certs" "$tmp_dir/bin"
+printf '{"name":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/profile.json"
+printf '{"profile":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json"
+export RESULTS_DIR="$tmp_dir/results"
+export PREPARED_ENVIRONMENT_ROOT="$tmp_dir/prepared"
+export RUST_LOADTOOL_TARGET_DIR="$tmp_dir/target"
+export DIAGNOSTICS_SCRIPT="$tmp_dir/diagnostics"
 
-write_report() {
-    local path="$1"
-    local content="$2"
-    printf '%s\n' "$content" > "$path"
-}
+cat > "$tmp_dir/bin/cargo" <<'SH'
+#!/bin/bash
+set -euo pipefail
+mkdir -p "$RUST_LOADTOOL_TARGET_DIR/release"
+printf '#!/bin/bash\nexit "${LOADTOOL_STATUS:-0}"\n' > "$RUST_LOADTOOL_TARGET_DIR/release/rust-loadtool"
+chmod +x "$RUST_LOADTOOL_TARGET_DIR/release/rust-loadtool"
+SH
+chmod +x "$tmp_dir/bin/cargo"
+cat > "$tmp_dir/diagnostics" <<'SH'
+#!/bin/bash
+set -euo pipefail
+exit "${WRAPPER_STATUS:-0}"
+SH
+chmod +x "$tmp_dir/diagnostics"
+export PATH="$tmp_dir/bin:$PATH"
 
-write_report "$tmp_dir/valid.json" '{"valid":true}'
-validate_sla_report "$tmp_dir/valid.json"
-
-for fixture in \
-    '{"valid":false}' \
-    '{"valid":"true"}' \
-    '{"valid":1}' \
-    '{}' \
-    '[]' \
-    '{'; do
-    write_report "$tmp_dir/invalid.json" "$fixture"
-    if validate_sla_report "$tmp_dir/invalid.json" >/dev/null 2>&1; then
-        echo "invalid SLA report was accepted: $fixture" >&2
+for status in 0 1 2 23; do
+    set +e
+    WRAPPER_STATUS="$status" "$RUNNER" "status-$status" >/dev/null 2>&1
+    actual=$?
+    set -e
+    if [[ "$actual" -ne "$status" ]]; then
+        echo "runner returned $actual, want wrapper status $status" >&2
         exit 1
     fi
 done
-
-export RUNNER_EXIT_TEST_ROOT_DIR="$ROOT_DIR"
-export RUNNER_EXIT_TEST_TMP_DIR="$tmp_dir"
-
-cat > "$tmp_dir/driver.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-
-source "${RUNNER_EXIT_TEST_ROOT_DIR}/run-load-test.sh"
-
-parse_args() { RUN_TAG="runner-exit-${RUNNER_TEST_MODE}"; }
-resolve_profile() { :; }
-prepare_loadtool_binary() { LOADTOOL_BUILD_DIR=""; LOADTOOL_BIN="fake"; }
-build_loadtool() { :; }
-validate_profile_with_loadtool() { :; }
-prepare_run_workspace() { mkdir -p "$1"; }
-prepare_loadtool_certificates() { :; }
-log_selected_options() { :; }
-run_preflight_checks() { :; }
-prepare_environment() {
-    printf '%s\n' prepare-environment >> "$RUNNER_FLOW_LOG"
-    if [[ "$RUNNER_TEST_MODE" == preparation-failure ]]; then
-        return 17
-    fi
-}
-start_optional_diagnostics() { :; }
-iso_now() { printf '%s\n' '2026-08-11T12:00:00.000000000-03:00'; }
-
-run_loadtool() {
-    local target_dir="$1"
-    printf '%s\n' run >> "$RUNNER_FLOW_LOG"
-    case "$RUNNER_TEST_MODE" in
-        valid|diagnostics-failure)
-            printf '%s\n' '{"valid":true}' > "${target_dir}/sla-report.json"
-            ;;
-        violation)
-            printf '%s\n' '{"valid":false}' > "${target_dir}/sla-report.json"
-            ;;
-        malformed-report)
-            printf '%s\n' '{' > "${target_dir}/sla-report.json"
-            ;;
-        loadtool-failure)
-            return 23
-            ;;
-        *)
-            return 99
-            ;;
-    esac
-}
-
-collect_optional_diagnostics() {
-    printf '%s\n' diagnostics >> "$RUNNER_FLOW_LOG"
-    if [[ "$RUNNER_TEST_MODE" == loadtool-failure || "$RUNNER_TEST_MODE" == diagnostics-failure ]]; then
-        return 19
-    fi
-}
-write_run_window_json() { printf '%s\n' enriched >> "$RUNNER_FLOW_LOG"; }
-
-cd "$RUNNER_EXIT_TEST_TMP_DIR"
-main test
-SH
-chmod +x "$tmp_dir/driver.sh"
-
-run_driver() {
-    local mode="$1"
-    local flow_log="$tmp_dir/${mode}.flow"
-    RUNNER_TEST_MODE="$mode" RUNNER_FLOW_LOG="$flow_log" "$tmp_dir/driver.sh"
-}
-
-run_driver valid
-cat > "$tmp_dir/valid.expected" <<'EOF'
-prepare-environment
-run
-diagnostics
-enriched
-EOF
-diff -u "$tmp_dir/valid.expected" "$tmp_dir/valid.flow"
-
-set +e
-run_driver violation >"$tmp_dir/violation.log" 2>&1
-violation_status=$?
-set -e
-if [[ "$violation_status" -eq 0 ]]; then
-    echo "runner accepted an SLA report with violations" >&2
-    exit 1
-fi
-if [[ "$violation_status" -ne 1 ]]; then
-    echo "runner returned $violation_status for a completed invalid report, want 1" >&2
-    exit 1
-fi
-if ! grep -q '^enriched$' "$tmp_dir/violation.flow"; then
-    echo "runner did not enrich a technically completed run with violations" >&2
-    exit 1
-fi
-
-set +e
-run_driver malformed-report >"$tmp_dir/malformed-report.log" 2>&1
-malformed_report_status=$?
-set -e
-if [[ "$malformed_report_status" -ne 2 ]]; then
-    echo "runner returned $malformed_report_status for a malformed report, want operational exit code 2" >&2
-    exit 1
-fi
-
-set +e
-run_driver loadtool-failure >"$tmp_dir/loadtool-failure.log" 2>&1
-loadtool_failure_status=$?
-set -e
-if [[ "$loadtool_failure_status" -ne 2 ]]; then
-    echo "runner returned $loadtool_failure_status, want operational exit code 2" >&2
-    exit 1
-fi
-cat > "$tmp_dir/loadtool-failure.expected" <<'EOF'
-prepare-environment
-run
-diagnostics
-EOF
-diff -u "$tmp_dir/loadtool-failure.expected" "$tmp_dir/loadtool-failure.flow"
-
-set +e
-run_driver diagnostics-failure >"$tmp_dir/diagnostics-failure.log" 2>&1
-diagnostics_failure_status=$?
-set -e
-if [[ "$diagnostics_failure_status" -ne 2 ]]; then
-    echo "runner returned $diagnostics_failure_status, want operational exit code 2" >&2
-    exit 1
-fi
-cat > "$tmp_dir/diagnostics-failure.expected" <<'EOF'
-prepare-environment
-run
-diagnostics
-EOF
-diff -u "$tmp_dir/diagnostics-failure.expected" "$tmp_dir/diagnostics-failure.flow"
-
-set +e
-run_driver preparation-failure >"$tmp_dir/preparation-failure.log" 2>&1
-preparation_failure_status=$?
-set -e
-if [[ "$preparation_failure_status" -ne 2 ]]; then
-    echo "runner returned $preparation_failure_status, want operational exit code 2" >&2
-    exit 1
-fi
-cat > "$tmp_dir/preparation-failure.expected" <<'EOF'
-prepare-environment
-EOF
-diff -u "$tmp_dir/preparation-failure.expected" "$tmp_dir/preparation-failure.flow"

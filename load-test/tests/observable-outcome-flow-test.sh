@@ -3,53 +3,52 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNNER="$ROOT_DIR/run-load-test.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-source "${ROOT_DIR}/run-load-test.sh"
-
+mkdir -p "$tmp_dir/prepared/uniform-smoke/inputs" "$tmp_dir/prepared/uniform-smoke/certs" "$tmp_dir/bin"
+printf '{"name":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/profile.json"
+printf '{"profile":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json"
+export RESULTS_DIR="$tmp_dir/results"
+export PREPARED_ENVIRONMENT_ROOT="$tmp_dir/prepared"
+export RUST_LOADTOOL_TARGET_DIR="$tmp_dir/target"
+export DIAGNOSTICS_SCRIPT="$tmp_dir/diagnostics"
 export FLOW_LOG="$tmp_dir/flow.log"
 
-parse_args() { RUN_TAG="observable-flow"; }
-resolve_profile() { :; }
-prepare_loadtool_binary() { LOADTOOL_BUILD_DIR=""; LOADTOOL_BIN="fake"; }
-build_loadtool() { :; }
-validate_profile_with_loadtool() {
-    PROFILE_WARMUP_SECONDS=0
-    PROFILE_ACTIVE_SECONDS=1
-    PROFILE_DRAIN_SECONDS=0
-}
-prepare_run_workspace() { :; }
-prepare_loadtool_certificates() { :; }
-log_selected_options() { :; }
-run_preflight_checks() { :; }
-prepare_environment() { echo prepare-environment >> "$FLOW_LOG"; }
-start_optional_diagnostics() { :; }
-run_loadtool() { echo run >> "$FLOW_LOG"; }
-capture_and_assert_outbox_drained() {
-    echo outbox-validation >> "$FLOW_LOG"
-    return 1
-}
-collect_optional_diagnostics() { echo diagnostics >> "$FLOW_LOG"; }
-write_run_window_json() { echo run-window >> "$FLOW_LOG"; }
-validate_sla_report() { echo validate-report >> "$FLOW_LOG"; }
+cat > "$tmp_dir/bin/cargo" <<'SH'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' build >> "$FLOW_LOG"
+mkdir -p "$RUST_LOADTOOL_TARGET_DIR/release"
+cat > "$RUST_LOADTOOL_TARGET_DIR/release/rust-loadtool" <<'BIN'
+#!/bin/bash
+set -euo pipefail
+printf 'run %s\n' "$*" >> "$FLOW_LOG"
+BIN
+chmod +x "$RUST_LOADTOOL_TARGET_DIR/release/rust-loadtool"
+SH
+chmod +x "$tmp_dir/bin/cargo"
+cat > "$tmp_dir/diagnostics" <<'SH'
+#!/bin/bash
+set -euo pipefail
+printf 'diagnostics %s\n' "$*" >> "$FLOW_LOG"
+while [[ "$1" != -- ]]; do shift; done
+shift
+"$@"
+SH
+chmod +x "$tmp_dir/diagnostics"
+export PATH="$tmp_dir/bin:$PATH"
 
-main observable-flow
-
-if grep -q outbox-validation "$FLOW_LOG"; then
-    echo "runner still performs persisted outbox validation" >&2
-    exit 1
-fi
-
-cat > "$tmp_dir/expected-flow.log" <<'EOF'
-prepare-environment
-run
-diagnostics
-run-window
-validate-report
+"$RUNNER" --no-jfr --no-spi-trace --no-postgres-statements observable >/dev/null
+cat > "$tmp_dir/expected" <<'EOF'
+build
+diagnostics run --run-dir RESULT --no-jfr --no-spi-trace --no-postgres-statements -- BINARY run --run-dir RESULT --client-cert-root CERTS
+run run --run-dir RESULT --client-cert-root CERTS
 EOF
-
-if ! diff -u "$tmp_dir/expected-flow.log" "$FLOW_LOG"; then
-    echo "runner did not preserve the single-run observable flow" >&2
-    exit 1
-fi
+sed -E \
+    -e "s#--run-dir [^ ]+#--run-dir RESULT#g" \
+    -e "s#--client-cert-root [^ ]+#--client-cert-root CERTS#g" \
+    -e "s#-- /[^ ]+/rust-loadtool#-- BINARY#" \
+    "$FLOW_LOG" > "$tmp_dir/normalized"
+diff -u "$tmp_dir/expected" "$tmp_dir/normalized"
