@@ -40,7 +40,7 @@ chmod +x "$tmp_dir/scripts/container-jfr.sh"
 export SCRIPTS_DIR="$tmp_dir/scripts"
 export JFR_COMMAND_LOG="$tmp_dir/jfr-commands.log"
 
-source "${ROOT_DIR}/run-load-test.sh"
+source "${ROOT_DIR}/scripts/run-diagnostics.sh"
 
 start_jfr_recordings "$tmp_dir/results"
 

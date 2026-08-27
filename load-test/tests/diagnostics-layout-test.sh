@@ -92,7 +92,7 @@ chmod +x \
 
 export SCRIPTS_DIR="$tmp_dir/scripts"
 export FAKE_POSTGRES_SERVER_LOG_INVOCATIONS="$tmp_dir/postgres-server-log-invocations.log"
-source "$ROOT_DIR/run-load-test.sh"
+source "$ROOT_DIR/scripts/run-diagnostics.sh"
 
 ENABLE_JFR=false
 
@@ -171,3 +171,36 @@ ENABLE_POSTGRES_STATEMENTS=false
 start_optional_diagnostics "$tmp_dir/disabled"
 collect_optional_diagnostics "$tmp_dir/disabled"
 test ! -e "$tmp_dir/disabled/logs/postgres-server.log"
+
+mkdir -p "$tmp_dir/command-failure"
+set +e
+"$ROOT_DIR/scripts/run-diagnostics.sh" run \
+    --run-dir "$tmp_dir/command-failure" \
+    --no-jfr --no-spi-trace --no-postgres-statements \
+    -- bash -c 'exit 17'
+command_status=$?
+set -e
+if [[ "$command_status" -ne 17 ]]; then
+    echo "diagnostic wrapper returned $command_status, want child status 17" >&2
+    exit 1
+fi
+test -f "$tmp_dir/command-failure/logs/loadtool.log"
+
+export FAKE_POSTGRES_STATEMENTS_FAIL_ACTION=snapshot
+for child_status in 0 17; do
+    result="$tmp_dir/precedence-$child_status"
+    mkdir -p "$result"
+    set +e
+    "$ROOT_DIR/scripts/run-diagnostics.sh" run \
+        --run-dir "$result" --no-jfr --no-spi-trace \
+        -- bash -c "exit $child_status"
+    wrapper_status=$?
+    set -e
+    expected=2
+    [[ "$child_status" -eq 0 ]] || expected="$child_status"
+    if [[ "$wrapper_status" -ne "$expected" ]]; then
+        echo "diagnostic wrapper returned $wrapper_status, want $expected" >&2
+        exit 1
+    fi
+done
+unset FAKE_POSTGRES_STATEMENTS_FAIL_ACTION

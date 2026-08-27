@@ -11,8 +11,8 @@ assert_flags() {
     shift 3
 
     (
-        source "${ROOT_DIR}/run-load-test.sh"
-        parse_args "$@" test-run
+        source "${ROOT_DIR}/scripts/run-diagnostics.sh"
+        parse_args run --run-dir /tmp/diagnostic-test "$@" -- true
         [[ "$ENABLE_JFR" == "$want_jfr" ]]
         [[ "$ENABLE_SPI_TRACE" == "$want_trace" ]]
         [[ "$ENABLE_POSTGRES_STATEMENTS" == "$want_postgres" ]]
@@ -25,7 +25,7 @@ assert_flags true false true --no-spi-trace
 assert_flags true true false --no-postgres-statements
 assert_flags false false false --no-jfr --no-spi-trace --no-postgres-statements
 
-usage_output="$({ source "${ROOT_DIR}/run-load-test.sh"; usage; })"
+usage_output="$({ source "${ROOT_DIR}/scripts/run-diagnostics.sh"; usage; })"
 for flag in --no-jfr --no-spi-trace --no-postgres-statements; do
     if ! grep -Fq -- "$flag" <<< "$usage_output"; then
         echo "runner usage does not list ${flag}" >&2
