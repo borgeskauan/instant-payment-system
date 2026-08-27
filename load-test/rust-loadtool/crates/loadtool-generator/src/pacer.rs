@@ -5,12 +5,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
-use serde::Serialize;
 use tokio::sync::mpsc;
-
-use loadtool_contract::generator_metrics::{HistogramSummary, PacerDeadlineMisses};
-
-use crate::histogram::DurationHistogram;
 
 const BUCKET: Duration = Duration::from_millis(10);
 const SPIN_TAIL: Duration = Duration::from_micros(50);
@@ -153,43 +148,20 @@ pub fn advance_cursor(schedule: &PhaseSchedule, cursor: u64, now: Instant) -> Cu
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PacerMetrics {
-    pub planned_slots: u64,
-    pub dispatched_slots: u64,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PacerResult {
     pub missed_slots: u64,
-    pub missed_cursor_skip: u64,
-    pub missed_expired_before_dispatch: u64,
-    pub missed_channel_full: u64,
-    pub missed_preparation_not_ready: u64,
-    pub spin_wall_time_ns: u64,
-    pub pacer_lateness: HistogramSummary,
-    pub deadline_misses: PacerDeadlineMisses,
-    pub sleep_wake_lateness: HistogramSummary,
-    pub channel_closed: bool,
 }
 
-impl PacerMetrics {
-    fn record_cursor_skip(&mut self, count: u64) {
-        self.missed_slots = self.missed_slots.saturating_add(count);
-        self.missed_cursor_skip = self.missed_cursor_skip.saturating_add(count);
-    }
+#[derive(Default)]
+struct PacerState {
+    missed_slots: u64,
+    channel_closed: bool,
+}
 
-    fn record_expired_before_dispatch(&mut self, count: u64) {
+impl PacerState {
+    fn miss(&mut self, count: u64) {
         self.missed_slots = self.missed_slots.saturating_add(count);
-        self.missed_expired_before_dispatch =
-            self.missed_expired_before_dispatch.saturating_add(count);
-    }
-
-    fn record_channel_full(&mut self, count: u64) {
-        self.missed_slots = self.missed_slots.saturating_add(count);
-        self.missed_channel_full = self.missed_channel_full.saturating_add(count);
-    }
-
-    fn record_preparation_not_ready(&mut self, count: u64) {
-        self.missed_slots = self.missed_slots.saturating_add(count);
-        self.missed_preparation_not_ready = self.missed_preparation_not_ready.saturating_add(count);
     }
 }
 
@@ -198,7 +170,7 @@ pub fn spawn_prepared_pacer<T, Admit>(
     descriptor_sender: mpsc::Sender<BucketDescriptor>,
     prepared_receiver: Receiver<PreparedBucket<T>>,
     admit: Admit,
-) -> Result<JoinHandle<PacerMetrics>>
+) -> Result<JoinHandle<PacerResult>>
 where
     T: Send + 'static,
     Admit: FnMut(PreparedBucket<T>) + Send + 'static,
@@ -214,17 +186,12 @@ fn run_prepared_pacer<T, Admit>(
     sender: mpsc::Sender<BucketDescriptor>,
     prepared_receiver: Receiver<PreparedBucket<T>>,
     mut admit: Admit,
-) -> PacerMetrics
+) -> PacerResult
 where
     T: Send + 'static,
     Admit: FnMut(PreparedBucket<T>),
 {
-    let mut metrics = PacerMetrics {
-        planned_slots: schedule.planned_slots,
-        ..PacerMetrics::default()
-    };
-    let mut lateness = DurationHistogram::new();
-    let mut sleep_wake_lateness = DurationHistogram::new();
+    let mut state = PacerState::default();
     let lead_buckets = u64::try_from(PREPARATION_LEAD.as_nanos() / BUCKET.as_nanos())
         .expect("fixed preparation lead fits u64");
     let mut next_prepare = 0u64;
@@ -240,33 +207,33 @@ where
         &sender,
         &mut next_prepare,
         &mut dispatched,
-        &mut metrics,
+        &mut state,
     );
 
-    while cursor < schedule.buckets && !metrics.channel_closed {
+    while cursor < schedule.buckets && !state.channel_closed {
         let advance = advance_cursor(&schedule, cursor, Instant::now());
         let Some(bucket) = advance.next_bucket else {
             if next_prepare < schedule.buckets {
-                metrics.record_cursor_skip(schedule.slots_between(next_prepare, schedule.buckets));
+                state.miss(schedule.slots_between(next_prepare, schedule.buckets));
             }
             for skipped in cursor..schedule.buckets {
                 if dispatched.remove(&skipped)
                     && let Some(descriptor) = schedule.descriptor(skipped)
                 {
-                    metrics.record_cursor_skip(descriptor.request_count);
+                    state.miss(descriptor.request_count);
                 }
             }
             break;
         };
         if bucket > next_prepare {
-            metrics.record_cursor_skip(schedule.slots_between(next_prepare, bucket));
+            state.miss(schedule.slots_between(next_prepare, bucket));
             next_prepare = bucket;
         }
         for skipped in cursor..bucket {
             if dispatched.remove(&skipped)
                 && let Some(descriptor) = schedule.descriptor(skipped)
             {
-                metrics.record_cursor_skip(descriptor.request_count);
+                state.miss(descriptor.request_count);
             }
         }
         cursor = bucket;
@@ -274,19 +241,7 @@ where
         let timing = schedule
             .descriptor(bucket)
             .expect("live bucket has a descriptor");
-        let wait = wait_until(timing.bucket_start);
-        record_wait_metrics(
-            &mut metrics,
-            &mut sleep_wake_lateness,
-            timing.bucket_deadline,
-            wait,
-        );
-        if timing.request_count > 0 {
-            lateness.record_ns(nanos(
-                wait.completed_at
-                    .saturating_duration_since(timing.bucket_start),
-            ));
-        }
+        wait_until(timing.bucket_start);
 
         if dispatched.remove(&bucket) {
             match take_prepared_until(
@@ -297,7 +252,7 @@ where
             ) {
                 Some(prepared) => admit(prepared),
                 None => {
-                    metrics.record_preparation_not_ready(timing.request_count);
+                    state.miss(timing.request_count);
                 }
             }
         }
@@ -309,13 +264,13 @@ where
             &sender,
             &mut next_prepare,
             &mut dispatched,
-            &mut metrics,
+            &mut state,
         );
     }
 
-    metrics.pacer_lateness = lateness.summary();
-    metrics.sleep_wake_lateness = sleep_wake_lateness.summary();
-    metrics
+    PacerResult {
+        missed_slots: state.missed_slots,
+    }
 }
 
 fn take_prepared_until<T>(
@@ -367,9 +322,9 @@ fn prepare_descriptors_through(
     sender: &mpsc::Sender<BucketDescriptor>,
     next_prepare: &mut u64,
     dispatched: &mut BTreeSet<u64>,
-    metrics: &mut PacerMetrics,
+    state: &mut PacerState,
 ) {
-    while *next_prepare < target && !metrics.channel_closed {
+    while *next_prepare < target && !state.channel_closed {
         let descriptor = schedule
             .descriptor(*next_prepare)
             .expect("prepared bucket has a descriptor");
@@ -377,136 +332,36 @@ fn prepare_descriptors_through(
         if descriptor.request_count == 0 {
             continue;
         }
-        let wait = wait_until(descriptor.preparation_start);
-        metrics.spin_wall_time_ns = metrics
-            .spin_wall_time_ns
-            .saturating_add(wait.spin_wall_time_ns);
+        wait_until(descriptor.preparation_start);
         if Instant::now() >= descriptor.bucket_deadline {
-            metrics.record_expired_before_dispatch(descriptor.request_count);
+            state.miss(descriptor.request_count);
             continue;
         }
-        let request_count = descriptor.request_count;
         match sender.try_send(descriptor) {
             Ok(()) => {
-                metrics.dispatched_slots += request_count;
                 dispatched.insert(*next_prepare - 1);
             }
             Err(mpsc::error::TrySendError::Full(descriptor)) => {
-                metrics.record_channel_full(descriptor.request_count);
+                state.miss(descriptor.request_count);
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                metrics.channel_closed = true;
-                metrics.missed_slots += schedule.slots_between(*next_prepare - 1, schedule.buckets);
+                state.channel_closed = true;
+                state.miss(schedule.slots_between(*next_prepare - 1, schedule.buckets));
             }
         }
     }
 }
-
-fn record_wait_metrics(
-    metrics: &mut PacerMetrics,
-    sleep_wake_lateness: &mut DurationHistogram,
-    deadline: Instant,
-    wait: WaitTiming,
-) {
-    metrics.spin_wall_time_ns = metrics
-        .spin_wall_time_ns
-        .saturating_add(wait.spin_wall_time_ns);
-    if let Some(value) = wait.sleep_wake_lateness_ns() {
-        sleep_wake_lateness.record_ns(value);
+fn wait_until(target: Instant) {
+    let now = Instant::now();
+    if now >= target {
+        return;
     }
-    match classify_wait_deadline_miss(
-        deadline,
-        wait.entered_at,
-        wait.sleep_returned_at,
-        wait.completed_at,
-    ) {
-        Some(WaitDeadlineMiss::Entered) => metrics.deadline_misses.entered_after_deadline += 1,
-        Some(WaitDeadlineMiss::SleepReturned) => {
-            metrics.deadline_misses.sleep_returned_after_deadline += 1;
-        }
-        Some(WaitDeadlineMiss::SpinCompleted) => {
-            metrics.deadline_misses.spin_completed_after_deadline += 1;
-        }
-        None => {}
-    }
-}
-
-fn nanos(duration: Duration) -> u64 {
-    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WaitDeadlineMiss {
-    Entered,
-    SleepReturned,
-    SpinCompleted,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct WaitTiming {
-    entered_at: Instant,
-    planned_spin_start: Option<Instant>,
-    sleep_returned_at: Option<Instant>,
-    completed_at: Instant,
-    spin_wall_time_ns: u64,
-}
-
-impl WaitTiming {
-    fn sleep_wake_lateness_ns(self) -> Option<u64> {
-        Some(nanos(
-            self.sleep_returned_at?
-                .saturating_duration_since(self.planned_spin_start?),
-        ))
-    }
-}
-
-fn classify_wait_deadline_miss(
-    deadline: Instant,
-    entered_at: Instant,
-    sleep_returned_at: Option<Instant>,
-    completed_at: Instant,
-) -> Option<WaitDeadlineMiss> {
-    if entered_at >= deadline {
-        Some(WaitDeadlineMiss::Entered)
-    } else if sleep_returned_at.is_some_and(|value| value >= deadline) {
-        Some(WaitDeadlineMiss::SleepReturned)
-    } else if completed_at >= deadline {
-        Some(WaitDeadlineMiss::SpinCompleted)
-    } else {
-        None
-    }
-}
-
-fn wait_until(target: Instant) -> WaitTiming {
-    let entered_at = Instant::now();
-    if entered_at >= target {
-        return WaitTiming {
-            entered_at,
-            planned_spin_start: None,
-            sleep_returned_at: None,
-            completed_at: entered_at,
-            spin_wall_time_ns: 0,
-        };
-    }
-    let remaining = target.duration_since(entered_at);
-    let mut planned_spin_start = None;
-    let mut sleep_returned_at = None;
+    let remaining = target.duration_since(now);
     if remaining > SPIN_TAIL {
-        planned_spin_start = target.checked_sub(SPIN_TAIL);
         thread::sleep(remaining - SPIN_TAIL);
-        sleep_returned_at = Some(Instant::now());
     }
-    let spin_started = Instant::now();
     while Instant::now() < target {
         spin_loop();
-    }
-    let completed_at = Instant::now();
-    WaitTiming {
-        entered_at,
-        planned_spin_start,
-        sleep_returned_at,
-        completed_at,
-        spin_wall_time_ns: nanos(completed_at.saturating_duration_since(spin_started)),
     }
 }
 
@@ -532,43 +387,5 @@ mod tests {
     #[test]
     fn pacer_starts_its_spin_fifty_microseconds_before_the_boundary() {
         assert_eq!(SPIN_TAIL, Duration::from_micros(50));
-    }
-
-    #[test]
-    fn wait_deadline_misses_identify_the_stage_that_crossed_the_deadline() {
-        let origin = Instant::now();
-        let deadline = origin + Duration::from_millis(10);
-
-        assert_eq!(
-            classify_wait_deadline_miss(deadline, deadline, None, deadline),
-            Some(WaitDeadlineMiss::Entered)
-        );
-        assert_eq!(
-            classify_wait_deadline_miss(
-                deadline,
-                origin,
-                Some(deadline + Duration::from_nanos(1)),
-                deadline + Duration::from_nanos(1),
-            ),
-            Some(WaitDeadlineMiss::SleepReturned)
-        );
-        assert_eq!(
-            classify_wait_deadline_miss(
-                deadline,
-                origin,
-                Some(origin + Duration::from_millis(9)),
-                deadline + Duration::from_nanos(1),
-            ),
-            Some(WaitDeadlineMiss::SpinCompleted)
-        );
-        assert_eq!(
-            classify_wait_deadline_miss(
-                deadline,
-                origin,
-                Some(origin + Duration::from_millis(9)),
-                deadline - Duration::from_nanos(1),
-            ),
-            None
-        );
     }
 }

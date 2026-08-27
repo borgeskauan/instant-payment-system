@@ -5,12 +5,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use loadtool_contract::event::{
     Event, MessageKind, NotificationKind, NotificationStatus, Participant,
 };
-use loadtool_contract::generator_metrics::{
-    GeneratorMetrics, HistogramSummary, PacerDeadlineMisses, PacerMisses, PullMetrics,
-    SemanticAdmissionMisses, SlotMetrics, write_generator_metrics_atomic,
-};
 use loadtool_contract::model::ExecutionPlan;
-use loadtool_contract::run_window::{RunWindow, write_run_window_atomic};
 use loadtool_generator::clock::RunClock;
 use loadtool_generator::planner::{Planner, RunIdentity};
 use loadtool_generator::recorder::EventRecorder;
@@ -82,10 +77,7 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
             http_status: 200,
         })
         .unwrap();
-    let summary = recorder.close().expect("close recorder");
-
-    assert_eq!(summary.http_start_lateness.count, 1);
-    assert_eq!(summary.http_start_lateness.max_ns, 1);
+    recorder.close().expect("close recorder");
 
     assert_eq!(
         fs::read_to_string(temp.path().join("pacs008-starts.csv")).unwrap(),
@@ -166,120 +158,4 @@ fn recorder_rejects_preexisting_outputs() {
         fs::read_to_string(temp.path().join("notifications.csv")).unwrap(),
         "do not overwrite"
     );
-}
-
-#[test]
-fn run_window_uses_schema_two_and_all_authoritative_boundaries() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let path = temp.path().join("run-window.json");
-    let document = RunWindow::new(
-        "mixed",
-        1_000_000_000,
-        2_000_000_000,
-        3_000_000_000,
-        4_000_000_000,
-        5_000_000_000,
-    );
-
-    write_run_window_atomic(&path, &document).expect("write window");
-    let value: serde_json::Value =
-        serde_json::from_slice(&fs::read(&path).unwrap()).expect("valid JSON");
-
-    assert_eq!(value["schema_version"], 2);
-    assert_eq!(value["profile"]["name"], "mixed");
-    assert_eq!(
-        value["window"]["generation_started_at"],
-        "1970-01-01T00:00:01Z"
-    );
-    assert_eq!(value["window"]["warmup_ended_at"], "1970-01-01T00:00:02Z");
-    assert_eq!(value["window"]["active_started_at"], "1970-01-01T00:00:03Z");
-    assert_eq!(
-        value["window"]["generation_ended_at"],
-        "1970-01-01T00:00:04Z"
-    );
-    assert_eq!(
-        value["window"]["replay_deadline_at"],
-        "1970-01-01T00:00:05Z"
-    );
-}
-
-#[test]
-fn generator_metrics_are_published_atomically_with_bounded_summaries() {
-    let temp = tempfile::tempdir().expect("temp dir");
-    let path = temp.path().join("generator-metrics.json");
-    let metrics = GeneratorMetrics {
-        valid: false,
-        violations: vec!["one missed original slot".to_owned()],
-        slots: SlotMetrics {
-            planned: 210,
-            dispatched: 204,
-            started: 204,
-            completed: 204,
-            missed: 6,
-        },
-        pacer_lateness: HistogramSummary {
-            count: 100,
-            p50_ns: 10,
-            p95_ns: 20,
-            p99_ns: 30,
-            max_ns: 40,
-        },
-        pacer_misses: PacerMisses {
-            cursor_skip: 1,
-            expired_before_dispatch: 2,
-            channel_full: 3,
-            preparation_not_ready: 4,
-        },
-        pacer_deadline_misses: PacerDeadlineMisses {
-            entered_after_deadline: 1,
-            sleep_returned_after_deadline: 2,
-            spin_completed_after_deadline: 3,
-        },
-        pacer_sleep_wake_lateness: HistogramSummary {
-            count: 100,
-            p50_ns: 50,
-            p95_ns: 60,
-            p99_ns: 70,
-            max_ns: 80,
-        },
-        semantic_admission_misses: SemanticAdmissionMisses {
-            before_preparation: 1,
-            http2_readiness: 2,
-            before_commit: 3,
-        },
-        late_semantic_admissions: 6,
-        pull: PullMetrics {
-            count: 4,
-            empty_responses: 1,
-            batch_size_counts: [0, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        },
-        ..GeneratorMetrics::default()
-    };
-
-    write_generator_metrics_atomic(&path, &metrics).expect("write metrics");
-    let value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-
-    assert_eq!(value["valid"], false);
-    assert_eq!(value["slots"]["missed"], 6);
-    assert_eq!(value["pacerMisses"]["cursorSkip"], 1);
-    assert_eq!(value["pacerMisses"]["expiredBeforeDispatch"], 2);
-    assert_eq!(value["pacerMisses"]["channelFull"], 3);
-    assert_eq!(value["pacerMisses"]["preparationNotReady"], 4);
-    assert_eq!(value["pacerDeadlineMisses"]["enteredAfterDeadline"], 1);
-    assert_eq!(
-        value["pacerDeadlineMisses"]["sleepReturnedAfterDeadline"],
-        2
-    );
-    assert_eq!(
-        value["pacerDeadlineMisses"]["spinCompletedAfterDeadline"],
-        3
-    );
-    assert_eq!(value["pacerSleepWakeLateness"]["p99Ns"], 70);
-    assert_eq!(value["semanticAdmissionMisses"]["beforePreparation"], 1);
-    assert_eq!(value["semanticAdmissionMisses"]["http2Readiness"], 2);
-    assert_eq!(value["semanticAdmissionMisses"]["beforeCommit"], 3);
-    assert_eq!(value["lateSemanticAdmissions"], 6);
-    assert_eq!(value["pacerLateness"]["p99Ns"], 30);
-    assert_eq!(value["pull"]["batchSizeCounts"]["3"], 1);
-    assert!(!temp.path().join(".generator-metrics.json.tmp").exists());
 }

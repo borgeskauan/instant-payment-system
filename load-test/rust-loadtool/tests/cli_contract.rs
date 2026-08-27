@@ -63,7 +63,7 @@ fn validate_profile_defaults_and_accepts_an_explicit_internal_name() {
 fn validate_profile_rejects_invalid_and_unknown_names() {
     for name in ["../escape", "missing-profile"] {
         let output = run(&["validate-profile", "--profile", name]);
-        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.status.code(), Some(2));
         assert!(stderr(&output).contains(if name == "../escape" {
             "invalid profile name"
         } else {
@@ -81,6 +81,6 @@ fn valid_run_shape_validates_the_prepared_run() {
         run_dir.path().to_str().expect("UTF-8 path"),
     ]);
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("required profile.json is missing"));
 }

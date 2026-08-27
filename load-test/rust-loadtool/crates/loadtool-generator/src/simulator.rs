@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,16 +13,12 @@ use tokio_util::task::TaskTracker;
 
 use crate::causal::{CausalCapacity, CausalKind, CausalPermit};
 use crate::clock::RunClock;
-use crate::histogram::DurationHistogram;
 use crate::http2::{Http2Config, PersistentHttp2Client, PersistentPreparedRequest};
 use crate::notification::NotificationPayload;
 use crate::original::{
-    AdmissionMiss, AdmissionOutcome, PreparedOriginal, StartedOriginal, admit_original,
-    prepare_original,
+    AdmissionOutcome, PreparedOriginal, StartedOriginal, admit_original, prepare_original,
 };
-use crate::pacer::{
-    PREPARATION_LEAD, PacerMetrics, PhaseSchedule, PreparedBucket, spawn_prepared_pacer,
-};
+use crate::pacer::{PREPARATION_LEAD, PhaseSchedule, PreparedBucket, spawn_prepared_pacer};
 use crate::payload::{pacs002, pacs008};
 use crate::payment_state::PaymentStates;
 use crate::phase_tracker::{PhaseTracker, WarmupObservation, WarmupOutcomes};
@@ -36,13 +32,7 @@ use loadtool_contract::event::{
     Event, MessageKind, NotificationKind, NotificationStatus, Participant,
 };
 use loadtool_contract::generation_window::GenerationWindow;
-use loadtool_contract::generator_metrics::{
-    FlowInFlight, GeneratorMetrics, HistogramSummary, InFlightMetrics, PacerDeadlineMisses,
-    PacerMisses, ProcessMetrics, PullMetrics, SemanticAdmissionMisses, SlotMetrics,
-    write_generator_metrics_atomic,
-};
 use loadtool_contract::model::{ExecutionPlan, ReplayRule};
-use loadtool_contract::run_window::{RunWindow, write_run_window_atomic};
 
 const PACER_CHANNEL_CAPACITY: usize = 2;
 const RECORDER_CAPACITY: usize = 65_536;
@@ -62,7 +52,6 @@ pub struct SimulationOptions {
 
 #[derive(Clone, Copy, Debug)]
 struct ActiveWindow {
-    start: Instant,
     generation_end: Instant,
     hard_deadline: Instant,
 }
@@ -128,92 +117,12 @@ struct Runtime {
     causal_capacity: Arc<CausalCapacity>,
     pacs008_replay: Option<(ReplaySelector, Duration)>,
     pacs002_replay: Option<(ReplaySelector, Duration)>,
-    metrics: RuntimeMetrics,
     failure: RunFailure,
-}
-
-#[derive(Default)]
-struct RuntimeMetrics {
-    pacer: Mutex<Vec<PacerMetrics>>,
-    dispatch: Mutex<Vec<HistogramSummary>>,
-    original_started: AtomicU64,
-    original_completed: AtomicU64,
-    semantic_admission_misses: SemanticAdmissionMissCounters,
-    causal_capacity_violations: AtomicU64,
-    original_in_flight: FlowCounter,
-    replay_in_flight: FlowCounter,
-    pull_empty: AtomicU64,
-    pull_batches: [AtomicU64; 16],
-}
-
-#[derive(Default)]
-struct SemanticAdmissionMissCounters {
-    before_preparation: AtomicU64,
-    http2_readiness: AtomicU64,
-    before_commit: AtomicU64,
-}
-
-impl SemanticAdmissionMissCounters {
-    fn record(&self, reason: AdmissionMiss) {
-        let counter = match reason {
-            AdmissionMiss::BeforePreparation => &self.before_preparation,
-            AdmissionMiss::Http2Readiness => &self.http2_readiness,
-            AdmissionMiss::BeforeCommit => &self.before_commit,
-        };
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn record_count(&self, reason: AdmissionMiss, count: u64) {
-        let counter = match reason {
-            AdmissionMiss::BeforePreparation => &self.before_preparation,
-            AdmissionMiss::Http2Readiness => &self.http2_readiness,
-            AdmissionMiss::BeforeCommit => &self.before_commit,
-        };
-        counter.fetch_add(count, Ordering::Relaxed);
-    }
-
-    fn snapshot(&self) -> SemanticAdmissionMisses {
-        SemanticAdmissionMisses {
-            before_preparation: self.before_preparation.load(Ordering::Acquire),
-            http2_readiness: self.http2_readiness.load(Ordering::Acquire),
-            before_commit: self.before_commit.load(Ordering::Acquire),
-        }
-    }
-}
-
-#[derive(Default)]
-struct FlowCounter {
-    current: AtomicU64,
-    maximum: AtomicU64,
-}
-
-struct FlowGuard<'a>(&'a FlowCounter);
-
-impl FlowCounter {
-    fn enter(&self) -> FlowGuard<'_> {
-        let current = self.current.fetch_add(1, Ordering::AcqRel) + 1;
-        self.maximum.fetch_max(current, Ordering::Relaxed);
-        FlowGuard(self)
-    }
-
-    fn snapshot(&self) -> FlowInFlight {
-        FlowInFlight {
-            current: self.current.load(Ordering::Acquire),
-            maximum: self.maximum.load(Ordering::Acquire),
-        }
-    }
-}
-
-impl Drop for FlowGuard<'_> {
-    fn drop(&mut self) {
-        self.0.current.fetch_sub(1, Ordering::AcqRel);
-    }
 }
 
 #[derive(Default)]
 struct RunFailure {
     operational: Mutex<Option<String>>,
-    generator: Mutex<Vec<String>>,
 }
 
 impl RunFailure {
@@ -228,22 +137,8 @@ impl RunFailure {
         }
     }
 
-    fn generator(&self, error: impl Into<String>) {
-        self.generator
-            .lock()
-            .unwrap_or_else(|value| value.into_inner())
-            .push(error.into());
-    }
-
     fn operational_error(&self) -> Option<String> {
         self.operational
-            .lock()
-            .unwrap_or_else(|value| value.into_inner())
-            .clone()
-    }
-
-    fn generator_violations(&self) -> Vec<String> {
-        self.generator
             .lock()
             .unwrap_or_else(|value| value.into_inner())
             .clone()
@@ -431,7 +326,6 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
         active_window: RwLock::new(None),
         accepting_work: AtomicBool::new(true),
         causal_capacity: Arc::new(CausalCapacity::new(CAUSAL_HTTP_CAPACITY)?),
-        metrics: RuntimeMetrics::default(),
         failure: RunFailure::default(),
     });
 
@@ -492,7 +386,6 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
         .active_window
         .write()
         .unwrap_or_else(|value| value.into_inner()) = Some(ActiveWindow {
-        start: active_start,
         generation_end,
         hard_deadline,
     });
@@ -523,16 +416,8 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
     runtime.tasks.wait().await;
 
     let operational_error = runtime.failure.operational_error();
-    let mut generator_violations = runtime.failure.generator_violations();
-    let late_semantic_admissions = runtime.metrics.semantic_admission_misses.snapshot().total();
-    if late_semantic_admissions > 0 {
-        generator_violations.push(format!(
-            "{late_semantic_admissions} original payments missed their bucket admission deadline"
-        ));
-    }
-    let metrics_snapshot = snapshot_runtime_metrics(&runtime, &generator_violations);
     drop(runtime);
-    let recorder_summary = recorder.close()?;
+    recorder.close()?;
 
     if let Some(error) = operational_error {
         return Err(anyhow!(error));
@@ -547,27 +432,8 @@ pub async fn run(bundle: Bundle, options: SimulationOptions) -> Result<Generatio
         replay_deadline_at_ns: i64::try_from(clock.unix_nanos(hard_deadline)?)
             .context("replay deadline exceeds i64 nanoseconds")?,
     };
-    write_run_window_atomic(
-        bundle.run_window(),
-        &RunWindow::new(
-            &plan.profile,
-            clock.unix_nanos(warmup_start)?,
-            clock.unix_nanos(warmup_planned_end)?,
-            clock.unix_nanos(active_start)?,
-            clock.unix_nanos(generation_end)?,
-            clock.unix_nanos(hard_deadline)?,
-        ),
-    )?;
-    let mut metrics = metrics_snapshot;
-    metrics.http_start_lateness = recorder_summary.http_start_lateness;
-    metrics.process = process_metrics();
-    write_generator_metrics_atomic(bundle.generator_metrics(), &metrics)?;
     println!(
-        "started={} completed={} missed={} generator_valid={} output={}",
-        metrics.slots.started,
-        metrics.slots.completed,
-        metrics.slots.missed,
-        metrics.valid,
+        "load generation completed: output={}",
         bundle.events_dir().display()
     );
     Ok(window)
@@ -597,12 +463,7 @@ async fn run_generation_phase(
         );
     })?;
     let planner = Arc::clone(&runtime.planner);
-    let mut dispatch = DurationHistogram::new();
-
     while let Some(descriptor) = receiver.recv().await {
-        dispatch.record_ns(nanos(
-            Instant::now().saturating_duration_since(descriptor.preparation_start),
-        ));
         let mut jobs = Vec::with_capacity(
             usize::try_from(descriptor.request_count).expect("bucket request count fits usize"),
         );
@@ -645,27 +506,15 @@ async fn run_generation_phase(
         });
     }
     drop(prepared_sender);
-    let pacer_metrics = pacer
+    let pacer_result = pacer
         .join()
         .map_err(|_| anyhow!("load-tool pacer thread panicked"))?;
-    if pacer_metrics.missed_slots > 0 {
-        runtime.failure.generator(format!(
-            "pacer missed {} original slots in a generation phase",
-            pacer_metrics.missed_slots
+    if warmup && pacer_result.missed_slots > 0 {
+        runtime.warmup_tracker.fail(format!(
+            "pacer missed {} warmup original slots",
+            pacer_result.missed_slots
         ));
     }
-    runtime
-        .metrics
-        .pacer
-        .lock()
-        .unwrap_or_else(|value| value.into_inner())
-        .push(pacer_metrics);
-    runtime
-        .metrics
-        .dispatch
-        .lock()
-        .unwrap_or_else(|value| value.into_inner())
-        .push(dispatch.summary());
     check_operational(&runtime)
 }
 
@@ -724,7 +573,12 @@ async fn prepare_original_bucket(
                 }
             }
             Ok(AdmissionOutcome::Missed(reason)) => {
-                runtime.metrics.semantic_admission_misses.record(reason);
+                if let Some(tracker) = tracker {
+                    tracker.fail(format!(
+                        "warmup original {} missed admission: {reason:?}",
+                        job.sequence
+                    ));
+                }
             }
             Err(error) => runtime.failure.operational(&runtime.cancellation, error),
         }
@@ -738,7 +592,6 @@ fn admit_prepared_bucket(
     runtime_handle: &tokio::runtime::Handle,
 ) {
     let mut started = Vec::with_capacity(prepared.len());
-    let mut missed = 0u64;
     for prepared in prepared {
         let PreparedOriginalJob {
             job,
@@ -753,7 +606,14 @@ fn admit_prepared_bucket(
             job.request_timeout,
             job.hard_deadline,
         ) {
-            Ok(AdmissionOutcome::Missed(_)) => missed += 1,
+            Ok(AdmissionOutcome::Missed(reason)) => {
+                if let Some(tracker) = &tracker {
+                    tracker.fail(format!(
+                        "warmup original {} missed admission: {reason:?}",
+                        job.sequence
+                    ));
+                }
+            }
             Ok(AdmissionOutcome::Admitted(request)) => {
                 obligations.transfer();
                 started.push(StartedOriginalJob {
@@ -766,22 +626,12 @@ fn admit_prepared_bucket(
             Err(error) => runtime.failure.operational(&runtime.cancellation, error),
         }
     }
-    if missed > 0 {
-        runtime
-            .metrics
-            .semantic_admission_misses
-            .record_count(AdmissionMiss::BeforeCommit, missed);
-    }
     if started.is_empty() {
         return;
     }
     let task_runtime = Arc::clone(&runtime);
     runtime.tasks.spawn_on(
         async move {
-            task_runtime
-                .metrics
-                .original_started
-                .fetch_add(started.len() as u64, Ordering::Relaxed);
             for started in started {
                 handoff_started_original(Arc::clone(&task_runtime), started);
             }
@@ -835,7 +685,6 @@ async fn finish_original<F>(
 ) where
     F: std::future::Future<Output = crate::http2::HttpAttempt> + Send,
 {
-    let _in_flight = runtime.metrics.original_in_flight.enter();
     let completion = match started.finish().await {
         Ok(completion) => completion,
         Err(error) => {
@@ -843,10 +692,6 @@ async fn finish_original<F>(
             return;
         }
     };
-    runtime
-        .metrics
-        .original_completed
-        .fetch_add(1, Ordering::Relaxed);
     if let Err(error) = runtime.recorder.record(Event::Pacs008Completed {
         sequence: job.sequence,
         created_offset_ns: offset_ns(runtime.clock, job.bucket_start),
@@ -882,10 +727,12 @@ fn spawn_replay(
     tracker: Option<Arc<PhaseTracker>>,
 ) {
     if !runtime.accepting_work.load(Ordering::Acquire) {
-        runtime.failure.generator(format!(
-            "{} replay for sequence {sequence} was created after semantic shutdown",
-            message.as_str()
-        ));
+        if let Some(tracker) = tracker {
+            tracker.fail(format!(
+                "{} replay for sequence {sequence} was created after semantic shutdown",
+                message.as_str()
+            ));
+        }
         return;
     }
     let client_ispb = match runtime.pair_for_sequence(sequence) {
@@ -911,7 +758,6 @@ fn spawn_replay(
     let task_runtime = Arc::clone(&runtime);
     runtime.tasks.spawn(async move {
         let _work = PhaseWork(tracker.clone());
-        let _in_flight = task_runtime.metrics.replay_in_flight.enter();
         let due_at = request_started_at
             .checked_add(delay)
             .unwrap_or(hard_deadline);
@@ -955,10 +801,6 @@ fn spawn_replay(
                 }
             }
             Err(error) => {
-                task_runtime.failure.generator(format!(
-                    "{} replay for sequence {sequence} did not complete: {error}",
-                    message.as_str()
-                ));
                 if let Some(tracker) = tracker {
                     tracker.fail(error.to_string());
                 }
@@ -991,7 +833,6 @@ async fn pull_loop(runtime: Arc<Runtime>, mut session: PullSession) {
                 return;
             }
         };
-        observe_pull(&runtime, batch.notifications.len());
         let received_at = Instant::now();
         let mut capacity_violation = None;
         let result = state.process(batch, |notification| {
@@ -1006,11 +847,7 @@ async fn pull_loop(runtime: Arc<Runtime>, mut session: PullSession) {
         });
         if let Err(error) = result {
             if let Some(error) = capacity_violation {
-                runtime
-                    .metrics
-                    .causal_capacity_violations
-                    .fetch_add(1, Ordering::Relaxed);
-                runtime.failure.generator(error);
+                eprintln!("generator capacity violation: {error}");
             } else {
                 runtime.failure.operational(
                     &runtime.cancellation,
@@ -1057,6 +894,11 @@ fn process_pulled_notification(
                     && runtime.states.claim_pacs002(sequence)
                     && let Err(error) = spawn_pacs002(Arc::clone(runtime), sequence)
                 {
+                    if let Some(tracker) = runtime.tracker_for(sequence) {
+                        tracker.fail(format!(
+                            "warmup PACS.002 for sequence {sequence} exceeded generator capacity: {error}"
+                        ));
+                    }
                     *capacity_violation = Some(error.to_string());
                     return Err(error);
                 }
@@ -1374,154 +1216,6 @@ fn warmup_slots(plan: &ExecutionPlan) -> Result<u64> {
     bootstrap
         .checked_add(steady)
         .context("warmup slots overflow")
-}
-
-fn observe_pull(runtime: &Runtime, size: usize) {
-    let now = Instant::now();
-    let active = runtime
-        .active_window
-        .read()
-        .unwrap_or_else(|value| value.into_inner());
-    if !active.is_some_and(|window| now >= window.start && now < window.generation_end) {
-        return;
-    }
-    if size == 0 {
-        runtime.metrics.pull_empty.fetch_add(1, Ordering::Relaxed);
-    } else if size < runtime.metrics.pull_batches.len() {
-        runtime.metrics.pull_batches[size].fetch_add(1, Ordering::Relaxed);
-    } else {
-        runtime.failure.generator(format!(
-            "notification Pull returned {size} messages above protocol maximum"
-        ));
-    }
-}
-
-fn snapshot_runtime_metrics(runtime: &Runtime, violations: &[String]) -> GeneratorMetrics {
-    let pacers = runtime
-        .metrics
-        .pacer
-        .lock()
-        .unwrap_or_else(|value| value.into_inner());
-    let planned = pacers.iter().map(|value| value.planned_slots).sum();
-    let dispatched = pacers.iter().map(|value| value.dispatched_slots).sum();
-    let pacer_missed: u64 = pacers.iter().map(|value| value.missed_slots).sum();
-    let semantic_admission_misses = runtime.metrics.semantic_admission_misses.snapshot();
-    let late = semantic_admission_misses.total();
-    let mut pull_counts = [0u64; 16];
-    for (index, value) in pull_counts.iter_mut().enumerate().skip(1) {
-        *value = runtime.metrics.pull_batches[index].load(Ordering::Acquire);
-    }
-    GeneratorMetrics {
-        valid: violations.is_empty() && pacer_missed == 0 && late == 0,
-        violations: violations.to_vec(),
-        slots: SlotMetrics {
-            planned,
-            dispatched,
-            started: runtime.metrics.original_started.load(Ordering::Acquire),
-            completed: runtime.metrics.original_completed.load(Ordering::Acquire),
-            missed: pacer_missed + late,
-        },
-        pacer_misses: PacerMisses {
-            cursor_skip: pacers.iter().map(|value| value.missed_cursor_skip).sum(),
-            expired_before_dispatch: pacers
-                .iter()
-                .map(|value| value.missed_expired_before_dispatch)
-                .sum(),
-            channel_full: pacers.iter().map(|value| value.missed_channel_full).sum(),
-            preparation_not_ready: pacers
-                .iter()
-                .map(|value| value.missed_preparation_not_ready)
-                .sum(),
-        },
-        pacer_deadline_misses: PacerDeadlineMisses {
-            entered_after_deadline: pacers
-                .iter()
-                .map(|value| value.deadline_misses.entered_after_deadline)
-                .sum(),
-            sleep_returned_after_deadline: pacers
-                .iter()
-                .map(|value| value.deadline_misses.sleep_returned_after_deadline)
-                .sum(),
-            spin_completed_after_deadline: pacers
-                .iter()
-                .map(|value| value.deadline_misses.spin_completed_after_deadline)
-                .sum(),
-        },
-        semantic_admission_misses,
-        pacer_lateness: combine_histograms(pacers.iter().map(|value| value.pacer_lateness)),
-        pacer_sleep_wake_lateness: combine_histograms(
-            pacers.iter().map(|value| value.sleep_wake_lateness),
-        ),
-        dispatch_lateness: combine_histograms(
-            runtime
-                .metrics
-                .dispatch
-                .lock()
-                .unwrap_or_else(|value| value.into_inner())
-                .iter()
-                .copied(),
-        ),
-        late_semantic_admissions: late,
-        generator_capacity_violations: runtime
-            .metrics
-            .causal_capacity_violations
-            .load(Ordering::Acquire),
-        spin_wall_time_ns: pacers.iter().map(|value| value.spin_wall_time_ns).sum(),
-        in_flight: InFlightMetrics {
-            original: runtime.metrics.original_in_flight.snapshot(),
-            pacs008_replay: runtime.metrics.replay_in_flight.snapshot(),
-            causal_http: FlowInFlight {
-                current: runtime.causal_capacity.current(),
-                maximum: runtime.causal_capacity.maximum(),
-            },
-        },
-        pull: PullMetrics {
-            count: pull_counts.iter().sum(),
-            empty_responses: runtime.metrics.pull_empty.load(Ordering::Acquire),
-            batch_size_counts: pull_counts,
-        },
-        ..GeneratorMetrics::default()
-    }
-}
-
-fn combine_histograms(values: impl Iterator<Item = HistogramSummary>) -> HistogramSummary {
-    values.fold(HistogramSummary::default(), |mut combined, value| {
-        combined.count += value.count;
-        combined.p50_ns = combined.p50_ns.max(value.p50_ns);
-        combined.p95_ns = combined.p95_ns.max(value.p95_ns);
-        combined.p99_ns = combined.p99_ns.max(value.p99_ns);
-        combined.max_ns = combined.max_ns.max(value.max_ns);
-        combined
-    })
-}
-
-fn process_metrics() -> ProcessMetrics {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let mut usage = std::mem::zeroed::<libc::rusage>();
-        if libc::getrusage(libc::RUSAGE_SELF, &mut usage) == 0 {
-            return ProcessMetrics {
-                user_cpu_ns: timeval_ns(usage.ru_utime),
-                system_cpu_ns: timeval_ns(usage.ru_stime),
-                maximum_rss_bytes: u64::try_from(usage.ru_maxrss)
-                    .unwrap_or_default()
-                    .saturating_mul(1024),
-            };
-        }
-    }
-    ProcessMetrics::default()
-}
-
-#[cfg(target_os = "linux")]
-fn timeval_ns(value: libc::timeval) -> u64 {
-    u64::try_from(value.tv_sec)
-        .unwrap_or_default()
-        .saturating_mul(1_000_000_000)
-        .saturating_add(
-            u64::try_from(value.tv_usec)
-                .unwrap_or_default()
-                .saturating_mul(1_000),
-        )
 }
 
 fn transient_pull_error(error: &anyhow::Error) -> bool {

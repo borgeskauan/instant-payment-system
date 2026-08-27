@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
+use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_generator::simulator::SimulationOptions;
+use rust_loadtool::RunOutcome;
 
 #[tokio::test]
 async fn generator_finishes_before_the_reporter_reads_the_bundle() {
@@ -12,23 +14,25 @@ async fn generator_finishes_before_the_reporter_reads_the_bundle() {
     let generator_events = Arc::clone(&events);
     let reporter_events = Arc::clone(&events);
 
-    rust_loadtool::run_with(
+    let outcome = rust_loadtool::run_with(
         run.path(),
         SimulationOptions::default(),
         move |bundle, _| async move {
             let _guard = CompletionGuard(Arc::clone(&generator_events));
             generator_events.lock().unwrap().push("generator");
             copy_generated_outputs(&fixture_root(), bundle.root());
-            Ok(())
+            Ok(fixture_window())
         },
-        move |bundle| {
+        move |bundle, window| {
             reporter_events.lock().unwrap().push("reporter");
-            loadtool_report::write(bundle).map(|_| ())
+            assert_eq!(window, fixture_window());
+            loadtool_report::write(bundle, window)
         },
     )
     .await
     .unwrap();
 
+    assert_eq!(outcome, RunOutcome::Valid);
     assert_eq!(
         *events.lock().unwrap(),
         ["generator", "generator-dropped", "reporter"]
@@ -46,9 +50,9 @@ async fn generator_failure_skips_reporting_and_preserves_the_error() {
         run.path(),
         SimulationOptions::default(),
         |_, _| async { Err(anyhow!("generator stopped")) },
-        move |_| {
+        move |_, _| {
             *reporter_called.lock().unwrap() = true;
-            Ok(())
+            unreachable!()
         },
     )
     .await
@@ -63,23 +67,31 @@ async fn generator_failure_skips_reporting_and_preserves_the_error() {
 async fn invalid_generation_still_produces_an_invalid_report() {
     let run = prepared_run();
 
-    rust_loadtool::run_with(
+    let outcome = rust_loadtool::run_with(
         run.path(),
         SimulationOptions::default(),
         |bundle, _| async move {
             copy_generated_outputs(&fixture_root(), bundle.root());
-            let metrics = bundle.generator_metrics();
-            let mut value: serde_json::Value =
-                serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
-            value["valid"] = false.into();
-            value["violations"] = serde_json::json!(["fixture generator violation"]);
-            fs::write(metrics, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-            Ok(())
+            let starts = bundle.events_dir().join("pacs008-starts.csv");
+            let contents = fs::read_to_string(&starts).unwrap();
+            fs::write(
+                starts,
+                contents
+                    .lines()
+                    .filter(|line| !line.starts_with("fixture-3,"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n",
+            )
+            .unwrap();
+            Ok(fixture_window())
         },
-        |bundle| loadtool_report::write(bundle).map(|_| ()),
+        |bundle, window| loadtool_report::write(bundle, window),
     )
     .await
     .unwrap();
+
+    assert_eq!(outcome, RunOutcome::Invalid);
 
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(run.path().join("sla-report.json")).unwrap()).unwrap();
@@ -94,9 +106,9 @@ async fn reporter_failure_is_returned() {
         SimulationOptions::default(),
         |bundle, _| async move {
             copy_generated_outputs(&fixture_root(), bundle.root());
-            Ok(())
+            Ok(fixture_window())
         },
-        |_| Err(anyhow!("reporter stopped")),
+        |_, _| Err(anyhow!("reporter stopped")),
     )
     .await
     .unwrap_err();
@@ -116,9 +128,9 @@ async fn existing_outputs_fail_before_the_generator_runs() {
         SimulationOptions::default(),
         move |_, _| async move {
             *generator_called.lock().unwrap() = true;
-            Ok(())
+            Ok(fixture_window())
         },
-        |_| Ok(()),
+        |_, _| unreachable!(),
     )
     .await
     .unwrap_err();
@@ -147,15 +159,15 @@ fn prepared_run() -> tempfile::TempDir {
 
 fn copy_generated_outputs(source: &Path, destination: &Path) {
     copy_dir(&source.join("events"), &destination.join("events"));
-    copy_dir(
-        &source.join("diagnostics"),
-        &destination.join("diagnostics"),
-    );
-    fs::copy(
-        source.join("run-window.json"),
-        destination.join("run-window.json"),
-    )
-    .unwrap();
+}
+
+fn fixture_window() -> GenerationWindow {
+    GenerationWindow {
+        generation_started_at_ns: 1_767_225_600_000_000_000,
+        active_started_at_ns: 1_767_225_601_000_000_000,
+        generation_ended_at_ns: 1_767_225_603_000_000_000,
+        replay_deadline_at_ns: 1_767_225_613_000_000_000,
+    }
 }
 
 fn copy_dir(source: &Path, destination: &Path) {

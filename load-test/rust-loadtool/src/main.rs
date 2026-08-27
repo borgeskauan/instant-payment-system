@@ -58,7 +58,7 @@ async fn main() -> ExitCode {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("validate-profile failed: {error:#}");
-                    ExitCode::FAILURE
+                    ExitCode::from(2)
                 }
             }
         }
@@ -77,10 +77,11 @@ async fn main() -> ExitCode {
             })
             .await;
             match result {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(rust_loadtool::RunOutcome::Valid) => ExitCode::SUCCESS,
+                Ok(rust_loadtool::RunOutcome::Invalid) => ExitCode::FAILURE,
                 Err(error) => {
                     eprintln!("load-tool run failed: {error:#}");
-                    ExitCode::FAILURE
+                    ExitCode::from(2)
                 }
             }
         }

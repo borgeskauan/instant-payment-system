@@ -2,7 +2,6 @@
 
 pub mod causal;
 pub mod clock;
-mod histogram;
 pub mod http2;
 pub mod notification;
 pub mod original;

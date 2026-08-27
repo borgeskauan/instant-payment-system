@@ -80,7 +80,6 @@ fn absent_preparation_expires_without_delaying_the_next_bucket() {
         .expect("second prepared bucket");
     let metrics = handle.join().expect("pacer did not panic");
 
-    assert_eq!(metrics.missed_preparation_not_ready, first.request_count);
     let admissions = admissions.lock().expect("admission lock");
     assert_eq!(admissions.len(), 1);
     assert_eq!(admissions[0].0, 1);
@@ -191,13 +190,7 @@ fn bounded_channel_never_turns_a_full_bucket_into_later_load() {
     let queued = receiver.blocking_recv().expect("one descriptor");
 
     assert_eq!(queued.bucket_index, 0);
-    assert_eq!(metrics.planned_slots, 200);
-    assert_eq!(metrics.dispatched_slots, 20);
     assert_eq!(metrics.missed_slots, 200);
-    assert_eq!(metrics.missed_cursor_skip, 0);
-    assert_eq!(metrics.missed_expired_before_dispatch, 0);
-    assert_eq!(metrics.missed_channel_full, 180);
-    assert_eq!(metrics.missed_preparation_not_ready, 20);
 }
 
 #[test]
@@ -213,16 +206,7 @@ fn expired_phase_separates_preparation_expiry_from_cursor_skip() {
         .join()
         .expect("pacer did not panic");
 
-    assert_eq!(metrics.planned_slots, 200);
-    assert_eq!(metrics.dispatched_slots, 0);
     assert_eq!(metrics.missed_slots, 200);
-    assert!(metrics.missed_expired_before_dispatch > 0);
-    assert!(metrics.missed_cursor_skip > 0);
-    assert_eq!(
-        metrics.missed_expired_before_dispatch + metrics.missed_cursor_skip,
-        metrics.missed_slots
-    );
-    assert_eq!(metrics.missed_channel_full, 0);
 }
 
 #[test]
@@ -249,10 +233,7 @@ fn real_clock_pacing_preserves_the_ten_millisecond_envelope() {
         descriptor.request_count == 21
             && descriptor.bucket_deadline == descriptor.bucket_start + Duration::from_millis(10)
     }));
-    assert_eq!(metrics.planned_slots, 210);
-    assert_eq!(metrics.dispatched_slots + metrics.missed_slots, 210);
-    assert!(metrics.pacer_lateness.count > 0);
-    assert!(metrics.spin_wall_time_ns > 0);
+    assert_eq!(metrics.missed_slots, 0);
 }
 
 #[test]
@@ -278,7 +259,6 @@ fn descriptors_arrive_before_the_bucket_for_non_observable_preparation() {
     let metrics = handle.join().expect("pacer did not panic");
 
     assert!(received_at < first.bucket_start);
-    assert_eq!(metrics.dispatched_slots, metrics.planned_slots);
     assert_eq!(metrics.missed_slots, 0);
 }
 
@@ -307,7 +287,6 @@ fn rates_below_one_thousand_do_not_dispatch_empty_buckets() {
             .iter()
             .all(|descriptor| descriptor.request_count == 1)
     );
-    assert_eq!(metrics.dispatched_slots, 5);
     assert_eq!(metrics.missed_slots, 0);
 }
 

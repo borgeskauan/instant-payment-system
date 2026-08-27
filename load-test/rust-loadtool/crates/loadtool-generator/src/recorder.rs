@@ -8,10 +8,8 @@ use std::thread::{self, JoinHandle};
 use anyhow::{Context, Result, anyhow};
 
 use crate::clock::RunClock;
-use crate::histogram::DurationHistogram;
 use crate::planner::{Planner, RunIdentity};
 use loadtool_contract::event::{Event, Participant};
-use loadtool_contract::generator_metrics::HistogramSummary;
 
 const BUFFER_SIZE: usize = 4 * 1024 * 1024;
 
@@ -57,18 +55,13 @@ const REPLAY_HEADER: &[&str] = &[
 pub struct EventRecorder {
     sender: Option<SyncSender<Event>>,
     failure: Arc<Mutex<Option<String>>>,
-    worker: Option<JoinHandle<Result<RecorderSummary>>>,
+    worker: Option<JoinHandle<Result<()>>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct EventSender {
     sender: SyncSender<Event>,
     failure: Arc<Mutex<Option<String>>>,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RecorderSummary {
-    pub http_start_lateness: HistogramSummary,
 }
 
 impl EventRecorder {
@@ -122,7 +115,7 @@ impl EventRecorder {
         })
     }
 
-    pub fn close(mut self) -> Result<RecorderSummary> {
+    pub fn close(mut self) -> Result<()> {
         self.sender.take();
         let worker_result = self
             .worker
@@ -165,22 +158,12 @@ fn record_loop(
     planner: &Planner,
     identity: &RunIdentity,
     clock: RunClock,
-) -> Result<RecorderSummary> {
-    let mut http_start_lateness = DurationHistogram::new();
+) -> Result<()> {
     for event in receiver {
-        write_event(
-            &mut outputs,
-            planner,
-            identity,
-            clock,
-            event,
-            &mut http_start_lateness,
-        )?;
+        write_event(&mut outputs, planner, identity, clock, event)?;
     }
     outputs.finish()?;
-    Ok(RecorderSummary {
-        http_start_lateness: http_start_lateness.summary(),
-    })
+    Ok(())
 }
 
 fn write_event(
@@ -189,7 +172,6 @@ fn write_event(
     identity: &RunIdentity,
     clock: RunClock,
     event: Event,
-    http_start_lateness: &mut DurationHistogram,
 ) -> Result<()> {
     match event {
         Event::Pacs008Completed {
@@ -200,8 +182,6 @@ fn write_event(
             http_status,
             replay_selected,
         } => {
-            http_start_lateness
-                .record_ns(request_started_offset_ns.saturating_sub(created_offset_ns));
             let payment = planner.payment(sequence)?;
             let (payer, receiver) = pair(payment.pair_number);
             outputs.pacs008.write_record([

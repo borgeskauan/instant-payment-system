@@ -90,13 +90,6 @@ fn resolves_fixed_layout_and_decodes_the_normalized_plan() {
 
     assert!(bundle.root().is_absolute());
     assert_eq!(bundle.events_dir(), bundle.root().join("events"));
-    assert_eq!(bundle.run_window(), bundle.root().join("run-window.json"));
-    assert_eq!(
-        bundle.generator_metrics(),
-        bundle
-            .root()
-            .join("diagnostics/loadtool/generator-metrics.json")
-    );
     assert_eq!(prepared.profile.name, "contract-test");
     assert_eq!(prepared.plan.profile, prepared.profile.name);
     assert_eq!(prepared.plan.load.offered_tx_rate, 2100);
@@ -134,7 +127,6 @@ fn malformed_missing_and_unknown_plan_inputs_fail_before_outputs_exist() {
 
         assert!(bundle.load_prepared().is_err());
         assert!(!bundle.events_dir().exists());
-        assert!(!bundle.run_window().exists());
     }
 
     let temp = prepared_run();
@@ -149,7 +141,7 @@ fn malformed_missing_and_unknown_plan_inputs_fail_before_outputs_exist() {
 
 #[test]
 fn generated_outputs_must_be_absent_and_are_created_by_rust() {
-    for relative in ["events", "run-window.json", "sla-report.json"] {
+    for relative in ["events", "sla-report.json"] {
         let temp = prepared_run();
         let path = temp.path().join(relative);
         if Path::new(relative).extension().is_none() {
@@ -168,5 +160,6 @@ fn generated_outputs_must_be_absent_and_are_created_by_rust() {
     bundle.prepare_outputs().expect("prepare Rust outputs");
 
     assert!(bundle.events_dir().is_dir());
-    assert!(bundle.generator_metrics().parent().unwrap().is_dir());
+    assert!(!bundle.root().join("run-window.json").exists());
+    assert!(!bundle.root().join("generator-metrics.json").exists());
 }

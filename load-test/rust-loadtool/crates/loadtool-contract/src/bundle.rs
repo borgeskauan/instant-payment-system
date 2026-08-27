@@ -29,10 +29,7 @@ pub struct Bundle {
     profile: PathBuf,
     execution_plan: PathBuf,
     events_dir: PathBuf,
-    diagnostics_dir: PathBuf,
-    run_window: PathBuf,
     report: PathBuf,
-    generator_metrics: PathBuf,
 }
 
 impl Bundle {
@@ -43,17 +40,11 @@ impl Bundle {
         let root = fs::canonicalize(run_dir)
             .with_context(|| format!("resolve run directory {}", run_dir.display()))?;
         let inputs = root.join("inputs");
-        let diagnostics_dir = root.join("diagnostics");
         Ok(Self {
             profile: inputs.join("profile.json"),
             execution_plan: inputs.join("execution-plan.json"),
             events_dir: root.join("events"),
-            run_window: root.join("run-window.json"),
             report: root.join("sla-report.json"),
-            generator_metrics: diagnostics_dir
-                .join("loadtool")
-                .join("generator-metrics.json"),
-            diagnostics_dir,
             root,
         })
     }
@@ -64,14 +55,6 @@ impl Bundle {
 
     pub fn events_dir(&self) -> &Path {
         &self.events_dir
-    }
-
-    pub fn run_window(&self) -> &Path {
-        &self.run_window
-    }
-
-    pub fn generator_metrics(&self) -> &Path {
-        &self.generator_metrics
     }
 
     pub fn report(&self) -> &Path {
@@ -129,17 +112,6 @@ impl Bundle {
         self.validate_prepared()?;
         fs::create_dir(&self.events_dir)
             .with_context(|| format!("create {}", self.events_dir.display()))?;
-        fs::create_dir_all(
-            self.generator_metrics
-                .parent()
-                .expect("generator metrics always has a parent"),
-        )
-        .with_context(|| {
-            format!(
-                "create load-tool diagnostics under {}",
-                self.diagnostics_dir.display()
-            )
-        })?;
         Ok(())
     }
 
@@ -147,9 +119,7 @@ impl Bundle {
         require_regular_file(&self.profile, "profile.json")?;
         require_regular_file(&self.execution_plan, "execution-plan.json")?;
         require_absent(&self.events_dir, "events")?;
-        require_absent(&self.run_window, "run-window.json")?;
         require_absent(&self.report, "sla-report.json")?;
-        require_absent(&self.generator_metrics, "generator-metrics.json")?;
         Ok(())
     }
 }
