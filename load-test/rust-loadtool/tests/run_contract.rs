@@ -164,9 +164,9 @@ fn copy_generated_outputs(source: &Path, destination: &Path) {
 fn fixture_window() -> GenerationWindow {
     GenerationWindow {
         generation_started_at_ns: 1_767_225_600_000_000_000,
-        active_started_at_ns: 1_767_225_601_000_000_000,
-        generation_ended_at_ns: 1_767_225_603_000_000_000,
-        replay_deadline_at_ns: 1_767_225_613_000_000_000,
+        active_started_at_ns: 1_767_225_602_000_000_000,
+        generation_ended_at_ns: 1_767_225_604_000_000_000,
+        replay_deadline_at_ns: 1_767_225_614_000_000_000,
     }
 }
 

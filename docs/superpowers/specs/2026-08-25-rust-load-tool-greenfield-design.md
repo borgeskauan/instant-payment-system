@@ -626,7 +626,7 @@ somente a admissão do PACS.008 original; depois do `COMMIT`, seu HTTP obedece a
 ### Startup
 
 ```text
-validar inputs
+decodificar e validar o ExecutionPlan normalizado
     ↓
 calcular quantidade máxima de slots
     ↓
@@ -640,6 +640,11 @@ capturar runMonoOrigin + wallOrigin
     ↓
 iniciar thread do pacer
 ```
+
+A validação semântica autoritativa do plano pertence ao contrato compartilhado.
+Gerador e report não mantêm versões próprias dessas regras. O compilador
+conserva apenas parsing, normalização e validações de origem necessárias para
+apontar precisamente o campo inválido do profile.
 
 O pacer permanece vivo durante o run e recebe planos imutáveis. Bootstrap e
 steady são entregues juntos para permanecerem contíguos. Active recebe uma nova

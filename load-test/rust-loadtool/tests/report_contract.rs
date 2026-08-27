@@ -76,7 +76,7 @@ fn missing_or_contradictory_payer_outcomes_are_violations() {
     rewrite(
         &contradictory.path().join("events/notifications.csv"),
         |mut contents| {
-            contents.push_str("fixture-0,10000001,pacs002_received,1767225601260000000,RJCT,[]\n");
+            contents.push_str("fixture-0,10000001,pacs002_received,1767225602260000000,RJCT,[]\n");
             contents
         },
     );
@@ -112,7 +112,7 @@ fn ingress_and_aggregate_replay_failures_are_reported_as_violations() {
                 .to_owned();
             format!("{contents}{row}\n")
         },
-        |contents| contents.replacen("1767225602110000000,200", "1767225602110000000,500", 1),
+        |contents| contents.replacen("1767225603110000000,200", "1767225603110000000,500", 1),
     ];
     for mutate in mutations {
         let temp = copy_fixture();
@@ -128,15 +128,15 @@ fn replay_identity_and_timing_are_not_report_qualification_rules() {
     let replay = copy_fixture();
     rewrite(&replay.path().join("events/replays.csv"), |contents| {
         contents.replace(
-            "fixture-0,10000001,happy-path,pacs.008,1767225602100000000",
-            "unknown,99999999,unknown,pacs.008,1767225601999999999",
+            "fixture-0,10000001,happy-path,pacs.008,1767225603100000000",
+            "unknown,99999999,unknown,pacs.008,1767225602999999999",
         )
     });
     assert!(build_fixture(replay.path()).valid);
 
     let late = copy_fixture();
     rewrite(&late.path().join("events/pacs002-starts.csv"), |contents| {
-        contents.replace("1767225601100000000", "1767225603000000000")
+        contents.replace("1767225602100000000", "1767225604000000000")
     });
     assert!(build_fixture(late.path()).valid);
 }
@@ -162,9 +162,9 @@ fn build_fixture(root: &std::path::Path) -> loadtool_report::SlaReport {
 fn fixture_window() -> GenerationWindow {
     GenerationWindow {
         generation_started_at_ns: 1_767_225_600_000_000_000,
-        active_started_at_ns: 1_767_225_601_000_000_000,
-        generation_ended_at_ns: 1_767_225_603_000_000_000,
-        replay_deadline_at_ns: 1_767_225_613_000_000_000,
+        active_started_at_ns: 1_767_225_602_000_000_000,
+        generation_ended_at_ns: 1_767_225_604_000_000_000,
+        replay_deadline_at_ns: 1_767_225_614_000_000_000,
     }
 }
 

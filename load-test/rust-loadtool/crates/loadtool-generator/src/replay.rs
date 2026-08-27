@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use loadtool_contract::model::percentage_quota;
 
 const BLOCK_SIZE: u64 = 100;
 const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -28,18 +29,12 @@ pub struct ReplaySelector {
 
 impl ReplaySelector {
     pub fn new(share: f64, domain: ReplayDomain) -> Result<Self> {
-        let exact_quota = share * BLOCK_SIZE as f64;
-        let quota = exact_quota.round();
-        if !(share > 0.0
-            && share <= 1.0
-            && (exact_quota - quota).abs() <= f64::EPSILON * BLOCK_SIZE as f64)
-        {
+        let Some(quota) =
+            percentage_quota(share).filter(|quota| *quota > 0 && *quota <= BLOCK_SIZE)
+        else {
             bail!("replay share must select a whole percentage in (0, 1]");
-        }
-        Ok(Self {
-            quota: quota as u64,
-            domain,
-        })
+        };
+        Ok(Self { quota, domain })
     }
 
     pub fn selected(&self, ordinal: u64) -> bool {

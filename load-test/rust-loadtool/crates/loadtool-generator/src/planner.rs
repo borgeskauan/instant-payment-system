@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow, bail};
 
 use crate::replay::{ReplayDomain, stable_rotation};
-use loadtool_contract::model::{ExecutionPlan, Provisioning, Scenario};
+use loadtool_contract::model::{ExecutionPlan, Provisioning, Scenario, percentage_quota};
 
 const BLOCK_SIZE: u64 = 100;
 const FUNDING_SAFETY_MULTIPLIER: i64 = 16;
@@ -44,28 +44,17 @@ pub struct PlannedPayment<'a> {
 
 impl Planner {
     pub fn new(plan: Arc<ExecutionPlan>) -> Result<Self> {
-        if plan.scenarios.is_empty() {
-            bail!("execution plan needs at least one scenario");
-        }
+        plan.validate()?;
         let mut quotas = Vec::with_capacity(plan.scenarios.len());
         let mut hot_quotas = Vec::with_capacity(plan.scenarios.len());
-        let mut total = 0u64;
         for scenario in &plan.scenarios {
-            let exact = scenario.share * BLOCK_SIZE as f64;
-            let quota = exact.round();
-            if !(scenario.share > 0.0 && (exact - quota).abs() <= f64::EPSILON * BLOCK_SIZE as f64)
-            {
-                bail!("scenario {} has an inexact block share", scenario.name);
-            }
-            let quota = quota as u64;
-            total = total
-                .checked_add(quota)
-                .ok_or_else(|| anyhow!("scenario quota overflows"))?;
-            quotas.push(quota);
-            hot_quotas.push(validate_scenario(scenario)?);
-        }
-        if total != BLOCK_SIZE {
-            bail!("scenario shares must fill a 100-payment block");
+            quotas.push(
+                percentage_quota(scenario.share).expect("execution plan scenario was validated"),
+            );
+            hot_quotas.push(
+                percentage_quota(scenario.participants.hot_traffic_share)
+                    .expect("execution plan hot traffic share was validated"),
+            );
         }
 
         let mut layouts = Vec::with_capacity(BLOCK_SIZE as usize);
@@ -233,26 +222,6 @@ fn build_layout(plan: &ExecutionPlan, quotas: &[u64], rotation: u64) -> Vec<Assi
             }
         })
         .collect()
-}
-
-fn validate_scenario(scenario: &Scenario) -> Result<u64> {
-    if scenario.participants.hot_pair_count == 0 || scenario.participants.cold_pair_count == 0 {
-        bail!("scenario {} needs hot and cold pairs", scenario.name);
-    }
-    let hot_quota = whole_percentage_quota(scenario.participants.hot_traffic_share)
-        .filter(|quota| *quota > 0 && *quota < BLOCK_SIZE)
-        .ok_or_else(|| anyhow!("scenario {} has invalid hot traffic share", scenario.name))?;
-    if scenario.amount.minimum <= 0 || scenario.amount.maximum < scenario.amount.minimum {
-        bail!("scenario {} has invalid amount range", scenario.name);
-    }
-    Ok(hot_quota)
-}
-
-fn whole_percentage_quota(share: f64) -> Option<u64> {
-    let exact = share * BLOCK_SIZE as f64;
-    let quota = exact.round();
-    (share.is_finite() && (exact - quota).abs() <= f64::EPSILON * BLOCK_SIZE as f64)
-        .then_some(quota as u64)
 }
 
 fn selected_by_cumulative_quota(ordinal: u64, quota: u64) -> bool {

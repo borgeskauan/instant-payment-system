@@ -104,7 +104,6 @@ impl Bundle {
                 plan.profile
             ));
         }
-        plan.maximum_planned_slots()?;
         Ok(PreparedRun { profile, plan })
     }
 

@@ -140,6 +140,31 @@ fn malformed_missing_and_unknown_plan_inputs_fail_before_outputs_exist() {
 }
 
 #[test]
+fn semantically_invalid_normalized_plans_fail_before_outputs_exist() {
+    let invalid_plans = [
+        EXECUTION_PLAN.replace("\"offeredTxRate\": 2100", "\"offeredTxRate\": 0"),
+        EXECUTION_PLAN.replace(
+            "\"share\": 0.05, \"delaySeconds\": 10",
+            "\"share\": 0.055, \"delaySeconds\": 10",
+        ),
+        EXECUTION_PLAN.replace("\"hotTrafficShare\": 0.8", "\"hotTrafficShare\": 0.735"),
+        EXECUTION_PLAN.replace(
+            "\"amount\": {\"minimum\": 100, \"maximum\": 200}",
+            "\"amount\": {\"minimum\": 0, \"maximum\": 200}",
+        ),
+    ];
+
+    for plan in invalid_plans {
+        let temp = prepared_run();
+        fs::write(temp.path().join("inputs/execution-plan.json"), plan).expect("replace plan");
+        let bundle = Bundle::resolve(temp.path()).expect("resolve bundle");
+
+        assert!(bundle.load_prepared().is_err());
+        assert!(!bundle.events_dir().exists());
+    }
+}
+
+#[test]
 fn generated_outputs_must_be_absent_and_are_created_by_rust() {
     for relative in ["events", "sla-report.json"] {
         let temp = prepared_run();

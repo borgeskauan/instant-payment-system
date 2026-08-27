@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use loadtool_contract::bundle::CompletedRun;
 use loadtool_contract::event::{Pacs002Start, Pacs008Start, Replay};
 use loadtool_contract::generation_window::GenerationWindow;
@@ -98,9 +98,6 @@ pub struct LatencySummary {
 }
 
 pub fn build(run: CompletedRun) -> Result<SlaReport> {
-    if run.plan.scenarios.is_empty() {
-        bail!("report requires at least one configured scenario");
-    }
     let scenarios = &run.plan.scenarios;
     let indexes: HashMap<_, _> = scenarios
         .iter()
@@ -117,10 +114,7 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
             run.plan.load.offered_tx_rate,
             run.plan.load.required_minimum_tx_rate,
         ),
-        scenarios: scenarios
-            .iter()
-            .map(scenario_summary)
-            .collect::<Result<_>>()?,
+        scenarios: scenarios.iter().map(scenario_summary).collect(),
         replays: ReplaySummary {
             pacs008: replay::summarize(
                 &run.events.replays,
@@ -261,22 +255,8 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     Ok(report)
 }
 
-fn scenario_summary(scenario: &Scenario) -> Result<ScenarioSummary> {
-    if scenario.expectations.http_status != "2xx" {
-        bail!(
-            "unsupported HTTP expectation {:?} for scenario {:?}",
-            scenario.expectations.http_status,
-            scenario.name
-        );
-    }
-    if scenario.expectations.payer_notification.delivery_semantics != "at-least-once" {
-        bail!(
-            "unsupported payer notification delivery semantics {:?} for scenario {:?}",
-            scenario.expectations.payer_notification.delivery_semantics,
-            scenario.name
-        );
-    }
-    Ok(ScenarioSummary {
+fn scenario_summary(scenario: &Scenario) -> ScenarioSummary {
+    ScenarioSummary {
         name: scenario.name.clone(),
         share: scenario.share,
         traffic: ScenarioTrafficSummary::default(),
@@ -295,7 +275,7 @@ fn scenario_summary(scenario: &Scenario) -> Result<ScenarioSummary> {
         },
         performance: ScenarioPerformanceSummary::default(),
         violations: 0,
-    })
+    }
 }
 
 fn validate_scenarios(

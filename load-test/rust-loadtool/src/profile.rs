@@ -8,10 +8,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use loadtool_contract::model::{
     AmountRange, ExecutionPlan, Expectations, Funding, FundingAccount, LoadPlan, Participants,
     PayerNotification, Provisioning, ReplayPlan, ReplayRule, Scenario, WarmupPlan, WarmupStage,
+    contract_name_is_valid, percentage_quota,
 };
 use serde::Deserialize;
 
-const BLOCK_SIZE: f64 = 100.0;
 const MAX_PAIR_NUMBER: u32 = 999_999;
 
 #[derive(Deserialize)]
@@ -142,13 +142,7 @@ pub fn compile(profiles_dir: &Path, name: &str) -> Result<ExecutionPlan> {
 }
 
 pub fn validate_name(name: &str) -> Result<()> {
-    let mut characters = name.bytes();
-    if !characters
-        .next()
-        .is_some_and(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
-        || !characters
-            .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
-    {
+    if !contract_name_is_valid(name) {
         bail!(
             "invalid profile name {name:?}: use only lowercase letters, digits, and hyphens, beginning with a letter or digit"
         );
@@ -226,7 +220,7 @@ fn build(name: &str, source: SourceProfile) -> Result<ExecutionPlan> {
     }
     let mut scenarios = Vec::with_capacity(source.scenarios.len());
     let mut names = HashSet::new();
-    let mut quota = 0u32;
+    let mut quota = 0u64;
     let mut next_pair = 1u32;
     for (index, source) in source.scenarios.into_iter().enumerate() {
         let scenario = scenario(name, index, source, next_pair)?;
@@ -238,7 +232,7 @@ fn build(name: &str, source: SourceProfile) -> Result<ExecutionPlan> {
             ));
         }
         quota = quota
-            .checked_add(block_quota(scenario.share).expect("scenario share was validated"))
+            .checked_add(percentage_quota(scenario.share).expect("scenario share was validated"))
             .ok_or_else(|| invalid(name, "scenarios.share", "quota overflows"))?;
         let pairs = scenario
             .participants
@@ -281,6 +275,8 @@ fn build(name: &str, source: SourceProfile) -> Result<ExecutionPlan> {
     for (scenario, provisioning) in plan.scenarios.iter_mut().zip(provisioning) {
         scenario.provisioning = provisioning;
     }
+    plan.validate()
+        .with_context(|| format!("profile {name:?} produced an invalid execution plan"))?;
     Ok(plan)
 }
 
@@ -349,7 +345,7 @@ fn replay_rule(
 ) -> Result<Option<ReplayRule>> {
     source
         .map(|source| {
-            if source.share <= 0.0 || source.share > 1.0 || block_quota(source.share).is_none() {
+            if source.share <= 0.0 || source.share > 1.0 || percentage_quota(source.share).is_none() {
                 return Err(invalid(
                     name,
                     &format!("{field}.share"),
@@ -384,7 +380,7 @@ fn scenario(
             "scenario name must follow the profile-name contract",
         )
     })?;
-    if source.share <= 0.0 || block_quota(source.share).is_none() {
+    if source.share <= 0.0 || percentage_quota(source.share).is_none() {
         return Err(invalid(
             profile,
             &format!("{prefix}.share"),
@@ -400,7 +396,7 @@ fn scenario(
         ));
     }
     if !(participants.hot_traffic_share > 0.0 && participants.hot_traffic_share < 1.0)
-        || block_quota(participants.hot_traffic_share).is_none()
+        || percentage_quota(participants.hot_traffic_share).is_none()
     {
         return Err(invalid(
             profile,
@@ -440,7 +436,11 @@ fn scenario(
         amount: source.amount,
         funding: funding.clone(),
         provisioning: Provisioning {
-            payer_balance: funding.payer.balance.clone().unwrap_or_default(),
+            payer_balance: funding
+                .payer
+                .balance
+                .clone()
+                .unwrap_or_else(|| "0.00".to_owned()),
             receiver_balance: funding.receiver.balance.clone().unwrap_or_default(),
             reset_if_exists: funding.reset_if_exists,
         },
@@ -624,12 +624,6 @@ fn duration_seconds(value: &str) -> Result<u64> {
         bail!("duration must resolve to a whole number of seconds");
     }
     Ok(total as u64)
-}
-
-fn block_quota(share: f64) -> Option<u32> {
-    let exact = share * BLOCK_SIZE;
-    let rounded = exact.round();
-    (share.is_finite() && (exact - rounded).abs() <= 1e-9).then_some(rounded as u32)
 }
 
 fn pacs_code(value: &str) -> bool {
