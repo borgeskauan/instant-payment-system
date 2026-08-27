@@ -44,7 +44,7 @@ class PaymentStorageCompactionMigrationIntegrationTest {
                 }
                 try (var audit = statement.executeQuery("""
                         SELECT event_type::text, previous_status::text, resulting_status::text, reason::text
-                        FROM payment_audit_event
+                        FROM payment_audit_event_history
                         WHERE payment_id = 'E2E-COMPACTION-LEGACY'
                         """)) {
                     assertThat(audit.next()).isTrue();

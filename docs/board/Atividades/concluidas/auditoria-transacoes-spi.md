@@ -2,148 +2,131 @@
 
 - [x] Auditoria de negócio das transações no SPI
 
-## Contexto
+## Objetivo do MVP
 
-Para reduzir pressão no PostgreSQL, o SPI mantém `payment_transaction_entity` estreita e voltada ao estado operacional necessário para liquidação e notificações. Essa row mutável não substitui um histórico append-only capaz de explicar os fatos de negócio efetivamente aplicados.
+A auditoria responde, para cada pagamento, qual resultado de negócio foi
+confirmado, por que ele ocorreu e quais efeitos financeiros foram aplicados sem
+duplicidade. Ela não replica tentativas técnicas nem o estado interno dos
+workers.
 
-Os timestamps operacionais `created_at`, `updated_at` e `status_changed_at` continuam sendo uma necessidade separada. Eles descrevem o estado atual e não substituem esta auditoria.
+`payment_transaction_entity` continua sendo o estado operacional mutável. A
+auditoria é append-only pelo comportamento da aplicação, mas não é event
+sourcing, mecanismo de recuperação, extrato completo dos participantes nem
+registro regulatório inviolável.
 
-A auditoria de entradas rejeitadas também possui origens e garantias diferentes e permanece separada em [`auditoria-rejeicoes-entrada.md`](../Backlog/operacao-testes/auditoria-rejeicoes-entrada.md).
+## Fatos persistidos
 
-## Solução implementada
+O SPI persiste somente três fatos consolidados:
 
-O SPI passa a persistir eventos em `payment_audit_event`:
+| Fato confirmado | Evento | Efeito financeiro auditado |
+| --- | --- | --- |
+| Pagamento admitido e fundos tornados indisponíveis | `PAYMENT_RESERVED` | `sender_delta_cents = -amount_cents` |
+| Aceite aplicado e recebedor creditado | `PAYMENT_SETTLED` | `receiver_delta_cents = amount_cents` |
+| Pagamento rejeitado na admissão | `PAYMENT_REJECTED` | nenhum delta |
+| Pagamento reservado posteriormente rejeitado | `PAYMENT_REJECTED` | `sender_delta_cents = amount_cents` |
 
-| Fato efetivamente aplicado | Eventos produzidos |
-| --- | --- |
-| Novo pagamento | `PAYMENT_CREATED` |
-| `WAITING_ACCEPTANCE → REJECTED` | `PAYMENT_STATUS_CHANGED` |
-| Aceite sem fundos suficientes: `WAITING_ACCEPTANCE → ACCEPTED_IN_PROCESS` | `PAYMENT_STATUS_CHANGED` |
-| Liquidação: `WAITING_ACCEPTANCE → ACCEPTED_AND_SETTLED` | `PAYMENT_STATUS_CHANGED` + `SETTLEMENT_APPLIED` |
-| Replay que aplica um dos fatos acima | Os mesmos eventos normais correspondentes |
-| Replay, duplicata homogênea ou processamento que resulta em `NOOP` | Nenhum evento |
-| Entrada divergente ou não autorizada | Fora desta task |
+Os históricos possíveis no MVP são:
 
-A criação produz somente `PAYMENT_CREATED`; não existe uma mudança de status adicional para o estado inicial. `PAYMENT_STATUS_CHANGED` e `SETTLEMENT_APPLIED` são fatos separados, porém uma liquidação persiste ambos no mesmo bulk e na mesma transação. Ou os dois existem, ou nenhum existe.
+```text
+happy path:
+PAYMENT_RESERVED → PAYMENT_SETTLED
 
-Não existe requisito de ordem entre esses dois eventos. `event_id` é apenas identidade técnica e não representa uma sequência causal do pagamento.
+insufficient funds:
+PAYMENT_REJECTED
 
-## Modelo físico
+rejeição depois da reserva:
+PAYMENT_RESERVED → PAYMENT_REJECTED
+```
 
-`payment_audit_event` possui colunas tipadas, sem `JSONB`:
+Não existe `PAYMENT_CREATED`, `PAYMENT_STATUS_CHANGED` ou
+`SETTLEMENT_APPLIED` no contrato vigente. Criação e reserva são um único fato
+porque fazem commit atomicamente. Aceite e settlement também são inseparáveis
+no modelo atual. A rejeição posterior já descreve a liberação atômica da
+reserva.
 
-- `event_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY`;
+Se futuramente o domínio permitir aceite confirmado sem settlement, ou
+rejeição confirmada sem liberação imediata, esses fatos deverão voltar a ser
+separados.
+
+## Formato dos eventos
+
+`payment_audit_event` mantém colunas tipadas, sem `JSONB`:
+
+- `event_id BIGINT GENERATED ALWAYS AS IDENTITY NOT NULL` como identidade
+  técnica, sem PK nem garantia de ordem causal;
 - `payment_id TEXT NOT NULL`;
-- `event_type TEXT NOT NULL`;
-- `previous_status TEXT`;
-- `resulting_status TEXT`;
+- `event_type payment_audit_event_type NOT NULL`;
+- `previous_status payment_status`;
+- `resulting_status payment_status`;
 - `amount_cents BIGINT`;
 - `sender_ispb TEXT`;
 - `receiver_ispb TEXT`;
 - `sender_delta_cents BIGINT`;
 - `receiver_delta_cents BIGINT`;
+- `reason payment_rejection_reason`;
 - `occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`.
 
-Constraints permitem somente `PAYMENT_CREATED`, `PAYMENT_STATUS_CHANGED` e `SETTLEMENT_APPLIED` e exigem o formato correspondente de cada evento. Criação e settlement são únicos por `payment_id` no modelo atual.
+Constraints validam o formato de cada um dos três eventos. Dois índices
+parciais protegem as invariantes:
 
-Não existe unicidade em `payment_id + previous_status + resulting_status`. A auditoria registra toda transição efetivamente aplicada e permite que a mesma transição legítima volte a ocorrer caso a máquina de estados evolua.
+- `uq_payment_audit_admission`: no máximo um resultado inicial por pagamento;
+- `uq_payment_audit_terminal_outcome`: no máximo um resultado terminal para um
+  pagamento reservado.
 
-Os índices são:
-
-- `(payment_id, event_id)` para consulta do histórico;
-- único parcial por `payment_id` para `PAYMENT_CREATED`;
-- único parcial por `payment_id` para `SETTLEMENT_APPLIED`.
-
-Não existe foreign key para `payment_transaction_entity`. Valor, ISPB do pagador e ISPB do recebedor são preservados nos eventos que precisam explicar esses fatos sem depender da row operacional. O payload PACS original, saldos anteriores e posteriores, credenciais e segredos não são armazenados.
+Assim, settlement e rejeição terminal não podem coexistir, e replays não podem
+duplicar reserva, crédito ou liberação.
 
 ## Gravação transacional e bulk
 
-Cada batch executa statements separados dentro do mesmo `@Transactional`:
+Cada batch executa statements separados na mesma transação Spring:
 
-1. classificar e aplicar o statement financeiro bulk;
-2. inserir em bulk os eventos de auditoria dos resultados efetivos;
-3. inserir em bulk as obrigações de notificação correspondentes;
-4. fazer commit PostgreSQL.
+1. classifica e aplica pagamento, status e saldos em bulk;
+2. insere em bulk os fatos de auditoria efetivamente confirmados;
+3. insere em bulk as obrigações de notificação;
+4. confirma a transação PostgreSQL.
 
-Atomicidade não depende de um único CTE. Falha da auditoria ou da outbox desfaz pagamento, status e saldos. A exceção de banco não é embrulhada; indisponibilidade de recurso continua chegando ao consumer como falha de infraestrutura, sem ACK prematuro do input Kafka.
+Falha da auditoria ou da outbox desfaz a reserva, o crédito, a liberação e o
+status correspondente. O repositório executa no máximo um insert bulk de
+auditoria por fase e não usa `ON CONFLICT`: uma classificação contraditória
+falha visivelmente e provoca rollback.
 
-O statement financeiro retorna somente os fatos que já classificou:
-
-- `createdPayments` distingue rows realmente inseridas de acceptance replays;
-- `appliedStatusTransitions` inclui settlement, rejeição e a transição antes oculta para `ACCEPTED_IN_PROCESS`;
-- as classificações existentes para outbox, divergência e autorização são preservadas.
-
-Não há releitura de `payment_transaction_entity` para reconstruir eventos. O serviço monta uma lista plana e o repositório executa no máximo um insert bulk de auditoria por batch. O insert não usa `ON CONFLICT`: uma violação inesperada falha visivelmente e provoca rollback, em vez de ocultar erro de classificação.
+As próprias listas de pagamentos reservados, liquidados e rejeitados já
+carregam todos os dados necessários. O DTO intermediário
+`PaymentStatusTransition` foi removido e não há releitura do pagamento para
+reconstruir a auditoria.
 
 ## Replay
 
-- Replay que realmente cria o pagamento produz `PAYMENT_CREATED`.
-- Replay que realmente aplica transição ou liquidação produz os eventos normais correspondentes.
-- Replay idêntico de `pacs.008` em `WAITING_ACCEPTANCE` pode preservar ou recriar a outbox, mas não recria o pagamento e não produz outro `PAYMENT_CREATED`.
-- Replay em estado avançado e `pacs.002` que não aplica nova transição ou settlement são `NOOP` e não produzem auditoria.
-- Não existe `PAYMENT_REPLAYED` neste corte.
+- Replay que efetivamente aplica um fato produz o evento normal desse fato.
+- Replay idêntico ou concorrente que se torna `NOOP` não produz evento.
+- Não existe `PAYMENT_REPLAYED`, evento de retry ou evento de redelivery.
+- As constraints e a aquisição transacional da mudança financeira impedem
+  efeitos lógicos duplicados.
 
-## Critérios de aceite
+## Migração do modelo anterior
 
-- criação, auditoria e acceptance outbox commitam ou fazem rollback juntas;
-- rejeição, auditoria e rejection outbox commitam ou fazem rollback juntas;
-- settlement, saldos, status, dois eventos de auditoria e duas obrigações commitam ou fazem rollback juntos;
-- falta de fundos registra somente a transição efetivamente aplicada;
-- falha no insert de auditoria desfaz o fato financeiro antes de iniciar o trabalho da outbox;
-- indisponibilidade do PostgreSQL na auditoria preserva a exceção de infraestrutura;
-- inserts continuam bulk e não existe operação por item;
-- replay `NOOP` não cria evento e replay com efeito produz eventos normais;
-- duplicata homogênea no mesmo batch gera no máximo o fato efetivamente aplicado;
-- constraints rejeitam tipos e formatos inválidos;
-- criação e settlement duplicados são rejeitados;
-- a mesma transição de status pode ser persistida mais de uma vez;
-- testes não dependem de ordem entre `PAYMENT_STATUS_CHANGED` e `SETTLEMENT_APPLIED`;
-- reset do teste de carga limpa a tabela de auditoria quando solicitado.
+A V17 não reinterpreta eventos antigos segundo a arquitetura atual. Fazer isso
+atribuiria o débito da reserva ao timestamp de uma criação ocorrida antes de a
+reserva existir e perderia transições legítimas como `ACCEPTED_IN_PROCESS`.
 
-## Retenção e dados
+Por isso, a migration renomeia a tabela anterior para
+`payment_audit_event_legacy_v16`, preservando rows, tipos textuais, deltas e
+timestamps sem alteração. Uma nova `payment_audit_event`, restrita aos três
+fatos consolidados, recebe somente eventos produzidos depois da V17. A view
+read-only `payment_audit_event_history` une os dois modelos quando a consulta
+histórica completa for necessária. O `event_id` novo continua depois do maior
+valor legado, sem transformar essa identidade técnica em ordem causal.
 
-- O MVP utiliza somente dados sintéticos.
-- Não existe backfill: pagamentos anteriores à migration não ganham eventos inventados nem timestamps imprecisos.
-- Não existe retenção ou limpeza automática.
-- O reset explícito do ambiente de carga pode truncar a tabela entre execuções.
-- Particionamento, arquivamento e object storage ficam adiados.
+## Fora de escopo
 
-## Validação final
+- payload PACS original e tentativas que fizeram rollback;
+- Kafka, retries, DLQ, comunicação e entrega de notificações;
+- snapshots de saldo, reconstrução integral de contas ou event sourcing;
+- ator responsável, credenciais e segredos;
+- assinatura, hash chain, WORM ou separação regulatória de privilégios;
+- retenção, particionamento, arquivamento, consulta online e UI;
+- rejeições de entrada anteriores à criação de um pagamento.
 
-A suíte completa do SPI passou com 180 testes, sem falhas ou erros, usando PostgreSQL 17 real via Testcontainers nos testes de integração.
-
-Os cenários manuais também foram validados diretamente no PostgreSQL:
-
-- `fed25d92-b4a1-4ec0-a510-31510ac149af`: criação seguida de `WAITING_ACCEPTANCE → ACCEPTED_IN_PROCESS` por ausência das contas de liquidação, sem settlement ou alteração de saldos;
-- `361b0d2a-39aa-445f-8f8d-8f19a45d5fea`: criação e liquidação imediata, com os três eventos esperados, débito e crédito de `2550` centavos e ACK das três deliveries;
-- replay da acceptance do pagamento liquidado: delivery repetida e ACKada sem alterar status, saldos, auditoria ou outbox;
-- `4489405a-ce8e-4b20-bfd6-0a59b9b76ae0`: rejeição autenticada pelo PSP recebedor, com `WAITING_ACCEPTANCE → REJECTED`, notificação `RJCT` ACKada e saldos intactos;
-- acceptances atrasadas após a rejeição permaneceram `NOOP` e não reabriram nem liquidaram o pagamento.
-
-## Limitações Conscientes
-
-- O histórico começa na implantação da migration e pode ser parcial para pagamentos preexistentes.
-- Append-only é uma regra da aplicação; este corte não adiciona trigger ou separação de privilégios para impedir `UPDATE` e `DELETE` administrativos.
-- `event_id` é identidade técnica e não oferece ordem causal entre fatos do mesmo pagamento.
-- Não existe indicador especial de replay; eventos descrevem o efeito aplicado.
-- Replay `NOOP`, retry, redelivery, DLQ e outras tentativas diagnósticas não são auditados.
-- Rejeições de entrada pertencem a outra task.
-- O payload PACS original, ator do settlement e snapshots de saldo não são armazenados.
-- Não existe backfill, retenção, cleanup, particionamento ou arquivamento.
-- A tabela crescerá continuamente.
-- Este corte não inclui load test comparativo nem métricas específicas de auditoria.
-- Essas simplificações são adequadas ao MVP, mas não definem necessariamente o desenho final de produção.
-
-## Sinais para Evolução
-
-Evoluir o desenho quando ocorrer pelo menos uma destas condições:
-
-- crescimento da tabela ou do WAL exigir retenção, particionamento, arquivamento ou cleanup;
-- impacto relevante em throughput, latência ou uso do PostgreSQL;
-- necessidade de backfill ou reconstrução histórica de pagamentos anteriores à migration;
-- exigência de ordem causal explícita ou correlação entre eventos da mesma operação;
-- necessidade de distinguir replay, retry, redelivery ou tentativa original;
-- necessidade de auditar rejeições, ator responsável ou payload original sanitizado;
-- necessidade de impedir updates/deletes por privilégios separados ou proteção adicional no banco;
-- consultas operacionais exigirem novos índices ou uma projeção de leitura;
-- dados deixarem de ser exclusivamente sintéticos e exigirem política formal de acesso e retenção.
+Esses limites preservam o objetivo do MVP: provar o ciclo de vida e os efeitos
+financeiros de cada pagamento confirmado, sem transformar a auditoria em uma
+segunda implementação do SPI.

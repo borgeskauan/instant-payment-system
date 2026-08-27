@@ -12,10 +12,23 @@ Esta task não bloqueia a estabilização da stack única e não pressupõe
 Kubernetes. A infraestrutura usada no experimento será escolhida quando a task
 for iniciada.
 
+A concorrência interna dos listeners Kafka maior que `1` pertence a esta mesma
+frente. Embora use uma única JVM, ela já cria transações financeiras
+concorrentes e exercita no PostgreSQL parte dos riscos de locking, idempotência
+e participantes quentes que aparecem com múltiplas instâncias.
+
+O baseline atual não é inteiramente sequencial: PACS.008 e PACS.002 possuem
+listeners independentes e podem executar simultaneamente. Entretanto, cada
+fluxo permanece serializado internamente com `concurrency=1`. Esta task começa
+justamente na fronteira ainda não homologada: dois batches concorrentes do
+mesmo fluxo e, depois, múltiplas instâncias do SPI.
+
 ## Escopo
 
 - [ ] Definir a topologia de duas stacks/instalações independentes que
       compartilham o mesmo PostgreSQL.
+- [ ] Definir e homologar a concorrência dos listeners Kafka por fluxo,
+      começando pelo PACS.008, antes de escolher a configuração multi-instância.
 - [ ] Definir a carga contratada por stack e a capacidade agregada esperada
       antes do experimento.
 - [ ] Isolar dados, tópicos, consumer groups, ISPBs, certificados e métricas de

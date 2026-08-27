@@ -2,13 +2,31 @@ use std::fs;
 
 use loadtool_contract::model::ExecutionPlan;
 
-const PROFILES: [&str; 5] = [
+const PROFILES: [&str; 6] = [
     "uniform-smoke",
     "mixed-outcomes-smoke",
     "mixed-outcomes-2k-diagnostic",
     "mixed-outcomes-2k-6m",
     "mixed-outcomes-2k-15m",
+    "mixed-outcomes-4k-diagnostic",
 ];
+
+#[test]
+fn four_k_diagnostic_preserves_the_official_workload_shape() {
+    let plan = rust_loadtool::profile::compile(&profiles_dir(), "mixed-outcomes-4k-diagnostic")
+        .unwrap();
+
+    assert_eq!(plan.profile, "mixed-outcomes-4k-diagnostic");
+    assert_eq!(plan.load.offered_tx_rate, 4000);
+    assert_eq!(plan.load.required_minimum_tx_rate, 4000);
+    assert_eq!(plan.load.active_duration.as_secs(), 180);
+    assert_eq!(plan.load.drain.as_secs(), 30);
+    assert_eq!(plan.scenarios.len(), 2);
+    assert_eq!(plan.scenarios[0].share, 0.8);
+    assert_eq!(plan.scenarios[1].share, 0.2);
+    assert_eq!(plan.replay.pacs008.as_ref().unwrap().share, 0.05);
+    assert_eq!(plan.replay.pacs002.as_ref().unwrap().share, 0.05);
+}
 
 #[test]
 fn every_checked_in_profile_compiles_to_its_stable_execution_shape() {
@@ -45,6 +63,16 @@ fn every_checked_in_profile_compiles_to_its_stable_execution_shape() {
             30,
             2,
             "1283118849.60",
+        ),
+        (
+            "mixed-outcomes-4k-diagnostic",
+            4000,
+            4000,
+            120,
+            180,
+            30,
+            2,
+            "522578112.00",
         ),
     ];
     assert_eq!(PROFILES, expected.map(|entry| entry.0));

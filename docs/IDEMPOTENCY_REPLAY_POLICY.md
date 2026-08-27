@@ -37,7 +37,8 @@ Version and fingerprint must be compared together. A matching hash with a differ
 
 | Case | Financial classification | Audit result | Notification result |
 | ---- | ------------------------ | ------------ | ------------- |
-| New payment | Insert as `WAITING_ACCEPTANCE`. | Insert `PAYMENT_CREATED`. | Insert one `ACCEPTANCE_REQUEST` for the receiver. |
+| New payment with available funds | Reserve payer funds and insert as `WAITING_ACCEPTANCE`. | Insert `PAYMENT_RESERVED`. | Insert one `ACCEPTANCE_REQUEST` for the receiver. |
+| New payment without available funds | Insert as `REJECTED / INSUFFICIENT_FUNDS` without changing balances. | Insert `PAYMENT_REJECTED` without a financial delta. | Insert one `REJECTED_NOTIFICATION/RJCT` with `AM04` for the payer. |
 | Existing identical payment in `WAITING_ACCEPTANCE` | No-op. | No event: the payment was not created again. | No notification insert. The original outbox/Kafka delivery remains authoritative. |
 | Existing identical payment in advanced status | No-op. | No event. | No notification insert. |
 | Existing payment without comparable fingerprint | `DIVERGENT_DUPLICATE`. | No event in the business audit. | No notification insert; publish the original input to DLQ. |
@@ -64,10 +65,9 @@ Incoming status reports are applied conditionally against the current persisted 
 
 | Incoming status | Current status | Financial result | Audit result | Notification result |
 | --------------- | -------------- | ---------------- | ------------ | ------------- |
-| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE`, sufficient funds | Settle directly. | `PAYMENT_STATUS_CHANGED` + `SETTLEMENT_APPLIED`. | Insert `ACSC` for the payer and `ACCC` for the receiver. |
-| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE`, insufficient funds | Transition to `ACCEPTED_IN_PROCESS`. | `PAYMENT_STATUS_CHANGED`. | No notification insert. |
+| `ACCEPTED_IN_PROCESS` | `WAITING_ACCEPTANCE` | Credit the receiver and settle directly; the payer was already debited by the reservation. | `PAYMENT_SETTLED`. | Insert `ACSC` for the payer and `ACCC` for the receiver. |
 | `ACCEPTED_IN_PROCESS` | `ACCEPTED_IN_PROCESS` or `ACCEPTED_AND_SETTLED` | No-op. | No event. | No notification insert. |
-| `REJECTED` | `WAITING_ACCEPTANCE` | Transition to `REJECTED`. | `PAYMENT_STATUS_CHANGED`. | Insert `REJECTED_NOTIFICATION/RJCT` for the payer. |
+| `REJECTED` | `WAITING_ACCEPTANCE` | Release the payer reservation and transition to `REJECTED`. | `PAYMENT_REJECTED` with the release delta. | Insert `REJECTED_NOTIFICATION/RJCT` for the payer. |
 | `REJECTED` | `REJECTED` | No-op. | No event. | No notification insert. |
 | Any incompatible transition | Any incompatible current state | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
 | Any status | Missing payment | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
@@ -79,7 +79,7 @@ Batch-local rules:
 | Same batch, same `paymentId`, same status | Keep the first logical report; repeated records are batch-local no-ops. |
 | Same batch, same `paymentId`, different statuses | Classify every record for that `paymentId` as `DIVERGENT_STATUS_REPORT`. |
 
-Settlement, participant balances, both audit events, and both notification
+Settlement, participant balances, the consolidated audit event, and both notification
 obligations commit or roll back together. Replaying a report that produces no
 new transition or settlement inserts neither audit nor notification rows and
 cannot debit funds again.
@@ -88,7 +88,12 @@ cannot debit funds again.
 
 `payment_audit_event` is append-only by application behavior and stores only normalized business facts. It does not store the original PACS payload, diagnostic attempts, input rejections, or `NOOP` replay events.
 
-`PAYMENT_STATUS_CHANGED` and `SETTLEMENT_APPLIED` from one settlement are inserted in the same bulk and transaction. Their `event_id` values are technical identities only; no relative or causal ordering is guaranteed. Creation and settlement are unique per payment in the current model, while repeated identical status transitions are deliberately allowed if the lifecycle evolves.
+The current model stores only `PAYMENT_RESERVED`, `PAYMENT_SETTLED`, and
+`PAYMENT_REJECTED`. Atomic business effects are consolidated: creation plus
+reservation is one fact, acceptance plus receiver credit is one fact, and a
+post-reservation rejection includes the release delta. `event_id` remains a
+technical identity and does not define causal order. Partial unique indexes
+allow at most one admission result and one terminal result per payment.
 
 There is no audit backfill. A replay that applies a real creation, transition, or settlement produces the normal events for that effect; a replay that applies nothing produces no event.
 

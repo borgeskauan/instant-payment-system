@@ -4,7 +4,6 @@ import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.port.output.PaymentStatusTransition;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,7 +22,7 @@ public class PaymentAuditService {
         this.auditRepository = auditRepository;
     }
 
-    public void storeCreationEvents(
+    public void storeAdmissionEvents(
             List<PaymentTransactionCommand> createdPayments,
             List<PaymentRejection> rejectedPayments
     ) {
@@ -34,74 +33,70 @@ public class PaymentAuditService {
             return;
         }
 
-        Map<String, PaymentRejection> rejectionByPaymentId = new HashMap<>();
-        for (PaymentRejection rejection : rejectedPayments) {
-            validatePayment(rejection.payment());
-            if (rejectionByPaymentId.put(rejection.payment().getPaymentId(), rejection) != null) {
-                throw new IllegalArgumentException("Duplicate rejected payment: " + rejection.payment().getPaymentId());
-            }
-        }
-
+        Map<String, PaymentRejection> rejectionByPaymentId = rejectionsByPaymentId(rejectedPayments);
         List<PaymentAuditEvent> events = new ArrayList<>(createdPayments.size());
         for (PaymentTransactionCommand payment : createdPayments) {
             validatePayment(payment);
             PaymentRejection rejection = rejectionByPaymentId.remove(payment.getPaymentId());
+            long amountCents = payment.getAmountCents();
             events.add(new PaymentAuditEvent(
                     payment.getPaymentId(),
-                    PaymentAuditEventType.PAYMENT_CREATED,
+                    rejection == null
+                            ? PaymentAuditEventType.PAYMENT_RESERVED
+                            : PaymentAuditEventType.PAYMENT_REJECTED,
                     null,
                     rejection == null ? PaymentStatus.WAITING_ACCEPTANCE : PaymentStatus.REJECTED,
-                    payment.getAmountCents(),
+                    amountCents,
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
-                    null,
+                    rejection == null ? Math.negateExact(amountCents) : null,
                     null,
                     rejection == null ? null : rejection.reason()
             ));
         }
-        if (!rejectionByPaymentId.isEmpty()) {
-            throw new IllegalArgumentException("Rejected payments must belong to the created payment set");
-        }
+        requireNoUnknownRejections(rejectionByPaymentId);
         auditRepository.insertAll(events);
     }
 
-    public void storeStatusEvents(
-            List<PaymentStatusTransition> appliedStatusTransitions,
-            List<PaymentTransactionCommand> settledPayments
+    public void storeOutcomeEvents(
+            List<PaymentTransactionCommand> settledPayments,
+            List<PaymentRejection> rejectedPayments
     ) {
-        if (appliedStatusTransitions.isEmpty() && settledPayments.isEmpty()) {
+        if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
             return;
         }
 
-        List<PaymentAuditEvent> events =
-                new ArrayList<>(appliedStatusTransitions.size() + settledPayments.size());
-        for (PaymentStatusTransition transition : appliedStatusTransitions) {
-            events.add(new PaymentAuditEvent(
-                    transition.paymentId(),
-                    PaymentAuditEventType.PAYMENT_STATUS_CHANGED,
-                    transition.previousStatus(),
-                    transition.resultingStatus(),
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    transition.rejectionReason()
-            ));
-        }
+        List<PaymentAuditEvent> events = new ArrayList<>(settledPayments.size() + rejectedPayments.size());
         for (PaymentTransactionCommand payment : settledPayments) {
             validatePayment(payment);
             long amountCents = payment.getAmountCents();
             events.add(new PaymentAuditEvent(
                     payment.getPaymentId(),
-                    PaymentAuditEventType.SETTLEMENT_APPLIED,
-                    null,
-                    null,
+                    PaymentAuditEventType.PAYMENT_SETTLED,
+                    PaymentStatus.WAITING_ACCEPTANCE,
+                    PaymentStatus.ACCEPTED_AND_SETTLED,
                     amountCents,
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
-                    Math.negateExact(amountCents),
+                    null,
                     amountCents
+            ));
+        }
+        for (PaymentRejection rejection : rejectedPayments) {
+            PaymentTransactionCommand payment = rejection.payment();
+            validatePayment(payment);
+            long amountCents = payment.getAmountCents();
+            events.add(new PaymentAuditEvent(
+                    payment.getPaymentId(),
+                    PaymentAuditEventType.PAYMENT_REJECTED,
+                    PaymentStatus.WAITING_ACCEPTANCE,
+                    PaymentStatus.REJECTED,
+                    amountCents,
+                    requiredIspb(getBankCode(payment.getSender())),
+                    requiredIspb(getBankCode(payment.getReceiver())),
+                    amountCents,
+                    null,
+                    rejection.reason()
             ));
         }
         auditRepository.insertAll(events);
@@ -113,6 +108,23 @@ public class PaymentAuditService {
         }
         if (payment.getPaymentId() == null || payment.getPaymentId().isBlank()) {
             throw new IllegalArgumentException("Payment ID cannot be null or blank");
+        }
+    }
+
+    private Map<String, PaymentRejection> rejectionsByPaymentId(List<PaymentRejection> rejectedPayments) {
+        Map<String, PaymentRejection> rejectionByPaymentId = new HashMap<>();
+        for (PaymentRejection rejection : rejectedPayments) {
+            validatePayment(rejection.payment());
+            if (rejectionByPaymentId.put(rejection.payment().getPaymentId(), rejection) != null) {
+                throw new IllegalArgumentException("Duplicate rejected payment: " + rejection.payment().getPaymentId());
+            }
+        }
+        return rejectionByPaymentId;
+    }
+
+    private void requireNoUnknownRejections(Map<String, PaymentRejection> rejectionByPaymentId) {
+        if (!rejectionByPaymentId.isEmpty()) {
+            throw new IllegalArgumentException("Rejected payments must belong to the created payment set");
         }
     }
 

@@ -13,7 +13,6 @@ import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
-import br.kauan.spi.port.output.PaymentStatusTransition;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -359,11 +358,6 @@ class JpaAdapterIntegrationTest {
         assertThat(result.settledPayments())
                 .extracting(PaymentTransactionCommand::getPaymentId)
                 .containsExactly(payment.getPaymentId());
-        assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
-                payment.getPaymentId(),
-                PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.ACCEPTED_AND_SETTLED
-        ));
         assertThat(result.rejectedPayments()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
@@ -445,7 +439,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.appliedStatusTransitions()).isEmpty();
         assertThat(result.divergentStatusReports())
                 .extracting(AuthenticatedStatusReport::command)
                 .containsExactly(accepted, rejected);
@@ -467,7 +460,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.appliedStatusTransitions()).isEmpty();
         assertThat(result.divergentStatusReports())
                 .extracting(AuthenticatedStatusReport::command)
                 .containsExactly(first, repeated);
@@ -513,7 +505,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(replay.settledPayments()).isEmpty();
         assertThat(replay.rejectedPayments()).isEmpty();
-        assertThat(replay.appliedStatusTransitions()).isEmpty();
         assertThat(replay.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
         assertThat(rejectionReason(payment.getPaymentId()))
@@ -530,7 +521,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.appliedStatusTransitions()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_IN_PROCESS.name());
     }
@@ -545,7 +535,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.appliedStatusTransitions()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
     }
@@ -565,11 +554,6 @@ class JpaAdapterIntegrationTest {
                         PaymentRejection::reason
                 )
                 .containsExactly(tuple(payment.getPaymentId(), null));
-        assertThat(result.appliedStatusTransitions()).containsExactly(new PaymentStatusTransition(
-                payment.getPaymentId(),
-                PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.REJECTED
-        ));
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
         assertThat(rejectionReason(payment.getPaymentId())).isNull();
@@ -587,7 +571,6 @@ class JpaAdapterIntegrationTest {
 
         assertThat(result.settledPayments()).isEmpty();
         assertThat(result.rejectedPayments()).isEmpty();
-        assertThat(result.appliedStatusTransitions()).isEmpty();
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
     }

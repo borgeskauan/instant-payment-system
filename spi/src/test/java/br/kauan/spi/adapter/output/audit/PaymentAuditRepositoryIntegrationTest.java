@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.audit;
 
 import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
+import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.services.audit.PaymentAuditEvent;
 import br.kauan.spi.domain.services.audit.PaymentAuditEventType;
@@ -32,7 +33,30 @@ class PaymentAuditRepositoryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void databaseAllowsInsufficientFundsReasonOnARejectedStatusChange() {
+    void databasePersistsTheReservedBusinessFact() {
+        PaymentAuditEvent reservation = new PaymentAuditEvent(
+                "E2E-AUDIT-REPOSITORY-RESERVED",
+                PaymentAuditEventType.PAYMENT_RESERVED,
+                null,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                1_000L,
+                "11111111",
+                "22222222",
+                -1_000L,
+                null
+        );
+
+        repository.insertAll(List.of(reservation));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT event_type::text FROM payment_audit_event WHERE payment_id = ?",
+                String.class,
+                reservation.paymentId()
+        )).isEqualTo("PAYMENT_RESERVED");
+    }
+
+    @Test
+    void databaseAllowsInsufficientFundsReasonOnAnIngressRejection() {
         jdbcTemplate.update(
                 """
                         INSERT INTO payment_audit_event (
@@ -40,19 +64,27 @@ class PaymentAuditRepositoryIntegrationTest {
                             event_type,
                             previous_status,
                             resulting_status,
+                            amount_cents,
+                            sender_ispb,
+                            receiver_ispb,
                             reason
                         ) VALUES (
                             ?,
                             ?::payment_audit_event_type,
+                            NULL,
                             ?::payment_status,
-                            ?::payment_status,
+                            ?,
+                            ?,
+                            ?,
                             ?::payment_rejection_reason
                         )
                         """,
                 "E2E-AUDIT-REPOSITORY-REJECTION-REASON",
-                PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentAuditEventType.PAYMENT_REJECTED.name(),
                 PaymentStatus.REJECTED.name(),
+                1_000L,
+                "11111111",
+                "22222222",
                 "INSUFFICIENT_FUNDS"
         );
 
@@ -72,31 +104,39 @@ class PaymentAuditRepositoryIntegrationTest {
                             event_type,
                             previous_status,
                             resulting_status,
+                            amount_cents,
+                            sender_ispb,
+                            receiver_ispb,
+                            receiver_delta_cents,
                             reason
                         ) VALUES (
                             ?,
                             ?::payment_audit_event_type,
                             ?::payment_status,
                             ?::payment_status,
+                            ?,
+                            ?,
+                            ?,
+                            ?,
                             ?::payment_rejection_reason
                         )
                         """,
                 "E2E-AUDIT-REPOSITORY-INVALID-REJECTION-REASON",
-                PaymentAuditEventType.PAYMENT_STATUS_CHANGED.name(),
+                PaymentAuditEventType.PAYMENT_SETTLED.name(),
                 PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.ACCEPTED_IN_PROCESS.name(),
+                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                1_000L,
+                "11111111",
+                "22222222",
+                1_000L,
                 "INSUFFICIENT_FUNDS"
         )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
-    void insertsMixedEventsInOneBulkWithDatabaseTimestamps() {
+    void insertsReservedAndSettledFactsInOneBulkWithDatabaseTimestamps() {
         repository.insertAll(List.of(
-                creation("E2E-AUDIT-REPOSITORY-CREATED"),
-                statusChange(
-                        "E2E-AUDIT-REPOSITORY-SETTLED",
-                        PaymentStatus.ACCEPTED_AND_SETTLED
-                ),
+                reservation("E2E-AUDIT-REPOSITORY-RESERVED-BULK"),
                 settlement("E2E-AUDIT-REPOSITORY-SETTLED")
         ));
 
@@ -130,26 +170,25 @@ class PaymentAuditRepositoryIntegrationTest {
                 )
         );
 
-        assertThat(rows).hasSize(3).allSatisfy(row -> assertThat(row.occurredAt()).isNotNull());
+        assertThat(rows).hasSize(2).allSatisfy(row -> assertThat(row.occurredAt()).isNotNull());
         assertThat(rows).extracting(AuditRow::eventType)
                 .containsExactlyInAnyOrder(
-                        "PAYMENT_CREATED",
-                        "PAYMENT_STATUS_CHANGED",
-                        "SETTLEMENT_APPLIED"
+                        "PAYMENT_RESERVED",
+                        "PAYMENT_SETTLED"
                 );
-        assertThat(rows).filteredOn(row -> row.eventType().equals("SETTLEMENT_APPLIED"))
+        assertThat(rows).filteredOn(row -> row.eventType().equals("PAYMENT_SETTLED"))
                 .containsExactly(new AuditRow(
                         "E2E-AUDIT-REPOSITORY-SETTLED",
-                        "SETTLEMENT_APPLIED",
-                        null,
-                        null,
+                        "PAYMENT_SETTLED",
+                        "WAITING_ACCEPTANCE",
+                        "ACCEPTED_AND_SETTLED",
                         1_000L,
                         "11111111",
                         "22222222",
-                        -1_000L,
+                        null,
                         1_000L,
                         rows.stream()
-                                .filter(row -> row.eventType().equals("SETTLEMENT_APPLIED"))
+                                .filter(row -> row.eventType().equals("PAYMENT_SETTLED"))
                                 .findFirst()
                                 .orElseThrow()
                                 .occurredAt()
@@ -157,27 +196,31 @@ class PaymentAuditRepositoryIntegrationTest {
     }
 
     @Test
-    void allowsTheSameStatusTransitionMoreThanOnce() {
-        PaymentAuditEvent transition = statusChange(
-                "E2E-AUDIT-REPOSITORY-REPEATED-TRANSITION",
-                PaymentStatus.REJECTED
-        );
+    void rejectsConflictingTerminalOutcomes() {
+        String paymentId = "E2E-AUDIT-REPOSITORY-CONFLICTING-OUTCOME";
 
-        repository.insertAll(List.of(transition, transition));
-
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM payment_audit_event WHERE payment_id = ?",
-                Integer.class,
-                transition.paymentId()
-        )).isEqualTo(2);
+        assertThatThrownBy(() -> repository.insertAll(List.of(
+                settlement(paymentId),
+                releasedRejection(paymentId)
+        ))).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
-    void rejectsDuplicateCreationEvents() {
-        PaymentAuditEvent creation = creation("E2E-AUDIT-REPOSITORY-DUPLICATE-CREATION");
+    void rejectsDuplicateReservationEvents() {
+        PaymentAuditEvent reservation = reservation("E2E-AUDIT-REPOSITORY-DUPLICATE-RESERVATION");
 
-        assertThatThrownBy(() -> repository.insertAll(List.of(creation, creation)))
+        assertThatThrownBy(() -> repository.insertAll(List.of(reservation, reservation)))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void rejectsConflictingAdmissionOutcomes() {
+        String paymentId = "E2E-AUDIT-REPOSITORY-CONFLICTING-ADMISSION";
+
+        assertThatThrownBy(() -> repository.insertAll(List.of(
+                reservation(paymentId),
+                ingressRejection(paymentId)
+        ))).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
@@ -194,13 +237,13 @@ class PaymentAuditRepositoryIntegrationTest {
         PaymentAuditEvent first = settlement(paymentId);
         PaymentAuditEvent divergent = new PaymentAuditEvent(
                 paymentId,
-                PaymentAuditEventType.SETTLEMENT_APPLIED,
-                null,
-                null,
+                PaymentAuditEventType.PAYMENT_SETTLED,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED,
                 2_000L,
                 "11111111",
                 "22222222",
-                -2_000L,
+                null,
                 2_000L
         );
 
@@ -210,19 +253,19 @@ class PaymentAuditRepositoryIntegrationTest {
 
     @Test
     void rejectsEventsThatDoNotMatchTheirRequiredShape() {
-        PaymentAuditEvent invalidStatusChange = new PaymentAuditEvent(
+        PaymentAuditEvent invalidReservation = new PaymentAuditEvent(
                 "E2E-AUDIT-REPOSITORY-INVALID-SHAPE",
-                PaymentAuditEventType.PAYMENT_STATUS_CHANGED,
+                PaymentAuditEventType.PAYMENT_RESERVED,
+                null,
                 PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.REJECTED,
                 1_000L,
-                null,
-                null,
-                null,
+                "11111111",
+                "22222222",
+                -999L,
                 null
         );
 
-        assertThatThrownBy(() -> repository.insertAll(List.of(invalidStatusChange)))
+        assertThatThrownBy(() -> repository.insertAll(List.of(invalidReservation)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -261,30 +304,45 @@ class PaymentAuditRepositoryIntegrationTest {
         )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
-    private PaymentAuditEvent creation(String paymentId) {
+    private PaymentAuditEvent reservation(String paymentId) {
         return new PaymentAuditEvent(
                 paymentId,
-                PaymentAuditEventType.PAYMENT_CREATED,
+                PaymentAuditEventType.PAYMENT_RESERVED,
                 null,
                 PaymentStatus.WAITING_ACCEPTANCE,
                 1_000L,
                 "11111111",
                 "22222222",
-                null,
+                -1_000L,
                 null
         );
     }
 
-    private PaymentAuditEvent statusChange(String paymentId, PaymentStatus resultingStatus) {
+    private PaymentAuditEvent ingressRejection(String paymentId) {
         return new PaymentAuditEvent(
                 paymentId,
-                PaymentAuditEventType.PAYMENT_STATUS_CHANGED,
+                PaymentAuditEventType.PAYMENT_REJECTED,
+                null,
+                PaymentStatus.REJECTED,
+                1_000L,
+                "11111111",
+                "22222222",
+                null,
+                null,
+                PaymentRejectionReason.INSUFFICIENT_FUNDS
+        );
+    }
+
+    private PaymentAuditEvent releasedRejection(String paymentId) {
+        return new PaymentAuditEvent(
+                paymentId,
+                PaymentAuditEventType.PAYMENT_REJECTED,
                 PaymentStatus.WAITING_ACCEPTANCE,
-                resultingStatus,
-                null,
-                null,
-                null,
-                null,
+                PaymentStatus.REJECTED,
+                1_000L,
+                "11111111",
+                "22222222",
+                1_000L,
                 null
         );
     }
@@ -292,13 +350,13 @@ class PaymentAuditRepositoryIntegrationTest {
     private PaymentAuditEvent settlement(String paymentId) {
         return new PaymentAuditEvent(
                 paymentId,
-                PaymentAuditEventType.SETTLEMENT_APPLIED,
-                null,
-                null,
+                PaymentAuditEventType.PAYMENT_SETTLED,
+                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentStatus.ACCEPTED_AND_SETTLED,
                 1_000L,
                 "11111111",
                 "22222222",
-                -1_000L,
+                null,
                 1_000L
         );
     }

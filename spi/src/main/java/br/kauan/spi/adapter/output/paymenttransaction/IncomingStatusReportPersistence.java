@@ -6,7 +6,6 @@ import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
 import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.status.StatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.port.output.PaymentStatusTransition;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -100,7 +99,7 @@ class IncomingStatusReportPersistence {
 
     StatusReportPersistenceResult classifyAndApply(List<AuthenticatedStatusReport> statusReports) {
         if (statusReports.isEmpty()) {
-            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
+            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
         BatchLocalStatusReportClassification batchLocalClassification =
@@ -108,7 +107,6 @@ class IncomingStatusReportPersistence {
         Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
         List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
         List<PaymentRejection> rejectedPayments = new ArrayList<>();
-        List<PaymentStatusTransition> appliedStatusTransitions = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
 
@@ -124,15 +122,10 @@ class IncomingStatusReportPersistence {
             switch (actionRow.action()) {
                 case SETTLED_PAYMENT -> {
                     settledPayments.add(toPaymentTransaction(actionRow));
-                    appliedStatusTransitions.add(transition(
-                            actionRow,
-                            PaymentStatus.ACCEPTED_AND_SETTLED
-                    ));
                 }
                 case REJECTED_NOTIFICATION -> {
                     PaymentRejectionReason reason = rejectionReason(actionRow.rejectionReason());
                     rejectedPayments.add(new PaymentRejection(toPaymentTransaction(actionRow), reason));
-                    appliedStatusTransitions.add(transition(actionRow, PaymentStatus.REJECTED, reason));
                 }
                 case DIVERGENT_STATUS_REPORT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
@@ -151,7 +144,6 @@ class IncomingStatusReportPersistence {
         return new StatusReportPersistenceResult(
                 settledPayments,
                 rejectedPayments,
-                appliedStatusTransitions,
                 reportsWithOrdinals(statusReports, divergentStatusReportOrdinals),
                 reportsWithOrdinals(statusReports, unauthorizedStatusReportOrdinals)
         );
@@ -461,26 +453,6 @@ class IncomingStatusReportPersistence {
                 null,
                 null,
                 null
-        );
-    }
-
-    private PaymentStatusTransition transition(
-            StatusReportActionRow actionRow,
-            PaymentStatus resultingStatus
-    ) {
-        return transition(actionRow, resultingStatus, null);
-    }
-
-    private PaymentStatusTransition transition(
-            StatusReportActionRow actionRow,
-            PaymentStatus resultingStatus,
-            PaymentRejectionReason rejectionReason
-    ) {
-        return new PaymentStatusTransition(
-                actionRow.paymentId(),
-                PaymentStatus.WAITING_ACCEPTANCE,
-                resultingStatus,
-                rejectionReason
         );
     }
 

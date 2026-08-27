@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PaymentAuditIndexCompactionMigrationIntegrationTest {
 
     @Test
-    void removesTechnicalIndexesWithoutChangingExistingAuditEventIds() throws Exception {
+    void removesTechnicalIndexesAndArchivesExistingAuditEventIds() throws Exception {
         try (PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine")) {
             postgres.start();
             flyway(postgres, "14").migrate();
@@ -25,7 +25,7 @@ class PaymentAuditIndexCompactionMigrationIntegrationTest {
             ); var statement = connection.createStatement()) {
                 try (var event = statement.executeQuery("""
                         SELECT event_id
-                        FROM payment_audit_event
+                        FROM payment_audit_event_history
                         WHERE payment_id = 'E2E-AUDIT-INDEX-COMPACTION'
                         """)) {
                     assertThat(event.next()).isTrue();
@@ -40,9 +40,9 @@ class PaymentAuditIndexCompactionMigrationIntegrationTest {
                         ORDER BY indexname
                         """)) {
                     assertThat(indexes.next()).isTrue();
-                    assertThat(indexes.getString(1)).isEqualTo("uq_payment_audit_created");
+                    assertThat(indexes.getString(1)).isEqualTo("uq_payment_audit_admission");
                     assertThat(indexes.next()).isTrue();
-                    assertThat(indexes.getString(1)).isEqualTo("uq_payment_audit_settlement");
+                    assertThat(indexes.getString(1)).isEqualTo("uq_payment_audit_terminal_outcome");
                     assertThat(indexes.next()).isFalse();
                 }
             }

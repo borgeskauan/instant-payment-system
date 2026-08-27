@@ -52,7 +52,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         PaymentTransactionPersistenceResult persistenceResult =
                 paymentTransactionRepository.storeAndClassifyIncomingPaymentRequests(transactions);
 
-        paymentAuditService.storeCreationEvents(
+        paymentAuditService.storeAdmissionEvents(
                 persistenceResult.createdPayments(),
                 persistenceResult.rejectedPayments()
         );
@@ -84,9 +84,9 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         List<AuthenticatedStatusReport> unauthorizedStatusReports =
                 new ArrayList<>(persistenceResult.unauthorizedStatusReports());
 
-        paymentAuditService.storeStatusEvents(
-                persistenceResult.appliedStatusTransitions(),
-                persistenceResult.settledPayments()
+        paymentAuditService.storeOutcomeEvents(
+                persistenceResult.settledPayments(),
+                persistenceResult.rejectedPayments()
         );
 
         if (!persistenceResult.rejectedPayments().isEmpty()) {

@@ -65,8 +65,8 @@ class PaymentTransactionStorageSchemaIntegrationTest {
         );
 
         assertThat(indexNames).containsExactly(
-                "uq_payment_audit_created",
-                "uq_payment_audit_settlement"
+                "uq_payment_audit_admission",
+                "uq_payment_audit_terminal_outcome"
         );
     }
 

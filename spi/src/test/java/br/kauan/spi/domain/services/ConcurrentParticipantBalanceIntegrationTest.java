@@ -73,7 +73,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
 
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(9_000L);
         assertThat(paymentCount(payment.getPaymentId())).isOne();
-        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_CREATED")).isOne();
+        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_RESERVED")).isOne();
         assertThat(outboxCount(payment.getPaymentId(), "ACCEPTANCE_REQUEST")).isOne();
     }
 
@@ -92,7 +92,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
 
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(9_000L);
         assertThat(paymentCount(first.getPaymentId())).isOne();
-        assertThat(auditCount(first.getPaymentId(), "PAYMENT_CREATED")).isOne();
+        assertThat(auditCount(first.getPaymentId(), "PAYMENT_RESERVED")).isOne();
         assertThat(outboxCount(first.getPaymentId(), "ACCEPTANCE_REQUEST")).isOne();
         assertThat(firstResult.get().divergentDuplicates().size()
                 + secondResult.get().divergentDuplicates().size()).isOne();
@@ -113,8 +113,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(payerAfterReserve);
         assertThat(balanceCents(RECEIVER_ISPB)).isEqualTo(receiverBefore + payment.getAmountCents());
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
-        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_STATUS_CHANGED")).isOne();
-        assertThat(auditCount(payment.getPaymentId(), "SETTLEMENT_APPLIED")).isOne();
+        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_SETTLED")).isOne();
         assertThat(statusOutboxCount(payment.getPaymentId())).isEqualTo(2);
     }
 
@@ -133,8 +132,8 @@ class ConcurrentParticipantBalanceIntegrationTest {
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(payerAfterReserve + payment.getAmountCents());
         assertThat(balanceCents(RECEIVER_ISPB)).isEqualTo(receiverBefore);
         assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
-        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_STATUS_CHANGED")).isOne();
-        assertThat(auditCount(payment.getPaymentId(), "SETTLEMENT_APPLIED")).isZero();
+        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_REJECTED")).isOne();
+        assertThat(auditCount(payment.getPaymentId(), "PAYMENT_SETTLED")).isZero();
         assertThat(statusOutboxCount(payment.getPaymentId())).isOne();
     }
 

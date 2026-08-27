@@ -159,7 +159,7 @@ O modelo de repetição está explícito no contrato e na documentação; `run-w
 - [x] Manter as populações, configurações e contagens dos dois tipos separadas e impedir que replay `pacs.008` crie outro `pacs.002` original.
 - [x] Não proteger ordinais, identidade dos pagamentos selecionados, coincidência entre conjuntos ou reprodutibilidade de `EndToEndId`.
 - [x] Tratar entregas `pacs.002` idênticas sob `at-least-once` como um único resultado lógico final e transformar ausência, status contraditório ou reason contraditório em violação do relatório.
-- [x] Provar na SPI que happy-path produz exatamente um `SETTLEMENT_APPLIED`, insufficient-funds produz zero e status aceito repetido não duplica settlement, fundos, auditoria ou outbox.
+- [x] Provar na SPI que happy-path produz exatamente um `PAYMENT_SETTLED`, insufficient-funds produz zero e status aceito repetido não duplica settlement, fundos, auditoria ou outbox.
 - [x] Rejeitar na SPI tanto um segundo settlement idêntico quanto um segundo settlement divergente para o mesmo pagamento.
 - [x] Manter settlement como invariante interno da SPI: o relatório do load-tool não inventa observabilidade que o fluxo externo não oferece e não consulta PostgreSQL.
 

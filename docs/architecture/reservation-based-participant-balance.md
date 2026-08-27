@@ -94,7 +94,7 @@ Para cada pagamento reservado:
 
 - inserir o pagamento em `WAITING_ACCEPTANCE`;
 - descontar seu valor do saldo disponível do pagador;
-- registrar a criação na auditoria;
+- registrar `PAYMENT_RESERVED`, incluindo o débito da reserva;
 - criar a obrigação normal de aceite para o recebedor.
 
 Para cada pagamento sem saldo:
@@ -102,7 +102,7 @@ Para cada pagamento sem saldo:
 - persistir `REJECTED / INSUFFICIENT_FUNDS`;
 - gerar a notificação `RJCT` com motivo PACS `AM04` para o pagador;
 - não criar acceptance request;
-- não criar settlement nem settlement audit;
+- registrar somente `PAYMENT_REJECTED`, sem delta financeiro;
 - não alterar saldo.
 
 Todos os resultados e a mutação agregada do saldo confirmam ou fazem rollback em
@@ -201,10 +201,13 @@ calcula os deltas a partir das rows retornadas por essa transição.
 
 ## Auditoria e outbox
 
-A auditoria deve continuar descrevendo o resultado lógico do pagamento sem
-indicar que o pagador foi debitado novamente no aceite. Se o evento
-`SETTLEMENT_APPLIED` continuar representando o settlement lógico completo, essa
-semântica deve ser documentada e separada das mutações físicas por fase.
+A auditoria descreve os fatos de negócio confirmados e seus deltas por fase.
+`PAYMENT_RESERVED` registra o débito do pagador;
+`PAYMENT_SETTLED` registra somente o crédito do recebedor; e
+`PAYMENT_REJECTED` registra nenhum delta na insuficiência inicial ou a devolução
+ao pagador quando uma reserva existente é liberada. Assim, a soma dos eventos
+reconstrói o efeito financeiro do pagamento sem debitar o pagador novamente no
+aceite.
 
 Falha na auditoria ou na outbox precisa desfazer a reserva, o crédito ou a
 liberação e a respectiva transição. Cada transição cria no máximo uma obrigação

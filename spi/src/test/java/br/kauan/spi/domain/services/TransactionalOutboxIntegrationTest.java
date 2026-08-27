@@ -64,13 +64,13 @@ class TransactionalOutboxIntegrationTest {
 
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
-                "PAYMENT_CREATED",
+                "PAYMENT_RESERVED",
                 null,
                 PaymentStatus.WAITING_ACCEPTANCE.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
-                null,
+                -1_000L,
                 null,
                 null
         ));
@@ -92,7 +92,7 @@ class TransactionalOutboxIntegrationTest {
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
-                "PAYMENT_CREATED",
+                "PAYMENT_REJECTED",
                 null,
                 PaymentStatus.REJECTED.name(),
                 1_000L,
@@ -123,13 +123,13 @@ class TransactionalOutboxIntegrationTest {
 
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
-                "PAYMENT_STATUS_CHANGED",
+                "PAYMENT_REJECTED",
                 PaymentStatus.WAITING_ACCEPTANCE.name(),
                 PaymentStatus.REJECTED.name(),
-                null,
-                null,
-                null,
-                null,
+                1_000L,
+                SENDER_ISPB,
+                RECEIVER_ISPB,
+                1_000L,
                 null,
                 null
         ));
@@ -154,30 +154,17 @@ class TransactionalOutboxIntegrationTest {
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("510.00");
-        assertThat(auditRows(payment.getPaymentId())).containsExactlyInAnyOrder(
-                new AuditRow(
-                        "PAYMENT_STATUS_CHANGED",
-                        PaymentStatus.WAITING_ACCEPTANCE.name(),
-                        PaymentStatus.ACCEPTED_AND_SETTLED.name(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null
-                ),
-                new AuditRow(
-                        "SETTLEMENT_APPLIED",
-                        null,
-                        null,
-                        1_000L,
-                        SENDER_ISPB,
-                        RECEIVER_ISPB,
-                        -1_000L,
-                        1_000L,
-                        null
-                )
-        );
+        assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
+                "PAYMENT_SETTLED",
+                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                1_000L,
+                SENDER_ISPB,
+                RECEIVER_ISPB,
+                null,
+                1_000L,
+                null
+        ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
                         new OutboundNotificationRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC"),
@@ -200,30 +187,17 @@ class TransactionalOutboxIntegrationTest {
         assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("510.00");
-        assertThat(auditRows(payment.getPaymentId())).containsExactlyInAnyOrder(
-                new AuditRow(
-                        "PAYMENT_STATUS_CHANGED",
-                        PaymentStatus.WAITING_ACCEPTANCE.name(),
-                        PaymentStatus.ACCEPTED_AND_SETTLED.name(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null
-                ),
-                new AuditRow(
-                        "SETTLEMENT_APPLIED",
-                        null,
-                        null,
-                        1_000L,
-                        SENDER_ISPB,
-                        RECEIVER_ISPB,
-                        -1_000L,
-                        1_000L,
-                        null
-                )
-        );
+        assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
+                "PAYMENT_SETTLED",
+                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                1_000L,
+                SENDER_ISPB,
+                RECEIVER_ISPB,
+                null,
+                1_000L,
+                null
+        ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
                         new OutboundNotificationRow("SETTLED_NOTIFICATION", SENDER_ISPB, "ACSC"),

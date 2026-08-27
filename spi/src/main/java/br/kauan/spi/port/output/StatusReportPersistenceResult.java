@@ -9,7 +9,6 @@ import java.util.List;
 public record StatusReportPersistenceResult(
         List<PaymentTransactionCommand> settledPayments,
         List<PaymentRejection> rejectedPayments,
-        List<PaymentStatusTransition> appliedStatusTransitions,
         List<AuthenticatedStatusReport> divergentStatusReports,
         List<AuthenticatedStatusReport> unauthorizedStatusReports
 ) {

@@ -3836,3 +3836,31 @@ está registrada no relatório consolidado. As evidências encerram a necessidad
 de tuning adicional nessa configuração e atendem ao objetivo de performance
 desta task. A homologação concorrente foi separada para a task
 [`Homologar execução multi-instância`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md).
+
+### Limite deliberado de concorrência
+
+Na configuração homologada, cada fluxo financeiro é serializado internamente:
+o listener PACS.008 usa `concurrency=1` e o listener PACS.002 também usa
+`concurrency=1`. Como são listeners independentes, um batch PACS.008 e um
+batch PACS.002 ainda podem executar simultaneamente e produzir transações
+concorrentes no PostgreSQL. O que não foi exercitado foi a execução simultânea
+de dois batches do mesmo fluxo.
+
+O diagnóstico exploratório de `4.000 TPS` localizou a primeira fila dominante
+no consumer PACS.008. Aumentar `max.poll.records` de `500` para `1.000` não
+resolveu a fila: cerca de `10%` dos callbacks ultrapassaram `500`, o p99 do
+callback passou de aproximadamente `153 ms` para `250 ms` e o número de
+notificações concluídas depois da janela ativa cresceu para `8.010`. O limite
+vigente permanece `500`.
+
+Não será testada nesta task a elevação da concorrência do listener PACS.008 de
+`1` para `2`. Dois child consumers criariam transações financeiras concorrentes
+contra as mesmas tabelas e participantes quentes. Essa mudança exercita a mesma
+classe de locking, idempotência e capacidade compartilhada que precisa ser
+homologada para múltiplas instâncias, sem representar por si só uma topologia
+distribuída completa.
+
+Portanto, concorrência de listeners maior que `1` e execução com múltiplas
+instâncias não foram homologadas e ficam explicitamente fora da estabilização
+da stack única. Ambas serão tratadas como trabalho futuro na task de
+homologação concorrente.
