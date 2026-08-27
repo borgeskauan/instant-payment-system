@@ -136,4 +136,3 @@ mostrar acima dos custos de CSV, JSON ou sincronização do estado de pagamentos
   antecipadamente o vale de rolling a um único componente;
 - nenhuma otimização adicional é mantida sem ganho observável e sem preservar o
   comportamento do PSP simulado.
-
