@@ -1,11 +1,9 @@
 {
-  "valid": true,
   "generation": {
     "planned_originals": 4,
     "executed_originals": 4,
     "required_minimum_tps": 1,
-    "minimum_rolling_tps": 2,
-    "valid": true
+    "minimum_rolling_tps": 2
   },
   "scenarios": [
     {

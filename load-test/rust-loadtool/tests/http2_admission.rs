@@ -10,9 +10,7 @@ use loadtool_generator::causal::{CausalCapacity, CausalKind};
 use loadtool_generator::http2::{
     Http2Client, Http2Config, Http2Reservation, HttpAttempt, PreparedHttp2Request,
 };
-use loadtool_generator::original::{
-    AdmissionMiss, AdmissionOutcome, admit_original, prepare_original,
-};
+use loadtool_generator::original::{AdmissionOutcome, admit_original, prepare_original};
 use loadtool_generator::payment_state::PaymentStates;
 use loadtool_generator::replay_task::send_causal_admitted;
 
@@ -230,10 +228,7 @@ async fn expired_initial_deadline_has_no_payload_state_or_request() {
     .await
     .unwrap();
 
-    assert!(matches!(
-        result,
-        AdmissionOutcome::Missed(AdmissionMiss::BeforePreparation)
-    ));
+    assert!(matches!(result, AdmissionOutcome::Missed));
     assert_eq!(builds.load(Ordering::Relaxed), 0);
     assert!(!states.is_committed(0));
     assert_eq!(client.sends.load(Ordering::Relaxed), 0);
@@ -256,10 +251,7 @@ async fn unavailable_or_late_stream_capacity_remains_unobserved() {
         .await
         .unwrap();
 
-        assert!(matches!(
-            result,
-            AdmissionOutcome::Missed(AdmissionMiss::Http2Readiness)
-        ));
+        assert!(matches!(result, AdmissionOutcome::Missed));
         assert!(!states.is_committed(0));
         assert_eq!(client.sends.load(Ordering::Relaxed), 0);
     }
@@ -290,10 +282,7 @@ async fn prepared_request_after_the_bucket_deadline_is_reported_before_commit() 
     )
     .unwrap();
 
-    assert!(matches!(
-        result,
-        AdmissionOutcome::Missed(AdmissionMiss::BeforeCommit)
-    ));
+    assert!(matches!(result, AdmissionOutcome::Missed));
     assert!(!states.is_committed(0));
     assert_eq!(client.sends.load(Ordering::Relaxed), 0);
 }

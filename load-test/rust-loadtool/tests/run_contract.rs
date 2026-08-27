@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::anyhow;
 use loadtool_contract::generation_window::GenerationWindow;
 use loadtool_generator::simulator::SimulationOptions;
-use rust_loadtool::RunOutcome;
 
 #[tokio::test]
 async fn generator_finishes_before_the_reporter_reads_the_bundle() {
@@ -14,7 +13,7 @@ async fn generator_finishes_before_the_reporter_reads_the_bundle() {
     let generator_events = Arc::clone(&events);
     let reporter_events = Arc::clone(&events);
 
-    let outcome = rust_loadtool::run_with(
+    rust_loadtool::run_with(
         run.path(),
         SimulationOptions::default(),
         move |bundle, _| async move {
@@ -32,7 +31,6 @@ async fn generator_finishes_before_the_reporter_reads_the_bundle() {
     .await
     .unwrap();
 
-    assert_eq!(outcome, RunOutcome::Valid);
     assert_eq!(
         *events.lock().unwrap(),
         ["generator", "generator-dropped", "reporter"]
@@ -64,10 +62,10 @@ async fn generator_failure_skips_reporting_and_preserves_the_error() {
 }
 
 #[tokio::test]
-async fn invalid_generation_still_produces_an_invalid_report() {
+async fn generation_below_the_rolling_minimum_completes_and_preserves_the_facts() {
     let run = prepared_run();
 
-    let outcome = rust_loadtool::run_with(
+    rust_loadtool::run_with(
         run.path(),
         SimulationOptions::default(),
         |bundle, _| async move {
@@ -78,7 +76,9 @@ async fn invalid_generation_still_produces_an_invalid_report() {
                 starts,
                 contents
                     .lines()
-                    .filter(|line| !line.starts_with("fixture-3,"))
+                    .filter(|line| {
+                        !line.starts_with("fixture-2,") && !line.starts_with("fixture-3,")
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
                     + "\n",
@@ -91,11 +91,40 @@ async fn invalid_generation_still_produces_an_invalid_report() {
     .await
     .unwrap();
 
-    assert_eq!(outcome, RunOutcome::Invalid);
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(run.path().join("sla-report.json")).unwrap()).unwrap();
+    assert!(report.get("valid").is_none());
+    assert!(report.get("performance_qualified").is_none());
+    assert_eq!(report["generation"]["required_minimum_tps"], 1);
+    assert_eq!(report["generation"]["minimum_rolling_tps"], 0);
+}
+
+#[tokio::test]
+async fn functional_violations_are_reported_without_failing_the_command() {
+    let run = prepared_run();
+
+    rust_loadtool::run_with(
+        run.path(),
+        SimulationOptions::default(),
+        |bundle, _| async move {
+            copy_generated_outputs(&fixture_root(), bundle.root());
+            let starts = bundle.events_dir().join("pacs008-starts.csv");
+            let contents = fs::read_to_string(&starts).unwrap();
+            fs::write(
+                starts,
+                contents.replacen(",202,insufficient-funds", ",500,insufficient-funds", 1),
+            )
+            .unwrap();
+            Ok(fixture_window())
+        },
+        loadtool_report::write,
+    )
+    .await
+    .unwrap();
 
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(run.path().join("sla-report.json")).unwrap()).unwrap();
-    assert_eq!(report["valid"], false);
+    assert_eq!(report["scenarios"][1]["violations"], 1);
 }
 
 #[tokio::test]

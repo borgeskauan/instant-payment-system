@@ -80,8 +80,9 @@ experimento precisar desativá-los.
 
 O gerador registra somente as evidências necessárias para reconstruir a
 workload. A seção de geração do relatório informa pagamentos originais
-planejados e executados, piso rolling observado e validade; instrumentação de
-infraestrutura permanece fora do hot path Rust.
+planejados e executados e o piso rolling observado; instrumentação de
+infraestrutura permanece fora do hot path Rust. O comando retorna erro somente
+quando não consegue concluir tecnicamente a execução ou produzir o relatório.
 
 O workload oficial oferece 2.100 pagamentos originais por segundo durante 15
 minutos, além dos replays configurados. O relatório qualifica a capacidade

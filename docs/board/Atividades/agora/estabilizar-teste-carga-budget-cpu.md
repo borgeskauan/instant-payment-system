@@ -26,7 +26,7 @@ duas stacks compartilhando o mesmo PostgreSQL.
   cada comparação.
 - Distinguir execução técnica de aprovação: o runner e o relatório devem concluir
   para preservar evidências, enquanto throughput rolling, p99 ou correção fora
-  do contrato tornam `valid: false`.
+  do contrato permanecem explícitos nos respectivos campos do relatório.
 - Tratar média e total como diagnóstico. Catch-up e picos não compensam nenhuma
   rolling window de um segundo abaixo do piso.
 - Não fazer tuning ou refatoração sem uma hipótese sustentada pelas medições.
@@ -112,8 +112,8 @@ artefatos já existentes, o bundle inclui:
 - `diagnostics/container-stats.csv`, com CPU, memória e I/O a cada segundo.
 
 O objetivo desta execução é classificar a limitação do ingresso como CPU, I/O,
-lock, conexão ou combinação desses fatores. O run é diagnóstico, pode resultar
-em `valid: false` e não autoriza tuning nem mudança dos buckets por si só.
+lock, conexão ou combinação desses fatores. O run é diagnóstico, pode ficar
+fora do piso ou do SLA e não autoriza tuning nem mudança dos buckets por si só.
 
 O profile `mixed-outcomes-2k-6m` ocupa a fronteira entre esse feedback rápido e
 o run oficial. Ele preserva integralmente workload, warmup, replays, drain e
@@ -3474,8 +3474,8 @@ usavam o mesmo valor de `2.000 TPS`:
 `mixed-outcomes-2k-15m` oferecem `2.100 TPS` e continuam exigindo no mínimo
 `2.000 TPS`. A margem de 5% evita que jitter normal do gerador torne o
 experimento inconclusivo sem reduzir o contrato: qualquer rolling window abaixo
-de `2.000` continua invalidando o run, enquanto carga acima do piso é reportada
-como workload efetivamente exercitada. O smoke funcional mixed-outcomes usa a
+de `2.000` continua demonstrando que o run não comprovou o piso, enquanto carga
+acima dele é reportada como workload efetivamente exercitada. O smoke funcional mixed-outcomes usa a
 mesma margem, oferecendo `105 TPS` para exigir `100 TPS`; o profile de
 compatibilidade `uniform-smoke` permanece inalterado.
 

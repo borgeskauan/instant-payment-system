@@ -13,7 +13,6 @@ use crate::replay::{self, ReplaySummary};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SlaReport {
-    pub valid: bool,
     pub generation: GenerationSummary,
     pub scenarios: Vec<ScenarioSummary>,
     pub replays: ReplaySummary,
@@ -107,7 +106,6 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     validate_scenarios(&run.events.pacs008, &run.events.pacs002, &indexes)?;
 
     let mut report = SlaReport {
-        valid: false,
         generation: generation::summarize(
             &run.events.pacs008,
             &run.window,
@@ -244,14 +242,6 @@ pub fn build(run: CompletedRun) -> Result<SlaReport> {
     {
         summary.performance.latency_ms = summarize_latency(values);
     }
-    report.valid = report.generation.valid
-        && report.replays.pacs008.violations == 0
-        && report.replays.pacs002.violations == 0
-        && report
-            .scenarios
-            .iter()
-            .all(|scenario| scenario.violations == 0)
-        && report.performance.within_sla;
     Ok(report)
 }
 

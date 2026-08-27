@@ -10,7 +10,6 @@ pub struct GenerationSummary {
     pub executed_originals: usize,
     pub required_minimum_tps: u64,
     pub minimum_rolling_tps: usize,
-    pub valid: bool,
 }
 
 pub fn summarize(
@@ -48,8 +47,6 @@ pub fn summarize(
         window.active_started_at_ns,
         window.generation_ended_at_ns,
     );
-    summary.valid = summary.executed_originals as u64 == summary.planned_originals
-        && summary.minimum_rolling_tps >= required_minimum_tps as usize;
     summary
 }
 

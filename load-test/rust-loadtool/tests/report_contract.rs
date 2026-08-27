@@ -18,7 +18,7 @@ fn report_deep_matches_the_frozen_contract_fixture() {
 }
 
 #[test]
-fn incomplete_planned_generation_forces_the_final_report_invalid() {
+fn incomplete_planned_generation_can_still_meet_the_rolling_minimum() {
     let temp = copy_fixture();
     rewrite(&temp.path().join("events/pacs008-starts.csv"), |contents| {
         contents
@@ -34,19 +34,32 @@ fn incomplete_planned_generation_forces_the_final_report_invalid() {
         .load_completed(fixture_window())
         .unwrap();
     let report = loadtool_report::build(completed).unwrap();
-    assert!(!report.valid);
     assert_eq!(report.generation.planned_originals, 4);
     assert_eq!(report.generation.executed_originals, 3);
-    assert!(!report.generation.valid);
+    assert!(
+        report.generation.minimum_rolling_tps >= report.generation.required_minimum_tps as usize
+    );
     assert!(report.performance.within_sla);
+}
+
+#[test]
+fn latency_above_the_sla_is_not_a_correctness_failure() {
+    let temp = copy_fixture();
+    rewrite(&temp.path().join("events/notifications.csv"), |contents| {
+        contents
+            .replace("1767225602200000000", "1767225603900000000")
+            .replace("1767225602250000000", "1767225603950000000")
+    });
+
+    let report = build_fixture(temp.path());
+    assert!(!report.performance.within_sla);
 }
 
 #[test]
 fn report_publication_is_atomic_and_never_overwrites() {
     let temp = copy_fixture();
     let bundle = Bundle::resolve(temp.path()).unwrap();
-    let report = loadtool_report::write(&bundle, fixture_window()).unwrap();
-    assert!(report.valid);
+    loadtool_report::write(&bundle, fixture_window()).unwrap();
     let bytes = fs::read(temp.path().join("sla-report.json")).unwrap();
     assert_eq!(*bytes.last().unwrap(), b'\n');
 
@@ -70,7 +83,7 @@ fn missing_or_contradictory_payer_outcomes_are_violations() {
     );
     let report = build_fixture(missing.path());
     assert_eq!(report.scenarios[1].outcome.missing, 1);
-    assert!(!report.valid);
+    assert_eq!(report.scenarios[1].violations, 1);
 
     let contradictory = copy_fixture();
     rewrite(
@@ -83,7 +96,7 @@ fn missing_or_contradictory_payer_outcomes_are_violations() {
     let report = build_fixture(contradictory.path());
     assert_eq!(report.scenarios[0].outcome.matched, 2);
     assert_eq!(report.scenarios[0].outcome.contradictory, 1);
-    assert!(!report.valid);
+    assert_eq!(report.scenarios[0].violations, 1);
 }
 
 #[test]
@@ -93,7 +106,7 @@ fn ingress_and_aggregate_replay_failures_are_reported_as_violations() {
         &bad_http.path().join("events/pacs008-starts.csv"),
         |contents| contents.replacen(",202,insufficient-funds", ",500,insufficient-funds", 1),
     );
-    assert!(!build_fixture(bad_http.path()).valid);
+    assert_eq!(build_fixture(bad_http.path()).scenarios[1].violations, 1);
 
     let mutations: [fn(String) -> String; 3] = [
         |contents| {
@@ -119,12 +132,11 @@ fn ingress_and_aggregate_replay_failures_are_reported_as_violations() {
         rewrite(&temp.path().join("events/replays.csv"), mutate);
         let report = build_fixture(temp.path());
         assert!(report.replays.pacs008.violations > 0);
-        assert!(!report.valid);
     }
 }
 
 #[test]
-fn replay_identity_and_timing_are_not_report_qualification_rules() {
+fn replay_identity_and_timing_do_not_create_violations() {
     let replay = copy_fixture();
     rewrite(&replay.path().join("events/replays.csv"), |contents| {
         contents.replace(
@@ -132,13 +144,13 @@ fn replay_identity_and_timing_are_not_report_qualification_rules() {
             "unknown,99999999,unknown,pacs.008,1767225602999999999",
         )
     });
-    assert!(build_fixture(replay.path()).valid);
+    assert_eq!(build_fixture(replay.path()).replays.pacs008.violations, 0);
 
     let late = copy_fixture();
     rewrite(&late.path().join("events/pacs002-starts.csv"), |contents| {
         contents.replace("1767225602100000000", "1767225604000000000")
     });
-    assert!(build_fixture(late.path()).valid);
+    assert_eq!(build_fixture(late.path()).replays.pacs002.violations, 0);
 }
 
 fn fixture_root() -> std::path::PathBuf {

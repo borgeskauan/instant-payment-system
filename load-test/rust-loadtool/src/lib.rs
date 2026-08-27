@@ -16,13 +16,7 @@ pub struct RunOptions {
     pub generator: SimulationOptions,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RunOutcome {
-    Valid,
-    Invalid,
-}
-
-pub async fn run(options: RunOptions) -> Result<RunOutcome> {
+pub async fn run(options: RunOptions) -> Result<()> {
     run_with(
         &options.run_dir,
         options.generator,
@@ -38,19 +32,15 @@ pub async fn run_with<G, F, R>(
     options: SimulationOptions,
     generator: G,
     reporter: R,
-) -> Result<RunOutcome>
+) -> Result<()>
 where
     G: FnOnce(Bundle, SimulationOptions) -> F,
     F: Future<Output = Result<GenerationWindow>>,
-    R: FnOnce(&Bundle, GenerationWindow) -> Result<loadtool_report::SlaReport>,
+    R: FnOnce(&Bundle, GenerationWindow) -> Result<()>,
 {
     let bundle = Bundle::resolve(run_dir)?;
     bundle.load_prepared()?;
     let window = generator(bundle.clone(), options).await?;
-    let report = reporter(&bundle, window)?;
-    Ok(if report.valid {
-        RunOutcome::Valid
-    } else {
-        RunOutcome::Invalid
-    })
+    reporter(&bundle, window)?;
+    Ok(())
 }

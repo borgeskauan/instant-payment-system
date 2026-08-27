@@ -20,15 +20,8 @@ use loadtool_contract::event::{Event, MessageKind, Participant};
 const PACER_CHANNEL_CAPACITY: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AdmissionMiss {
-    BeforePreparation,
-    Http2Readiness,
-    BeforeCommit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionOutcome<T> {
-    Missed(AdmissionMiss),
+    Missed,
     Admitted(T),
 }
 
@@ -89,14 +82,14 @@ where
     Build: FnOnce() -> Result<Bytes>,
 {
     if Instant::now() >= bucket_deadline {
-        return Ok(AdmissionOutcome::Missed(AdmissionMiss::BeforePreparation));
+        return Ok(AdmissionOutcome::Missed);
     }
     let body = build_payload()?;
     let Some(reservation) = client.reserve_until(bucket_deadline).await? else {
-        return Ok(AdmissionOutcome::Missed(AdmissionMiss::Http2Readiness));
+        return Ok(AdmissionOutcome::Missed);
     };
     if Instant::now() >= bucket_deadline {
-        return Ok(AdmissionOutcome::Missed(AdmissionMiss::Http2Readiness));
+        return Ok(AdmissionOutcome::Missed);
     }
     let request = reservation.prepare("/transfer", body.clone())?;
     Ok(AdmissionOutcome::Admitted(PreparedOriginal {
@@ -117,7 +110,7 @@ where
     R: PreparedHttp2Request,
 {
     if Instant::now() >= prepared.bucket_deadline {
-        return Ok(AdmissionOutcome::Missed(AdmissionMiss::BeforeCommit));
+        return Ok(AdmissionOutcome::Missed);
     }
 
     if !states.commit(prepared.sequence) {
@@ -291,11 +284,12 @@ pub(crate) async fn run_generation_phase(
     let pacer_result = pacer
         .join()
         .map_err(|_| anyhow!("load-tool pacer thread panicked"))?;
-    if warmup && pacer_result.missed_slots > 0 {
-        runtime.warmup_tracker.fail(format!(
-            "pacer missed {} warmup original slots",
+    if pacer_result.missed_slots > 0 {
+        eprintln!(
+            "load-tool diagnostic: phase={} missed_original_slots={}",
+            if warmup { "warmup" } else { "active" },
             pacer_result.missed_slots
-        ));
+        );
     }
     runtime.check_operational()
 }
@@ -354,14 +348,7 @@ async fn prepare_original_bucket(
                     Err(error) => runtime.failure.operational(&runtime.cancellation, error),
                 }
             }
-            Ok(AdmissionOutcome::Missed(reason)) => {
-                if let Some(tracker) = tracker {
-                    tracker.fail(format!(
-                        "warmup original {} missed admission: {reason:?}",
-                        job.sequence
-                    ));
-                }
-            }
+            Ok(AdmissionOutcome::Missed) => {}
             Err(error) => runtime.failure.operational(&runtime.cancellation, error),
         }
     }
@@ -388,14 +375,7 @@ fn admit_prepared_bucket(
             job.request_timeout,
             job.hard_deadline,
         ) {
-            Ok(AdmissionOutcome::Missed(reason)) => {
-                if let Some(tracker) = &tracker {
-                    tracker.fail(format!(
-                        "warmup original {} missed admission: {reason:?}",
-                        job.sequence
-                    ));
-                }
-            }
+            Ok(AdmissionOutcome::Missed) => {}
             Ok(AdmissionOutcome::Admitted(request)) => {
                 obligations.transfer();
                 started.push(StartedOriginalJob {

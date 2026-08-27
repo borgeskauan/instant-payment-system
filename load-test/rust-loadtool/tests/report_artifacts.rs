@@ -51,7 +51,6 @@ fn rolling_windows_find_unaligned_gaps_and_do_not_credit_later_spikes() {
     assert_eq!(summary.executed_originals, 6);
     assert_eq!(summary.required_minimum_tps, 3);
     assert_eq!(summary.minimum_rolling_tps, 1);
-    assert!(!summary.valid);
 }
 
 fn start(index: usize, timestamp: i64) -> Pacs008Start {

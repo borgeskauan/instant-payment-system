@@ -16,7 +16,7 @@ pub fn build(completed: CompletedRun) -> Result<SlaReport> {
     summary::build(completed)
 }
 
-pub fn write(bundle: &Bundle, window: GenerationWindow) -> Result<SlaReport> {
+pub fn write(bundle: &Bundle, window: GenerationWindow) -> Result<()> {
     let completed = bundle.load_completed(window)?;
     let report = build(completed)?;
     let path = bundle.report();
@@ -49,6 +49,5 @@ pub fn write(bundle: &Bundle, window: GenerationWindow) -> Result<SlaReport> {
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result?;
-    Ok(report)
+    result
 }

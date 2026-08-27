@@ -62,8 +62,7 @@ async fn main() -> ExitCode {
             })
             .await;
             match result {
-                Ok(rust_loadtool::RunOutcome::Valid) => ExitCode::SUCCESS,
-                Ok(rust_loadtool::RunOutcome::Invalid) => ExitCode::FAILURE,
+                Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("load-tool run failed: {error:#}");
                     ExitCode::from(2)

@@ -653,7 +653,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "csv",
- "hdrhistogram",
  "http-body-util",
  "hyper",
  "hyper-util",
