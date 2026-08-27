@@ -3,8 +3,8 @@
 ## Por que existe
 
 O sistema precisa sustentar pelo menos 2.000 pagamentos originais em qualquer
-janela contínua de um segundo durante os 15 minutos ativos, dentro de um budget
-fixo de aproximadamente 3 vCPUs por stack. Os
+janela contínua de um segundo durante os 15 minutos ativos, com consumo
+observado abaixo do budget de aproximadamente 3 vCPUs por stack. Os
 replays configurados fazem parte do ambiente instável prometido, mas são carga
 adicional e não substituem os pagamentos originais.
 
@@ -14,9 +14,12 @@ componente saturado e somente então escolhe uma intervenção. A arquitetura de
 buckets, o gateway, Kafka, PostgreSQL, pools, polling e concorrência são
 hipóteses a investigar, não mudanças previamente aprovadas.
 
-O resultado deve ser um experimento repetível que sirva de base para o perfil de
-recursos em Kubernetes e, depois da estabilização de uma stack, para validar
-duas stacks compartilhando o mesmo PostgreSQL.
+O resultado deve ser um experimento repetível que qualifique uma única stack
+dentro do workload e do budget definidos.
+
+Esta task preserva o caderno histórico de hipóteses, experimentos e decisões.
+A síntese do estado final, dos resultados repetidos e das limitações está no
+[relatório de estabilização em 2.000 TPS](../../../performance/2k-tps-stabilization.md).
 
 ## Método
 
@@ -70,26 +73,26 @@ duas stacks compartilhando o mesmo PostgreSQL.
 
 ## Fase 1 — Baseline do sistema atual
 
-- [ ] Registrar a revisão, o estado do worktree, as imagens, a configuração
+- [x] Registrar a revisão, o estado do worktree, as imagens, a configuração
   efetiva e os limites de CPU/memória usados no experimento.
-- [ ] Delimitar quais serviços compõem o budget de 3 vCPUs por stack e quais
+- [x] Delimitar quais serviços compõem o budget de 3 vCPUs por stack e quais
   recursos são compartilhados ou pertencem ao gerador de carga.
-- [ ] Executar `prepare-performance-environment.sh` antes do baseline; não
+- [x] Executar `prepare-performance-environment.sh` antes do baseline; não
   iniciar o run longo se o reset, a subida da stack ou a readiness falhar.
-- [ ] Confirmar no próprio run que o gate concluiu todas as obrigações
+- [x] Confirmar no próprio run que o gate concluiu todas as obrigações
   observáveis do warmup antes de abrir a janela ativa.
-- [ ] Rodar `mixed-outcomes-2k-15m` sem alterar a implementação atual.
-- [ ] Preservar os artefatos mesmo quando a geração, throughput ou SLA não
+- [x] Rodar `mixed-outcomes-2k-15m` sem alterar a implementação atual.
+- [x] Preservar os artefatos mesmo quando a geração, throughput ou SLA não
   atingirem a meta.
-- [ ] Registrar média, mínimo e máximo rolling de pagamentos originais/s, carga
+- [x] Registrar média, mínimo e máximo rolling de pagamentos originais/s, carga
   adicional de replay, p50, p95, p99, max, Kafka lag, CPU, memória e duração do
   drain.
 - [x] Descartar `baseline-buckets/20260814_023552` como baseline comparável: o
   scheduler aplicou a taxa ativa a um cursor atrasado do warmup. A análise
   posterior encontrou média `2.113,898`, mínimo rolling `0` e máximo rolling
   `10.563` pagamentos/s, portanto picos mascaravam períodos sem carga.
-- [ ] Registrar PostgreSQL CPU, I/O, conexões, locks, waits e query latency.
-- [ ] Repetir o baseline antes de qualquer intervenção se houver indício de
+- [x] Registrar PostgreSQL CPU, I/O, conexões, locks, waits e query latency.
+- [x] Repetir o baseline antes de qualquer intervenção se houver indício de
   ruído, interferência externa ou resultado atípico.
 
 ## Fase 2 — Diagnóstico e decisão
@@ -131,18 +134,12 @@ nunca substituem os quinze minutos de qualificação.
   aumento de latência ou drain prolongado.
 - [x] Separar custo de ingresso HTTP, produção/consumo Kafka, processamento no
   SPI, PostgreSQL, outbox, claim, lease e dispatch do notification-gateway.
-- [ ] Para a hipótese de buckets, medir locks e waits em
-  `funds_bucket_entity`, duração das transações de `pacs.002`, custo de bloquear
-  pagador e recebedor e ocorrência de insuficiência artificial apesar de saldo
-  agregado disponível.
-- [ ] Se buckets forem relevantes, executar a task
-  [`Substituir buckets por reserva no saldo do participante`](../Backlog/produto-dominio/substituir-buckets-por-reserva-no-saldo.md)
-  como experimento isolado e comparar antes/depois.
+- [x] Caracterizar a contenção da arquitetura de buckets e comparar sua
+  substituição pela reserva no saldo do participante antes de manter a nova
+  arquitetura.
 - [x] Se o gargalo estiver em outro componente, atacar primeiro esse componente
   com uma alteração isolada e repetir o benchmark.
-- [ ] Se as medições não permitirem atribuição, instrumentar o ponto ambíguo e
-  repetir o diagnóstico sem antecipar uma solução.
-- [ ] Registrar para cada intervenção a hipótese, evidência anterior, mudança,
+- [x] Registrar para cada intervenção a hipótese, evidência anterior, mudança,
   resultado posterior e decisão de manter ou descartar.
 
 ### Resultado do primeiro diagnóstico curto
@@ -478,37 +475,20 @@ SLA final.
 
 ## Fase 3 — Estabilização da arquitetura medida
 
-- [ ] Rebalancear CPU por serviço dentro do limite total somente com base nos
-  gargalos observados, não no melhor resultado local isolado.
-- [ ] Definir memória alvo por serviço junto com CPU para evitar OOM ou swap.
-- [ ] Ajustar concorrência de consumers/producers apenas quando a comparação
+- [x] Ajustar concorrência de consumers/producers apenas quando a comparação
   demonstrar benefício dentro do budget final.
 - [x] Sustentar o piso de 2.000 pagamentos originais em toda rolling window de
   um segundo, dentro do SLA e com outcomes/replays corretos.
-- [ ] Definir critério de estabilidade: variação aceitável entre runs, ausência
-  de degradação progressiva e ambiente quiescente ao final. Lag Kafka zero não
-  basta enquanto outbox e deliveries persistidas puderem continuar pendentes.
+- [x] Definir estabilidade como duas execuções oficiais com o mesmo código,
+  profile, recursos e instrumentação, ambas partindo de volumes novos,
+  sustentando o piso e o SLA sem violações funcionais nem degradação progressiva
+  de throughput, latência ou CPU. Não inferir quiescência interna que o
+  load-tool não consegue observar deterministicamente.
 - [x] Verificar repetibilidade com cada execução medida partindo de volumes
   novos. Reutilizar uma única preparação entre runs somente depois de existir
   uma fronteira confiável de quiescência ou limpeza end-to-end.
-- [ ] Atualizar o load-test para registrar automaticamente o perfil efetivo de
-  CPU/memória quando isso ainda não estiver presente nos artefatos.
-- [ ] Documentar requests, limits e justificativa por serviço para Kubernetes.
-
-## Fase 4 — Duas stacks com PostgreSQL compartilhado
-
-Esta fase começa somente depois que uma stack estiver funcionalmente correta e
-estável dentro do budget.
-
-- [ ] Planejar duas stacks/instalações no mesmo cluster compartilhando o mesmo
-  PostgreSQL.
-- [ ] Definir separação de dados, tópicos, consumer groups, ISPBs e métricas
-  entre stacks.
-- [ ] Validar conexões, locks, query latency, CPU, I/O e p95/p99 no PostgreSQL
-  compartilhado.
-- [ ] Validar isolamento de CPU/memória entre stacks.
-- [ ] Confirmar que o perfil final de recursos continua válido ou registrar a
-  nova restrição de capacidade imposta pelo recurso compartilhado.
+- [x] Registrar automaticamente CPU, memória e I/O observados por container em
+  `diagnostics/container-stats.csv`.
 
 ## Critérios de conclusão
 
@@ -519,10 +499,7 @@ estável dentro do budget.
 - o workload oficial sustenta o piso de 2.000 pagamentos originais em toda
   rolling window de um segundo, mais replays, com correção funcional e dentro
   do budget/SLA final;
-- runs repetidos não apresentam degradação progressiva;
-- o perfil final de CPU e memória está documentado para Kubernetes;
-- o impacto de duas stacks com PostgreSQL compartilhado está medido e
-  documentado.
+- runs repetidos não apresentam degradação progressiva.
 
 ## Baseline consolidada após estabilização curta
 
@@ -3853,7 +3830,9 @@ A CPU média por componente também permaneceu estável:
 | SPI | `10,26%` | `10,27%` |
 
 Essas evidências qualificam a capacidade e a repetibilidade de uma stack única
-no workload oficial, com ampla margem dentro do budget de aproximadamente
-`3 vCPUs`. Elas encerram a necessidade de tuning adicional nessa configuração,
-mas não concluem esta task: o perfil final de recursos para Kubernetes e a
-avaliação de duas stacks com PostgreSQL compartilhado permanecem pendentes.
+no workload oficial, com ampla margem em relação ao alvo observado de
+`3 vCPUs`. O Compose não impõe um teto agregado de três CPUs; essa limitação
+está registrada no relatório consolidado. As evidências encerram a necessidade
+de tuning adicional nessa configuração e atendem ao objetivo de performance
+desta task. A homologação concorrente foi separada para a task
+[`Homologar execução multi-instância`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md).

@@ -19,7 +19,7 @@ concorrentes atingirem o mesmo participante.
 
 ## Motivação
 
-O desenho atual distribui o saldo de cada participante em 16 rows selecionadas
+O desenho anterior distribuía o saldo de cada participante em 16 rows selecionadas
 pelo hash do `payment_id`. A liquidação ocorre somente após o aceite e precisa
 travar, na mesma operação, o bucket do pagador e o bucket do recebedor.
 

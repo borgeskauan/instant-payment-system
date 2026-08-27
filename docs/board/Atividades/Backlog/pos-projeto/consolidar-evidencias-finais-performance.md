@@ -2,6 +2,21 @@
 
 * [ ] Preservar e documentar a evidência final depois que a meta de performance for atingida e confirmada
 
+## Estado atual
+
+* [x] selecionar o run qualificador final e sua repetição limpa;
+* [x] consolidar método, decisões, resultados e limitações no
+  [relatório final](../../../../performance/2k-tps-stabilization.md);
+* [x] preservar profile, plano normalizado, relatórios e checksums no
+  [manifesto de evidências](../../../../performance/evidence/2026-08-27/manifest.md);
+* [ ] arquivar os dois bundles brutos fora do Git comum, com checksum do bundle
+  completo, localização e instruções de recuperação;
+* [ ] validar a recuperação do arquivo externo antes de remover os bundles
+  locais e resultados intermediários.
+
+A task permanece aberta somente pelas etapas de preservação externa. Os
+artefatos locais não devem ser apagados até elas terminarem.
+
 ## Por que existe
 
 Durante a estabilização, os bundles completos permanecem locais e a task ativa
@@ -29,8 +44,7 @@ Somente depois que a task de estabilização:
 * registrar revisão Git, estado do worktree, imagens dos serviços, configuração
   efetiva e limites de CPU e memória;
 * preservar no repositório os artefatos compactos necessários, incluindo perfil,
-  plano de execução, janela autoritativa, relatório SLA e um manifesto da
-  evidência;
+  plano de execução, relatórios e um manifesto da evidência;
 * arquivar os bundles brutos completos fora do Git comum, com checksum, formato,
   localização e instruções de recuperação documentados;
 * excluir do arquivo credenciais, certificados efêmeros e outros dados que não

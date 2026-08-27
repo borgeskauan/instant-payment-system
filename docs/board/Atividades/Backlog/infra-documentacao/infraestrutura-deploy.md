@@ -8,4 +8,7 @@ O projeto nasceu com intenção de rodar os serviços em containers e, futuramen
 
 - [ ] Conferir quais serviços já estão containerizados.
 - [ ] Separar o que é ambiente local com Docker Compose do que seria deploy Kubernetes.
+- [ ] Se Kubernetes voltar a ser priorizado, usar as evidências dos testes de
+      performance para definir e justificar `requests` e `limits` de CPU e
+      memória por serviço.
 - [ ] Realizar deploy em Kubernetes, se ainda fizer sentido para o projeto.
