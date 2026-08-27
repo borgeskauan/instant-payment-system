@@ -36,7 +36,7 @@
 - Produces `Bundle::load_completed(window: GenerationWindow) -> Result<CompletedRun>`.
 - Produces `loadtool_report::write(bundle: &Bundle, window: GenerationWindow) -> Result<SlaReport>`.
 
-- [ ] **Step 1: Write failing tests for the minimal generation JSON**
+- [x] **Step 1: Write failing tests for the minimal generation JSON**
 
 Assert the report contains only the following generation data:
 
@@ -50,7 +50,7 @@ assert!(report.generation.valid);
 
 Add a fixture with one active PACS.008 row removed and assert `executed_originals == 3` and `valid == false`. Retain boundary cases proving every continuous one-second interval is considered.
 
-- [ ] **Step 2: Run focused tests and observe failure**
+- [x] **Step 2: Run focused tests and observe failure**
 
 ```bash
 cd load-test/rust-loadtool
@@ -59,7 +59,7 @@ cargo test --locked --test report_contract --test report_artifacts
 
 Expected: FAIL because the report still loads persisted window/metrics artifacts and exposes average/maximum fields.
 
-- [ ] **Step 3: Implement the neutral window contract**
+- [x] **Step 3: Implement the neutral window contract**
 
 ```rust
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,11 +97,11 @@ impl GenerationWindow {
 
 Require ordered timestamps, active start no earlier than planned warmup end, generation end equal to active start plus active duration, and replay deadline equal to generation end plus drain.
 
-- [ ] **Step 4: Make the bundle and reporter consume the supplied window**
+- [x] **Step 4: Make the bundle and reporter consume the supplied window**
 
 Change `CompletedRun` to hold `GenerationWindow`. Make `Bundle::load_completed` and `loadtool_report::write` require it instead of reading an artifact.
 
-- [ ] **Step 5: Implement the minimal generation summary**
+- [x] **Step 5: Implement the minimal generation summary**
 
 ```rust
 pub struct GenerationSummary {
@@ -115,7 +115,7 @@ pub struct GenerationSummary {
 
 Calculate planned originals with checked `offered_tx_rate * active_duration.as_secs()`. Filter starts to `[activeStart, generationEnd)`, sort timestamps, and use the existing two-pointer rolling scan. Remove offered/average/maximum/outside-window fields. Overall validity consumes `generation.valid`.
 
-- [ ] **Step 6: Run focused tests and commit**
+- [x] **Step 6: Run focused tests and commit**
 
 ```bash
 cargo test --locked --test report_contract --test report_artifacts
@@ -140,11 +140,11 @@ git commit -m "refactor(load-test): minimize generation reporting"
 - Produces `simulator::run(...) -> Result<GenerationWindow>`.
 - Produces `RunOutcome::{Valid, Invalid}`; run exits are valid `0`, invalid `1`, operational `2`.
 
-- [ ] **Step 1: Rewrite orchestration tests to require the in-memory window**
+- [x] **Step 1: Rewrite orchestration tests to require the in-memory window**
 
 Make the fake generator return a known `GenerationWindow`; make the fake reporter receive that exact value. Stop copying run-window and metrics fixtures. Assert an invalid report returns `RunOutcome::Invalid` after writing `sla-report.json`. Assert operational CLI errors return `2` and completed invalid runs return `1`.
 
-- [ ] **Step 2: Run focused tests and observe failure**
+- [x] **Step 2: Run focused tests and observe failure**
 
 ```bash
 cd load-test/rust-loadtool
@@ -153,7 +153,7 @@ cargo test --locked --test bundle_contract --test evidence_contract --test run_c
 
 Expected: FAIL against the persisted metrics/window lifecycle and old exit mapping.
 
-- [ ] **Step 3: Remove observation infrastructure**
+- [x] **Step 3: Remove observation infrastructure**
 
 Delete serialized metrics, process resource sampling, Pull batch observation, histograms, in-flight observation, and recorder summaries. Retain only counters required by lifecycle/correctness. Reduce pacer output to an internal non-serialized result such as:
 
@@ -165,7 +165,7 @@ pub struct PacerResult {
 
 A warmup pacing miss must fail the warmup gate internally. Active missing originals are detected by the report count.
 
-- [ ] **Step 4: Return the window and compose reporting**
+- [x] **Step 4: Return the window and compose reporting**
 
 After fixed drain, task closure, recorder close, and operational checks, return the four Unix-nanosecond boundaries. Implement:
 
@@ -179,7 +179,7 @@ Ok(if report.valid { RunOutcome::Valid } else { RunOutcome::Invalid })
 
 Map outcomes to `0`/`1` and operational failures to `2` in `main.rs`.
 
-- [ ] **Step 5: Remove obsolete artifacts and pass focused tests**
+- [x] **Step 5: Remove obsolete artifacts and pass focused tests**
 
 Remove metrics/window paths and checks from `Bundle`, delete their modules, fixtures, and `run-window-test.sh`. Do not add legacy-format rejection tests.
 
@@ -189,7 +189,7 @@ cargo test --locked --test bundle_contract --test evidence_contract --test run_c
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd ../..
@@ -211,11 +211,11 @@ git commit -m "refactor(load-test): remove generator telemetry artifacts"
 - Produces `provision-profile-funds.sh --execution-plan FILE`.
 - `execution-plan-participants.py FILE` emits trusted normalized participant/provisioning rows as TSV.
 
-- [ ] **Step 1: Write failing complete-preparation tests**
+- [x] **Step 1: Write failing complete-preparation tests**
 
 Use fake Cargo/loadtool, Docker, readiness, certificate, and funding adapters. Assert the successful flow is `validate-profile → docker down → docker up → readiness → funding → certificates → publish`. Assert omitted profile selects `uniform-smoke`, explicit names select their own directory, and any failure leaves no final prepared root.
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 ```bash
 bash load-test/tests/prepare-environment-test.sh
@@ -224,7 +224,7 @@ bash load-test/tests/prepare-performance-environment-test.sh
 
 Expected: FAIL because preparation currently starts only the stack and funding consumes a run directory.
 
-- [ ] **Step 3: Extract trusted participant rows once**
+- [x] **Step 3: Extract trusted participant rows once**
 
 Implement a small Python consumer that calls `json.load`, indexes the normalized fields directly, and prints:
 
@@ -234,15 +234,15 @@ pairNumberStart<TAB>hotPairCount<TAB>coldPairCount<TAB>payerBalance<TAB>receiver
 
 It must not implement scenario discriminators, range/share rules, or business validation.
 
-- [ ] **Step 4: Rename and narrow funding**
+- [x] **Step 4: Rename and narrow funding**
 
 Change the adapter CLI to `provision-profile-funds.sh --execution-plan FILE`. Preserve payer/receiver ISPB expansion and reset/preserve behavior; remove generic preparation terminology.
 
-- [ ] **Step 5: Implement atomic complete preparation**
+- [x] **Step 5: Implement atomic complete preparation**
 
 Add `--profile` with `uniform-smoke` default, safe internal-name validation, staging under a configurable prepared root, cached release build, profile snapshot, plan generation, stack reset/start, readiness, funding, and certificate generation. Invalidate the prior final root before stack mutation and rename staging only after every stage succeeds. A trap removes failed staging.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```bash
 bash load-test/tests/prepare-environment-test.sh
@@ -261,11 +261,11 @@ git commit -m "refactor(load-test): prepare complete profile environments"
 - Produces `run-diagnostics.sh run --run-dir DIR [--no-jfr] [--no-spi-trace] [--no-postgres-statements] -- COMMAND...`.
 - Returns the child status when nonzero; returns `2` when the child succeeds but diagnostics fail.
 
-- [ ] **Step 1: Rewrite tests against the wrapper**
+- [x] **Step 1: Rewrite tests against the wrapper**
 
 Stop sourcing `run-load-test.sh`. Assert default-enabled collection, disabled paths, success artifacts, child failure plus collection failure, collection-only failure, and cleanup of sampler PIDs.
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 ```bash
 bash load-test/tests/diagnostics-layout-test.sh
@@ -276,7 +276,7 @@ bash load-test/tests/runner-diagnostics-defaults-test.sh
 
 Expected: FAIL because the wrapper does not exist.
 
-- [ ] **Step 3: Move the diagnostic lifecycle**
+- [x] **Step 3: Move the diagnostic lifecycle**
 
 Move the current JFR, SPI trace, PostgreSQL statement/activity/I/O/log, container stats, PID cleanup, and failure-precedence functions without changing their adapters. Parse all options before side effects. Execute the child through `tee` and preserve `PIPESTATUS`:
 
@@ -286,7 +286,7 @@ if ((tee_status != 0 || diagnostics_status != 0)); then return 2; fi
 return 0
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 ```bash
 bash load-test/tests/diagnostics-layout-test.sh
@@ -309,11 +309,11 @@ git commit -m "refactor(load-test): isolate run diagnostics"
 - Consumes `.prepared-environment/<profile>`, the cached Rust binary, and `run-diagnostics.sh`.
 - Rust run CLI accepts `--run-dir DIR --client-cert-root DIR` as its only orchestration paths.
 
-- [ ] **Step 1: Write the thin-runner contract tests**
+- [x] **Step 1: Write the thin-runner contract tests**
 
 Assert invalid names and absent/mismatched preparation fail before result creation; prepared inputs are copied byte-for-byte; no Docker/readiness/funding/cert command is invoked; diagnostic disable flags are forwarded; Rust receives only run dir and client cert root; statuses `0`, `1`, and `2` are preserved; and two sequential runs can reuse one prepared environment.
 
-- [ ] **Step 2: Run tests and observe failure**
+- [x] **Step 2: Run tests and observe failure**
 
 ```bash
 bash load-test/tests/profile-selection-test.sh
@@ -324,15 +324,15 @@ bash load-test/tests/observable-outcome-flow-test.sh
 
 Expected: FAIL because the runner still validates/provisions/generates certificates/enriches window/parses report.
 
-- [ ] **Step 3: Reduce TLS override surface**
+- [x] **Step 3: Reduce TLS override surface**
 
 Replace the six hidden CLI arguments and `SimulationOptions` fields with one `client_cert_root: Option<PathBuf>`, used for both Central Transfer and Gateway. Continue reading CA and server names from the profile.
 
-- [ ] **Step 4: Rewrite the runner**
+- [x] **Step 4: Rewrite the runner**
 
 Keep only argument parsing, prepared-directory resolution, cached Cargo build, result creation, input copying, diagnostic wrapper invocation, result path logging, and status propagation. Use the release binary directly; remove all Python, temporary binary/certificate cleanup, plan decomposition, environment preparation, and report parsing.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 ```bash
 bash load-test/tests/profile-selection-test.sh
@@ -357,7 +357,7 @@ git commit -m "refactor(load-test): run prepared workloads only"
 - `notification_flow` owns Pull, outcomes, PACS.002, and causal replay.
 - `runtime` owns shared handles, the write-once active window, cancellation, and TaskTracker.
 
-- [ ] **Step 1: Establish the passing refactor baseline**
+- [x] **Step 1: Establish the passing refactor baseline**
 
 Preserve/extend `dependency_boundary.rs` so `loadtool-generator` cannot depend on `loadtool-report`, then run:
 
@@ -368,19 +368,19 @@ cargo test --workspace --locked
 
 Expected: PASS before structural movement.
 
-- [ ] **Step 2: Move runtime ownership first**
+- [x] **Step 2: Move runtime ownership first**
 
 Move runtime/topology/failure/cancellation state to `runtime.rs`. Expose behavior through methods rather than broad public fields. Replace `RwLock<Option<ActiveWindow>>` with `OnceLock<ActiveWindow>` because it is initialized once before active traffic.
 
-- [ ] **Step 3: Move notification and lifecycle flows**
+- [x] **Step 3: Move notification and lifecycle flows**
 
 Move Pull loop, notification handling, PACS.002 dispatch, and causal replay to `notification_flow.rs`. Move warmup/active/drain orchestration and shutdown to `lifecycle.rs`. Leave setup/composition in `simulator.rs`. Do not add actors, registries, event buses, worker pools, or queues.
 
-- [ ] **Step 4: Centralize event and JSON representation**
+- [x] **Step 4: Centralize event and JSON representation**
 
 Co-locate CSV headers with contract row schemas and retain one atomic JSON writer for `sla-report.json`. Remove imports, locks, fields, and parameters with no consumers after the split.
 
-- [ ] **Step 5: Run full Rust verification and commit**
+- [x] **Step 5: Run full Rust verification and commit**
 
 ```bash
 cargo fmt --check
@@ -396,26 +396,26 @@ git commit -m "refactor(load-test): clarify generator responsibilities"
 **Files:**
 - Modify: `README.md`
 - Modify: `load-test/README.md` if present
-- Modify: `docs/board/Atividades/Backlog/pos-projeto/separar-preparacao-do-runner-load-test.md`
+- Modify: `docs/board/Atividades/concluidas/separar-preparacao-do-runner-load-test.md`
 - Modify/delete: stale active tests found by final reference scan
 
 **Interfaces:**
 - Documents the official fresh qualified flow and explicitly exploratory reused flow.
 
-- [ ] **Step 1: Update documentation and the board task**
+- [x] **Step 1: Update documentation and the board task**
 
 Document:
 
 ```bash
 cd load-test
-./prepare-performance-environment.sh --profile uniform-smoke
-./run-load-test.sh --profile uniform-smoke qualified-smoke
-./run-load-test.sh --profile uniform-smoke exploratory-repeat
+./prepare-performance-environment.sh --profile mixed-outcomes-smoke
+./run-load-test.sh --profile mixed-outcomes-smoke qualified-smoke
+./run-load-test.sh --profile mixed-outcomes-smoke exploratory-repeat
 ```
 
 State that the second run reuses state and does not qualify performance. Mark the board task complete only after verification.
 
-- [ ] **Step 2: Remove stale active references**
+- [x] **Step 2: Remove stale active references**
 
 ```bash
 rg -n "run-window|generator-metrics|prepare-environment|validate_sla_report|LOADTOOL_BUILD_DIR|central-transfer-ca-cert|gateway-ca-cert" load-test README.md docs/board
@@ -423,7 +423,7 @@ rg -n "run-window|generator-metrics|prepare-environment|validate_sla_report|LOAD
 
 Update/delete every active-code, test, and operational-document reference. Historical design specs may mention superseded behavior only when clearly historical.
 
-- [ ] **Step 3: Run automated verification**
+- [x] **Step 3: Run automated verification**
 
 ```bash
 cd load-test/rust-loadtool
@@ -438,21 +438,22 @@ git diff --check
 
 Expected: PASS.
 
-- [ ] **Step 4: Run the public short validation twice**
+- [x] **Step 4: Run the public short validation twice**
 
 ```bash
 cd load-test
-./prepare-performance-environment.sh --profile uniform-smoke
-./run-load-test.sh --profile uniform-smoke orchestration-qualified
-./run-load-test.sh --profile uniform-smoke orchestration-exploratory
+./prepare-performance-environment.sh --profile mixed-outcomes-smoke
+./run-load-test.sh --profile mixed-outcomes-smoke orchestration-qualified-smoke
+sleep 30
+./run-load-test.sh --profile mixed-outcomes-smoke orchestration-exploratory-smoke
 ```
 
-Expected: both produce current-format bundles; the first has `plannedOriginals == executedOriginals` and satisfies the rolling minimum; the second completes without another preparation. Do not run a 15-minute profile.
+Expected: both produce current-format bundles; the first has `plannedOriginals == executedOriginals` and satisfies the rolling minimum; after the current 30-second Pull timeout closes the prior sessions, the second completes without another preparation. Do not run a 15-minute profile.
 
-- [ ] **Step 5: Commit documentation and confirm final state**
+- [x] **Step 5: Commit documentation and confirm final state**
 
 ```bash
-git add README.md load-test docs/board/Atividades/Backlog/pos-projeto/separar-preparacao-do-runner-load-test.md
+git add README.md load-test docs/board/Atividades/concluidas/separar-preparacao-do-runner-load-test.md
 git commit -m "docs: document qualified and exploratory load runs"
 git status --short
 git log --oneline -8

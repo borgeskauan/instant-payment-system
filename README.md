@@ -10,12 +10,23 @@ readiness dos serviços:
 
 ```bash
 cd load-test
-./prepare-performance-environment.sh
+./prepare-performance-environment.sh --profile mixed-outcomes-smoke
+./run-load-test.sh --profile mixed-outcomes-smoke qualified-smoke
 ```
 
 O comando remove os volumes do PostgreSQL e Kafka, preserva imagens e build
-cache e deixa a stack em execução. Ele não gera tráfego. Repita-o depois de
-alterar o código ou antes de iniciar um novo baseline isolado.
+cache, provisiona os participantes e deixa a stack pronta para o profile. Ele
+não gera tráfego. O primeiro run depois dessa preparação é candidato à
+qualificação. Um segundo run sem preparar novamente é somente exploratório:
+
+```bash
+./run-load-test.sh --profile mixed-outcomes-smoke exploratory-repeat
+```
+
+Repita o preparador depois de alterar o código ou antes de iniciar um novo
+baseline isolado. Uma repetição iniciada imediatamente após o processo anterior
+pode coincidir com o encerramento dos long-polls do Gateway; aguarde até 30
+segundos para iniciar outro processo sobre a mesma stack.
 
 Para conferir os containers, a partir da raiz do repositório:
 
@@ -32,12 +43,14 @@ docker compose -f infra/docker-compose.yml logs -f \
 
 ## Testes de carga
 
-Depois de uma única preparação, execute o diagnóstico curto quantas vezes forem
-necessárias:
+Prepare o mesmo profile que será executado. Depois do primeiro diagnóstico,
+repetições sobre a stack aquecida são exploratórias:
 
 ```bash
 cd load-test
+./prepare-performance-environment.sh --profile mixed-outcomes-2k-diagnostic
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-1
+sleep 30
 ./run-load-test.sh --profile mixed-outcomes-2k-diagnostic diagnostic-2
 ```
 
@@ -45,6 +58,7 @@ Para investigar estabilidade sem pagar o custo do run oficial, use o profile
 intermediário de seis minutos:
 
 ```bash
+./prepare-performance-environment.sh --profile mixed-outcomes-2k-6m
 ./run-load-test.sh --profile mixed-outcomes-2k-6m loadtool-diagnostic-6m
 ```
 
@@ -60,16 +74,14 @@ O bootstrap aceita até 30 segundos para concluir cada request enquanto a JVM
 está fria; steady e active mantêm o timeout normal de 5 segundos. O gate não
 tenta inferir quiescência interna por lag Kafka ou por sleeps fixos.
 
-O protocolo de pull retorna até `15` notificações por chamada; o tamanho não é
-configurável pelo PSP nem pelo profile. O relatório registra a distribuição dos
-lotes efetivamente recebidos.
-
 JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
 `--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
 experimento precisar desativá-los.
 
-As métricas do próprio gerador Rust são coletadas em todas as execuções em
-`diagnostics/loadtool/`.
+O gerador registra somente as evidências necessárias para reconstruir a
+workload. A seção de geração do relatório informa pagamentos originais
+planejados e executados, piso rolling observado e validade; instrumentação de
+infraestrutura permanece fora do hot path Rust.
 
 O workload oficial oferece 2.100 pagamentos originais por segundo durante 15
 minutos, além dos replays configurados. O relatório qualifica a capacidade
@@ -79,6 +91,7 @@ abaixo dele:
 
 ```bash
 cd load-test
+./prepare-performance-environment.sh --profile mixed-outcomes-2k-15m
 ./run-load-test.sh --profile mixed-outcomes-2k-15m baseline-buckets
 ```
 

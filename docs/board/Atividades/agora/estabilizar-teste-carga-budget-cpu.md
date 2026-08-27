@@ -43,8 +43,10 @@ duas stacks compartilhando o mesmo PostgreSQL.
 ## Workloads
 
 - Para um baseline isolado, executar `cd load-test &&
-  ./prepare-performance-environment.sh`. O comando recria volumes, sobe a stack
-  e espera readiness; ele não gera tráfego nem tenta inferir quiescência interna.
+  ./prepare-performance-environment.sh --profile mixed-outcomes-2k-15m`. O
+  comando recria volumes, sobe a stack, espera readiness, provisiona fundos e
+  certificados e publica o ambiente preparado; ele não gera tráfego nem tenta
+  inferir quiescência interna.
 - Workload oficial: `cd load-test && ./run-load-test.sh --profile
   mixed-outcomes-2k-15m <run-tag>`.
 - Para investigar pausas intermitentes do gerador, usar `cd load-test &&
@@ -119,10 +121,9 @@ SLAs do profile de quinze minutos, alterando somente a duração ativa para seis
 minutos. A duração foi escolhida porque o run limpo
 `loadtool-performance-clean-15m/20260824_221747` teve seu primeiro vale
 relevante em `active+314,5 s`; um recorte exato de cinco minutos teria terminado
-antes de observar o fenômeno. As métricas próprias do gerador Rust são
-registradas em todo run; esse profile serve para correlacionar pausas com o
-pacer, dispatch, admissão HTTP/2 e recursos do processo. Seus resultados são
-diagnósticos e nunca substituem os quinze minutos de qualificação.
+antes de observar o fenômeno. Esse profile preserva os CSVs necessários para
+reconstruir a workload em uma janela menor. Seus resultados são diagnósticos e
+nunca substituem os quinze minutos de qualificação.
 
 - [x] Identificar o primeiro serviço, recurso ou estágio que satura quando o
   budget é respeitado.

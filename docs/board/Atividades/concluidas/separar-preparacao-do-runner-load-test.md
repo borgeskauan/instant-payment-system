@@ -1,15 +1,16 @@
 # Separar preparação do ambiente e execução do load test
 
-- [ ] Tornar o preparador o único responsável por deixar o ambiente pronto para um run
+- [x] Tornar o preparador o único responsável por deixar o ambiente pronto para um run
 
 ## Contexto
 
-Hoje existem duas fronteiras com nomes e responsabilidades próximas:
+Antes desta mudança existiam duas fronteiras com nomes e responsabilidades
+próximas:
 
-- `prepare-performance-environment.sh` recria a stack, remove os volumes,
-  aguarda readiness e deixa os componentes disponíveis;
-- `run-load-test.sh` ainda chama um preparador interno para interpretar o plano
-  e provisionar os participantes antes de executar o workload.
+- `prepare-performance-environment.sh` recriava a stack, removia os volumes,
+  aguardava readiness e deixava os componentes disponíveis;
+- `run-load-test.sh` ainda chamava um preparador interno para interpretar o
+  plano e provisionar os participantes antes de executar o workload.
 
 Essa divisão torna ambíguo o significado de "ambiente preparado". Um run pode
 informar que a preparação terminou mesmo quando recebeu uma stack reutilizada,
@@ -29,7 +30,7 @@ Estabelecer uma fronteira única:
 preparador
   → reset da stack e dos volumes
   → build/start
-  → readiness e qualificação
+  → readiness
   → preparação dependente do perfil, incluindo provisionamento
   → ambiente pronto
 
@@ -47,7 +48,7 @@ ausente ou incompleta.
 
 - definir uma única interface pública de preparação para um perfil;
 - mover para essa fronteira o provisionamento hoje iniciado pelo runner;
-- manter no preparador reset destrutivo, build/start, readiness e qualificação;
+- manter no preparador reset destrutivo, build/start e readiness;
 - remover do runner a chamada ao preparador interno e as responsabilidades que
   existirem apenas para preparar o ambiente;
 - fazer o runner falhar claramente quando o ambiente previamente preparado não
@@ -62,8 +63,8 @@ ausente ou incompleta.
 
 - existe um único comando responsável por preparar integralmente o ambiente de
   um perfil;
-- o sucesso do preparador significa que reset, subida, readiness, qualificação
-  e provisionamento terminaram;
+- o sucesso do preparador significa que reset, subida, readiness e
+  provisionamento terminaram;
 - o runner não remove volumes, não sobe componentes e não provisiona fundos;
 - falha do preparador é apresentada ao operador e não aciona um caminho
   alternativo;
@@ -71,6 +72,22 @@ ausente ou incompleta.
   reutilizada foi integralmente preparada;
 - documentação e testes deixam inequívoca a fronteira entre preparação e
   execução medida.
+
+## Resultado
+
+- `prepare-performance-environment.sh --profile NAME` agora valida o profile,
+  recria a stack e os volumes, aguarda readiness, provisiona fundos, gera os
+  certificados e publica `.prepared-environment/<profile>` atomicamente;
+- `run-load-test.sh` somente resolve esse estado preparado, cria o bundle e
+  executa o Rust load-tool sob o wrapper independente de diagnósticos;
+- a suíte Rust, os 14 testes shell e a sintaxe dos scripts passaram;
+- o smoke limpo `orchestration-qualified-smoke/20260827_000908` executou
+  `1.050/1.050` originais e observou rolling mínimo `103` para o piso `100`;
+- a repetição exploratória
+  `orchestration-exploratory-after-pull-timeout/20260827_001129` reutilizou o
+  ambiente sem novo preparo e produziu o mesmo resultado de geração;
+- uma nova execução deve aguardar o encerramento dos long-polls do processo
+  anterior, limitado pelo timeout atual de 30 segundos do Gateway.
 
 ## Fora de escopo
 
