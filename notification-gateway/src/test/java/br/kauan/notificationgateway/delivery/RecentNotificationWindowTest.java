@@ -1,6 +1,5 @@
 package br.kauan.notificationgateway.delivery;
 
-import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -25,8 +24,8 @@ class RecentNotificationWindowTest {
         RecentNotificationWindow.Lookup first = window.lookup(3, "20000001", -1, 15, 100);
         RecentNotificationWindow.Lookup second = window.lookup(3, "20000002", -1, 15, 100);
 
-        assertThat(first.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(0L, 2L);
-        assertThat(second.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(1L, 3L);
+        assertThat(first.notifications()).extracting(DeliveryNotification::offset).containsExactly(0L, 2L);
+        assertThat(second.notifications()).extracting(DeliveryNotification::offset).containsExactly(1L, 3L);
         assertThat(first.lastExaminedOffset()).isEqualTo(3);
         assertThat(second.lastExaminedOffset()).isEqualTo(3);
         assertThat(first.atTail()).isTrue();
@@ -34,7 +33,7 @@ class RecentNotificationWindowTest {
 
     @Test
     void stopsAtTheNotificationLimitWithoutSkippingTheNextMatchingOffset() {
-        List<KafkaNotificationRecord> records = new ArrayList<>();
+        List<DeliveryNotification> records = new ArrayList<>();
         for (int offset = 0; offset < 6; offset++) {
             records.add(record(offset, "20000001"));
         }
@@ -42,7 +41,7 @@ class RecentNotificationWindowTest {
 
         RecentNotificationWindow.Lookup page = window.lookup(3, "20000001", -1, 3, 100);
 
-        assertThat(page.notifications()).extracting(KafkaNotificationRecord::offset)
+        assertThat(page.notifications()).extracting(DeliveryNotification::offset)
                 .containsExactly(0L, 1L, 2L);
         assertThat(page.lastExaminedOffset()).isEqualTo(2);
         assertThat(page.atTail()).isFalse();
@@ -73,14 +72,14 @@ class RecentNotificationWindowTest {
         assertThat(lookup.notifications()).isEmpty();
     }
 
-    private void addAll(KafkaNotificationRecord... records) {
-        for (KafkaNotificationRecord record : records) {
+    private void addAll(DeliveryNotification... records) {
+        for (DeliveryNotification record : records) {
             window.add(record);
         }
     }
 
-    private KafkaNotificationRecord record(long offset, String recipient) {
-        return new KafkaNotificationRecord(
+    private DeliveryNotification record(long offset, String recipient) {
+        return new DeliveryNotification(
                 3,
                 offset,
                 recipient,

@@ -1,4 +1,4 @@
-package br.kauan.notificationgateway.kafka;
+package br.kauan.notificationgateway.delivery;
 
 public final class InvalidNotificationOffsetException extends RuntimeException {
 

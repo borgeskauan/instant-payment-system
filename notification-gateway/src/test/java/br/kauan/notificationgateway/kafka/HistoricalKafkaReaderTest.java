@@ -1,5 +1,8 @@
 package br.kauan.notificationgateway.kafka;
 
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.DeliveryPage;
+import br.kauan.notificationgateway.delivery.NotificationCursorExpiredException;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -33,9 +36,9 @@ class HistoricalKafkaReaderTest {
         ));
         HistoricalKafkaReader reader = new HistoricalKafkaReader(ignored -> consumer, Duration.ofMillis(1));
 
-        KafkaNotificationPage page = reader.read("20000001", 3, -1, 15, 100);
+        DeliveryPage page = reader.read("20000001", 3, -1, 15, 100);
 
-        assertThat(page.notifications()).extracting(KafkaNotificationRecord::communicationId)
+        assertThat(page.notifications()).extracting(DeliveryNotification::communicationId)
                 .containsExactly("wanted-1", "wanted-3");
         assertThat(page.lastExaminedOffset()).isEqualTo(4);
         assertThat(page.atTail()).isTrue();
@@ -51,7 +54,7 @@ class HistoricalKafkaReaderTest {
         Consumer<String, byte[]> consumer = consumer(0, 20, records);
         HistoricalKafkaReader reader = new HistoricalKafkaReader(ignored -> consumer, Duration.ofMillis(1));
 
-        KafkaNotificationPage page = reader.read("20000001", 3, -1, 15, 100);
+        DeliveryPage page = reader.read("20000001", 3, -1, 15, 100);
 
         assertThat(page.notifications()).hasSize(15);
         assertThat(page.lastExaminedOffset()).isEqualTo(14);

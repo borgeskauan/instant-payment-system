@@ -1,8 +1,5 @@
 package br.kauan.notificationgateway.delivery;
 
-import br.kauan.notificationgateway.kafka.HistoricalKafkaReader;
-import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
-import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -19,13 +16,13 @@ class NotificationDeliveryReaderTest {
     @Test
     void servesContiguousRecentOffsetsFromMemoryWithoutKafkaSeek() {
         RecentNotificationWindow window = new RecentNotificationWindow(10);
-        HistoricalKafkaReader history = mock(HistoricalKafkaReader.class);
+        NotificationHistory history = mock(NotificationHistory.class);
         NotificationDeliveryReader reader = new NotificationDeliveryReader(window, history, 100);
         window.add(record(0, "memory"));
 
-        KafkaNotificationPage page = reader.read("20000001", 3, -1, 15);
+        DeliveryPage page = reader.read("20000001", 3, -1, 15);
 
-        assertThat(page.notifications()).extracting(KafkaNotificationRecord::communicationId)
+        assertThat(page.notifications()).extracting(DeliveryNotification::communicationId)
                 .containsExactly("memory");
         verifyNoInteractions(history);
     }
@@ -33,17 +30,17 @@ class NotificationDeliveryReaderTest {
     @Test
     void readsKafkaDirectlyWhenTheCursorFallsOutsideMemoryCoverage() {
         RecentNotificationWindow window = new RecentNotificationWindow(10);
-        HistoricalKafkaReader history = mock(HistoricalKafkaReader.class);
+        NotificationHistory history = mock(NotificationHistory.class);
         NotificationDeliveryReader reader = new NotificationDeliveryReader(window, history, 100);
-        KafkaNotificationPage historical = new KafkaNotificationPage(List.of(record(4, "historical")), 4, true);
+        DeliveryPage historical = new DeliveryPage(List.of(record(4, "historical")), 4, true);
         when(history.read("20000001", 3, 3, 15, 100)).thenReturn(historical);
 
         assertThat(reader.read("20000001", 3, 3, 15)).isEqualTo(historical);
         verify(history).read("20000001", 3, 3, 15, 100);
     }
 
-    private KafkaNotificationRecord record(long offset, String id) {
-        return new KafkaNotificationRecord(
+    private DeliveryNotification record(long offset, String id) {
+        return new DeliveryNotification(
                 3,
                 offset,
                 "20000001",

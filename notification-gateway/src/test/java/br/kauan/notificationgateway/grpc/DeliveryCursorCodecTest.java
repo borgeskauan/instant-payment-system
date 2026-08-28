@@ -1,8 +1,11 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
 import br.kauan.notificationgateway.kafka.NotificationLog;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 
 import java.nio.charset.StandardCharsets;
 
@@ -17,7 +20,15 @@ class DeliveryCursorCodecTest {
     @Test
     void springCreatesCodecFromConfiguredStableSecret() {
         new ApplicationContextRunner()
-                .withPropertyValues("notification-gateway.pull.cursor-secret=0123456789abcdef0123456789abcdef")
+                .withUserConfiguration(TestConfiguration.class)
+                .withPropertyValues(
+                        "notification-gateway.kafka.listener-concurrency=1",
+                        "notification-gateway.kafka.recent-window-capacity-per-partition=4096",
+                        "notification-gateway.pull.cursor-secret=0123456789abcdef0123456789abcdef",
+                        "notification-gateway.pull.long-poll-timeout=30s",
+                        "notification-gateway.pull.kafka-scan-limit=4096",
+                        "notification-gateway.pull.kafka-poll-timeout=100ms"
+                )
                 .withBean(DeliveryCursorCodec.class)
                 .run(context -> assertThat(context).hasSingleBean(DeliveryCursorCodec.class));
     }
@@ -60,5 +71,10 @@ class DeliveryCursorCodecTest {
         assertThatThrownBy(() -> new DeliveryCursorCodec("too-short".getBytes(StandardCharsets.UTF_8)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("at least 32 bytes");
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(NotificationGatewayProperties.class)
+    static class TestConfiguration {
     }
 }

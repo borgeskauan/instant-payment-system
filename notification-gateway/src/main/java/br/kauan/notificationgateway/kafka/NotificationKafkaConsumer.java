@@ -1,7 +1,8 @@
 package br.kauan.notificationgateway.kafka;
 
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
 import br.kauan.notificationgateway.delivery.RecentNotificationWindow;
-import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -37,7 +38,7 @@ public class NotificationKafkaConsumer {
 
         Set<String> recipients = new HashSet<>();
         for (ConsumerRecord<String, byte[]> record : records) {
-            KafkaNotificationRecord notification = KafkaNotificationRecordMapper.map(record);
+            DeliveryNotification notification = KafkaNotificationRecordMapper.map(record);
             recentWindow.add(notification);
             recipients.add(notification.recipientIspb());
         }

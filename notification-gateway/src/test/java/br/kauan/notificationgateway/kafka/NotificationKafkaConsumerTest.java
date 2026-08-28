@@ -1,7 +1,8 @@
 package br.kauan.notificationgateway.kafka;
 
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
 import br.kauan.notificationgateway.delivery.RecentNotificationWindow;
-import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.Test;
@@ -29,7 +30,7 @@ class NotificationKafkaConsumerTest {
         ));
 
         assertThat(window.lookup(3, "20000001", 9, 15, 100).notifications())
-                .extracting(KafkaNotificationRecord::communicationId)
+                .extracting(DeliveryNotification::communicationId)
                 .containsExactly("message-1");
         verify(coordinator).signal(java.util.Set.of("20000001", "20000002"));
     }

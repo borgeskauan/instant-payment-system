@@ -94,6 +94,7 @@ Ser a borda autenticada de ingresso dos PSPs: receber PACS.008 e PACS.002, conve
 * PACS inválido agora possui classificação explícita e retorna `400`; falhas Kafka e defeitos internos permanecem `500`.
 * Uma única instância thread-safe do cliente Kafka publica nos dois tópicos, eliminando buffers, metadata e lifecycle duplicados.
 * O serviço passou a usar somente `KAFKA_BOOTSTRAP_SERVERS`; o alias legado Spring foi removido do código e do Compose.
+* `AppConfig` permaneceu como fonte tipada única da configuração runtime. O override não utilizado de `SERVER_PORT` foi removido; a porta homologada ficou fixa em `8001`, enquanto bootstrap Kafka e caminhos TLS permanecem parâmetros de deployment.
 * O contrato de publicação parcial, a identidade autenticada, o mTLS, o protobuf, os tópicos e os parâmetros Kafka foram preservados.
 * `./mvnw test` executou 36 testes sem falhas, erros ou skips.
 * `docker compose config --quiet` e `git diff --check` passaram.

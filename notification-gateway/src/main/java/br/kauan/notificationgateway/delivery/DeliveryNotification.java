@@ -1,6 +1,6 @@
-package br.kauan.notificationgateway.kafka;
+package br.kauan.notificationgateway.delivery;
 
-public record KafkaNotificationRecord(
+public record DeliveryNotification(
         int partition,
         long offset,
         String recipientIspb,

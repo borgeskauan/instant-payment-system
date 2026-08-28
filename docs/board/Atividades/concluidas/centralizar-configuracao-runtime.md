@@ -33,7 +33,7 @@ explícito, sem manter cópias independentes do mesmo valor.
 
 ## Resultado
 
-Implementado no commit `38e6a30` para o SPI:
+Implementado inicialmente no commit `38e6a30` para o SPI e concluído durante o cleanup dos demais componentes:
 
 * `application.yml` é a fonte do baseline comportamental homologado;
 * properties tipadas substituem defaults embutidos em `@Value`;
@@ -41,3 +41,7 @@ Implementado no commit `38e6a30` para o SPI:
 * o startup registra a configuração efetiva sem credenciais;
 * o preparador captura essa linha em `inputs/spi-runtime-config.log`, que o
   runner preserva no bundle do experimento.
+
+No Notification Gateway, `application.yml` passou a ser o único baseline, `NotificationGatewayProperties` concentra e valida as propriedades próprias do componente e `KafkaProperties` fornece a configuração Kafka padrão do Spring. Os fallbacks repetidos em `@Value` e os placeholders redundantes de variáveis de ambiente foram removidos; overrides continuam disponíveis pela convenção canônica do Spring, enquanto o alias compartilhado `KAFKA_BOOTSTRAP_SERVERS` permanece explícito por ser uma decisão de deployment comum à stack.
+
+No Kafka Producer, `AppConfig` permanece como fonte tipada única porque o componente não usa Spring. Conectividade Kafka e caminhos dos certificados continuam sendo configuração de deployment, os parâmetros homologados do producer continuam no código e o override não utilizado de `SERVER_PORT` foi removido.

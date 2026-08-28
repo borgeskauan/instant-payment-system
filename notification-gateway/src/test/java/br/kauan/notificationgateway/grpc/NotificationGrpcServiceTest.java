@@ -1,12 +1,13 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.DeliveryPage;
+import br.kauan.notificationgateway.delivery.NotificationCursorExpiredException;
 import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
-import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
-import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
-import br.kauan.notificationgateway.kafka.NotificationCursorExpiredException;
 import br.kauan.notificationgateway.kafka.NotificationLog;
 import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import io.grpc.Context;
@@ -15,6 +16,7 @@ import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +36,7 @@ class NotificationGrpcServiceTest {
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
         int partition = new NotificationPartitionResolver().partition("20000001");
-        when(reader.read("20000001", partition, -1, 15)).thenReturn(new KafkaNotificationPage(
+        when(reader.read("20000001", partition, -1, 15)).thenReturn(new DeliveryPage(
                 List.of(record(partition, 12, "first"), record(partition, 18, "second")),
                 18,
                 true
@@ -60,7 +62,7 @@ class NotificationGrpcServiceTest {
         NotificationGrpcService service = service(reader, codec, 1_000);
         int partition = new NotificationPartitionResolver().partition("20000001");
         when(reader.read("20000001", partition, -1, 15))
-                .thenReturn(new KafkaNotificationPage(List.of(), 25, true));
+                .thenReturn(new DeliveryPage(List.of(), 25, true));
         CapturingObserver observer = new CapturingObserver();
 
         authenticatedCall(service, PullRequest.newBuilder().build(), observer);
@@ -78,7 +80,7 @@ class NotificationGrpcServiceTest {
         int partition = new NotificationPartitionResolver().partition("20000001");
         String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, partition, 20));
         when(reader.read("20000001", partition, 20, 15))
-                .thenReturn(new KafkaNotificationPage(List.of(), 20, true));
+                .thenReturn(new DeliveryPage(List.of(), 20, true));
         CapturingObserver observer = new CapturingObserver();
 
         authenticatedCall(service, PullRequest.newBuilder().setCursor(cursor).build(), observer);
@@ -113,7 +115,7 @@ class NotificationGrpcServiceTest {
                 new PullRequestCoordinator(),
                 codec,
                 new NotificationPartitionResolver(),
-                timeoutMillis
+                Duration.ofMillis(timeoutMillis)
         );
     }
 
@@ -130,8 +132,8 @@ class NotificationGrpcServiceTest {
                 });
     }
 
-    private KafkaNotificationRecord record(int partition, long offset, String payload) {
-        return new KafkaNotificationRecord(
+    private DeliveryNotification record(int partition, long offset, String payload) {
+        return new DeliveryNotification(
                 partition,
                 offset,
                 "20000001",

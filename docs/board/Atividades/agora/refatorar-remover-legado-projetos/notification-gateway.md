@@ -29,14 +29,19 @@ Ownership aprovado: o SPI decide quais notificações existem e seu significado;
 * manter a topologia fixa da geração vigente e tratar mudança de partições como migração explícita;
 * remover assignor explícito, quantidade de partições configurável, constantes duplicadas e fechamento prematuro de Pull;
 * manter `TreeMap`: array circular foi mais rápido no microbenchmark, mas o ganho absoluto não justificou substituir coleção padrão por indexação própria;
-* simplificar o tailer removendo validação duplicada, agrupamento, ordenação, cópias intermediárias, atomicidade fictícia do cache e o estado redundante `KNOWN_TAIL`.
+* simplificar o tailer removendo validação duplicada, agrupamento, ordenação, cópias intermediárias, atomicidade fictícia do cache e o estado redundante `KNOWN_TAIL`;
+* manter modelos, coordenação de Pull e outcomes de leitura em `delivery`; o adapter Kafka implementa o port de histórico e o adapter gRPC consome os contratos de delivery em vez de tipos concretos do reader Kafka.
 
 As ambiguidades relevantes de ownership, progresso e sequência foram resolvidas durante os dois gates; nenhuma ambiguidade permanece aberta nesta etapa.
 
 ## Evidências
 
-* 37 testes do Gateway passaram sem falha;
+* 39 testes do Gateway passaram sem falha;
 * o Compose permaneceu válido;
 * `git diff --check` passou.
+
+A revisão final de ownership eliminou a dependência Kafka → gRPC: `PullRequestCoordinator`, os modelos de delivery e os erros semânticos passaram para `delivery`, enquanto `HistoricalKafkaReader` passou a implementar o port `NotificationHistory`. O protocolo, o cursor, a posição Kafka, o cache e o comportamento de long polling permaneceram inalterados.
+
+A configuração própria do componente passou a ser vinculada e validada por `NotificationGatewayProperties`. `application.yml` é o único baseline, os consumidores deixaram de repetir fallbacks em `@Value` e os overrides usam a resolução canônica do Spring. A configuração padrão do consumer Kafka passou a ser lida por `KafkaProperties`, sem reconstruir em paralelo os valores já pertencentes ao Spring Boot.
 
 A arquitetura de entrega vigente está documentada em [`Entrega durável de notificações pelo Kafka`](../../../../architecture/kafka-durable-notification-delivery.md).

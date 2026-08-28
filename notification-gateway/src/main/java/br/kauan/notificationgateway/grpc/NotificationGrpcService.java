@@ -1,15 +1,17 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.DeliveryPage;
+import br.kauan.notificationgateway.delivery.InvalidNotificationOffsetException;
 import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
+import br.kauan.notificationgateway.delivery.NotificationCursorExpiredException;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
 import br.kauan.notificationgateway.grpc.proto.Notification;
 import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
-import br.kauan.notificationgateway.kafka.InvalidNotificationOffsetException;
-import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
-import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
-import br.kauan.notificationgateway.kafka.NotificationCursorExpiredException;
 import br.kauan.notificationgateway.kafka.NotificationLog;
 import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import com.google.protobuf.ByteString;
@@ -17,7 +19,6 @@ import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import net.devh.boot.grpc.server.service.GrpcService;
-import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Duration;
 
@@ -37,13 +38,23 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
             PullRequestCoordinator coordinator,
             DeliveryCursorCodec cursorCodec,
             NotificationPartitionResolver partitionResolver,
-            @Value("${notification-gateway.pull.long-poll-timeout-ms:30000}") long longPollTimeoutMillis
+            NotificationGatewayProperties properties
+    ) {
+        this(reader, coordinator, cursorCodec, partitionResolver, properties.pull().longPollTimeout());
+    }
+
+    NotificationGrpcService(
+            NotificationDeliveryReader reader,
+            PullRequestCoordinator coordinator,
+            DeliveryCursorCodec cursorCodec,
+            NotificationPartitionResolver partitionResolver,
+            Duration longPollTimeout
     ) {
         this.reader = reader;
         this.coordinator = coordinator;
         this.cursorCodec = cursorCodec;
         this.partitionResolver = partitionResolver;
-        this.longPollTimeout = Duration.ofMillis(longPollTimeoutMillis);
+        this.longPollTimeout = longPollTimeout;
     }
 
     @Override
@@ -63,7 +74,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
                 serverObserver.setOnCancelHandler(session::signal);
             }
 
-            KafkaNotificationPage page = reader.read(
+            DeliveryPage page = reader.read(
                     recipientIspb,
                     partition,
                     cursor.lastExaminedOffset(),
@@ -85,7 +96,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
             }
 
             PullResponse.Builder response = PullResponse.newBuilder();
-            for (KafkaNotificationRecord notification : page.notifications()) {
+            for (DeliveryNotification notification : page.notifications()) {
                 response.addNotifications(Notification.newBuilder()
                         .setPayload(ByteString.copyFrom(notification.payload()))
                         .setCommunicationId(notification.communicationId()));
@@ -115,7 +126,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
         }
     }
 
-    private boolean shouldLongPoll(KafkaNotificationPage page, DeliveryCursor cursor) {
+    private boolean shouldLongPoll(DeliveryPage page, DeliveryCursor cursor) {
         return page.notifications().isEmpty()
                 && page.atTail()
                 && page.lastExaminedOffset() == cursor.lastExaminedOffset();

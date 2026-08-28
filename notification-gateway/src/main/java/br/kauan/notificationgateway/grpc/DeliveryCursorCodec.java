@@ -1,8 +1,8 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
 import br.kauan.notificationgateway.kafka.NotificationLog;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Mac;
@@ -23,7 +23,11 @@ public final class DeliveryCursorCodec {
     private final SecretKeySpec key;
 
     @Autowired
-    public DeliveryCursorCodec(@Value("${notification-gateway.pull.cursor-secret}") String secret) {
+    public DeliveryCursorCodec(NotificationGatewayProperties properties) {
+        this(properties.pull().cursorSecret());
+    }
+
+    DeliveryCursorCodec(String secret) {
         this(secret.getBytes(StandardCharsets.UTF_8));
     }
 

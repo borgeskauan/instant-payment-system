@@ -1,31 +1,36 @@
 package br.kauan.notificationgateway.delivery;
 
-import br.kauan.notificationgateway.kafka.HistoricalKafkaReader;
-import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
-import org.springframework.beans.factory.annotation.Value;
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
 public final class NotificationDeliveryReader {
 
     private final RecentNotificationWindow recentWindow;
-    private final HistoricalKafkaReader history;
+    private final NotificationHistory history;
     private final int scanLimit;
 
+    @Autowired
     public NotificationDeliveryReader(
             RecentNotificationWindow recentWindow,
-            HistoricalKafkaReader history,
-            @Value("${notification-gateway.pull.kafka-scan-limit:4096}") int scanLimit
+            NotificationHistory history,
+            NotificationGatewayProperties properties
     ) {
-        if (scanLimit < 15) {
-            throw new IllegalArgumentException("Kafka scan limit must be at least 15");
-        }
+        this(recentWindow, history, properties.pull().kafkaScanLimit());
+    }
+
+    NotificationDeliveryReader(
+            RecentNotificationWindow recentWindow,
+            NotificationHistory history,
+            int scanLimit
+    ) {
         this.recentWindow = recentWindow;
         this.history = history;
         this.scanLimit = scanLimit;
     }
 
-    public KafkaNotificationPage read(
+    public DeliveryPage read(
             String recipientIspb,
             int partition,
             long afterOffset,
@@ -41,7 +46,7 @@ public final class NotificationDeliveryReader {
         if (lookup.state() == RecentNotificationWindow.LookupState.MISS) {
             return history.read(recipientIspb, partition, afterOffset, notificationLimit, scanLimit);
         }
-        return new KafkaNotificationPage(
+        return new DeliveryPage(
                 lookup.notifications(),
                 lookup.lastExaminedOffset(),
                 lookup.atTail()

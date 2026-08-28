@@ -1,4 +1,4 @@
-package br.kauan.notificationgateway.grpc;
+package br.kauan.notificationgateway.delivery;
 
 import org.junit.jupiter.api.Test;
 

@@ -14,13 +14,10 @@ class AppConfigTest {
     @Test
     void usesDirectKafkaBootstrapServersWhenPresent() {
         Map<String, String> env = tlsEnv();
-        env.putAll(Map.of(
-                "SERVER_PORT", "9000",
-                "KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"
-        ));
+        env.put("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092");
         AppConfig config = AppConfig.fromEnv(env);
 
-        assertEquals(9000, config.port());
+        assertEquals(8001, config.port());
         assertEquals("kafka:9092", config.kafkaBootstrapServers());
     }
 

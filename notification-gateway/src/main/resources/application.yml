@@ -16,17 +16,17 @@ grpc:
     port: 9090
     security:
       enabled: true
-      certificate-chain: ${GRPC_SERVER_SECURITY_CERTIFICATE_CHAIN:file:/certs/gateway/server.crt}
-      private-key: ${GRPC_SERVER_SECURITY_PRIVATE_KEY:file:/certs/gateway/server.key}
-      trust-cert-collection: ${GRPC_SERVER_SECURITY_TRUST_CERT_COLLECTION:file:/certs/ca/ca.crt}
+      certificate-chain: file:/certs/gateway/server.crt
+      private-key: file:/certs/gateway/server.key
+      trust-cert-collection: file:/certs/ca/ca.crt
       client-auth: REQUIRE
 
 notification-gateway:
   kafka:
-    listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:1}
-    recent-window-capacity-per-partition: ${NOTIFICATION_GATEWAY_KAFKA_RECENT_WINDOW_CAPACITY_PER_PARTITION:4096}
+    listener-concurrency: 1
+    recent-window-capacity-per-partition: 4096
   pull:
-    cursor-secret: ${NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET:local-development-cursor-secret-change-me}
-    long-poll-timeout-ms: ${NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS:30000}
-    kafka-scan-limit: ${NOTIFICATION_GATEWAY_PULL_KAFKA_SCAN_LIMIT:4096}
-    kafka-poll-timeout: ${NOTIFICATION_GATEWAY_PULL_KAFKA_POLL_TIMEOUT:100ms}
+    cursor-secret: local-development-cursor-secret-change-me
+    long-poll-timeout: 30s
+    kafka-scan-limit: 4096
+    kafka-poll-timeout: 100ms

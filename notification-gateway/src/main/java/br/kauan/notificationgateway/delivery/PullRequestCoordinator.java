@@ -1,4 +1,4 @@
-package br.kauan.notificationgateway.grpc;
+package br.kauan.notificationgateway.delivery;
 
 import org.springframework.stereotype.Component;
 
@@ -13,7 +13,7 @@ public final class PullRequestCoordinator {
 
     private final ConcurrentHashMap<String, Session> active = new ConcurrentHashMap<>();
 
-    Session begin(String recipientIspb) {
+    public Session begin(String recipientIspb) {
         Session session = new Session(recipientIspb);
         if (active.putIfAbsent(recipientIspb, session) != null) {
             throw new ConcurrentPullException();
@@ -30,7 +30,7 @@ public final class PullRequestCoordinator {
         }
     }
 
-    final class Session implements AutoCloseable {
+    public final class Session implements AutoCloseable {
 
         private final String recipientIspb;
         private final CountDownLatch notificationAvailable = new CountDownLatch(1);
@@ -39,11 +39,11 @@ public final class PullRequestCoordinator {
             this.recipientIspb = recipientIspb;
         }
 
-        void await(Duration timeout) throws InterruptedException {
+        public void await(Duration timeout) throws InterruptedException {
             notificationAvailable.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
         }
 
-        void signal() {
+        public void signal() {
             notificationAvailable.countDown();
         }
 
@@ -53,6 +53,6 @@ public final class PullRequestCoordinator {
         }
     }
 
-    static final class ConcurrentPullException extends RuntimeException {
+    public static final class ConcurrentPullException extends RuntimeException {
     }
 }

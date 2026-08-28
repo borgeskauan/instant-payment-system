@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.kafka;
 
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 
@@ -10,7 +11,7 @@ public final class KafkaNotificationRecordMapper {
     private KafkaNotificationRecordMapper() {
     }
 
-    public static KafkaNotificationRecord map(ConsumerRecord<String, byte[]> record) {
+    public static DeliveryNotification map(ConsumerRecord<String, byte[]> record) {
         if (record.partition() < 0 || record.offset() < 0) {
             throw new IllegalArgumentException("Kafka partition and offset must not be negative");
         }
@@ -20,7 +21,7 @@ public final class KafkaNotificationRecordMapper {
         if (record.value() == null) {
             throw new IllegalArgumentException("Missing notification payload");
         }
-        return new KafkaNotificationRecord(
+        return new DeliveryNotification(
                 record.partition(),
                 record.offset(),
                 record.key(),

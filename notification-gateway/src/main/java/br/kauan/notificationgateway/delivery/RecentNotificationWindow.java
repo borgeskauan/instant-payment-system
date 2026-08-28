@@ -1,7 +1,7 @@
 package br.kauan.notificationgateway.delivery;
 
-import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
-import org.springframework.beans.factory.annotation.Value;
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -21,13 +21,12 @@ public final class RecentNotificationWindow {
     private final int capacityPerPartition;
     private final ConcurrentHashMap<Integer, PartitionWindow> windows = new ConcurrentHashMap<>();
 
-    public RecentNotificationWindow(
-            @Value("${notification-gateway.kafka.recent-window-capacity-per-partition:4096}")
-            int capacityPerPartition
-    ) {
-        if (capacityPerPartition < 1) {
-            throw new IllegalArgumentException("partition buffer capacity must be positive");
-        }
+    @Autowired
+    public RecentNotificationWindow(NotificationGatewayProperties properties) {
+        this(properties.kafka().recentWindowCapacityPerPartition());
+    }
+
+    public RecentNotificationWindow(int capacityPerPartition) {
         this.capacityPerPartition = capacityPerPartition;
     }
 
@@ -38,12 +37,12 @@ public final class RecentNotificationWindow {
 
     public record Lookup(
             LookupState state,
-            List<KafkaNotificationRecord> notifications,
+            List<DeliveryNotification> notifications,
             long lastExaminedOffset,
             boolean atTail
     ) {
         private static Lookup hit(
-                List<KafkaNotificationRecord> notifications,
+                List<DeliveryNotification> notifications,
                 long lastExaminedOffset,
                 boolean atTail
         ) {
@@ -55,7 +54,7 @@ public final class RecentNotificationWindow {
         }
     }
 
-    public void add(KafkaNotificationRecord record) {
+    public void add(DeliveryNotification record) {
         windows.computeIfAbsent(record.partition(), ignored -> new PartitionWindow(capacityPerPartition))
                 .add(record);
     }
@@ -79,13 +78,13 @@ public final class RecentNotificationWindow {
     private static final class PartitionWindow {
 
         private final int capacity;
-        private final NavigableMap<Long, KafkaNotificationRecord> records = new TreeMap<>();
+        private final NavigableMap<Long, DeliveryNotification> records = new TreeMap<>();
 
         private PartitionWindow(int capacity) {
             this.capacity = capacity;
         }
 
-        synchronized void add(KafkaNotificationRecord record) {
+        synchronized void add(DeliveryNotification record) {
             if (records.isEmpty()) {
                 records.put(record.offset(), record);
             } else if (record.offset() >= records.firstKey() && record.offset() <= records.lastKey()) {
@@ -116,10 +115,10 @@ public final class RecentNotificationWindow {
                 return Lookup.hit(List.of(), afterOffset, true);
             }
 
-            List<KafkaNotificationRecord> matches = new ArrayList<>(notificationLimit);
+            List<DeliveryNotification> matches = new ArrayList<>(notificationLimit);
             long lastExamined = afterOffset;
             int examined = 0;
-            for (KafkaNotificationRecord record : records.tailMap(afterOffset, false).values()) {
+            for (DeliveryNotification record : records.tailMap(afterOffset, false).values()) {
                 if (record.offset() != lastExamined + 1) {
                     return Lookup.miss(afterOffset);
                 }
