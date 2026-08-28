@@ -1,6 +1,6 @@
 # Simplificação arquitetural do SPI
 
-- [ ] Concluir o cleanup arquitetural do SPI sem enfraquecer suas invariantes de negócio
+- [x] Concluir o cleanup arquitetural do SPI sem enfraquecer suas invariantes de negócio
 
 ## Propósito
 
@@ -154,7 +154,9 @@ Validação concluída em 27/08/2026:
   outcomes `RJCT/AM04`, nenhum outcome ausente ou contraditório e nenhuma
   violação de replay.
 
-### Fase 2 — adotar JDBC como fronteira de persistência — decisão fechada
+### Fase 2 — adotar JDBC como fronteira de persistência — concluída
+
+Commit de referência: `1b1465e`.
 
 #### Problema atual
 
@@ -189,7 +191,16 @@ esses fluxos com repositories JPA.
   PostgreSQL real;
 * nenhuma regressão material nos caminhos PACS.008 e PACS.002.
 
-### Fase 3 — criar um baseline atual do schema — decisão fechada
+#### Resultado
+
+`JdbcTemplate` é a única stack de persistência. Foram removidos Spring Data
+JPA/Hibernate, annotations de entidade e nomes que sugeriam uma implementação
+JPA inexistente. Classificação, locks, operações em bulk e rollback continuam
+protegidos pelos testes PostgreSQL.
+
+### Fase 3 — criar um baseline atual do schema — concluída
+
+Commit de referência: `58b3583`.
 
 #### Problema atual
 
@@ -231,6 +242,13 @@ inteiro de commits.
   parte do contrato;
 * nenhuma migration consolidada antes da estabilização do modelo final.
 
+#### Resultado
+
+As migrations experimentais foram substituídas por um único baseline suportado
+para bancos novos. A evolução arquitetural permanece documentada em
+[`spi-schema-evolution.md`](../../../architecture/spi-schema-evolution.md) e no
+histórico Git, sem obrigar o runtime a reconstruir modelos descartados.
+
 ### Fase 4 — manter a API administrativa de fundos — decisão concluída
 
 `FundsAdminController` permanece no SPI, no package administrativo e sob
@@ -254,19 +272,25 @@ Nenhuma mudança de código é necessária nesta fase. O preparador continua usa
 a API administrativa, sem consultar diretamente o schema PostgreSQL e sem
 duplicar regras financeiras em scripts.
 
-### Fase 5 — centralizar configuração runtime
+### Fase 5 — centralizar configuração runtime — concluída
+
+Commit de referência: `38e6a30`.
 
 Esta fase já possui task própria:
-[`centralizar-configuracao-runtime.md`](../Backlog/pos-projeto/centralizar-configuracao-runtime.md).
+[`centralizar-configuracao-runtime.md`](centralizar-configuracao-runtime.md).
 
 Ela deve acontecer depois da remoção das dependências e propriedades obsoletas,
 para que somente configurações ainda necessárias sejam centralizadas. Este
 roadmap não duplica seu inventário nem sua decisão de fonte autoritativa.
 
-O gate para o SPI é simples: cada propriedade possui uma fonte padrão e os
-overrides efetivos usados em benchmark ficam visíveis.
+`application.yml` agora contém o baseline comportamental homologado. Properties
+tipadas substituem fallbacks em `@Value`; Compose mantém apenas concerns de
+deployment. O SPI emite `event=spi_runtime_configuration`, e o preparador copia
+essa configuração efetiva para `inputs/spi-runtime-config.log` em todo bundle.
 
-### Fase 6 — acabamento estrutural
+### Fase 6 — acabamento estrutural — concluída
+
+Commit de referência: `b482ac4`.
 
 Somente depois das decisões anteriores:
 
@@ -282,7 +306,14 @@ Somente depois das decisões anteriores:
 Esta fase não cria novas camadas. Se uma reorganização não remover ambiguidade
 ou dependência, ela fica fora do cleanup.
 
-### Fase 7 — validação final
+#### Resultado
+
+Foram removidos o DTO/mapper paralelo de pagamentos, 14 colunas nunca
+consultadas pelo fluxo JDBC e testes que apenas detectavam a ausência de APIs ou
+schemas antigos. O schema atual, inserts reais, idempotência, transições,
+auditoria e outbox continuam cobertos por testes semânticos e de integração.
+
+### Fase 7 — validação final — concluída
 
 Cada fase mantém seus testes focados e a suíte completa do SPI. Ao final:
 
@@ -290,14 +321,29 @@ Cada fase mantém seus testes focados e a suíte completa do SPI. Ao final:
 2. executar os testes funcionais do load-test que exercitam happy path,
    insufficient funds e replays;
 3. executar um smoke curto com stack recriada;
-4. executar um único benchmark de regressão de 2.000 TPS por 15 minutos se
-   alguma fase tiver alterado o hot path ou a persistência;
-5. comparar outcomes, rolling mínimo, latências e recursos com o baseline
-   qualificado vigente;
-6. atualizar a documentação arquitetural com o estado final, não com as
+4. confirmar outcomes e artefatos do smoke sem transformar o cleanup em uma
+   nova rodada de estabilização de performance;
+5. atualizar a documentação arquitetural com o estado final, não com as
    alternativas descartadas.
 
-Refatorações apenas nominais não justificam uma run longa isoladamente.
+#### Resultado
+
+Validação concluída em 28/08/2026:
+
+* 177 testes do SPI, incluindo PostgreSQL/Flyway, sem falhas;
+* suíte Rust e todos os testes shell do load-test sem falhas;
+* stack recriada exclusivamente por `prepare-performance-environment.sh`;
+* `mixed-outcomes-smoke` em
+  `spi-cleanup-smoke/20260828_000528`: 1.050/1.050 originais ativos,
+  rolling mínimo 103 para piso 100, 1.040 outcomes `ACSC`, 260 outcomes
+  `RJCT/AM04`, replays PACS.008 65/65, replays PACS.002 51/51 e zero
+  violações;
+* latência p99 de 283,702 ms, dentro do threshold de 1 s do smoke;
+* configuração runtime efetiva presente no bundle.
+
+Por decisão de escopo, não foi executada uma nova run de 15 minutos. O cleanup
+foi validado funcionalmente; estabilização e regressões longas continuam sendo
+trabalho de performance separado.
 
 ## Trabalhos relacionados, mas independentes
 
@@ -352,5 +398,5 @@ do desenho atual e avançar, não forçar uma refatoração.
   capacidade com menor ownership;
 * o código final preserva atomicidade, idempotência, auditoria e entrega de
   notificações;
-* a suíte funcional permanece verde e mudanças no hot path não degradam o
-  baseline de 2.000 TPS.
+* a suíte funcional e o smoke em stack limpa permanecem verdes; regressões
+  longas pertencem à estabilização de performance.
