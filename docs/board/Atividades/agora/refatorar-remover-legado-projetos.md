@@ -297,7 +297,7 @@ funcionalidade ou responsabilidade compreensível externamente.
 
 ## Escopo por projeto
 
-### Etapa 0 — SPI — cleanup estrutural concluído; falhas pendentes
+### Etapa 0 — SPI — cleanup estrutural base concluído; revisões pendentes
 
 - [x] Consolidar auditoria em fatos de negócio.
 - [x] Remover infraestrutura e APIs sem consumidores.
@@ -320,12 +320,24 @@ funcionalidade ou responsabilidade compreensível externamente.
   produção e consolidar duplicações encontradas.
 - [ ] Cobrir a matriz de falhas com testes semânticos, incluindo destino,
   confirmação do offset e ausência de descarte silencioso.
+- [ ] Revisar a fronteira hexagonal das classes de persistência de pagamentos e
+  status.
+- [ ] Classificar seus blocos como política de domínio, orquestração da
+  aplicação ou mecanismo de persistência.
+- [ ] Extrair para o core somente decisões puras de admissão/duplicidade,
+  reserva de liquidez e transição/replay de status.
+- [ ] Manter no adapter JDBC SQL, arrays, row mapping, locks determinísticos,
+  updates condicionais, mutações agregadas e controle de recursos.
+- [ ] Preservar a transação, a atomicidade, o batching e a quantidade de idas ao
+  banco.
+- [ ] Testar políticas extraídas sem PostgreSQL e preservar testes de integração
+  PostgreSQL para locking, concorrência e atomicidade.
 
 O histórico, as decisões e as evidências estão em
 [`Simplificação arquitetural do SPI`](../concluidas/simplificar-arquitetura-spi.md).
-O cleanup estrutural registrado nessa task permanece concluído. A revisão de
-falhas acima é uma auditoria final e limitada da fronteira Kafka; ela não
-autoriza reabrir outras decisões do SPI sem evidência nova.
+O cleanup estrutural já registrado permanece concluído. As revisões de falhas e
+da fronteira hexagonal são intervenções adicionais e delimitadas; elas não
+autorizam reabrir outras decisões do SPI sem evidência nova.
 
 #### Matriz obrigatória de falhas do SPI
 
@@ -343,6 +355,47 @@ O objetivo não é enviar toda exceção para DLQ. A revisão deve garantir que:
 * nenhuma exceção seja engolida enquanto o offset é confirmado;
 * payload original, causa e identidade de origem sejam suficientes para
   investigar uma mensagem estacionada.
+
+#### Fronteira hexagonal de pagamentos
+
+As classes `IncomingPaymentRequestPersistence` e
+`IncomingStatusReportPersistence` concentram mecanismos JDBC legítimos e
+decisões de negócio. O objetivo não é dividir arquivos por tamanho nem buscar
+pureza arquitetural abstrata. A revisão deve reduzir o contexto necessário para
+compreender as regras sem degradar o hot path já homologado.
+
+Direção aprovada:
+
+```text
+core
+├─ política de admissão e duplicidade
+├─ política de reserva de liquidez
+└─ política de transição e replay de status
+
+adapter JDBC
+├─ leitura e row mapping
+├─ inserts e selects em lote
+├─ locks e aquisição condicional de transições
+├─ deltas agregados de saldo
+└─ recursos JDBC
+```
+
+Restrições:
+
+* usar poucas classes coesas e stateless;
+* não criar interfaces sem múltiplas implementações reais;
+* não criar engine genérica de regras, registry ou hierarquia de policies;
+* não transformar o port em uma sequência de operações JDBC granulares;
+* não acrescentar queries, filas, callbacks transacionais ou DTOs apenas para
+  satisfazer uma forma arquitetural;
+* permitir que o adapter invoque políticas puras enquanto mantém os mesmos
+  locks e a mesma transação;
+* medir com teste focado ou diagnóstico curto qualquer alteração material no
+  hot path.
+
+O resultado desejado admite mais alguns arquivos, mas deve reduzir branches de
+negócio dentro dos adapters, tornar as regras legíveis sem PostgreSQL e manter a
+complexidade transacional essencial próxima do JDBC.
 
 ### Etapa 1 — Notification Gateway
 
@@ -445,6 +498,9 @@ Eles só entram nesta task depois de uma decisão explícita de permanência.
 - [ ] A matriz de falhas do SPI comprova DLQ para erros definitivos, retry para
   falhas transitórias, fluxo de domínio para rejeições esperadas e ausência de
   ACK/descarte silencioso.
+- [ ] Políticas de pagamento e status são compreensíveis e testáveis fora do
+  adapter, enquanto SQL, batching, locks e atomicidade permanecem concentrados
+  na implementação JDBC sem round trips adicionais.
 - [ ] Ganhos fáceis de performance mantidos possuem evidência antes/depois e não
   adicionam mecanismos ou responsabilidades ao projeto.
 - [ ] O estado final e as limitações ficam documentados sem iniciar nova rodada
