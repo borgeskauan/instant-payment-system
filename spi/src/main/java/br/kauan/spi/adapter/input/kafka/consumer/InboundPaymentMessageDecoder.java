@@ -3,7 +3,7 @@ package br.kauan.spi.adapter.input.kafka.consumer;
 import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
 import br.kauan.spi.adapter.input.kafka.internal.InternalPaymentMessageMapper;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.tracing.SpiPaymentStage;
 import br.kauan.spi.domain.services.tracing.SpiPaymentStageEvent;
@@ -38,7 +38,7 @@ public class InboundPaymentMessageDecoder {
         return command;
     }
 
-    public StatusReportCommand toStatusReport(ConsumerRecord<String, byte[]> record) {
+    public IncomingStatusReportCommand toStatusReport(ConsumerRecord<String, byte[]> record) {
         byte[] payload = record.value();
         if (payload == null || payload.length == 0) {
             throw new InvalidInboundPayloadException("Payment status report payload is empty");
@@ -51,7 +51,12 @@ public class InboundPaymentMessageDecoder {
             throw new InvalidInboundPayloadException("Failed to parse payment status report protobuf", e);
         }
 
-        StatusReportCommand command = messageMapper.toStatusReport(report);
+        IncomingStatusReportCommand command;
+        try {
+            command = messageMapper.toStatusReport(report);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidInboundPayloadException("Invalid payment status report", e);
+        }
         SpiPaymentStageEvent.record(report.getPaymentId(), SpiPaymentStage.STATUS_RECEIVED);
         return command;
     }

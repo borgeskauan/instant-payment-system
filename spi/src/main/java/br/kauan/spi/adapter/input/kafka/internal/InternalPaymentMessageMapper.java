@@ -2,16 +2,14 @@ package br.kauan.spi.adapter.input.kafka.internal;
 
 import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.Reason;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.springframework.stereotype.Component;
-
-import java.util.List;
 
 @Component
 public class InternalPaymentMessageMapper {
@@ -27,14 +25,14 @@ public class InternalPaymentMessageMapper {
                 .build();
     }
 
-    public StatusReportCommand toStatusReport(PaymentStatusReport report) {
-        return StatusReportCommand.builder()
-                .originalPaymentId(report.getPaymentId())
-                .status(toDomainStatus(report.getStatus()))
-                .reasons(report.getReasonsList().stream()
-                        .map(this::toReason)
-                        .toList())
-                .build();
+    public IncomingStatusReportCommand toStatusReport(PaymentStatusReport report) {
+        return new IncomingStatusReportCommand(
+                report.getPaymentId(),
+                toDomainOutcome(report.getStatus()),
+                report.getReasonsList().stream()
+                        .map(reason -> StatusReasonCode.of(reason.getCode()))
+                        .toList()
+        );
     }
 
     private Party toParty(br.kauan.pix.internal.v1.Party party) {
@@ -55,19 +53,10 @@ public class InternalPaymentMessageMapper {
                 .build();
     }
 
-    private Reason toReason(br.kauan.pix.internal.v1.StatusReason reason) {
-        return Reason.builder()
-                .code(emptyToNull(reason.getCode()))
-                .descriptions(reason.getDescription().isBlank()
-                        ? List.of()
-                        : List.of(reason.getDescription()))
-                .build();
-    }
-
-    private PaymentStatus toDomainStatus(br.kauan.pix.internal.v1.PaymentStatus status) {
+    private StatusReportOutcome toDomainOutcome(br.kauan.pix.internal.v1.PaymentStatus status) {
         return switch (status) {
-            case ACCEPTED_IN_PROCESS -> PaymentStatus.ACCEPTED_IN_PROCESS;
-            case REJECTED -> PaymentStatus.REJECTED;
+            case ACCEPTED_IN_PROCESS -> StatusReportOutcome.ACCEPTED;
+            case REJECTED -> StatusReportOutcome.REJECTED;
             case PAYMENT_STATUS_UNSPECIFIED, UNRECOGNIZED ->
                     throw new IllegalArgumentException("Unsupported internal payment status: " + status);
         };

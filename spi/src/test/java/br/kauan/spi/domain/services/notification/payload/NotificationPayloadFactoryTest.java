@@ -1,7 +1,7 @@
 package br.kauan.spi.domain.services.notification.payload;
 
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.NotificationStatus;
+import br.kauan.spi.domain.entity.status.NotificationStatusItem;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -39,10 +39,11 @@ class NotificationPayloadFactoryTest {
 
     @Test
     void buildsStatusNotificationWithExistingJsonShape() {
-        Object payload = factory.statusNotification("MSG-1", List.of(StatusReportCommand.builder()
-                .originalPaymentId("E2E-1")
-                .status(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
-                .build()));
+        Object payload = factory.statusNotification("MSG-1", List.of(new NotificationStatusItem(
+                "E2E-1",
+                NotificationStatus.ACSC,
+                List.of()
+        )));
 
         assertThat(serialized(payload))
                 .contains("\"GrpHdr\"")

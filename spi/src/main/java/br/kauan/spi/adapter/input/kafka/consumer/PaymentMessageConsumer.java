@@ -153,7 +153,7 @@ public class PaymentMessageConsumer {
             try {
                 String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
                 var statusReport = messageDecoder.toStatusReport(record);
-                log.debug("Processing status report. payment_id={}", statusReport.getOriginalPaymentId());
+                log.debug("Processing status report. payment_id={}", statusReport.originalPaymentId());
                 statusReports.add(new AuthenticatedStatusReport(
                         sourceOrdinal,
                         authenticatedIspb,
@@ -191,7 +191,7 @@ public class PaymentMessageConsumer {
             dlqPublisher.publish(
                     recordAt(records, divergentStatusReport.sourceOrdinal()),
                     new DivergentStatusReportException(
-                            divergentStatusReport.command().getOriginalPaymentId()
+                            divergentStatusReport.command().originalPaymentId()
                     )
             );
         }
@@ -205,7 +205,7 @@ public class PaymentMessageConsumer {
             dlqPublisher.publish(
                     recordAt(records, unauthorizedStatusReport.sourceOrdinal()),
                     new UnauthorizedPspException(
-                            unauthorizedStatusReport.command().getOriginalPaymentId(),
+                            unauthorizedStatusReport.command().originalPaymentId(),
                             unauthorizedStatusReport.authenticatedIspb()
                     )
             );

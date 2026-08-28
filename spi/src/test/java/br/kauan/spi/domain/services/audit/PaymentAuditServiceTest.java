@@ -2,8 +2,10 @@ package br.kauan.spi.domain.services.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -43,12 +45,14 @@ class PaymentAuditServiceTest {
                 payment.getPaymentId(),
                 PaymentAuditEventType.PAYMENT_RESERVED,
                 null,
-                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentState.WAITING_ACCEPTANCE,
                 1_500L,
                 "11111111",
                 "22222222",
                 -1_500L,
-                null
+                null,
+                null,
+                List.of()
         ));
     }
 
@@ -60,20 +64,21 @@ class PaymentAuditServiceTest {
 
         service.storeAdmissionEvents(
                 List.of(payment),
-                List.of(new PaymentRejection(payment, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+                List.of(PaymentRejection.insufficientFunds(payment))
         );
 
         assertThat(capturedEvents(repository)).containsExactly(new PaymentAuditEvent(
                 payment.getPaymentId(),
                 PaymentAuditEventType.PAYMENT_REJECTED,
                 null,
-                PaymentStatus.REJECTED,
+                PaymentState.REJECTED,
                 1_500L,
                 "11111111",
                 "22222222",
                 null,
                 null,
-                PaymentRejectionReason.INSUFFICIENT_FUNDS
+                PaymentRejectionCause.INSUFFICIENT_FUNDS,
+                List.of()
         ));
     }
 
@@ -83,10 +88,13 @@ class PaymentAuditServiceTest {
         PaymentAuditService service = new PaymentAuditService(repository);
         PaymentTransactionCommand settledPayment = payment("E2E-AUDIT-SETTLED", 2_500L);
         PaymentTransactionCommand rejectedPayment = payment("E2E-AUDIT-REJECTED", 1_200L);
-        PaymentRejection rejection = new PaymentRejection(rejectedPayment, null);
+        PaymentRejection rejection = PaymentRejection.receiverRejected(
+                rejectedPayment,
+                List.of(StatusReasonCode.of("AB03"))
+        );
 
         service.storeOutcomeEvents(
-                List.of(settledPayment),
+                List.of(new PaymentSettlement(settledPayment, List.of(StatusReasonCode.of("AC01")))),
                 List.of(rejection)
         );
 
@@ -94,25 +102,28 @@ class PaymentAuditServiceTest {
                 new PaymentAuditEvent(
                         settledPayment.getPaymentId(),
                         PaymentAuditEventType.PAYMENT_SETTLED,
-                        PaymentStatus.WAITING_ACCEPTANCE,
-                        PaymentStatus.ACCEPTED_AND_SETTLED,
+                        PaymentState.WAITING_ACCEPTANCE,
+                        PaymentState.SETTLED,
                         2_500L,
                         "11111111",
                         "22222222",
                         null,
-                        2_500L
+                        2_500L,
+                        null,
+                        List.of(StatusReasonCode.of("AC01"))
                 ),
                 new PaymentAuditEvent(
                         rejectedPayment.getPaymentId(),
                         PaymentAuditEventType.PAYMENT_REJECTED,
-                        PaymentStatus.WAITING_ACCEPTANCE,
-                        PaymentStatus.REJECTED,
+                        PaymentState.WAITING_ACCEPTANCE,
+                        PaymentState.REJECTED,
                         1_200L,
                         "11111111",
                         "22222222",
                         1_200L,
                         null,
-                        null
+                        null,
+                        List.of(StatusReasonCode.of("AB03"))
                 )
         );
     }

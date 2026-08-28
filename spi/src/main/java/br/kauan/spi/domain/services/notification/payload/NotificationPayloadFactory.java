@@ -1,9 +1,8 @@
 package br.kauan.spi.domain.services.notification.payload;
 
 import br.kauan.spi.domain.entity.commons.Money;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.Reason;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.NotificationStatusItem;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -33,7 +32,7 @@ public class NotificationPayloadFactory {
 
     public Map<String, Object> statusNotification(
             String messageId,
-            List<StatusReportCommand> statusReports
+            List<NotificationStatusItem> statusReports
     ) {
         return orderedMap(
                 "GrpHdr", groupHeader(messageId, statusReports.size()),
@@ -107,46 +106,34 @@ public class NotificationPayloadFactory {
         );
     }
 
-    private List<Map<String, Object>> statusItems(List<StatusReportCommand> statusReports) {
+    private List<Map<String, Object>> statusItems(List<NotificationStatusItem> statusReports) {
         var items = new ArrayList<Map<String, Object>>(statusReports.size());
-        for (StatusReportCommand statusReport : statusReports) {
+        for (NotificationStatusItem statusReport : statusReports) {
             items.add(statusItem(statusReport));
         }
         return items;
     }
 
-    private Map<String, Object> statusItem(StatusReportCommand statusReport) {
+    private Map<String, Object> statusItem(NotificationStatusItem statusReport) {
         return orderedMap(
-                "OrgnlEndToEndId", statusReport.getOriginalPaymentId(),
-                "TxSts", paymentStatus(statusReport.getStatus()),
-                "StsRsnInf", reasons(statusReport.getReasons())
+                "OrgnlEndToEndId", statusReport.originalPaymentId(),
+                "TxSts", statusReport.status().name(),
+                "StsRsnInf", reasons(statusReport.reasonCodes())
         );
     }
 
-    private List<Map<String, Object>> reasons(List<Reason> reasons) {
-        if (reasons == null) {
+    private List<Map<String, Object>> reasons(List<StatusReasonCode> reasons) {
+        if (reasons.isEmpty()) {
             return List.of();
         }
 
         var items = new ArrayList<Map<String, Object>>(reasons.size());
-        for (Reason reason : reasons) {
+        for (StatusReasonCode reason : reasons) {
             items.add(orderedMap(
-                    "Rsn", orderedMap("Cd", reasonCode(reason.getCode())),
-                    "AddtlInf", reason.getDescriptions()
+                    "Rsn", orderedMap("Cd", reason.value())
             ));
         }
         return items;
-    }
-
-    private String paymentStatus(PaymentStatus status) {
-        return switch (status) {
-            case ACCEPTED_AND_SETTLED_FOR_RECEIVER -> "ACCC";
-            case ACCEPTED_AND_SETTLED_FOR_SENDER -> "ACSC";
-            case ACCEPTED_IN_PROCESS -> "ACSP";
-            case REJECTED -> "RJCT";
-            case WAITING_ACCEPTANCE, ACCEPTED_AND_SETTLED ->
-                    throw new IllegalArgumentException("No notification mapping for status: " + status);
-        };
     }
 
     private String accountType(BankAccountType type) {
@@ -156,10 +143,6 @@ public class NotificationPayloadFactory {
             case SALARY -> "SLRY";
             case PAYMENT -> "TRAN";
         };
-    }
-
-    private String reasonCode(String code) {
-        return code == null || code.isBlank() ? "AB03" : code;
     }
 
     private Map<String, Object> orderedMap(Object... entries) {

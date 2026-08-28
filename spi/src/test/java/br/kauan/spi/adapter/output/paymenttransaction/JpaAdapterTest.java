@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.junit.jupiter.api.Test;
 
@@ -17,7 +17,7 @@ class JpaAdapterTest {
                 () -> JpaAdapter.class.getMethod(
                         "saveTransaction",
                         PaymentTransactionCommand.class,
-                        PaymentStatus.class
+                        PaymentState.class
                 ));
     }
 
@@ -27,7 +27,7 @@ class JpaAdapterTest {
                 () -> JpaAdapter.class.getMethod(
                         "updateStatus",
                         String.class,
-                        PaymentStatus.class
+                        PaymentState.class
                 ));
     }
 
@@ -37,7 +37,7 @@ class JpaAdapterTest {
                 () -> JpaAdapter.class.getMethod(
                         "updateStatuses",
                         List.class,
-                        PaymentStatus.class
+                        PaymentState.class
                 ));
     }
 

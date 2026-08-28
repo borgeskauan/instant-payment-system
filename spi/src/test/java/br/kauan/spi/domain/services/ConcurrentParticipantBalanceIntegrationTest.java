@@ -3,8 +3,10 @@ package br.kauan.spi.domain.services;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -105,14 +107,14 @@ class ConcurrentParticipantBalanceIntegrationTest {
         long receiverBefore = balanceCents(RECEIVER_ISPB);
         Runnable accept = () -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
+                StatusReportOutcome.ACCEPTED
         ));
 
         invokeConcurrently(accept, accept);
 
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(payerAfterReserve);
         assertThat(balanceCents(RECEIVER_ISPB)).isEqualTo(receiverBefore + payment.getAmountCents());
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(state(payment.getPaymentId())).isEqualTo(PaymentState.SETTLED.name());
         assertThat(auditCount(payment.getPaymentId(), "PAYMENT_SETTLED")).isOne();
         assertThat(statusOutboxCount(payment.getPaymentId())).isEqualTo(2);
     }
@@ -124,14 +126,14 @@ class ConcurrentParticipantBalanceIntegrationTest {
         long receiverBefore = balanceCents(RECEIVER_ISPB);
         Runnable reject = () -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.REJECTED
+                StatusReportOutcome.REJECTED
         ));
 
         invokeConcurrently(reject, reject);
 
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(payerAfterReserve + payment.getAmountCents());
         assertThat(balanceCents(RECEIVER_ISPB)).isEqualTo(receiverBefore);
-        assertThat(status(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(state(payment.getPaymentId())).isEqualTo(PaymentState.REJECTED.name());
         assertThat(auditCount(payment.getPaymentId(), "PAYMENT_REJECTED")).isOne();
         assertThat(auditCount(payment.getPaymentId(), "PAYMENT_SETTLED")).isZero();
         assertThat(statusOutboxCount(payment.getPaymentId())).isOne();
@@ -169,14 +171,20 @@ class ConcurrentParticipantBalanceIntegrationTest {
         return List.of(new AuthenticatedPaymentRequest(0, SENDER_ISPB, payment));
     }
 
-    private List<AuthenticatedStatusReport> authenticatedReports(String paymentId, PaymentStatus status) {
+    private List<AuthenticatedStatusReport> authenticatedReports(
+            String paymentId,
+            StatusReportOutcome outcome
+    ) {
         return List.of(new AuthenticatedStatusReport(
                 0,
                 RECEIVER_ISPB,
-                StatusReportCommand.builder()
-                        .originalPaymentId(paymentId)
-                        .status(status)
-                        .build()
+                new IncomingStatusReportCommand(
+                        paymentId,
+                        outcome,
+                        outcome == StatusReportOutcome.REJECTED
+                                ? List.of(StatusReasonCode.of("AB03"))
+                                : List.of()
+                )
         ));
     }
 
@@ -185,7 +193,7 @@ class ConcurrentParticipantBalanceIntegrationTest {
         insertBalance(RECEIVER_ISPB, 5_000L);
         PaymentTransactionCommand payment = payment(paymentId);
         processor.processTransactions(authenticatedPayments(payment));
-        assertThat(status(paymentId)).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
+        assertThat(state(paymentId)).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
         assertThat(balanceCents(SENDER_ISPB)).isEqualTo(9_000L);
         return payment;
     }
@@ -244,9 +252,9 @@ class ConcurrentParticipantBalanceIntegrationTest {
         );
     }
 
-    private String status(String paymentId) {
+    private String state(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT status FROM payment_transaction_entity WHERE payment_id = ?",
+                "SELECT state FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
                 paymentId
         );

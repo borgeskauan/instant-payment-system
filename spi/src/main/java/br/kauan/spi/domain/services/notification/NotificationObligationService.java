@@ -3,11 +3,11 @@ package br.kauan.spi.domain.services.notification;
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
+import br.kauan.spi.domain.entity.status.NotificationStatus;
+import br.kauan.spi.domain.entity.status.NotificationStatusItem;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.Reason;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import lombok.extern.slf4j.Slf4j;
@@ -90,46 +90,47 @@ public class NotificationObligationService {
     }
 
     public void storeStatusObligations(
-            List<PaymentTransactionCommand> settledPayments,
+            List<PaymentSettlement> settlements,
             List<PaymentRejection> rejectedPayments
     ) {
-        if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
+        if (settlements.isEmpty() && rejectedPayments.isEmpty()) {
             return;
         }
 
-        store(statusObligations(settledPayments, rejectedPayments));
+        store(statusObligations(settlements, rejectedPayments));
         log.debug(
                 "Status notification obligations stored. settled={}, rejected={}",
-                settledPayments.size(),
+                settlements.size(),
                 rejectedPayments.size()
         );
     }
 
     private List<NotificationPublication> statusObligations(
-            List<PaymentTransactionCommand> settledPayments,
+            List<PaymentSettlement> settlements,
             List<PaymentRejection> rejectedPayments
     ) {
-        if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
+        if (settlements.isEmpty() && rejectedPayments.isEmpty()) {
             return List.of();
         }
 
-        Map<String, List<StatusReportCommand>> byRecipient = new LinkedHashMap<>();
+        Map<String, List<NotificationStatusItem>> byRecipient = new LinkedHashMap<>();
 
-        for (PaymentTransactionCommand paymentTransaction : settledPayments) {
+        for (PaymentSettlement settlement : settlements) {
+            PaymentTransactionCommand paymentTransaction = settlement.payment();
             validatePaymentTransaction(paymentTransaction);
             String receiverIspb = validatedIspb(getBankCode(paymentTransaction.getReceiver()));
             String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
             addStatus(byRecipient,
                     receiverIspb,
                     paymentTransaction,
-                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER,
-                    null
+                    NotificationStatus.ACCC,
+                    settlement.reasonCodes()
             );
             addStatus(byRecipient,
                     senderIspb,
                     paymentTransaction,
-                    PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER,
-                    null
+                    NotificationStatus.ACSC,
+                    settlement.reasonCodes()
             );
         }
 
@@ -140,13 +141,13 @@ public class NotificationObligationService {
             addStatus(byRecipient,
                     senderIspb,
                     paymentTransaction,
-                    PaymentStatus.REJECTED,
-                    rejection.reason()
+                    NotificationStatus.RJCT,
+                    notificationReasons(rejection)
             );
         }
 
         List<NotificationPublication> obligations = new ArrayList<>();
-        for (Map.Entry<String, List<StatusReportCommand>> recipient : byRecipient.entrySet()) {
+        for (Map.Entry<String, List<NotificationStatusItem>> recipient : byRecipient.entrySet()) {
             forEachChunk(recipient.getValue(), chunk -> obligations.add(statusObligation(
                     recipient.getKey(),
                     chunk
@@ -156,17 +157,17 @@ public class NotificationObligationService {
     }
 
     private void addStatus(
-            Map<String, List<StatusReportCommand>> byRecipient,
+            Map<String, List<NotificationStatusItem>> byRecipient,
             String recipientIspb,
             PaymentTransactionCommand paymentTransaction,
-            PaymentStatus paymentStatus,
-            PaymentRejectionReason rejectionReason
+            NotificationStatus status,
+            List<StatusReasonCode> reasonCodes
     ) {
-        StatusReportCommand statusReport = StatusReportCommand.builder()
-                .originalPaymentId(paymentTransaction.getPaymentId())
-                .status(paymentStatus)
-                .reasons(notificationReasons(rejectionReason))
-                .build();
+        NotificationStatusItem statusReport = new NotificationStatusItem(
+                paymentTransaction.getPaymentId(),
+                status,
+                reasonCodes
+        );
         byRecipient.computeIfAbsent(recipientIspb, ignored -> new ArrayList<>()).add(statusReport);
     }
 
@@ -187,7 +188,7 @@ public class NotificationObligationService {
 
     private NotificationPublication statusObligation(
             String recipientIspb,
-            List<StatusReportCommand> statusReports
+            List<NotificationStatusItem> statusReports
     ) {
         String messageId = UUID.randomUUID().toString();
         byte[] payload = contentSerializer.serialize(
@@ -217,15 +218,12 @@ public class NotificationObligationService {
         eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
     }
 
-    private List<Reason> notificationReasons(PaymentRejectionReason rejectionReason) {
-        if (rejectionReason == null) {
-            return null;
+    private List<StatusReasonCode> notificationReasons(PaymentRejection rejection) {
+        if (rejection.cause() == null) {
+            return rejection.externalReasonCodes();
         }
-        return switch (rejectionReason) {
-            case INSUFFICIENT_FUNDS -> List.of(Reason.builder()
-                    .code("AM04")
-                    .descriptions(List.of())
-                    .build());
+        return switch (rejection.cause()) {
+            case INSUFFICIENT_FUNDS -> List.of(StatusReasonCode.of("AM04"));
         };
     }
 

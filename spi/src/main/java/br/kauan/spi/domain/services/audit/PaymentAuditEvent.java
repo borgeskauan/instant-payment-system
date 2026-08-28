@@ -1,50 +1,34 @@
 package br.kauan.spi.domain.services.audit;
 
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+
+import java.util.List;
 
 public record PaymentAuditEvent(
         String paymentId,
         PaymentAuditEventType eventType,
-        PaymentStatus previousStatus,
-        PaymentStatus resultingStatus,
+        PaymentState previousState,
+        PaymentState resultingState,
         Long amountCents,
         String senderIspb,
         String receiverIspb,
         Long senderDeltaCents,
         Long receiverDeltaCents,
-        PaymentRejectionReason reason
+        PaymentRejectionCause rejectionCause,
+        List<StatusReasonCode> externalReasonCodes
 ) {
-    public PaymentAuditEvent(
-            String paymentId,
-            PaymentAuditEventType eventType,
-            PaymentStatus previousStatus,
-            PaymentStatus resultingStatus,
-            Long amountCents,
-            String senderIspb,
-            String receiverIspb,
-            Long senderDeltaCents,
-            Long receiverDeltaCents
-    ) {
-        this(
-                paymentId,
-                eventType,
-                previousStatus,
-                resultingStatus,
-                amountCents,
-                senderIspb,
-                receiverIspb,
-                senderDeltaCents,
-                receiverDeltaCents,
-                null
-        );
-    }
-
     public PaymentAuditEvent {
-        if (reason != null
+        externalReasonCodes = StatusReasonCode.normalize(externalReasonCodes);
+        if (rejectionCause != null
                 && (eventType != PaymentAuditEventType.PAYMENT_REJECTED
-                || resultingStatus != PaymentStatus.REJECTED)) {
-            throw new IllegalArgumentException("Rejection reason is only valid for rejected payment events");
+                || resultingState != PaymentState.REJECTED)) {
+            throw new IllegalArgumentException("Rejection cause is only valid for rejected payment events");
+        }
+        if (!externalReasonCodes.isEmpty()
+                && eventType == PaymentAuditEventType.PAYMENT_RESERVED) {
+            throw new IllegalArgumentException("External reason codes are not valid for payment reservation events");
         }
     }
 }

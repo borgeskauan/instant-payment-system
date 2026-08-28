@@ -2,7 +2,7 @@ package br.kauan.spi.domain.services;
 
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.services.audit.PaymentAuditService;
 import br.kauan.spi.domain.services.notification.NotificationObligationService;
 import br.kauan.spi.domain.services.tracing.SpiPaymentStage;
@@ -85,7 +85,7 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                 new ArrayList<>(persistenceResult.unauthorizedStatusReports());
 
         paymentAuditService.storeOutcomeEvents(
-                persistenceResult.settledPayments(),
+                persistenceResult.settlements(),
                 persistenceResult.rejectedPayments()
         );
 
@@ -94,27 +94,27 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
                     persistenceResult.rejectedPayments().size());
         }
 
-        if (!persistenceResult.settledPayments().isEmpty()
+        if (!persistenceResult.settlements().isEmpty()
                 || !persistenceResult.rejectedPayments().isEmpty()) {
             notificationObligationService.storeStatusObligations(
-                    persistenceResult.settledPayments(),
+                    persistenceResult.settlements(),
                     persistenceResult.rejectedPayments()
             );
         }
 
-        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
-            SpiPaymentStageEvent.record(paymentTransaction.getPaymentId(), SpiPaymentStage.SETTLEMENT_COMPLETED);
+        for (PaymentSettlement settlement : persistenceResult.settlements()) {
+            SpiPaymentStageEvent.record(settlement.payment().getPaymentId(), SpiPaymentStage.SETTLEMENT_COMPLETED);
         }
 
-        for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
+        for (PaymentSettlement settlement : persistenceResult.settlements()) {
             SpiPaymentStageEvent.record(
-                    paymentTransaction.getPaymentId(),
+                    settlement.payment().getPaymentId(),
                     SpiPaymentStage.CONFIRMATION_NOTIFICATION_ENQUEUED
             );
         }
 
         log.debug("[PIX FLOW - Complete] Status reports processed. settled={}, rejected={}",
-                persistenceResult.settledPayments().size(),
+                persistenceResult.settlements().size(),
                 persistenceResult.rejectedPayments().size());
 
         return new StatusReportProcessingResult(divergentStatusReports, unauthorizedStatusReports);

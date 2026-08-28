@@ -1,7 +1,7 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentState;
 import jakarta.persistence.Column;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -21,12 +21,15 @@ public class Entity {
     private String description;
 
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(columnDefinition = "payment_status")
-    private PaymentStatus status;
+    @Column(columnDefinition = "payment_state")
+    private PaymentState state;
 
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(columnDefinition = "payment_rejection_reason")
-    private PaymentRejectionReason rejectionReason;
+    @Column(columnDefinition = "payment_rejection_cause")
+    private PaymentRejectionCause rejectionCause;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private String[] externalReasonCodes;
 
     // Sender fields
     private String senderName;

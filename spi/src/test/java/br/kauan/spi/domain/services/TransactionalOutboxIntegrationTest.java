@@ -4,8 +4,10 @@ import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -62,17 +64,18 @@ class TransactionalOutboxIntegrationTest {
 
         processor.processTransactions(authenticatedPayments(payment));
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
                 "PAYMENT_RESERVED",
                 null,
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
+                PaymentState.WAITING_ACCEPTANCE.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
                 -1_000L,
                 null,
-                null
+                null,
+                List.of()
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactly(new OutboundNotificationRow("ACCEPTANCE_REQUEST", RECEIVER_ISPB, null));
@@ -87,20 +90,21 @@ class TransactionalOutboxIntegrationTest {
 
         processor.processTransactions(authenticatedPayments(payment));
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
-        assertThat(paymentRejectionReason(payment.getPaymentId())).isEqualTo("INSUFFICIENT_FUNDS");
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.REJECTED.name());
+        assertThat(paymentRejectionCause(payment.getPaymentId())).isEqualTo("INSUFFICIENT_FUNDS");
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
                 "PAYMENT_REJECTED",
                 null,
-                PaymentStatus.REJECTED.name(),
+                PaymentState.REJECTED.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
                 null,
                 null,
-                "INSUFFICIENT_FUNDS"
+                "INSUFFICIENT_FUNDS",
+                List.of()
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactly(new OutboundNotificationRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT"));
@@ -114,27 +118,31 @@ class TransactionalOutboxIntegrationTest {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-REJECTED");
         insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
 
         processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.REJECTED
+                StatusReportOutcome.REJECTED
         ));
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.REJECTED.name());
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.REJECTED.name());
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
                 "PAYMENT_REJECTED",
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.REJECTED.name(),
+                PaymentState.WAITING_ACCEPTANCE.name(),
+                PaymentState.REJECTED.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
                 1_000L,
                 null,
-                null
+                null,
+                List.of("AB03")
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactly(new OutboundNotificationRow("REJECTED_NOTIFICATION", SENDER_ISPB, "RJCT"));
+        assertThat(outboxPayload(payment.getPaymentId()))
+                .contains("\"Cd\":\"AB03\"")
+                .doesNotContain("AddtlInf");
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
     }
@@ -144,26 +152,27 @@ class TransactionalOutboxIntegrationTest {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-SETTLED");
         insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
 
         processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
+                StatusReportOutcome.ACCEPTED
         ));
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.SETTLED.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("510.00");
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
                 "PAYMENT_SETTLED",
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                PaymentState.WAITING_ACCEPTANCE.name(),
+                PaymentState.SETTLED.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
                 null,
                 1_000L,
-                null
+                null,
+                List.of()
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
@@ -177,26 +186,27 @@ class TransactionalOutboxIntegrationTest {
         PaymentTransactionCommand payment = payment("E2E-TX-OUTBOX-SETTLED-REPEATED");
         insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
 
         processor.processStatusReports(List.of(
-                authenticatedReport(0, payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS),
-                authenticatedReport(1, payment.getPaymentId(), PaymentStatus.ACCEPTED_IN_PROCESS)
+                authenticatedReport(0, payment.getPaymentId(), StatusReportOutcome.ACCEPTED),
+                authenticatedReport(1, payment.getPaymentId(), StatusReportOutcome.ACCEPTED)
         ));
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.ACCEPTED_AND_SETTLED.name());
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.SETTLED.name());
         assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("510.00");
         assertThat(auditRows(payment.getPaymentId())).containsExactly(new AuditRow(
                 "PAYMENT_SETTLED",
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
+                PaymentState.WAITING_ACCEPTANCE.name(),
+                PaymentState.SETTLED.name(),
                 1_000L,
                 SENDER_ISPB,
                 RECEIVER_ISPB,
                 null,
                 1_000L,
-                null
+                null,
+                List.of()
         ));
         assertThat(outboxRows(payment.getPaymentId()))
                 .containsExactlyInAnyOrder(
@@ -231,18 +241,28 @@ class TransactionalOutboxIntegrationTest {
         return List.of(new AuthenticatedPaymentRequest(0, SENDER_ISPB, payment));
     }
 
-    private List<AuthenticatedStatusReport> authenticatedReports(String paymentId, PaymentStatus status) {
-        return List.of(authenticatedReport(0, paymentId, status));
+    private List<AuthenticatedStatusReport> authenticatedReports(
+            String paymentId,
+            StatusReportOutcome outcome
+    ) {
+        return List.of(authenticatedReport(0, paymentId, outcome));
     }
 
-    private AuthenticatedStatusReport authenticatedReport(int sourceOrdinal, String paymentId, PaymentStatus status) {
+    private AuthenticatedStatusReport authenticatedReport(
+            int sourceOrdinal,
+            String paymentId,
+            StatusReportOutcome outcome
+    ) {
         return new AuthenticatedStatusReport(
                 sourceOrdinal,
                 RECEIVER_ISPB,
-                StatusReportCommand.builder()
-                        .originalPaymentId(paymentId)
-                        .status(status)
-                        .build()
+                new IncomingStatusReportCommand(
+                        paymentId,
+                        outcome,
+                        outcome == StatusReportOutcome.REJECTED
+                                ? List.of(StatusReasonCode.of("AB03"))
+                                : List.of()
+                )
         );
     }
 
@@ -278,27 +298,31 @@ class TransactionalOutboxIntegrationTest {
                 """
                         SELECT
                             event_type,
-                            previous_status,
-                            resulting_status,
+                            previous_state,
+                            resulting_state,
                             amount_cents,
                             sender_ispb,
                             receiver_ispb,
                             sender_delta_cents,
                             receiver_delta_cents,
-                            reason
+                            rejection_cause,
+                            external_reason_codes
                         FROM payment_audit_event
                         WHERE payment_id = ?
                         """,
                 (resultSet, rowNumber) -> new AuditRow(
                         resultSet.getString("event_type"),
-                        resultSet.getString("previous_status"),
-                        resultSet.getString("resulting_status"),
+                        resultSet.getString("previous_state"),
+                        resultSet.getString("resulting_state"),
                         resultSet.getObject("amount_cents", Long.class),
                         resultSet.getString("sender_ispb"),
                         resultSet.getString("receiver_ispb"),
                         resultSet.getObject("sender_delta_cents", Long.class),
                         resultSet.getObject("receiver_delta_cents", Long.class),
-                        resultSet.getString("reason")
+                        resultSet.getString("rejection_cause"),
+                        resultSet.getArray("external_reason_codes") == null
+                                ? List.of()
+                                : List.of((String[]) resultSet.getArray("external_reason_codes").getArray())
                 ),
                 paymentId
         );
@@ -312,17 +336,17 @@ class TransactionalOutboxIntegrationTest {
         );
     }
 
-    private String paymentStatus(String paymentId) {
+    private String paymentState(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT status FROM payment_transaction_entity WHERE payment_id = ?",
+                "SELECT state FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
                 paymentId
         );
     }
 
-    private String paymentRejectionReason(String paymentId) {
+    private String paymentRejectionCause(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT rejection_reason FROM payment_transaction_entity WHERE payment_id = ?",
+                "SELECT rejection_cause FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
                 paymentId
         );
@@ -337,20 +361,20 @@ class TransactionalOutboxIntegrationTest {
         return new String(payload, java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    private void insertPayment(PaymentTransactionCommand payment, PaymentStatus status) {
+    private void insertPayment(PaymentTransactionCommand payment, PaymentState state) {
         jdbcTemplate.update(
                 """
                         INSERT INTO payment_transaction_entity (
                             payment_id,
                             amount_cents,
-                            status,
+                            state,
                             sender_bank_code,
                             receiver_bank_code
-                        ) VALUES (?, ?, ?::payment_status, ?, ?)
+                        ) VALUES (?, ?, ?::payment_state, ?, ?)
                         """,
                 payment.getPaymentId(),
                 payment.getAmountCents(),
-                status.name(),
+                state.name(),
                 SENDER_ISPB,
                 RECEIVER_ISPB
         );
@@ -419,7 +443,8 @@ class TransactionalOutboxIntegrationTest {
             String receiverIspb,
             Long senderDeltaCents,
             Long receiverDeltaCents,
-            String reason
+            String rejectionCause,
+            List<String> externalReasonCodes
     ) {
     }
 }

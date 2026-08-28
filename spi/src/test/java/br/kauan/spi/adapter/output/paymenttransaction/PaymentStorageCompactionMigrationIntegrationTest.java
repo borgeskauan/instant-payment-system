@@ -31,8 +31,9 @@ class PaymentStorageCompactionMigrationIntegrationTest {
                         SELECT
                             request_fingerprint,
                             request_fingerprint_version,
-                            status::text,
-                            rejection_reason::text
+                            state::text,
+                            rejection_cause::text,
+                            external_reason_codes
                         FROM payment_transaction_entity
                         WHERE payment_id = 'E2E-COMPACTION-LEGACY'
                         """)) {
@@ -41,9 +42,11 @@ class PaymentStorageCompactionMigrationIntegrationTest {
                     assertThat(payment.getShort(2)).isEqualTo((short) 1);
                     assertThat(payment.getString(3)).isEqualTo("REJECTED");
                     assertThat(payment.getString(4)).isEqualTo("INSUFFICIENT_FUNDS");
+                    assertThat(payment.getArray(5)).isNull();
                 }
                 try (var audit = statement.executeQuery("""
-                        SELECT event_type::text, previous_status::text, resulting_status::text, reason::text
+                        SELECT event_type, previous_state, resulting_state, rejection_cause,
+                               external_reason_codes
                         FROM payment_audit_event_history
                         WHERE payment_id = 'E2E-COMPACTION-LEGACY'
                         """)) {
@@ -52,6 +55,7 @@ class PaymentStorageCompactionMigrationIntegrationTest {
                     assertThat(audit.getString(2)).isNull();
                     assertThat(audit.getString(3)).isEqualTo("REJECTED");
                     assertThat(audit.getString(4)).isEqualTo("INSUFFICIENT_FUNDS");
+                    assertThat(audit.getArray(5)).isNull();
                 }
             }
         }

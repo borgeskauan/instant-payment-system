@@ -5,12 +5,15 @@ import br.kauan.pix.internal.v1.Party;
 import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatus;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
+import br.kauan.pix.internal.v1.StatusReason;
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.adapter.input.kafka.internal.InternalPaymentMessageMapper;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import br.kauan.spi.port.input.StatusReportProcessingResult;
@@ -38,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
@@ -527,9 +531,9 @@ class PaymentMessageConsumerTest {
         verify(processor).processStatusReports(statusReportsCaptor.capture());
         @SuppressWarnings("unchecked")
         List<AuthenticatedStatusReport> statusReports = statusReportsCaptor.getValue();
-        StatusReportCommand statusReport = statusReports.getFirst().command();
-        assertEquals("E2E-1", statusReport.getOriginalPaymentId());
-        assertEquals(br.kauan.spi.domain.entity.status.PaymentStatus.ACCEPTED_IN_PROCESS, statusReport.getStatus());
+        IncomingStatusReportCommand statusReport = statusReports.getFirst().command();
+        assertEquals("E2E-1", statusReport.originalPaymentId());
+        assertEquals(StatusReportOutcome.ACCEPTED, statusReport.outcome());
         verify(acknowledgment).acknowledge();
     }
 
@@ -550,7 +554,7 @@ class PaymentMessageConsumerTest {
         @SuppressWarnings("unchecked")
         List<AuthenticatedStatusReport> statusReports = statusReportsCaptor.getValue();
         assertEquals(List.of("E2E-1", "E2E-2"), statusReports.stream()
-                .map(statusReport -> statusReport.command().getOriginalPaymentId())
+                .map(statusReport -> statusReport.command().originalPaymentId())
                 .toList());
         verify(acknowledgment).acknowledge();
     }
@@ -566,10 +570,11 @@ class PaymentMessageConsumerTest {
                 List.of(new AuthenticatedStatusReport(
                         0,
                         "20000001",
-                        br.kauan.spi.domain.entity.status.StatusReportCommand.builder()
-                                .originalPaymentId("E2E-DIVERGENT")
-                                .status(br.kauan.spi.domain.entity.status.PaymentStatus.REJECTED)
-                                .build()
+                        new IncomingStatusReportCommand(
+                                "E2E-DIVERGENT",
+                                StatusReportOutcome.REJECTED,
+                                List.of(StatusReasonCode.of("AB03"))
+                        )
                 )),
                 List.of()
         ));
@@ -596,10 +601,11 @@ class PaymentMessageConsumerTest {
                 List.of(new AuthenticatedStatusReport(
                         0,
                         "20000001",
-                        br.kauan.spi.domain.entity.status.StatusReportCommand.builder()
-                                .originalPaymentId("E2E-DIVERGENT")
-                                .status(br.kauan.spi.domain.entity.status.PaymentStatus.REJECTED)
-                                .build()
+                        new IncomingStatusReportCommand(
+                                "E2E-DIVERGENT",
+                                StatusReportOutcome.REJECTED,
+                                List.of(StatusReasonCode.of("AB03"))
+                        )
                 )),
                 List.of()
         ));
@@ -625,10 +631,11 @@ class PaymentMessageConsumerTest {
                 List.of(new AuthenticatedStatusReport(
                         0,
                         "20000001",
-                        br.kauan.spi.domain.entity.status.StatusReportCommand.builder()
-                                .originalPaymentId("E2E-UNAUTHORIZED")
-                                .status(br.kauan.spi.domain.entity.status.PaymentStatus.REJECTED)
-                                .build()
+                        new IncomingStatusReportCommand(
+                                "E2E-UNAUTHORIZED",
+                                StatusReportOutcome.REJECTED,
+                                List.of(StatusReasonCode.of("AB03"))
+                        )
                 ))
         ));
 
@@ -701,6 +708,34 @@ class PaymentMessageConsumerTest {
                 isNull(),
                 any(RuntimeException.class));
         verify(processor, never()).processStatusReports(any(List.class));
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    void rejectedStatusReportWithoutAReasonCodeGoesToDlqBeforeProcessing() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(processor, invalidPayloadRecoverer);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        ConsumerRecord<String, byte[]> invalidRecord = record(
+                "spi-payment-status-reports",
+                5,
+                93L,
+                PaymentStatusReport.newBuilder()
+                        .setPaymentId("E2E-MISSING-REASON")
+                        .setStatus(PaymentStatus.REJECTED)
+                        .build()
+                        .toByteArray()
+        );
+
+        consumer.consumeStatusReports(List.of(invalidRecord), acknowledgment);
+
+        verify(invalidPayloadRecoverer).accept(
+                eq(invalidRecord),
+                isNull(),
+                any(InvalidInboundPayloadException.class)
+        );
+        verify(processor, never()).processStatusReports(anyList());
         verify(acknowledgment).acknowledge();
     }
 
@@ -876,9 +911,12 @@ class PaymentMessageConsumerTest {
     }
 
     private static PaymentStatusReport statusReport(String paymentId, PaymentStatus status) {
-        return PaymentStatusReport.newBuilder()
+        PaymentStatusReport.Builder builder = PaymentStatusReport.newBuilder()
                 .setPaymentId(paymentId)
-                .setStatus(status)
-                .build();
+                .setStatus(status);
+        if (status == PaymentStatus.REJECTED) {
+            builder.addReasons(StatusReason.newBuilder().setCode("AB03").build());
+        }
+        return builder.build();
     }
 }

@@ -36,18 +36,20 @@ class PaymentTransactionStorageSchemaIntegrationTest {
     }
 
     @Test
-    void migrationUsesCompactFingerprintAndReadableCategoricalTypes() {
+    void migrationSeparatesPaymentStateFromInternalAndExternalRejectionReasons() {
         assertThat(columnTypes("payment_transaction_entity")).containsAllEntriesOf(Map.of(
                 "request_fingerprint", "bytea",
                 "request_fingerprint_version", "smallint",
-                "status", "payment_status",
-                "rejection_reason", "payment_rejection_reason"
+                "state", "payment_state",
+                "rejection_cause", "payment_rejection_cause",
+                "external_reason_codes", "text[]"
         ));
         assertThat(columnTypes("payment_audit_event")).containsAllEntriesOf(Map.of(
                 "event_type", "payment_audit_event_type",
-                "previous_status", "payment_status",
-                "resulting_status", "payment_status",
-                "reason", "payment_rejection_reason"
+                "previous_state", "payment_state",
+                "resulting_state", "payment_state",
+                "rejection_cause", "payment_rejection_cause",
+                "external_reason_codes", "text[]"
         ));
     }
 

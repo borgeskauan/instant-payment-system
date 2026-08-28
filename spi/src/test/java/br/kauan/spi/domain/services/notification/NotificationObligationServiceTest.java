@@ -4,8 +4,8 @@ import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -81,7 +81,10 @@ class NotificationObligationServiceTest {
         PaymentTransactionCommand settled = payment("E2E-SETTLED", "10000001", "20000001");
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000002", "20000002");
 
-        service.storeStatusObligations(List.of(settled), List.of(new PaymentRejection(rejected, null)));
+        service.storeStatusObligations(
+                List.of(new PaymentSettlement(settled, List.of())),
+                List.of(PaymentRejection.receiverRejected(rejected, List.of(StatusReasonCode.of("AB03"))))
+        );
 
         List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations)
@@ -104,7 +107,7 @@ class NotificationObligationServiceTest {
 
         service.storeTransactionObligations(
                 List.of(accepted),
-                List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+                List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
         List<NotificationPublication> obligations = capturedObligations(repository);
@@ -132,7 +135,7 @@ class NotificationObligationServiceTest {
 
         service.storeStatusObligations(
                 List.of(),
-                List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+                List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
         List<NotificationPublication> obligations = capturedObligations(repository);
@@ -179,8 +182,8 @@ class NotificationObligationServiceTest {
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000001", "30000001");
 
         service.storeStatusObligations(
-                List.of(settled),
-                List.of(new PaymentRejection(rejected, PaymentRejectionReason.INSUFFICIENT_FUNDS))
+                List.of(new PaymentSettlement(settled, List.of())),
+                List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
         List<NotificationPublication> obligations = capturedObligations(repository);

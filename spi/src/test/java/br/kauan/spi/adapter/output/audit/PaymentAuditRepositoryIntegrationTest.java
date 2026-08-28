@@ -1,8 +1,9 @@
 package br.kauan.spi.adapter.output.audit;
 
 import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.services.audit.PaymentAuditEvent;
 import br.kauan.spi.domain.services.audit.PaymentAuditEventType;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,275 +33,138 @@ class PaymentAuditRepositoryIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void databasePersistsTheReservedBusinessFact() {
-        PaymentAuditEvent reservation = new PaymentAuditEvent(
-                "E2E-AUDIT-REPOSITORY-RESERVED",
-                PaymentAuditEventType.PAYMENT_RESERVED,
-                null,
-                PaymentStatus.WAITING_ACCEPTANCE,
-                1_000L,
-                "11111111",
-                "22222222",
-                -1_000L,
-                null
-        );
-
-        repository.insertAll(List.of(reservation));
-
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT event_type::text FROM payment_audit_event WHERE payment_id = ?",
-                String.class,
-                reservation.paymentId()
-        )).isEqualTo("PAYMENT_RESERVED");
-    }
-
-    @Test
-    void databaseAllowsInsufficientFundsReasonOnAnIngressRejection() {
-        jdbcTemplate.update(
-                """
-                        INSERT INTO payment_audit_event (
-                            payment_id,
-                            event_type,
-                            previous_status,
-                            resulting_status,
-                            amount_cents,
-                            sender_ispb,
-                            receiver_ispb,
-                            reason
-                        ) VALUES (
-                            ?,
-                            ?::payment_audit_event_type,
-                            NULL,
-                            ?::payment_status,
-                            ?,
-                            ?,
-                            ?,
-                            ?::payment_rejection_reason
-                        )
-                        """,
-                "E2E-AUDIT-REPOSITORY-REJECTION-REASON",
-                PaymentAuditEventType.PAYMENT_REJECTED.name(),
-                PaymentStatus.REJECTED.name(),
-                1_000L,
-                "11111111",
-                "22222222",
-                "INSUFFICIENT_FUNDS"
-        );
-
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT reason FROM payment_audit_event WHERE payment_id = ?",
-                String.class,
-                "E2E-AUDIT-REPOSITORY-REJECTION-REASON"
-        )).isEqualTo("INSUFFICIENT_FUNDS");
-    }
-
-    @Test
-    void databaseRejectsAReasonOnANonRejectedAuditEvent() {
-        assertThatThrownBy(() -> jdbcTemplate.update(
-                """
-                        INSERT INTO payment_audit_event (
-                            payment_id,
-                            event_type,
-                            previous_status,
-                            resulting_status,
-                            amount_cents,
-                            sender_ispb,
-                            receiver_ispb,
-                            receiver_delta_cents,
-                            reason
-                        ) VALUES (
-                            ?,
-                            ?::payment_audit_event_type,
-                            ?::payment_status,
-                            ?::payment_status,
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?::payment_rejection_reason
-                        )
-                        """,
-                "E2E-AUDIT-REPOSITORY-INVALID-REJECTION-REASON",
-                PaymentAuditEventType.PAYMENT_SETTLED.name(),
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                PaymentStatus.ACCEPTED_AND_SETTLED.name(),
-                1_000L,
-                "11111111",
-                "22222222",
-                1_000L,
-                "INSUFFICIENT_FUNDS"
-        )).isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void insertsReservedAndSettledFactsInOneBulkWithDatabaseTimestamps() {
+    void persistsBusinessFactsWithSeparatedStateAndReasonOrigins() {
         repository.insertAll(List.of(
-                reservation("E2E-AUDIT-REPOSITORY-RESERVED-BULK"),
-                settlement("E2E-AUDIT-REPOSITORY-SETTLED")
+                reservation("E2E-AUDIT-RESERVED"),
+                settlement("E2E-AUDIT-SETTLED", List.of(StatusReasonCode.of("AC01"))),
+                ingressRejection("E2E-AUDIT-INGRESS-REJECTED"),
+                releasedRejection("E2E-AUDIT-RECEIVER-REJECTED", List.of(StatusReasonCode.of("AB03")))
         ));
 
         List<AuditRow> rows = jdbcTemplate.query(
                 """
-                        SELECT
-                            payment_id,
-                            event_type,
-                            previous_status,
-                            resulting_status,
-                            amount_cents,
-                            sender_ispb,
-                            receiver_ispb,
-                            sender_delta_cents,
-                            receiver_delta_cents,
-                            occurred_at
+                        SELECT payment_id,
+                               previous_state::text,
+                               resulting_state::text,
+                               rejection_cause::text,
+                               external_reason_codes
                         FROM payment_audit_event
-                        WHERE payment_id LIKE 'E2E-AUDIT-REPOSITORY-%'
+                        WHERE payment_id LIKE 'E2E-AUDIT-%'
+                        ORDER BY payment_id
                         """,
                 (resultSet, rowNumber) -> new AuditRow(
-                        resultSet.getString("payment_id"),
-                        resultSet.getString("event_type"),
-                        resultSet.getString("previous_status"),
-                        resultSet.getString("resulting_status"),
-                        resultSet.getObject("amount_cents", Long.class),
-                        resultSet.getString("sender_ispb"),
-                        resultSet.getString("receiver_ispb"),
-                        resultSet.getObject("sender_delta_cents", Long.class),
-                        resultSet.getObject("receiver_delta_cents", Long.class),
-                        resultSet.getObject("occurred_at", OffsetDateTime.class)
+                        resultSet.getString(1),
+                        resultSet.getString(2),
+                        resultSet.getString(3),
+                        resultSet.getString(4),
+                        resultSet.getArray(5) == null
+                                ? List.of()
+                                : List.of((String[]) resultSet.getArray(5).getArray())
                 )
         );
 
-        assertThat(rows).hasSize(2).allSatisfy(row -> assertThat(row.occurredAt()).isNotNull());
-        assertThat(rows).extracting(AuditRow::eventType)
-                .containsExactlyInAnyOrder(
-                        "PAYMENT_RESERVED",
-                        "PAYMENT_SETTLED"
-                );
-        assertThat(rows).filteredOn(row -> row.eventType().equals("PAYMENT_SETTLED"))
-                .containsExactly(new AuditRow(
-                        "E2E-AUDIT-REPOSITORY-SETTLED",
-                        "PAYMENT_SETTLED",
-                        "WAITING_ACCEPTANCE",
-                        "ACCEPTED_AND_SETTLED",
-                        1_000L,
-                        "11111111",
-                        "22222222",
+        assertThat(rows).containsExactly(
+                new AuditRow(
+                        "E2E-AUDIT-INGRESS-REJECTED",
                         null,
-                        1_000L,
-                        rows.stream()
-                                .filter(row -> row.eventType().equals("PAYMENT_SETTLED"))
-                                .findFirst()
-                                .orElseThrow()
-                                .occurredAt()
-                ));
+                        "REJECTED",
+                        "INSUFFICIENT_FUNDS",
+                        List.of()
+                ),
+                new AuditRow(
+                        "E2E-AUDIT-RECEIVER-REJECTED",
+                        "WAITING_ACCEPTANCE",
+                        "REJECTED",
+                        null,
+                        List.of("AB03")
+                ),
+                new AuditRow(
+                        "E2E-AUDIT-RESERVED",
+                        null,
+                        "WAITING_ACCEPTANCE",
+                        null,
+                        List.of()
+                ),
+                new AuditRow(
+                        "E2E-AUDIT-SETTLED",
+                        "WAITING_ACCEPTANCE",
+                        "SETTLED",
+                        null,
+                        List.of("AC01")
+                )
+        );
+    }
+
+    @Test
+    void databaseRejectsAnInternalCauseOnASettlement() {
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                """
+                        INSERT INTO payment_audit_event (
+                            payment_id, event_type, previous_state, resulting_state,
+                            amount_cents, sender_ispb, receiver_ispb,
+                            receiver_delta_cents, rejection_cause
+                        ) VALUES (
+                            ?, 'PAYMENT_SETTLED', 'WAITING_ACCEPTANCE', 'SETTLED',
+                            1000, '11111111', '22222222', 1000, 'INSUFFICIENT_FUNDS'
+                        )
+                        """,
+                "E2E-AUDIT-INVALID-CAUSE"
+        )).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void databaseRejectsAReceiverRejectionWithoutExternalReasonCodes() {
+        assertThatThrownBy(() -> repository.insertAll(List.of(new PaymentAuditEvent(
+                "E2E-AUDIT-MISSING-EXTERNAL-CODE",
+                PaymentAuditEventType.PAYMENT_REJECTED,
+                PaymentState.WAITING_ACCEPTANCE,
+                PaymentState.REJECTED,
+                1_000L,
+                "11111111",
+                "22222222",
+                1_000L,
+                null,
+                null,
+                List.of()
+        )))).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void rejectsConflictingTerminalOutcomes() {
-        String paymentId = "E2E-AUDIT-REPOSITORY-CONFLICTING-OUTCOME";
+        String paymentId = "E2E-AUDIT-CONFLICTING-OUTCOME";
 
         assertThatThrownBy(() -> repository.insertAll(List.of(
-                settlement(paymentId),
-                releasedRejection(paymentId)
+                settlement(paymentId, List.of()),
+                releasedRejection(paymentId, List.of(StatusReasonCode.of("AB03")))
         ))).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
-    void rejectsDuplicateReservationEvents() {
-        PaymentAuditEvent reservation = reservation("E2E-AUDIT-REPOSITORY-DUPLICATE-RESERVATION");
+    void rejectsDuplicateAdmissionFacts() {
+        PaymentAuditEvent reservation = reservation("E2E-AUDIT-DUPLICATE-ADMISSION");
 
         assertThatThrownBy(() -> repository.insertAll(List.of(reservation, reservation)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
-    void rejectsConflictingAdmissionOutcomes() {
-        String paymentId = "E2E-AUDIT-REPOSITORY-CONFLICTING-ADMISSION";
-
-        assertThatThrownBy(() -> repository.insertAll(List.of(
-                reservation(paymentId),
-                ingressRejection(paymentId)
-        ))).isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void rejectsDuplicateSettlementEvents() {
-        PaymentAuditEvent settlement = settlement("E2E-AUDIT-REPOSITORY-DUPLICATE-SETTLEMENT");
-
-        assertThatThrownBy(() -> repository.insertAll(List.of(settlement, settlement)))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void rejectsDivergentSettlementEventsForTheSamePayment() {
-        String paymentId = "E2E-AUDIT-REPOSITORY-DIVERGENT-SETTLEMENT";
-        PaymentAuditEvent first = settlement(paymentId);
-        PaymentAuditEvent divergent = new PaymentAuditEvent(
-                paymentId,
-                PaymentAuditEventType.PAYMENT_SETTLED,
-                PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.ACCEPTED_AND_SETTLED,
-                2_000L,
-                "11111111",
-                "22222222",
-                null,
-                2_000L
-        );
-
-        assertThatThrownBy(() -> repository.insertAll(List.of(first, divergent)))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void rejectsEventsThatDoNotMatchTheirRequiredShape() {
+    void rejectsFactsThatDoNotMatchTheirFinancialShape() {
         PaymentAuditEvent invalidReservation = new PaymentAuditEvent(
-                "E2E-AUDIT-REPOSITORY-INVALID-SHAPE",
+                "E2E-AUDIT-INVALID-SHAPE",
                 PaymentAuditEventType.PAYMENT_RESERVED,
                 null,
-                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentState.WAITING_ACCEPTANCE,
                 1_000L,
                 "11111111",
                 "22222222",
                 -999L,
-                null
+                null,
+                null,
+                List.of()
         );
 
         assertThatThrownBy(() -> repository.insertAll(List.of(invalidReservation)))
                 .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void rejectsUnknownEventTypes() {
-        assertThatThrownBy(() -> jdbcTemplate.update(
-                """
-                        INSERT INTO payment_audit_event (
-                            payment_id,
-                            event_type,
-                            previous_status,
-                            resulting_status,
-                            amount_cents,
-                            sender_ispb,
-                            receiver_ispb,
-                            sender_delta_cents,
-                            receiver_delta_cents
-                        ) VALUES (
-                            ?,
-                            ?::payment_audit_event_type,
-                            NULL,
-                            ?::payment_status,
-                            ?,
-                            ?,
-                            ?,
-                            NULL,
-                            NULL
-                        )
-                        """,
-                "E2E-AUDIT-REPOSITORY-INVALID-TYPE",
-                "UNKNOWN_EVENT",
-                PaymentStatus.WAITING_ACCEPTANCE.name(),
-                1_000L,
-                "11111111",
-                "22222222"
-        )).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private PaymentAuditEvent reservation(String paymentId) {
@@ -309,12 +172,14 @@ class PaymentAuditRepositoryIntegrationTest {
                 paymentId,
                 PaymentAuditEventType.PAYMENT_RESERVED,
                 null,
-                PaymentStatus.WAITING_ACCEPTANCE,
+                PaymentState.WAITING_ACCEPTANCE,
                 1_000L,
                 "11111111",
                 "22222222",
                 -1_000L,
-                null
+                null,
+                null,
+                List.of()
         );
     }
 
@@ -323,55 +188,55 @@ class PaymentAuditRepositoryIntegrationTest {
                 paymentId,
                 PaymentAuditEventType.PAYMENT_REJECTED,
                 null,
-                PaymentStatus.REJECTED,
+                PaymentState.REJECTED,
                 1_000L,
                 "11111111",
                 "22222222",
                 null,
                 null,
-                PaymentRejectionReason.INSUFFICIENT_FUNDS
+                PaymentRejectionCause.INSUFFICIENT_FUNDS,
+                List.of()
         );
     }
 
-    private PaymentAuditEvent releasedRejection(String paymentId) {
+    private PaymentAuditEvent releasedRejection(String paymentId, List<StatusReasonCode> reasonCodes) {
         return new PaymentAuditEvent(
                 paymentId,
                 PaymentAuditEventType.PAYMENT_REJECTED,
-                PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.REJECTED,
+                PaymentState.WAITING_ACCEPTANCE,
+                PaymentState.REJECTED,
                 1_000L,
                 "11111111",
                 "22222222",
                 1_000L,
-                null
+                null,
+                null,
+                reasonCodes
         );
     }
 
-    private PaymentAuditEvent settlement(String paymentId) {
+    private PaymentAuditEvent settlement(String paymentId, List<StatusReasonCode> reasonCodes) {
         return new PaymentAuditEvent(
                 paymentId,
                 PaymentAuditEventType.PAYMENT_SETTLED,
-                PaymentStatus.WAITING_ACCEPTANCE,
-                PaymentStatus.ACCEPTED_AND_SETTLED,
+                PaymentState.WAITING_ACCEPTANCE,
+                PaymentState.SETTLED,
                 1_000L,
                 "11111111",
                 "22222222",
                 null,
-                1_000L
+                1_000L,
+                null,
+                reasonCodes
         );
     }
 
     private record AuditRow(
             String paymentId,
-            String eventType,
-            String previousStatus,
-            String resultingStatus,
-            Long amountCents,
-            String senderIspb,
-            String receiverIspb,
-            Long senderDeltaCents,
-            Long receiverDeltaCents,
-            OffsetDateTime occurredAt
+            String previousState,
+            String resultingState,
+            String rejectionCause,
+            List<String> externalReasonCodes
     ) {
     }
 }

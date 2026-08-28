@@ -2,7 +2,8 @@ package br.kauan.spi.domain.services.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
+import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.springframework.stereotype.Service;
 
@@ -45,13 +46,14 @@ public class PaymentAuditService {
                             ? PaymentAuditEventType.PAYMENT_RESERVED
                             : PaymentAuditEventType.PAYMENT_REJECTED,
                     null,
-                    rejection == null ? PaymentStatus.WAITING_ACCEPTANCE : PaymentStatus.REJECTED,
+                    rejection == null ? PaymentState.WAITING_ACCEPTANCE : PaymentState.REJECTED,
                     amountCents,
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
                     rejection == null ? Math.negateExact(amountCents) : null,
                     null,
-                    rejection == null ? null : rejection.reason()
+                    rejection == null ? null : rejection.cause(),
+                    rejection == null ? List.of() : rejection.externalReasonCodes()
             ));
         }
         requireNoUnknownRejections(rejectionByPaymentId);
@@ -59,27 +61,30 @@ public class PaymentAuditService {
     }
 
     public void storeOutcomeEvents(
-            List<PaymentTransactionCommand> settledPayments,
+            List<PaymentSettlement> settlements,
             List<PaymentRejection> rejectedPayments
     ) {
-        if (settledPayments.isEmpty() && rejectedPayments.isEmpty()) {
+        if (settlements.isEmpty() && rejectedPayments.isEmpty()) {
             return;
         }
 
-        List<PaymentAuditEvent> events = new ArrayList<>(settledPayments.size() + rejectedPayments.size());
-        for (PaymentTransactionCommand payment : settledPayments) {
+        List<PaymentAuditEvent> events = new ArrayList<>(settlements.size() + rejectedPayments.size());
+        for (PaymentSettlement settlement : settlements) {
+            PaymentTransactionCommand payment = settlement.payment();
             validatePayment(payment);
             long amountCents = payment.getAmountCents();
             events.add(new PaymentAuditEvent(
                     payment.getPaymentId(),
                     PaymentAuditEventType.PAYMENT_SETTLED,
-                    PaymentStatus.WAITING_ACCEPTANCE,
-                    PaymentStatus.ACCEPTED_AND_SETTLED,
+                    PaymentState.WAITING_ACCEPTANCE,
+                    PaymentState.SETTLED,
                     amountCents,
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
                     null,
-                    amountCents
+                    amountCents,
+                    null,
+                    settlement.reasonCodes()
             ));
         }
         for (PaymentRejection rejection : rejectedPayments) {
@@ -89,14 +94,15 @@ public class PaymentAuditService {
             events.add(new PaymentAuditEvent(
                     payment.getPaymentId(),
                     PaymentAuditEventType.PAYMENT_REJECTED,
-                    PaymentStatus.WAITING_ACCEPTANCE,
-                    PaymentStatus.REJECTED,
+                    PaymentState.WAITING_ACCEPTANCE,
+                    PaymentState.REJECTED,
                     amountCents,
                     requiredIspb(getBankCode(payment.getSender())),
                     requiredIspb(getBankCode(payment.getReceiver())),
                     amountCents,
                     null,
-                    rejection.reason()
+                    rejection.cause(),
+                    rejection.externalReasonCodes()
             ));
         }
         auditRepository.insertAll(events);

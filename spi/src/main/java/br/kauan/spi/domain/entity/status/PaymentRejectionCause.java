@@ -1,5 +1,5 @@
 package br.kauan.spi.domain.entity.status;
 
-public enum PaymentRejectionReason {
+public enum PaymentRejectionCause {
     INSUFFICIENT_FUNDS
 }

@@ -3,8 +3,8 @@ package br.kauan.spi.adapter.output.paymenttransaction;
 import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -53,17 +53,18 @@ class IncomingPaymentRequestPersistence {
 
     private static final String REJECT_INSUFFICIENT_SQL = """
             UPDATE payment_transaction_entity
-            SET status = ?::payment_status,
-                rejection_reason = ?::payment_rejection_reason
+            SET state = ?::payment_state,
+                rejection_cause = ?::payment_rejection_cause,
+                external_reason_codes = NULL
             WHERE payment_id = ANY (?::text[])
-              AND status = ?::payment_status
+              AND state = ?::payment_state
             """;
 
     private static final String INSERT_CANDIDATES_SQL = """
             INSERT INTO payment_transaction_entity (
                 payment_id,
                 amount_cents,
-                status,
+                state,
                 sender_bank_code,
                 receiver_bank_code,
                 request_fingerprint,
@@ -72,7 +73,7 @@ class IncomingPaymentRequestPersistence {
             SELECT
                 payment_id,
                 amount_cents,
-                ?::payment_status,
+                ?::payment_state,
                 sender_bank_code,
                 receiver_bank_code,
                 request_fingerprint,
@@ -175,10 +176,7 @@ class IncomingPaymentRequestPersistence {
             if (outcome.reserved()) {
                 acceptanceRequests.add(payment);
             } else {
-                rejectedPayments.add(new PaymentRejection(
-                        payment,
-                        PaymentRejectionReason.INSUFFICIENT_FUNDS
-                ));
+                rejectedPayments.add(PaymentRejection.insufficientFunds(payment));
             }
         }
 
@@ -257,7 +255,7 @@ class IncomingPaymentRequestPersistence {
                 );
 
                 try (var statement = connection.prepareStatement(INSERT_CANDIDATES_SQL)) {
-                    statement.setString(1, PaymentStatus.WAITING_ACCEPTANCE.name());
+                    statement.setString(1, PaymentState.WAITING_ACCEPTANCE.name());
                     statement.setArray(2, paymentIdArray);
                     statement.setArray(3, amountCentsArray);
                     statement.setArray(4, senderBankCodeArray);
@@ -499,10 +497,10 @@ class IncomingPaymentRequestPersistence {
         try {
             paymentIdArray = connection.createArrayOf("text", insufficientPaymentIds.toArray(String[]::new));
             try (var statement = connection.prepareStatement(REJECT_INSUFFICIENT_SQL)) {
-                statement.setString(1, PaymentStatus.REJECTED.name());
-                statement.setString(2, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
+                statement.setString(1, PaymentState.REJECTED.name());
+                statement.setString(2, PaymentRejectionCause.INSUFFICIENT_FUNDS.name());
                 statement.setArray(3, paymentIdArray);
-                statement.setString(4, PaymentStatus.WAITING_ACCEPTANCE.name());
+                statement.setString(4, PaymentState.WAITING_ACCEPTANCE.name());
                 int updatedRows = statement.executeUpdate();
                 if (updatedRows != insufficientPaymentIds.size()) {
                     throw new IllegalStateException("Could not reject every insufficient payment");
