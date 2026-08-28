@@ -25,14 +25,14 @@ export interface DemoAccount {
 })
 export class AppConfigService {
   readonly providers: DemoPsp[] = [
-    {id: 'psp-a', name: 'PSP A', bankCode: '11111111', baseUrl: '/api/psp-a'},
-    {id: 'psp-b', name: 'PSP B', bankCode: '22222222', baseUrl: '/api/psp-b'},
+    {id: 'psp-a', name: 'Bank A', bankCode: '11111111', baseUrl: '/api/psp-a'},
+    {id: 'psp-b', name: 'Bank B', bankCode: '22222222', baseUrl: '/api/psp-b'},
   ];
 
   readonly demoRecipient: DemoRecipient = {
     name: 'Bob',
     pixKey: 'bob@example.com',
-    provider: 'PSP B',
+    provider: 'Bank B',
   };
 
   readonly demoAccounts: DemoAccount[] = [

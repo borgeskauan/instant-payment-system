@@ -39,7 +39,7 @@ export class PspService {
         return {
           name: response.receiver.name,
           taxId: response.receiver.taxId,
-          institution: this.config.providerByBankCode(bankCode)?.name ?? 'Unknown PSP',
+          institution: this.config.providerByBankCode(bankCode)?.name ?? 'Unknown bank',
           bankCode,
         };
       })

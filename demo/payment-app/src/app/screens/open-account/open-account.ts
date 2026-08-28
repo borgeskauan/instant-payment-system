@@ -34,8 +34,4 @@ export class OpenAccount {
   providerName(account: DemoAccount): string {
     return this.config.providerById(account.providerId).name;
   }
-
-  providerBankCode(account: DemoAccount): string {
-    return this.config.providerById(account.providerId).bankCode;
-  }
 }

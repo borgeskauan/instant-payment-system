@@ -34,6 +34,7 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - PSP passou a expor o histórico efêmero do cliente com estados `PROCESSING`, `SETTLED` e `REJECTED`; a UI acompanha o pagamento submetido por até 1,5 segundo e mantém os pagamentos recentes na conta;
 - a demo agora apresenta somente Alice no PSP A e Bob no PSP B; ambos podem enviar e receber pagamentos, apenas a chave do Bob é provisionada, e a chave da Alice pode ser criada pelo usuário pela interface;
 - as telas internas identificam o cliente e o PSP ativos, preservam uma largura adequada no desktop, aceitam envio por Enter e apresentam a instituição recebedora com nome e ISPB;
+- a linguagem da aplicação agora orienta usuários não técnicos por um caminho recomendado, oculta detalhes internos do sistema e permite abrir diretamente a conta do destinatário após um pagamento confirmado;
 - 30 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados após a segunda passagem.
 
 ## Trabalho restante — contrato do PSP e Angular

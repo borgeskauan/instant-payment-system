@@ -7,12 +7,12 @@
             <span class="text-lg font-bold text-white">{{ getFirstLetter(customer.name) }}</span>
           </div>
           <div class="min-w-0">
-            <p class="eyebrow text-blue-200">Demo customer</p>
+            <p class="eyebrow text-blue-200">Your account</p>
             <h1 class="truncate text-lg font-bold">{{ customer.name }}</h1>
-            <p class="truncate text-xs text-blue-100">{{ provider().name }} · ISPB {{ customer.bankCode }}</p>
+            <p class="truncate text-xs text-blue-100">{{ provider().name }}</p>
           </div>
         </div>
-        <button class="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/15 transition hover:bg-white/20" (click)="logout()">Switch</button>
+        <button class="shrink-0 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/15 transition hover:bg-white/20" (click)="logout()">Change customer</button>
       </div>
     </header>
 
@@ -39,7 +39,7 @@
             </svg>
           </div>
           <div>
-            <p class="eyebrow text-blue-600">New transfer</p>
+            <p class="eyebrow text-blue-600">Quick transfer</p>
             <h2 class="mt-0.5 text-lg font-bold text-slate-900">Send a PIX</h2>
           </div>
         </div>
@@ -138,7 +138,7 @@
           </div>
         </div>
         @if (customer.pixKeys.length === 0) {
-          <p class="mt-4 text-sm leading-6 text-slate-500">No PIX keys registered for this demo customer.</p>
+          <p class="mt-4 text-sm leading-6 text-slate-500">No PIX keys registered yet.</p>
         } @else {
           <ul class="mt-4 space-y-2">
             @for (key of customer.pixKeys; track key) {

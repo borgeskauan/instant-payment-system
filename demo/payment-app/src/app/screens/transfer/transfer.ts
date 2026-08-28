@@ -39,12 +39,12 @@ export class Transfer implements OnDestroy {
   constructor(
     private readonly router: Router,
     private readonly pspService: PspService,
-    config: AppConfigService,
-    userService: UserService,
+    private readonly config: AppConfigService,
+    private readonly userService: UserService,
   ) {
-    this.pixKey = config.provider().id === 'psp-a' ? config.demoRecipient.pixKey : '';
-    this.providerName = config.provider().name;
-    this.customerName = userService.user()?.name ?? '';
+    this.pixKey = this.config.provider().id === 'psp-a' ? this.config.demoRecipient.pixKey : '';
+    this.providerName = this.config.provider().name;
+    this.customerName = this.userService.user()?.name ?? '';
     if (!this.customerName) {
       void this.router.navigate(['/start']);
     }
@@ -126,6 +126,26 @@ export class Transfer implements OnDestroy {
       return;
     }
     void this.router.navigate(['/home']);
+  }
+
+  viewRecipientAccount(): void {
+    const recipientProvider = this.config.providerByBankCode(this.recipient.bankCode);
+    if (!recipientProvider) {
+      this.errorMessage = "Could not open the recipient's account.";
+      return;
+    }
+
+    const currentProviderId = this.config.provider().id;
+    this.loading = true;
+    this.config.selectProvider(recipientProvider.id);
+    this.userService.openCustomer(this.recipient.name, this.recipient.taxId).subscribe({
+      next: () => void this.router.navigate(['/home']),
+      error: () => {
+        this.config.selectProvider(currentProviderId);
+        this.loading = false;
+        this.errorMessage = "Could not open the recipient's account.";
+      },
+    });
   }
 
   ngOnDestroy(): void {
