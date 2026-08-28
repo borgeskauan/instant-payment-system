@@ -1,8 +1,8 @@
 package br.kauan.kafkaproducer.http;
 
 import br.kauan.kafkaproducer.kafka.PaymentPublisher;
+import br.kauan.kafkaproducer.pacs.InvalidPacsPayloadException;
 import br.kauan.kafkaproducer.security.PspAuthenticationException;
-import br.kauan.kafkaproducer.security.PspAuthorizationException;
 import br.kauan.kafkaproducer.security.PspClientCertificateIdentityExtractor;
 
 import io.netty.handler.ssl.SslContext;
@@ -83,9 +83,9 @@ public class ReactorNettyPaymentServer {
                     log.warn("PSP authentication failed: {}", error.getMessage());
                     return response.status(HttpResponseStatus.UNAUTHORIZED).send().then();
                 })
-                .onErrorResume(PspAuthorizationException.class, error -> {
-                    log.warn("PSP authorization failed: {}", error.getMessage());
-                    return response.status(HttpResponseStatus.FORBIDDEN).send().then();
+                .onErrorResume(InvalidPacsPayloadException.class, error -> {
+                    log.warn("Invalid PACS payload: {}", error.getMessage());
+                    return response.status(HttpResponseStatus.BAD_REQUEST).send().then();
                 })
                 .onErrorResume(error -> {
                     log.warn("Failed to publish payment payload: {}", error.toString());

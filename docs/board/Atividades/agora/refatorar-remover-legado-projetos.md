@@ -212,8 +212,7 @@ Ao concluir cada projeto:
 | --- | --- | --- | --- | --- |
 | [SPI](refatorar-remover-legado-projetos/spi.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 | [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
-| Kafka Producer | pendente | pendente | não iniciado | definir objetivo e apresentar inventário de negócio |
-| DICT | pendente | pendente | não iniciado | definir objetivo e apresentar inventário de negócio |
+| [Kafka Producer](refatorar-remover-legado-projetos/kafka-producer.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 | Load-tool e scripts | pendente | pendente | não iniciado nesta task | definir objetivo e apresentar inventário de negócio |
 | Infraestrutura compartilhada | pendente | pendente | não iniciado | definir resultado operacional e apresentar inventário observável |
 
@@ -224,11 +223,12 @@ Inventários, ambiguidades, diagnósticos, decisões de implementação e evidê
 Registros existentes:
 
 * [SPI](refatorar-remover-legado-projetos/spi.md);
-* [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md).
+* [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md);
+* [Kafka Producer](refatorar-remover-legado-projetos/kafka-producer.md).
 
-Kafka Producer, DICT, load-tool e infraestrutura devem repetir integralmente a metodologia obrigatória. Nenhum inventário técnico começa antes do Gate A e nenhuma alteração começa antes do Gate B.
+Load-tool e infraestrutura devem repetir integralmente a metodologia obrigatória. Nenhum inventário técnico começa antes do Gate A e nenhuma alteração começa antes do Gate B.
 
-`payment-app` e `payment-service-provider` continuam fora desta task até a decisão registrada em [`Avaliar PSP e frontend para o portfólio`](../Backlog/pos-projeto/avaliar-psp-frontend-portfolio.md).
+`dict`, `payment-app` e `payment-service-provider` continuam fora desta task até as decisões registradas em [`Avaliar DICT, PSP simulado e frontend para o portfólio`](../Backlog/pos-projeto/avaliar-dict-psp-frontend-portfolio.md).
 
 ## Fora de escopo
 

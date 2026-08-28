@@ -2,7 +2,6 @@ package br.kauan.kafkaproducer.kafka;
 
 import br.kauan.kafkaproducer.config.AppConfig;
 import br.kauan.kafkaproducer.pacs.PacsToInternalMessageMapper;
-import br.kauan.kafkaproducer.security.PspAuthorizationException;
 
 import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
@@ -17,39 +16,32 @@ public class KafkaPaymentPublisher implements PaymentPublisher {
 
     public static final String AUTHENTICATED_ISPB_HEADER = "authenticated-ispb";
 
-    private final ProducerClient paymentRequestProducer;
-    private final ProducerClient statusReportProducer;
+    private final ProducerClient producer;
     private final PacsToInternalMessageMapper messageMapper;
 
-    public KafkaPaymentPublisher(ProducerClient paymentRequestProducer, ProducerClient statusReportProducer) {
-        this(paymentRequestProducer, statusReportProducer, new PacsToInternalMessageMapper());
+    public KafkaPaymentPublisher(ProducerClient producer) {
+        this(producer, new PacsToInternalMessageMapper());
     }
 
     KafkaPaymentPublisher(
-            ProducerClient paymentRequestProducer,
-            ProducerClient statusReportProducer,
+            ProducerClient producer,
             PacsToInternalMessageMapper messageMapper
     ) {
-        this.paymentRequestProducer = paymentRequestProducer;
-        this.statusReportProducer = statusReportProducer;
+        this.producer = producer;
         this.messageMapper = messageMapper;
     }
 
     public static KafkaPaymentPublisher fromConfig(AppConfig config) {
-        return new KafkaPaymentPublisher(
-                new KafkaProducerClient(config.producerProperties()),
-                new KafkaProducerClient(config.producerProperties()));
+        return new KafkaPaymentPublisher(new KafkaProducerClient(config.producerProperties()));
     }
 
     @Override
     public Mono<Void> publishPaymentRequest(String authenticatedIspb, byte[] payload) {
         return Mono.defer(() -> {
             List<PaymentRequest> requests = messageMapper.toPaymentRequests(payload);
-            authorizePaymentRequests(authenticatedIspb, requests);
             List<Mono<Void>> sends = new ArrayList<>(requests.size());
             for (PaymentRequest request : requests) {
                 sends.add(publish(
-                        paymentRequestProducer,
                         AppConfig.PAYMENT_REQUESTS_TOPIC,
                         authenticatedIspb,
                         request.toByteArray()));
@@ -65,7 +57,6 @@ public class KafkaPaymentPublisher implements PaymentPublisher {
             List<Mono<Void>> sends = new ArrayList<>(reports.size());
             for (PaymentStatusReport report : reports) {
                 sends.add(publish(
-                        statusReportProducer,
                         AppConfig.PAYMENT_STATUS_REPORTS_TOPIC,
                         authenticatedIspb,
                         report.toByteArray()));
@@ -76,31 +67,19 @@ public class KafkaPaymentPublisher implements PaymentPublisher {
 
     @Override
     public void warmUp() {
-        paymentRequestProducer.partitionsFor(AppConfig.PAYMENT_REQUESTS_TOPIC);
-        statusReportProducer.partitionsFor(AppConfig.PAYMENT_STATUS_REPORTS_TOPIC);
+        producer.partitionsFor(AppConfig.PAYMENT_REQUESTS_TOPIC);
+        producer.partitionsFor(AppConfig.PAYMENT_STATUS_REPORTS_TOPIC);
     }
 
     @Override
     public void close() {
-        paymentRequestProducer.close();
-        statusReportProducer.close();
-    }
-
-    private void authorizePaymentRequests(String authenticatedIspb, List<PaymentRequest> requests) {
-        for (PaymentRequest request : requests) {
-            String senderIspb = request.getSender().getAccount().getIspb();
-            if (!authenticatedIspb.equals(senderIspb)) {
-                throw new PspAuthorizationException(
-                        "authenticated PSP cannot send payment request " + request.getPaymentId());
-            }
-        }
+        producer.close();
     }
 
     private Mono<Void> publish(
-            ProducerClient producer,
             String topic,
             String authenticatedIspb,
-        byte[] payload
+            byte[] payload
     ) {
         byte[] ispbKey = authenticatedIspb.getBytes(StandardCharsets.UTF_8);
         ProducerRecord<byte[], byte[]> record = new ProducerRecord<>(topic, ispbKey, payload);

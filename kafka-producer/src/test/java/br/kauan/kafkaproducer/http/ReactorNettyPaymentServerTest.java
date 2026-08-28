@@ -1,8 +1,8 @@
 package br.kauan.kafkaproducer.http;
 
 import br.kauan.kafkaproducer.kafka.PaymentPublisher;
+import br.kauan.kafkaproducer.pacs.InvalidPacsPayloadException;
 import br.kauan.kafkaproducer.security.PspAuthenticationException;
-import br.kauan.kafkaproducer.security.PspAuthorizationException;
 
 import io.netty.buffer.Unpooled;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
@@ -130,19 +130,6 @@ class ReactorNettyPaymentServerTest {
     }
 
     @Test
-    void oldIspbRoutesAreNotAvailable() throws Exception {
-        try (RunningServer server = start(new FakePaymentPublisher())) {
-            int status = post(
-                    server,
-                    trustedClientSslContext,
-                    "/12345678/transfer",
-                    "pacs008".getBytes());
-
-            assertEquals(404, status);
-        }
-    }
-
-    @Test
     void returnsServerErrorWhenPublisherFails() throws Exception {
         FakePaymentPublisher publisher = new FakePaymentPublisher();
         publisher.failure = new IllegalStateException("send failed");
@@ -155,14 +142,14 @@ class ReactorNettyPaymentServerTest {
     }
 
     @Test
-    void returnsForbiddenWhenPublisherRejectsPspAuthorization() throws Exception {
+    void returnsBadRequestWhenPacsPayloadIsInvalid() throws Exception {
         FakePaymentPublisher publisher = new FakePaymentPublisher();
-        publisher.failure = new PspAuthorizationException("sender does not match certificate");
+        publisher.failure = new InvalidPacsPayloadException("missing payment id");
 
         try (RunningServer server = start(publisher)) {
             int status = post(server, trustedClientSslContext, "/transfer", "pacs008".getBytes());
 
-            assertEquals(403, status);
+            assertEquals(400, status);
         }
     }
 

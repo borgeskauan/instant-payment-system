@@ -260,7 +260,7 @@ services:
       - ./certs/local/kafka-producer:/certs/kafka-producer:ro
       - ./certs/local/ca:/certs/ca:ro
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
       KAFKA_PRODUCER_TLS_CERTIFICATE_CHAIN: /certs/kafka-producer/server.crt
       KAFKA_PRODUCER_TLS_PRIVATE_KEY: /certs/kafka-producer/server.key
       KAFKA_PRODUCER_TLS_TRUST_CERT_COLLECTION: /certs/ca/ca.crt

@@ -32,37 +32,45 @@ public class PacsToInternalMessageMapper {
 
     public List<PaymentRequest> toPaymentRequests(byte[] payload) {
         try {
-            Pacs008Envelope envelope = pacs008Reader.readValue(payload);
+            Pacs008Envelope envelope = required(pacs008Reader.readValue(payload), "PACS.008 envelope");
             List<Pacs008Transaction> transactions = requiredNonEmpty(envelope.transactions(), "PACS.008 transaction");
             return transactions.stream()
                     .map(this::toPaymentRequest)
                     .toList();
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Invalid PACS.008 payload", e);
+        } catch (InvalidPacsPayloadException e) {
+            throw e;
+        } catch (IOException | ArithmeticException e) {
+            throw new InvalidPacsPayloadException("Invalid PACS.008 payload", e);
         }
     }
 
     public List<PaymentStatusReport> toPaymentStatusReports(byte[] payload) {
         try {
-            Pacs002Envelope envelope = pacs002Reader.readValue(payload);
+            Pacs002Envelope envelope = required(pacs002Reader.readValue(payload), "PACS.002 envelope");
             List<Pacs002Transaction> transactions = requiredNonEmpty(envelope.transactions(), "PACS.002 transaction");
             return transactions.stream()
                     .map(this::toPaymentStatusReport)
                     .toList();
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Invalid PACS.002 payload", e);
+        } catch (InvalidPacsPayloadException e) {
+            throw e;
+        } catch (IOException | ArithmeticException e) {
+            throw new InvalidPacsPayloadException("Invalid PACS.002 payload", e);
         }
     }
 
     private PaymentRequest toPaymentRequest(Pacs008Transaction transaction) {
+        transaction = required(transaction, "PACS.008 transaction");
+        PacsPaymentIdentification identification = required(
+                transaction.paymentIdentification(), "payment identification");
+        PacsAmount amount = required(transaction.amount(), "amount");
         String paymentId = required(firstNonBlank(
-                transaction.paymentIdentification().endToEndId(),
-                transaction.paymentIdentification().endToEndID()), "payment id");
+                identification.endToEndId(),
+                identification.endToEndID()), "payment id");
 
         return PaymentRequest.newBuilder()
                 .setPaymentId(paymentId)
-                .setAmountCents(toCents(transaction.amount().value()))
-                .setCurrency(required(transaction.amount().currency(), "currency"))
+                .setAmountCents(toCents(amount.value()))
+                .setCurrency(required(amount.currency(), "currency"))
                 .setDescription(valueOrEmpty(transaction.remittanceInformation() == null
                         ? null
                         : transaction.remittanceInformation().additionalInformation()))
@@ -78,6 +86,7 @@ public class PacsToInternalMessageMapper {
     }
 
     private PaymentStatusReport toPaymentStatusReport(Pacs002Transaction transaction) {
+        transaction = required(transaction, "PACS.002 transaction");
         String paymentId = required(firstNonBlank(
                 transaction.originalEndToEndId(),
                 transaction.originalEndToEndID()), "original payment id");
@@ -88,6 +97,7 @@ public class PacsToInternalMessageMapper {
 
         if (transaction.statusReasonInformations() != null) {
             for (Pacs002StatusReasonInformation reasonInformation : transaction.statusReasonInformations()) {
+                reasonInformation = required(reasonInformation, "status reason information");
                 builder.addReasons(StatusReason.newBuilder()
                         .setCode(valueOrEmpty(reasonInformation.reason() == null
                                 || reasonInformation.reason().code() == null
@@ -96,7 +106,7 @@ public class PacsToInternalMessageMapper {
                         .setDescription(reasonInformation.additionalInformation() == null
                                 || reasonInformation.additionalInformation().isEmpty()
                                 ? ""
-                                : reasonInformation.additionalInformation().getFirst())
+                                : valueOrEmpty(reasonInformation.additionalInformation().getFirst()))
                         .build());
             }
         }
@@ -157,7 +167,7 @@ public class PacsToInternalMessageMapper {
         return switch (status) {
             case "ACSP" -> PaymentStatus.ACCEPTED_IN_PROCESS;
             case "RJCT" -> PaymentStatus.REJECTED;
-            default -> throw new IllegalArgumentException("Unsupported PACS.002 status: " + status);
+            default -> throw new InvalidPacsPayloadException("Unsupported PACS.002 status: " + status);
         };
     }
 
@@ -170,17 +180,17 @@ public class PacsToInternalMessageMapper {
 
     private static <T> List<T> requiredNonEmpty(List<T> values, String description) {
         if (values == null || values.isEmpty()) {
-            throw new IllegalArgumentException("Missing " + description);
+            throw new InvalidPacsPayloadException("Missing " + description);
         }
         return values;
     }
 
     private static <T> T required(T value, String description) {
         if (value == null) {
-            throw new IllegalArgumentException("Missing " + description);
+            throw new InvalidPacsPayloadException("Missing " + description);
         }
         if (value instanceof String string && string.isBlank()) {
-            throw new IllegalArgumentException("Missing " + description);
+            throw new InvalidPacsPayloadException("Missing " + description);
         }
         return value;
     }
