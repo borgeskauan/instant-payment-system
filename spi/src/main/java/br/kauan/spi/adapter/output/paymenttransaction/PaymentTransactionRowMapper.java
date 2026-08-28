@@ -7,9 +7,9 @@ import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import org.springframework.stereotype.Component;
 
 @Component
-public class Mapper {
+class PaymentTransactionRowMapper {
 
-    public PaymentTransactionCommand toDomain(Entity entity) {
+    PaymentTransactionCommand toDomain(PaymentTransactionRow entity) {
         return PaymentTransactionCommand.builder()
                 .paymentId(entity.getPaymentId())
                 .amountCents(entity.getAmountCents() == null ? 0L : entity.getAmountCents())
@@ -20,7 +20,7 @@ public class Mapper {
                 .build();
     }
 
-    public static Party getSender(Entity entity) {
+    private static Party getSender(PaymentTransactionRow entity) {
         if (entity.getSenderName() == null && entity.getSenderBankCode() == null) {
             return null;
         }
@@ -33,7 +33,7 @@ public class Mapper {
                 .build();
     }
 
-    public static Party getReceiver(Entity entity) {
+    private static Party getReceiver(PaymentTransactionRow entity) {
         if (entity.getReceiverName() == null && entity.getReceiverBankCode() == null) {
             return null;
         }
@@ -46,7 +46,7 @@ public class Mapper {
                 .build();
     }
 
-    private static BankAccount getSenderAccount(Entity entity) {
+    private static BankAccount getSenderAccount(PaymentTransactionRow entity) {
         if (entity.getSenderAccountNumber() == null && entity.getSenderBankCode() == null) {
             return null;
         }
@@ -61,7 +61,7 @@ public class Mapper {
                 .build();
     }
 
-    private static BankAccount getReceiverAccount(Entity entity) {
+    private static BankAccount getReceiverAccount(PaymentTransactionRow entity) {
         if (entity.getReceiverAccountNumber() == null && entity.getReceiverBankCode() == null) {
             return null;
         }

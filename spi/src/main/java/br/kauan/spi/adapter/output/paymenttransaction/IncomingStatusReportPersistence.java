@@ -85,10 +85,10 @@ class IncomingStatusReportPersistence {
             WHERE balance.bank_code = delta.bank_code
             """;
 
-    private final Mapper repositoryMapper;
+    private final PaymentTransactionRowMapper repositoryMapper;
     private final JdbcTemplate jdbcTemplate;
 
-    IncomingStatusReportPersistence(Mapper repositoryMapper, JdbcTemplate jdbcTemplate) {
+    IncomingStatusReportPersistence(PaymentTransactionRowMapper repositoryMapper, JdbcTemplate jdbcTemplate) {
         this.repositoryMapper = repositoryMapper;
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -617,12 +617,12 @@ class IncomingStatusReportPersistence {
     }
 
     private PaymentTransactionCommand toPaymentTransaction(StatusReportActionRow actionRow) {
-        Entity entity = new Entity();
-        entity.setPaymentId(actionRow.paymentId());
-        entity.setAmountCents(actionRow.amountCents());
-        entity.setSenderBankCode(actionRow.senderBankCode());
-        entity.setReceiverBankCode(actionRow.receiverBankCode());
-        return repositoryMapper.toDomain(entity);
+        PaymentTransactionRow row = new PaymentTransactionRow();
+        row.setPaymentId(actionRow.paymentId());
+        row.setAmountCents(actionRow.amountCents());
+        row.setSenderBankCode(actionRow.senderBankCode());
+        row.setReceiverBankCode(actionRow.receiverBankCode());
+        return repositoryMapper.toDomain(row);
     }
 
     private enum Action {

@@ -21,7 +21,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,13 +35,13 @@ import static org.assertj.core.groups.Tuple.tuple;
 
 @SpringBootTest
 @Transactional
-class JpaAdapterIntegrationTest {
+class JdbcPaymentTransactionRepositoryIntegrationTest {
 
     @MockitoBean
     private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
-    private JpaAdapter adapter;
+    private JdbcPaymentTransactionRepository adapter;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -246,9 +245,7 @@ class JpaAdapterIntegrationTest {
         jdbcTemplate.update("DELETE FROM participant_balance_entity WHERE bank_code = ?", "22222222");
 
         assertThatThrownBy(() -> apply(report(payment.getPaymentId(), StatusReportOutcome.ACCEPTED)))
-                .isInstanceOf(InvalidDataAccessApiUsageException.class)
-                .hasRootCauseInstanceOf(IllegalStateException.class)
-                .rootCause()
+                .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("participant balance");
 
         assertThat(state(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());

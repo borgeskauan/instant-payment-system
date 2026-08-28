@@ -5,7 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class FundsJpaAdapter implements FundsRepository {
+public class JdbcFundsRepository implements FundsRepository {
 
     private static final String INSERT_OR_KEEP_BALANCE_SQL = """
             INSERT INTO participant_balance_entity (bank_code, balance_cents)
@@ -28,7 +28,7 @@ public class FundsJpaAdapter implements FundsRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public FundsJpaAdapter(JdbcTemplate jdbcTemplate) {
+    public JdbcFundsRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

@@ -2,33 +2,20 @@ package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
 import br.kauan.spi.domain.entity.status.PaymentState;
-import jakarta.persistence.Column;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
 import lombok.Data;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
 
 @Data
-@jakarta.persistence.Entity
-@Table(name = "payment_transaction_entity")
-public class Entity {
+class PaymentTransactionRow {
 
-    @Id
     private String paymentId;
     private Long amountCents;
     private String currency;
     private String description;
 
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(columnDefinition = "payment_state")
     private PaymentState state;
 
-    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
-    @Column(columnDefinition = "payment_rejection_cause")
     private PaymentRejectionCause rejectionCause;
 
-    @JdbcTypeCode(SqlTypes.ARRAY)
     private String[] externalReasonCodes;
 
     // Sender fields

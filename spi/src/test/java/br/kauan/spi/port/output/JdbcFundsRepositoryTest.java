@@ -11,12 +11,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class FundsJpaAdapterTest {
+class JdbcFundsRepositoryTest {
 
     @Test
     void provisionAccountCreatesOrResetsOneParticipantBalance() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
+        JdbcFundsRepository adapter = new JdbcFundsRepository(jdbcTemplate);
 
         adapter.provisionAccount("10000001", 16_000L, true);
 
@@ -30,7 +30,7 @@ class FundsJpaAdapterTest {
     @Test
     void provisionAccountPreservesOneParticipantBalanceWhenResetIsDisabled() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
+        JdbcFundsRepository adapter = new JdbcFundsRepository(jdbcTemplate);
 
         adapter.provisionAccount("10000001", 16_000L, false);
 
@@ -44,7 +44,7 @@ class FundsJpaAdapterTest {
     @Test
     void getAvailableFundsReturnsParticipantBalance() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
+        JdbcFundsRepository adapter = new JdbcFundsRepository(jdbcTemplate);
         when(jdbcTemplate.queryForObject(
                 contains("participant_balance_entity"),
                 eq(Long.class),
@@ -57,7 +57,7 @@ class FundsJpaAdapterTest {
     @Test
     void getAvailableFundsFailsWhenParticipantBalanceDoesNotExist() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
-        FundsJpaAdapter adapter = new FundsJpaAdapter(jdbcTemplate);
+        JdbcFundsRepository adapter = new JdbcFundsRepository(jdbcTemplate);
         when(jdbcTemplate.queryForObject(
                 contains("participant_balance_entity"),
                 eq(Long.class),

@@ -11,13 +11,13 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 
 @Repository
-public class JpaAdapter implements PaymentTransactionRepository {
+public class JdbcPaymentTransactionRepository implements PaymentTransactionRepository {
 
     private final IncomingPaymentRequestPersistence incomingPaymentRequestPersistence;
     private final IncomingStatusReportPersistence incomingStatusReportPersistence;
 
-    public JpaAdapter(
-            Mapper repositoryMapper,
+    public JdbcPaymentTransactionRepository(
+            PaymentTransactionRowMapper repositoryMapper,
             JdbcTemplate jdbcTemplate
     ) {
         this.incomingPaymentRequestPersistence = new IncomingPaymentRequestPersistence(jdbcTemplate);
