@@ -124,10 +124,15 @@ class PaymentOutcomeServiceTest {
     }
 
     @Test
-    void rejectedOutcomeDoesNotChangeLocalState() {
+    void rejectedOutcomeUpdatesThePaymentWithoutChangingTheBalance() {
+        PaymentTransaction payment = payment("E2E-1");
+        when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
+        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.REJECTED)).thenReturn(true);
+
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.REJECTED)));
 
-        verifyNoInteractions(paymentStore, stateStore);
+        verify(paymentStore).markFinalStatusApplied("E2E-1", PaymentStatus.REJECTED);
+        verifyNoInteractions(stateStore);
     }
 
     @Test

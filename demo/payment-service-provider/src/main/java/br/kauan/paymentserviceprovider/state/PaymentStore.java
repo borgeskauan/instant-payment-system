@@ -2,11 +2,14 @@ package br.kauan.paymentserviceprovider.state;
 
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentLifecycleStatus;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -20,16 +23,16 @@ import java.util.Set;
 @Repository
 public class PaymentStore {
 
-    private final Map<String, PaymentTransaction> payments = new HashMap<>();
+    private final Map<String, StoredPayment> payments = new HashMap<>();
     private final Set<FinalStatusKey> appliedFinalStatuses = new HashSet<>();
     private final Set<FinalStatusKey> claimedFinalStatuses = new HashSet<>();
 
     public synchronized List<PaymentTransaction> findAllByIds(Collection<String> paymentIds) {
         List<PaymentTransaction> foundPayments = new ArrayList<>(paymentIds.size());
         for (String paymentId : paymentIds) {
-            PaymentTransaction payment = payments.get(paymentId);
-            if (payment != null) {
-                foundPayments.add(payment);
+            StoredPayment storedPayment = payments.get(paymentId);
+            if (storedPayment != null) {
+                foundPayments.add(storedPayment.payment());
             }
         }
         return foundPayments;
@@ -37,8 +40,19 @@ public class PaymentStore {
 
     public synchronized void saveAll(Collection<PaymentTransaction> transactions) {
         for (PaymentTransaction transaction : transactions) {
-            payments.put(transaction.getPaymentId(), transaction);
+            payments.put(transaction.getPaymentId(), new StoredPayment(
+                    transaction,
+                    PaymentLifecycleStatus.PROCESSING,
+                    Instant.now()
+            ));
         }
+    }
+
+    public synchronized List<StoredPayment> findAllByAccountId(BankAccountId accountId) {
+        return payments.values().stream()
+                .filter(stored -> belongsToAccount(stored.payment(), accountId))
+                .sorted((left, right) -> right.createdAt().compareTo(left.createdAt()))
+                .toList();
     }
 
     public synchronized IncomingPaymentClassification storeAndClassifyIncoming(Collection<PaymentTransaction> transactions) {
@@ -56,11 +70,15 @@ public class PaymentStore {
                 continue;
             }
 
-            PaymentTransaction existing = payments.get(first.getPaymentId());
+            StoredPayment existing = payments.get(first.getPaymentId());
             if (existing == null) {
-                payments.put(first.getPaymentId(), first);
+                payments.put(first.getPaymentId(), new StoredPayment(
+                        first,
+                        PaymentLifecycleStatus.PROCESSING,
+                        Instant.now()
+                ));
                 acceptedPayments.add(first);
-            } else if (sameBusinessContent(existing, first)) {
+            } else if (sameBusinessContent(existing.payment(), first)) {
                 acceptedPayments.add(first);
             } else {
                 divergentPayments.addAll(samePaymentIdRecords);
@@ -83,6 +101,10 @@ public class PaymentStore {
         FinalStatusKey key = new FinalStatusKey(paymentId, status);
         claimedFinalStatuses.remove(key);
         appliedFinalStatuses.add(key);
+        StoredPayment payment = payments.get(paymentId);
+        if (payment != null) {
+            payments.put(paymentId, payment.withStatus(toLifecycleStatus(status)));
+        }
     }
 
     public synchronized void releaseFinalStatusClaim(String paymentId, PaymentStatus status) {
@@ -91,6 +113,20 @@ public class PaymentStore {
 
     private boolean containsDivergentRecords(PaymentTransaction first, List<PaymentTransaction> records) {
         return records.stream().anyMatch(transaction -> !sameBusinessContent(first, transaction));
+    }
+
+    private boolean belongsToAccount(PaymentTransaction payment, BankAccountId accountId) {
+        return Objects.equals(payment.getSender().getAccount().getId(), accountId)
+                || Objects.equals(payment.getReceiver().getAccount().getId(), accountId);
+    }
+
+    private PaymentLifecycleStatus toLifecycleStatus(PaymentStatus status) {
+        return switch (status) {
+            case ACCEPTED_AND_SETTLED_FOR_RECEIVER, ACCEPTED_AND_SETTLED_FOR_SENDER ->
+                    PaymentLifecycleStatus.SETTLED;
+            case REJECTED -> PaymentLifecycleStatus.REJECTED;
+            case ACCEPTED_IN_PROCESS -> PaymentLifecycleStatus.PROCESSING;
+        };
     }
 
     private boolean sameBusinessContent(PaymentTransaction left, PaymentTransaction right) {

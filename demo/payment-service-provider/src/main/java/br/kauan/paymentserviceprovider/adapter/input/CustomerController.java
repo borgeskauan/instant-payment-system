@@ -3,7 +3,9 @@ package br.kauan.paymentserviceprovider.adapter.input;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerSnapshot;
 import br.kauan.paymentserviceprovider.domain.dto.OpenCustomerRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.domain.dto.PaymentSummary;
 import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
+import br.kauan.paymentserviceprovider.domain.services.cts.PaymentHistoryService;
 import br.kauan.paymentserviceprovider.domain.services.customer.CustomerService;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,9 +16,11 @@ import java.util.List;
 public class CustomerController {
 
     private final CustomerService customerService;
+    private final PaymentHistoryService paymentHistoryService;
 
-    public CustomerController(CustomerService customerService) {
+    public CustomerController(CustomerService customerService, PaymentHistoryService paymentHistoryService) {
         this.customerService = customerService;
+        this.paymentHistoryService = paymentHistoryService;
     }
 
     @PostMapping("/customers")
@@ -32,5 +36,10 @@ public class CustomerController {
     @GetMapping("/customers/{customerId}/pix-keys")
     public List<PixKey> getPixKeys(@PathVariable String customerId) {
         return customerService.getAllPixKeys(customerId);
+    }
+
+    @GetMapping("/customers/{customerId}/payments")
+    public List<PaymentSummary> getPayments(@PathVariable String customerId) {
+        return paymentHistoryService.findByCustomerId(customerId);
     }
 }

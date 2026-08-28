@@ -3,7 +3,9 @@ package br.kauan.paymentserviceprovider.state;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.Party;
+import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentLifecycleStatus;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
+import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -24,6 +26,24 @@ class PaymentStoreTest {
         assertThat(result.acceptedPayments()).containsExactly(payment);
         assertThat(result.divergentPayments()).isEmpty();
         assertThat(store.findAllByIds(List.of("E2E-1"))).containsExactly(payment);
+        assertThat(store.findAllByAccountId(payment.getReceiver().getAccount().getId()))
+                .singleElement()
+                .extracting(StoredPayment::status)
+                .isEqualTo(PaymentLifecycleStatus.PROCESSING);
+    }
+
+    @Test
+    void finalOutcomeUpdatesThePaymentStatus() {
+        PaymentTransaction payment = payment("E2E-1", "10000001", "20000001", "10.00");
+        store.saveAll(List.of(payment));
+
+        assertThat(store.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)).isTrue();
+        store.markFinalStatusApplied("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
+
+        assertThat(store.findAllByAccountId(payment.getSender().getAccount().getId()))
+                .singleElement()
+                .extracting(StoredPayment::status)
+                .isEqualTo(PaymentLifecycleStatus.SETTLED);
     }
 
     @Test
