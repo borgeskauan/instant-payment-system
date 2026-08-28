@@ -21,7 +21,9 @@ import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -194,23 +196,30 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
-    void paymentRequestAuthenticatedAsDifferentSenderGoesDirectlyToUnauthorizedDlq() {
+    void paymentRequestAuthorizationIsOwnedByTheProcessingBoundary() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         DeadLetterPublishingRecoverer unauthorizedRecoverer = mock(DeadLetterPublishingRecoverer.class);
         PaymentMessageConsumer consumer = consumer(processor, unauthorizedRecoverer);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
         ConsumerRecord<String, byte[]> record =
                 withAuthenticatedIspb(paymentRequestRecord("E2E-WRONG-SENDER", "123", "12"), "33333333");
+        when(processor.processTransactions(any(List.class))).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<AuthenticatedPaymentRequest> requests = invocation.getArgument(0);
+            return new PaymentTransactionPersistenceResult(
+                    List.of(), List.of(), List.of(), List.of(), List.of(requests.getFirst()));
+        });
 
         consumer.consumePaymentRequests(List.of(record), acknowledgment);
 
-        verify(unauthorizedRecoverer).accept(
+        var inOrder = inOrder(processor, unauthorizedRecoverer, acknowledgment);
+        inOrder.verify(processor).processTransactions(any(List.class));
+        inOrder.verify(unauthorizedRecoverer).accept(
                 eq(record),
                 isNull(),
                 any(UnauthorizedPspException.class)
         );
-        verify(processor, never()).processTransactions(any(List.class));
-        verify(acknowledgment).acknowledge();
+        inOrder.verify(acknowledgment).acknowledge();
     }
 
     @Test
@@ -400,6 +409,38 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void semanticallyInvalidPaymentRequestGoesToDlqAndBatchContinues() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        stubNoDivergentDuplicates(processor);
+        DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
+        PaymentMessageConsumer consumer = consumer(processor, invalidPayloadRecoverer);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+        PaymentRequest base = paymentRequest("E2E-INVALID-ACCOUNT-TYPE", "123", "12");
+        PaymentRequest invalid = base.toBuilder()
+                .setSender(base.getSender().toBuilder()
+                        .setAccount(base.getSender().getAccount().toBuilder().setType("CRYPTO")))
+                .build();
+        ConsumerRecord<String, byte[]> invalidRecord = record(
+                "spi-payment-requests", 3, 42L, invalid.toByteArray());
+        ConsumerRecord<String, byte[]> validRecord = paymentRequestRecord("E2E-VALID", "456", "34");
+
+        consumer.consumePaymentRequests(List.of(invalidRecord, validRecord), acknowledgment);
+
+        verify(invalidPayloadRecoverer).accept(
+                eq(invalidRecord),
+                isNull(),
+                any(InvalidInboundPayloadException.class));
+        var requestsCaptor = forClass(List.class);
+        verify(processor).processTransactions(requestsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<AuthenticatedPaymentRequest> requests = requestsCaptor.getValue();
+        assertThat(requests)
+                .extracting(request -> request.command().getPaymentId())
+                .containsExactly("E2E-VALID");
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
     void paymentRequestDlqFailurePreventsAckAndPropagatesError() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         DeadLetterPublishingRecoverer invalidPayloadRecoverer = mock(DeadLetterPublishingRecoverer.class);
@@ -491,6 +532,23 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
+    void paymentRequestTransientLockFailureIsMappedToInfrastructureUnavailable() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        CannotAcquireLockException databaseFailure = new CannotAcquireLockException("lock unavailable");
+        doThrow(databaseFailure).when(processor).processTransactions(any(List.class));
+        PaymentMessageConsumer consumer = consumer(processor);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+
+        InfrastructureUnavailableException exception = assertThrows(InfrastructureUnavailableException.class,
+                () -> consumer.consumePaymentRequests(
+                        List.of(paymentRequestRecord("E2E-LOCKED", "123", "12")),
+                        acknowledgment));
+
+        assertThat(exception).hasCause(databaseFailure);
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
     void paymentRequestBatchProcessingFailureDoesNotBlameFirstRecord() {
         PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
         RuntimeException processingFailure = new RuntimeException("processing failed");
@@ -578,7 +636,7 @@ class PaymentMessageConsumerTest {
         inOrder.verify(divergentStatusRecoverer).accept(
                 eq(record),
                 isNull(),
-                any(DivergentStatusReportException.class));
+                any(StatusReportConflictException.class));
         inOrder.verify(acknowledgment).acknowledge();
     }
 
@@ -678,6 +736,23 @@ class PaymentMessageConsumerTest {
         assertThat(exception)
                 .hasMessage("Database unavailable while processing SPI batch")
                 .hasCause(databaseFailure);
+        verify(acknowledgment, never()).acknowledge();
+    }
+
+    @Test
+    void statusReportTransientQueryFailureIsMappedToInfrastructureUnavailable() {
+        PaymentTransactionProcessorUseCase processor = mock(PaymentTransactionProcessorUseCase.class);
+        QueryTimeoutException databaseFailure = new QueryTimeoutException("query timed out");
+        doThrow(databaseFailure).when(processor).processStatusReports(any(List.class));
+        PaymentMessageConsumer consumer = consumer(processor);
+        Acknowledgment acknowledgment = mock(Acknowledgment.class);
+
+        InfrastructureUnavailableException exception = assertThrows(InfrastructureUnavailableException.class,
+                () -> consumer.consumeStatusReports(
+                        List.of(statusReportRecord("E2E-QUERY-TIMEOUT", PaymentStatus.ACCEPTED_IN_PROCESS)),
+                        acknowledgment));
+
+        assertThat(exception).hasCause(databaseFailure);
         verify(acknowledgment, never()).acknowledge();
     }
 

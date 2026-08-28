@@ -307,18 +307,18 @@ funcionalidade ou responsabilidade compreensível externamente.
   arquitetural documentada.
 - [x] Centralizar a configuração runtime e remover modelos residuais.
 - [x] Validar a mudança com testes completos e smoke funcional.
-- [ ] Inventariar todos os pontos de falha dos ingressos Kafka do SPI.
-- [ ] Classificar cada falha como rejeição de negócio, erro definitivo de
+- [x] Inventariar todos os pontos de falha dos ingressos Kafka do SPI.
+- [x] Classificar cada falha como rejeição de negócio, erro definitivo de
   entrada, falha transitória ou defeito interno.
-- [ ] Verificar se cada erro definitivo de entrada é encaminhado para a DLQ
+- [x] Verificar se cada erro definitivo de entrada é encaminhado para a DLQ
   correta com contexto suficiente para diagnóstico.
-- [ ] Verificar se falhas transitórias preservam retry e não confirmam o offset
+- [x] Verificar se falhas transitórias preservam retry e não confirmam o offset
   prematuramente nem são convertidas imediatamente em DLQ.
-- [ ] Confirmar que rejeições de negócio esperadas seguem seu fluxo de domínio
+- [x] Confirmar que rejeições de negócio esperadas seguem seu fluxo de domínio
   e não são tratadas como falha operacional.
-- [ ] Remover handlers, publishers, tópicos ou testes de DLQ sem caminho real de
+- [x] Remover handlers, publishers, tópicos ou testes de DLQ sem caminho real de
   produção e consolidar duplicações encontradas.
-- [ ] Cobrir a matriz de falhas com testes semânticos, incluindo destino,
+- [x] Cobrir a matriz de falhas com testes semânticos, incluindo destino,
   confirmação do offset e ausência de descarte silencioso.
 - [ ] Revisar a fronteira hexagonal das classes de persistência de pagamentos e
   status.
@@ -339,13 +339,9 @@ O cleanup estrutural já registrado permanece concluído. As revisões de falhas
 da fronteira hexagonal são intervenções adicionais e delimitadas; elas não
 autorizam reabrir outras decisões do SPI sem evidência nova.
 
-#### Matriz obrigatória de falhas do SPI
+#### Matriz de falhas do SPI
 
-Antes de alterar handlers ou DLQs, registrar:
-
-| ponto de falha | classificação | comportamento vigente | destino correto | teste/evidência |
-| --- | --- | --- | --- | --- |
-| exemplo | negócio/definitiva/transitória/defeito | ACK, retry, DLQ ou rejeição | decisão aprovada | teste que comprova |
+A classificação autoritativa, suas fronteiras de responsabilidade, mudanças aprovadas e critérios de validação estão em [`SPI Kafka failure and DLQ cleanup`](../../../superpowers/specs/2026-08-28-spi-kafka-failure-dlq-design.md). A task não mantém uma segunda cópia da matriz para evitar divergência.
 
 O objetivo não é enviar toda exceção para DLQ. A revisão deve garantir que:
 

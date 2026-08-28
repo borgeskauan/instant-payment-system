@@ -413,13 +413,16 @@ class IncomingPaymentRequestPersistence {
                     connection,
                     requestsByPayer.keySet().toArray(String[]::new)
             );
+            if (lockedBalances.size() != requestsByPayer.size()) {
+                throw new IllegalStateException("Required participant balance is missing");
+            }
             Map<String, Long> debitsByPayer = new TreeMap<>();
             List<String> insufficientPaymentIds = new ArrayList<>();
             List<ReservationOutcome> outcomes = new ArrayList<>(createdRequests.size());
 
             for (Map.Entry<String, List<AuthenticatedPaymentRequest>> payerEntry : requestsByPayer.entrySet()) {
                 String payerIspb = payerEntry.getKey();
-                long remainingBalance = lockedBalances.getOrDefault(payerIspb, 0L);
+                long remainingBalance = lockedBalances.get(payerIspb);
                 for (AuthenticatedPaymentRequest paymentRequest : payerEntry.getValue()) {
                     long amountCents = paymentRequest.command().getAmountCents();
                     if (remainingBalance >= amountCents) {

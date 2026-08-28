@@ -69,15 +69,15 @@ Incoming status reports are applied conditionally against the current persisted 
 | `ACCEPTED_IN_PROCESS` | `ACCEPTED_IN_PROCESS` or `ACCEPTED_AND_SETTLED` | No-op. | No event. | No notification insert. |
 | `REJECTED` | `WAITING_ACCEPTANCE` | Release the payer reservation and transition to `REJECTED`. | `PAYMENT_REJECTED` with the release delta. | Insert `REJECTED_NOTIFICATION/RJCT` for the payer. |
 | `REJECTED` | `REJECTED` | No-op. | No event. | No notification insert. |
-| Any incompatible transition | Any incompatible current state | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
-| Any status | Missing payment | `DIVERGENT_STATUS_REPORT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
+| Any incompatible transition | Any incompatible current state | `STATUS_REPORT_CONFLICT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
+| Any status | Missing payment | `STATUS_REPORT_CONFLICT`. | No event in the business audit. | No notification insert; publish original input to DLQ. |
 
 Batch-local rules:
 
 | Case | Result |
 | ---- | ------ |
 | Same batch, same `paymentId`, same status | Keep the first logical report; repeated records are batch-local no-ops. |
-| Same batch, same `paymentId`, different statuses | Classify every record for that `paymentId` as `DIVERGENT_STATUS_REPORT`. |
+| Same batch, same `paymentId`, different statuses | Classify every record for that `paymentId` as `STATUS_REPORT_CONFLICT`. |
 
 Settlement, participant balances, the consolidated audit event, and both notification
 obligations commit or roll back together. Replaying a report that produces no
@@ -184,7 +184,7 @@ The two sides are independent:
 
 DLQ preserves invalid or deterministic-conflict inputs for diagnosis and controlled replay. Idempotency makes controlled replay safe, but there is no automated operational replay tool in this version.
 
-Current deterministic conflict types are `DIVERGENT_DUPLICATE` for `pacs.008` and `DIVERGENT_STATUS_REPORT` for `pacs.002`. If required DLQ publication fails, the source batch is not acknowledged.
+Current deterministic conflict types are `DIVERGENT_DUPLICATE` for `pacs.008` and `STATUS_REPORT_CONFLICT` for `pacs.002`. If required DLQ publication fails, the source batch is not acknowledged.
 
 ## Limitações Conscientes
 

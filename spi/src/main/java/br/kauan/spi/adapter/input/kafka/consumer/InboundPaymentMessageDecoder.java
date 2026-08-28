@@ -33,6 +33,7 @@ public class InboundPaymentMessageDecoder {
             throw new InvalidInboundPayloadException("Failed to parse payment request protobuf", e);
         }
 
+        InternalPaymentRequestValidator.validate(request);
         PaymentTransactionCommand command = messageMapper.toPaymentTransaction(request);
         SpiPaymentStageEvent.record(request.getPaymentId(), SpiPaymentStage.REQUEST_CONSUMED);
         return command;

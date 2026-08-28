@@ -124,7 +124,7 @@ class IncomingStatusReportPersistence {
                         toPaymentTransaction(actionRow),
                         actionRow.externalReasonCodes()
                 ));
-                case DIVERGENT_STATUS_REPORT -> addExpandedOrdinals(
+                case STATUS_REPORT_CONFLICT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
                         batchLocalClassification.originalOrdinalsByRepresentative(),
                         actionRow.ordinal()
@@ -167,7 +167,7 @@ class IncomingStatusReportPersistence {
             for (StatusReportRow statusReport : statusReports) {
                 LockedStatusReportRow lockedRow = lockedByOrdinal.get(statusReport.ordinal());
                 if (lockedRow == null) {
-                    actions.add(classificationAction(statusReport, Action.DIVERGENT_STATUS_REPORT));
+                    actions.add(classificationAction(statusReport, Action.STATUS_REPORT_CONFLICT));
                 } else if (!Objects.equals(lockedRow.authenticatedIspb(), lockedRow.receiverBankCode())) {
                     actions.add(classificationAction(lockedRow, Action.UNAUTHORIZED_PSP));
                 } else {
@@ -182,7 +182,7 @@ class IncomingStatusReportPersistence {
             for (List<LockedStatusReportRow> paymentRows : authorizedByPaymentId.values()) {
                 if (hasConflictingIdentity(paymentRows)) {
                     for (LockedStatusReportRow paymentRow : paymentRows) {
-                        actions.add(classificationAction(paymentRow, Action.DIVERGENT_STATUS_REPORT));
+                        actions.add(classificationAction(paymentRow, Action.STATUS_REPORT_CONFLICT));
                     }
                     continue;
                 }
@@ -198,7 +198,7 @@ class IncomingStatusReportPersistence {
                             paymentRow.requestedReasonCodes()
                     ));
                 } else if (!terminalReplayIsNoOp(paymentRow)) {
-                    actions.add(classificationAction(paymentRow, Action.DIVERGENT_STATUS_REPORT));
+                    actions.add(classificationAction(paymentRow, Action.STATUS_REPORT_CONFLICT));
                 }
             }
 
@@ -634,7 +634,7 @@ class IncomingStatusReportPersistence {
     private enum Action {
         SETTLED_PAYMENT,
         REJECTED_NOTIFICATION,
-        DIVERGENT_STATUS_REPORT,
+        STATUS_REPORT_CONFLICT,
         UNAUTHORIZED_PSP
     }
 

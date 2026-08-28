@@ -1,6 +1,5 @@
 package br.kauan.spi.adapter.input.kafka.consumer;
 
-import br.kauan.spi.Utils;
 import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
@@ -10,14 +9,15 @@ import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 @Slf4j
 @Component
@@ -68,13 +68,6 @@ public class PaymentMessageConsumer {
             try {
                 String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
                 var payment = messageDecoder.toPaymentTransaction(record);
-                if (!Objects.equals(authenticatedIspb, Utils.getBankCode(payment.getSender()))) {
-                    dlqPublisher.publish(
-                            record,
-                            new UnauthorizedPspException(payment.getPaymentId(), authenticatedIspb)
-                    );
-                    continue;
-                }
                 payments.add(new AuthenticatedPaymentRequest(sourceOrdinal, authenticatedIspb, payment));
             } catch (NotAuthenticatedException e) {
                 dlqPublisher.publish(record, e);
@@ -89,7 +82,7 @@ public class PaymentMessageConsumer {
                         paymentTransactionProcessorUseCase.processTransactions(payments);
                 publishDivergentDuplicates(result, records);
                 publishUnauthorizedPaymentRequests(result, records);
-            } catch (DataAccessResourceFailureException e) {
+            } catch (DataAccessResourceFailureException | TransientDataAccessException e) {
                 throw databaseUnavailable(
                         PAYMENT_REQUESTS_TOPIC,
                         payments.size(),
@@ -172,7 +165,7 @@ public class PaymentMessageConsumer {
                         paymentTransactionProcessorUseCase.processStatusReports(statusReports);
                 publishDivergentStatusReports(result, records);
                 publishUnauthorizedStatusReports(result, records);
-            } catch (DataAccessResourceFailureException e) {
+            } catch (DataAccessResourceFailureException | TransientDataAccessException e) {
                 throw databaseUnavailable(
                         PAYMENT_STATUS_REPORTS_TOPIC,
                         statusReports.size(),
@@ -190,7 +183,7 @@ public class PaymentMessageConsumer {
         for (AuthenticatedStatusReport divergentStatusReport : result.divergentStatusReports()) {
             dlqPublisher.publish(
                     recordAt(records, divergentStatusReport.sourceOrdinal()),
-                    new DivergentStatusReportException(
+                    new StatusReportConflictException(
                             divergentStatusReport.command().originalPaymentId()
                     )
             );
@@ -225,7 +218,7 @@ public class PaymentMessageConsumer {
     private InfrastructureUnavailableException databaseUnavailable(
             String topic,
             int records,
-            DataAccessResourceFailureException exception
+            DataAccessException exception
     ) {
         KafkaConsumerLogs.infrastructureUnavailable(topic, records, exception);
         return new InfrastructureUnavailableException(

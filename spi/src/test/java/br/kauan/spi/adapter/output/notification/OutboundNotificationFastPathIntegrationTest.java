@@ -16,6 +16,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -81,6 +83,21 @@ class OutboundNotificationFastPathIntegrationTest {
 
         verifyNoInteractions(pipeline);
         assertThat(storedRows(notification.communicationId())).isZero();
+    }
+
+    @Test
+    void failedFastPathAdmissionDoesNotUndoOrFailTheCommittedOutbox() {
+        NotificationPublication notification = notification(PAYMENT_PREFIX + "FAILED-FAST-PATH");
+        OutboundNotificationBatchReady batch = new OutboundNotificationBatchReady(List.of(notification));
+        doThrow(new IllegalStateException("pipeline unavailable")).when(pipeline).enqueue(batch);
+
+        assertThatCode(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            repository.insertAll(batch.notifications());
+            eventPublisher.publishEvent(batch);
+        })).doesNotThrowAnyException();
+
+        verify(pipeline).enqueue(batch);
+        assertThat(storedRows(notification.communicationId())).isOne();
     }
 
     private int storedRows(String communicationId) {

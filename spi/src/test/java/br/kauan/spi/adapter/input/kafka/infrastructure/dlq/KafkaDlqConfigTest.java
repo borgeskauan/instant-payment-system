@@ -1,8 +1,8 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.dlq;
 
 import br.kauan.spi.adapter.input.kafka.consumer.DivergentDuplicatePaymentException;
-import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
 import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
+import br.kauan.spi.adapter.input.kafka.consumer.StatusReportConflictException;
 import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
 import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
 import br.kauan.spi.config.SpiKafkaProperties;
@@ -99,7 +99,7 @@ class KafkaDlqConfigTest {
     }
 
     @Test
-    void divergentStatusReportDeadLetterPublishingRecovererPublishesWithDivergentStatusReportErrorType() {
+    void statusReportConflictDeadLetterPublishingRecovererPublishesWithStatusReportConflictErrorType() {
         KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
@@ -112,7 +112,7 @@ class KafkaDlqConfigTest {
                 "status-key",
                 "status-payload".getBytes(StandardCharsets.UTF_8));
 
-        recoverer.accept(sourceRecord, null, new DivergentStatusReportException("E2E-1"));
+        recoverer.accept(sourceRecord, null, new StatusReportConflictException("E2E-1"));
 
         var captor = forClass(ProducerRecord.class);
         verify(kafkaTemplate).send(captor.capture());
@@ -121,7 +121,7 @@ class KafkaDlqConfigTest {
         assertThat(dlqRecord.topic()).isEqualTo("spi-payment-status-reports.dlq");
         assertThat(dlqRecord.partition()).isEqualTo(5);
         assertThat(dlqRecord.value()).isSameAs(sourceRecord.value());
-        assertThat(header(dlqRecord.headers(), "dlq.error-type")).isEqualTo("DIVERGENT_STATUS_REPORT");
+        assertThat(header(dlqRecord.headers(), "dlq.error-type")).isEqualTo("STATUS_REPORT_CONFLICT");
         assertThat(header(dlqRecord.headers(), "dlq.consumer-group")).isEqualTo("spi-status-report-consumer-group");
     }
 

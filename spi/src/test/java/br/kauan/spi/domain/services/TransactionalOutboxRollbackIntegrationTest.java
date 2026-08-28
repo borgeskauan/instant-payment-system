@@ -100,6 +100,19 @@ class TransactionalOutboxRollbackIntegrationTest {
     }
 
     @Test
+    void missingPayerBalanceRollsBackInsteadOfBecomingInsufficientFunds() {
+        PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-MISSING-PAYER");
+        insertFunds(RECEIVER_ISPB, "500.00");
+
+        assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("participant balance");
+
+        assertThat(paymentCount(payment.getPaymentId())).isZero();
+        verifyNoInteractions(auditRepository, outboundNotificationRepository);
+    }
+
+    @Test
     void auditDatabaseOutagePropagatesForInfrastructureRetryAndRollsBackNewPayment() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-DATABASE-OUTAGE");
         insertFunds(SENDER_ISPB, "1000.00");

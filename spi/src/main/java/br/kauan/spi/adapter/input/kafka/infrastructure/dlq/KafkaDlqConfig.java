@@ -1,8 +1,8 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.dlq;
 
 import br.kauan.spi.adapter.input.kafka.consumer.DivergentDuplicatePaymentException;
-import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
 import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
+import br.kauan.spi.adapter.input.kafka.consumer.StatusReportConflictException;
 import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
 import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
 import br.kauan.spi.config.SpiKafkaProperties;
@@ -30,7 +30,7 @@ public class KafkaDlqConfig {
     private static final String BATCH_PROCESSING_ERROR = "BATCH_PROCESSING_ERROR";
     private static final String INVALID_PAYLOAD = "INVALID_PAYLOAD";
     private static final String DIVERGENT_DUPLICATE = "DIVERGENT_DUPLICATE";
-    private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
+    private static final String STATUS_REPORT_CONFLICT = "STATUS_REPORT_CONFLICT";
     private static final String NOT_AUTHENTICATED = "NOT_AUTHENTICATED";
     private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
     private static final Duration DLQ_SEND_TIMEOUT = Duration.ofSeconds(10);
@@ -87,8 +87,8 @@ public class KafkaDlqConfig {
         if (exception instanceof DivergentDuplicatePaymentException) {
             return DIVERGENT_DUPLICATE;
         }
-        if (exception instanceof DivergentStatusReportException) {
-            return DIVERGENT_STATUS_REPORT;
+        if (exception instanceof StatusReportConflictException) {
+            return STATUS_REPORT_CONFLICT;
         }
         if (exception instanceof NotAuthenticatedException) {
             return NOT_AUTHENTICATED;

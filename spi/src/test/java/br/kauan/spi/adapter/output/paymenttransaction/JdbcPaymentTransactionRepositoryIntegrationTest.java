@@ -76,6 +76,20 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
     }
 
     @Test
+    void paymentAuthorizationIsClassifiedAtThePersistenceBoundary() {
+        PaymentTransactionCommand payment = payment("E2E-IDEMP-UNAUTHORIZED-PAYER", "11111111", "22222222");
+        AuthenticatedPaymentRequest request = new AuthenticatedPaymentRequest(0, "33333333", payment);
+
+        PaymentTransactionPersistenceResult result =
+                adapter.storeAndClassifyIncomingPaymentRequests(List.of(request));
+
+        assertThat(result.unauthorizedRequests()).containsExactly(request);
+        assertThat(result.createdPayments()).isEmpty();
+        assertThat(rowCount(payment.getPaymentId())).isZero();
+        assertThat(balance("11111111")).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
     void insufficientFundsIsAnInternalRejectionCause() {
         PaymentTransactionCommand payment = payment("E2E-IDEMP-NO-FUNDS", "11111111", "22222222");
         insertFunds("11111111", "0.00");

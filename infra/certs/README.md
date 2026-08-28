@@ -150,7 +150,7 @@ evaluated.
 For a `pacs.002`, the SPI compares the authenticated ISPB with the persisted
 `receiver_bank_code` before acquiring payment or funds locks and before applying
 status changes or settlement. An unknown payment remains a
-`DIVERGENT_STATUS_REPORT`, because there is no persisted owner against which to
+`STATUS_REPORT_CONFLICT`, because there is no persisted owner against which to
 authorize it.
 
 A valid identity that is not authorized for the message or payment is
