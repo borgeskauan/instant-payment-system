@@ -3,6 +3,8 @@ package br.kauan.spi.domain.services;
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
+import br.kauan.spi.application.notification.NotificationException;
+import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
@@ -14,8 +16,6 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.application.notification.NotificationContentSerializer;
-import br.kauan.spi.application.notification.NotificationException;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -62,13 +63,15 @@ class TransactionalOutboxRollbackIntegrationTest {
     private PaymentAuditRepository auditRepository;
 
     @MockitoBean
-    private NotificationContentSerializer contentSerializer;
+    private NotificationPayloadFactory payloadFactory;
 
     @BeforeEach
     void prepareFixture() {
         cleanFixtures();
-        reset(auditRepository, outboundNotificationRepository, contentSerializer);
-        when(contentSerializer.serialize(any()))
+        reset(auditRepository, outboundNotificationRepository, payloadFactory);
+        when(payloadFactory.paymentNotification(anyString(), anyList()))
+                .thenReturn("{}".getBytes(StandardCharsets.UTF_8));
+        when(payloadFactory.statusNotification(anyString(), anyList()))
                 .thenReturn("{}".getBytes(StandardCharsets.UTF_8));
     }
 
@@ -203,7 +206,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-SERIALIZATION");
         insertFunds(SENDER_ISPB, "1000.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        when(contentSerializer.serialize(any()))
+        when(payloadFactory.paymentNotification(anyString(), anyList()))
                 .thenThrow(new NotificationException("serialization failed", new IllegalStateException("boom")));
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))

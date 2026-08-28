@@ -284,8 +284,7 @@ class NotificationObligationServiceTest {
             ApplicationEventPublisher eventPublisher
     ) {
         return new NotificationObligationService(
-                new NotificationPayloadFactory(),
-                new NotificationContentSerializer(new ObjectMapper().findAndRegisterModules()),
+                new NotificationPayloadFactory(new ObjectMapper().findAndRegisterModules()),
                 repository,
                 eventPublisher
         );

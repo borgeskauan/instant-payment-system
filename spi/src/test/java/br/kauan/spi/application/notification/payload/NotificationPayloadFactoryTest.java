@@ -6,26 +6,27 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.application.notification.NotificationContentSerializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class NotificationPayloadFactoryTest {
 
-    private final NotificationPayloadFactory factory = new NotificationPayloadFactory();
-    private final NotificationContentSerializer serializer = new NotificationContentSerializer(
-            new com.fasterxml.jackson.databind.ObjectMapper()
-                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
-                    .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    private final NotificationPayloadFactory factory = new NotificationPayloadFactory(
+            new ObjectMapper()
+                    .registerModule(new JavaTimeModule())
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
     );
 
     @Test
-    void buildsPaymentNotificationWithExistingJsonShape() {
-        Object payload = factory.paymentNotification("MSG-1", List.of(paymentTransaction("E2E-1")));
+    void buildsPaymentNotificationWithPacsJsonShape() {
+        byte[] payload = factory.paymentNotification("MSG-1", List.of(paymentTransaction("E2E-1")));
 
         assertThat(serialized(payload))
                 .contains("\"GrpHdr\"")
@@ -38,8 +39,8 @@ class NotificationPayloadFactoryTest {
     }
 
     @Test
-    void buildsStatusNotificationWithExistingJsonShape() {
-        Object payload = factory.statusNotification("MSG-1", List.of(new NotificationStatusItem(
+    void buildsStatusNotificationWithPacsJsonShape() {
+        byte[] payload = factory.statusNotification("MSG-1", List.of(new NotificationStatusItem(
                 "E2E-1",
                 NotificationStatus.ACSC,
                 List.of()
@@ -53,8 +54,8 @@ class NotificationPayloadFactoryTest {
                 .contains("\"TxSts\":\"ACSC\"");
     }
 
-    private String serialized(Object payload) {
-        return new String(serializer.serialize(payload), StandardCharsets.UTF_8);
+    private String serialized(byte[] payload) {
+        return new String(payload, StandardCharsets.UTF_8);
     }
 
     private static PaymentTransactionCommand paymentTransaction(String paymentId) {

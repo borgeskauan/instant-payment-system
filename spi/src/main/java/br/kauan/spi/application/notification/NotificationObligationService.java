@@ -25,18 +25,15 @@ public class NotificationObligationService {
     static final int MAX_ITEMS_PER_MESSAGE = 15;
 
     private final NotificationPayloadFactory payloadFactory;
-    private final NotificationContentSerializer contentSerializer;
     private final OutboundNotificationStore outboundNotificationStore;
     private final ApplicationEventPublisher eventPublisher;
 
     public NotificationObligationService(
             NotificationPayloadFactory payloadFactory,
-            NotificationContentSerializer contentSerializer,
             OutboundNotificationStore outboundNotificationStore,
             ApplicationEventPublisher eventPublisher
     ) {
         this.payloadFactory = payloadFactory;
-        this.contentSerializer = contentSerializer;
         this.outboundNotificationStore = outboundNotificationStore;
         this.eventPublisher = eventPublisher;
     }
@@ -170,9 +167,7 @@ public class NotificationObligationService {
             List<PaymentTransactionCommand> paymentTransactions
     ) {
         String messageId = UUID.randomUUID().toString();
-        byte[] payload = contentSerializer.serialize(
-                payloadFactory.paymentNotification(messageId, paymentTransactions)
-        );
+        byte[] payload = payloadFactory.paymentNotification(messageId, paymentTransactions);
         return OutboundNotification.create(
                 recipientIspb,
                 payload,
@@ -185,9 +180,7 @@ public class NotificationObligationService {
             List<NotificationStatusItem> statusReports
     ) {
         String messageId = UUID.randomUUID().toString();
-        byte[] payload = contentSerializer.serialize(
-                payloadFactory.statusNotification(messageId, statusReports)
-        );
+        byte[] payload = payloadFactory.statusNotification(messageId, statusReports);
         return OutboundNotification.create(
                 recipientIspb,
                 payload,
