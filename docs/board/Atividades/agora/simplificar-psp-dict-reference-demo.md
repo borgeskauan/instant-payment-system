@@ -28,21 +28,24 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - launcher standalone removido; inicialização, certificados e provisionamento da demo agora possuem uma única fronteira no Docker Compose;
 - saldo inicial centralizado por `DEMO_INITIAL_BALANCE` para provisionamento do core e projeção local do PSP;
 - reset limpo documentado: PSPs efêmeros devem iniciar junto de um log de notificações vazio;
-- 26 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados.
+- contrato final do PSP reduzido para abertura de conta de demonstração e execução por chave, com nova resolução autoritativa no servidor;
+- PSP reduzido novamente, de 68 para 66 arquivos Java de produção e de 2.432 para 2.331 linhas;
+- Angular reduzido a quatro telas e 18 arquivos de aplicação, sem endpoint `/info`, falsa semântica de login, cache de recebedor, specs-túmulo ou harness de teste vazio;
+- 27 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados após a segunda passagem.
 
 ## Trabalho restante — contrato do PSP e Angular
 
-- [ ] Remover a tela Angular e o endpoint `/info`, pois não participam do fluxo demonstrado.
-- [ ] Manter o preview visual, mas fazer `/transfer/execute` receber `senderCustomerId`, `receiverPixKey`, valor e descrição, resolvendo novamente a chave no PSP.
-- [ ] Remover do Angular o cache do objeto completo do recebedor e não confiar em um `Party` devolvido pelo navegador.
-- [ ] Não introduzir `previewId`, armazenamento temporário, expiração ou lifecycle adicional.
-- [ ] Substituir a falsa semântica de login por localizar ou criar um cliente de demonstração, alinhando nomes de DTOs, serviços e textos visíveis.
-- [ ] Simplificar o estado Angular para signals diretos, removendo a combinação de `BehaviorSubject`, `toSignal` e `computed` com efeitos colaterais.
-- [ ] Preservar somente o polling necessário para que o saldo final apareça na interface, com responsabilidade e nome explícitos.
-- [ ] Remover specs Angular que apenas instanciam componentes ou serviços e o harness associado caso nenhum teste semântico dependa dele.
-- [ ] Consolidar `PspService` e `TransferRequestService` em uma fronteira coesa de transferência de saída, removendo DTOs e modelos intermediários sem função.
-- [ ] Fazer o `NotificationProcessor` classificar e materializar cada payload a partir de uma única leitura JSON.
-- [ ] Usar coleções simples no `PaymentStore` quando a sincronização externa já serializar todos os acessos.
+- [x] Remover a tela Angular e o endpoint `/info`, pois não participam do fluxo demonstrado.
+- [x] Manter o preview visual, mas fazer `/transfer/execute` receber `senderCustomerId`, `receiverPixKey`, valor e descrição, resolvendo novamente a chave no PSP.
+- [x] Remover do Angular o cache do objeto completo do recebedor e não confiar em um `Party` devolvido pelo navegador.
+- [x] Não introduzir `previewId`, armazenamento temporário, expiração ou lifecycle adicional.
+- [x] Substituir a falsa semântica de login por localizar ou criar um cliente de demonstração, alinhando nomes de DTOs, serviços e textos visíveis.
+- [x] Simplificar o estado Angular para signals diretos, removendo a combinação de `BehaviorSubject`, `toSignal` e `computed` com efeitos colaterais.
+- [x] Preservar somente o polling necessário para que o saldo final apareça na interface, com responsabilidade e nome explícitos.
+- [x] Remover specs Angular que apenas instanciam componentes ou serviços e o harness associado caso nenhum teste semântico dependa dele.
+- [x] Consolidar `PspService` e `TransferRequestService` em uma fronteira coesa de transferência de saída, removendo DTOs e modelos intermediários sem função.
+- [x] Fazer o `NotificationProcessor` classificar e materializar cada payload a partir de uma única leitura JSON.
+- [x] Usar coleções simples no `PaymentStore` quando a sincronização externa já serializar todos os acessos.
 
 Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, preview do recebedor, PACS tipado, HTTP/2 com mTLS, Pull gRPC com cursor, idempotência e atualização visual dos dois saldos.
 

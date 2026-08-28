@@ -2,8 +2,8 @@ package br.kauan.paymentserviceprovider.domain.services.customer;
 
 import br.kauan.paymentserviceprovider.adapter.output.dict.DictClient;
 import br.kauan.paymentserviceprovider.config.PspProperties;
-import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
-import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginResponse;
+import br.kauan.paymentserviceprovider.domain.dto.CustomerSnapshot;
+import br.kauan.paymentserviceprovider.domain.dto.OpenCustomerRequest;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
 import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountType;
@@ -37,10 +37,10 @@ public class CustomerService {
         this.properties = properties;
     }
 
-    public synchronized CustomerLoginResponse findOrCreateCustomer(CustomerLoginRequest request) {
-        log.info("Finding or creating demo customer with taxId: {}", request.getTaxId());
+    public synchronized CustomerSnapshot openCustomer(OpenCustomerRequest request) {
+        log.info("Finding or creating demo customer with taxId: {}", request.taxId());
 
-        return stateStore.findCustomerByTaxId(request.getTaxId())
+        return stateStore.findCustomerByTaxId(request.taxId())
                 .map(this::handleExistingCustomer)
                 .orElseGet(() -> createNewCustomer(request));
     }
@@ -64,27 +64,20 @@ public class CustomerService {
         return stateStore.findPixKeysByCustomerId(customerId);
     }
 
-    private CustomerLoginResponse handleExistingCustomer(Customer customer) {
+    private CustomerSnapshot handleExistingCustomer(Customer customer) {
         var bankAccount = findCustomerBankAccount(customer.getId());
-
-        return CustomerLoginResponse.builder()
-                .customer(customer)
-                .bankAccount(bankAccount)
-                .build();
+        return new CustomerSnapshot(customer, bankAccount);
     }
 
-    private CustomerLoginResponse createNewCustomer(CustomerLoginRequest request) {
-        log.info("Creating new customer with taxId: {}", request.getTaxId());
+    private CustomerSnapshot createNewCustomer(OpenCustomerRequest request) {
+        log.info("Creating new customer with taxId: {}", request.taxId());
 
         Customer customer = buildCustomer(request);
         CustomerBankAccount customerBankAccount = generateBankAccount(customer.getId());
         stateStore.addCustomer(customer, customerBankAccount);
 
         log.info("New customer created successfully with ID: {}", customer.getId());
-        return CustomerLoginResponse.builder()
-                .customer(customer)
-                .bankAccount(customerBankAccount)
-                .build();
+        return new CustomerSnapshot(customer, customerBankAccount);
     }
 
     private Customer findCustomerById(String customerId) {
@@ -97,11 +90,11 @@ public class CustomerService {
                 .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account."));
     }
 
-    private Customer buildCustomer(CustomerLoginRequest request) {
+    private Customer buildCustomer(OpenCustomerRequest request) {
         return Customer.builder()
                 .id(UUID.randomUUID().toString())
-                .name(request.getName())
-                .taxId(request.getTaxId())
+                .name(request.name())
+                .taxId(request.taxId())
                 .build();
     }
 

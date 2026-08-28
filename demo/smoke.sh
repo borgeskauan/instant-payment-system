@@ -19,7 +19,7 @@ wait_for_psp() {
   local url="$1"
   local deadline=$((SECONDS + 60))
   while ((SECONDS < deadline)); do
-    if curl --fail --silent "$url/info" >/dev/null; then
+    if curl --silent --output /dev/null "$url/"; then
       return
     fi
     sleep 1
@@ -43,10 +43,10 @@ receiver_balance="$(jq -er '.bankAccount.balance' <<<"$receiver")"
 echo "Registering and resolving the receiver PIX key"
 post_json "$receiver_url/customers/$receiver_id/pix-keys" "{\"pixKey\":\"$pix_key\"}" >/dev/null
 preview="$(post_json "$sender_url/transfer/preview" "{\"receiverPixKey\":\"$pix_key\"}")"
-receiver_party="$(jq -cer '.receiver' <<<"$preview")"
+jq -e --arg key "$pix_key" '.receiver.pixKey == $key' <<<"$preview" >/dev/null
 
 echo "Submitting the payment through the core"
-transfer="$(post_json "$sender_url/transfer/execute" "{\"senderCustomerId\":\"$sender_id\",\"receiver\":$receiver_party,\"amount\":25.50,\"description\":\"reference demo smoke\"}")"
+transfer="$(post_json "$sender_url/transfer/execute" "{\"senderCustomerId\":\"$sender_id\",\"receiverPixKey\":\"$pix_key\",\"amount\":25.50,\"description\":\"reference demo smoke\"}")"
 transfer_id="$(jq -er '.transferId' <<<"$transfer")"
 
 echo "Waiting for both PSPs to observe the final outcome"

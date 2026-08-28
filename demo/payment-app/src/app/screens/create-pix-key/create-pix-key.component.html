@@ -1,31 +1,30 @@
-<div class="flex flex-col h-screen bg-gray-50">
-  <!-- Top Bar -->
-  <header class="flex items-center justify-between px-4 py-3 bg-blue-600 text-white shadow">
-    <h1 class="text-lg font-semibold">Create PIX Key</h1>
+<div class="flex min-h-screen flex-col bg-gray-50">
+  <header class="flex items-center justify-between bg-blue-600 px-4 py-3 text-white shadow">
+    <h1 class="text-lg font-semibold">Register PIX key</h1>
     <button (click)="cancel()" class="text-sm underline hover:opacity-80">Cancel</button>
   </header>
 
-  <main class="flex-grow p-4 space-y-6">
-    <!-- Error -->
-    <div *ngIf="errorMessage" class="p-3 rounded-lg bg-red-100 text-red-700 text-sm">
-      {{ errorMessage }}
-    </div>
+  <main class="flex-grow space-y-6 p-4">
+    @if (errorMessage) {
+      <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
+    }
 
     <label class="block">
-      <span class="text-gray-700 font-medium">Desired PIX Key</span>
+      <span class="font-medium text-gray-700">PIX key</span>
       <input
         type="text"
         [(ngModel)]="pixKey"
-        placeholder="Enter new PIX key"
-        class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+        placeholder="alice@example.com"
+        class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
     </label>
 
     <button
       (click)="savePixKey()"
-      class="w-full py-3 rounded-xl bg-green-600 text-white font-semibold shadow hover:bg-green-700 transition"
+      [disabled]="loading"
+      class="w-full rounded-xl bg-green-600 py-3 font-semibold text-white shadow transition hover:bg-green-700 disabled:opacity-50"
     >
-      Save PIX Key
+      {{ loading ? 'Registering...' : 'Register key' }}
     </button>
   </main>
 </div>

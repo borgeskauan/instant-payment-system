@@ -1,127 +1,129 @@
-import {Injectable, computed, signal, Signal} from '@angular/core';
+import {computed, Injectable, signal} from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {AppConfigService} from '../config/app-config.service';
-import {map, switchMap, tap} from 'rxjs';
 import {Router} from '@angular/router';
-import {BehaviorSubject} from 'rxjs';
-import {toSignal} from '@angular/core/rxjs-interop';
+import {map, Observable, switchMap, tap} from 'rxjs';
+import {AppConfigService} from '../config/app-config.service';
 
-interface ExternalCustomer {
+const BALANCE_REFRESH_INTERVAL_MS = 2000;
+
+interface CustomerSnapshot {
   customer: {
     id: string;
     name: string;
     taxId: string;
-  },
+  };
   bankAccount: {
+    account: {
+      id: {
+        bankCode: string;
+      };
+    };
     balance: number;
-  }
+  };
 }
 
 export interface User {
   id: string;
   name: string;
   taxId: string;
+  bankCode: string;
   balance: number;
   pixKeys: string[];
 }
 
-@Injectable({
-  providedIn: 'root'
-})
+@Injectable({providedIn: 'root'})
 export class UserService {
 
-  private loggedInUser = signal<ExternalCustomer | null>(null);
-  private pixKeys$ = new BehaviorSubject<string[]>([]);
-  private pixKeysSignal = toSignal(this.pixKeys$, {initialValue: []}); // Convert to signal
+  private readonly customerSnapshot = signal<CustomerSnapshot | null>(null);
+  private readonly pixKeys = signal<string[]>([]);
+  private pollingId?: number;
 
-  private intervalId: number = 0;
+  readonly user = computed<User | null>(() => {
+    const snapshot = this.customerSnapshot();
+    if (!snapshot) {
+      return null;
+    }
+    return {
+      id: snapshot.customer.id,
+      name: snapshot.customer.name,
+      taxId: snapshot.customer.taxId,
+      bankCode: snapshot.bankAccount.account.id.bankCode,
+      balance: snapshot.bankAccount.balance,
+      pixKeys: this.pixKeys(),
+    };
+  });
 
   constructor(
-    private http: HttpClient,
-    private config: AppConfigService,
-    private router: Router
+    private readonly http: HttpClient,
+    private readonly config: AppConfigService,
+    private readonly router: Router,
   ) {
   }
 
-  getUser(): Signal<User> {
-    return computed(() => {
-      const user = this.loggedInUser();
-      if (!user) {
-        this.navigateToLogin();
-        throw new Error('User not logged in');
-      }
-
-      return {
-        id: user.customer.id,
-        name: user.customer.name,
-        taxId: user.customer.taxId,
-        balance: user.bankAccount.balance,
-        pixKeys: this.pixKeysSignal()
-      };
-    });
-  }
-
-  private startUserPooling() {
-    if (this.intervalId) {
-      return;
-    }
-
-    this.intervalId = window.setInterval(() => {
-      const user = this.loggedInUser();
-      if (!user) {
-        return;
-      }
-
-      this.login(user.customer.name, user.customer.taxId).subscribe();
-    }, 10000);
-  }
-
-  login(name: string, taxId: string) {
-    return this.http.post<ExternalCustomer>(`${this.config.baseUrl}/customers`, {name, taxId}).pipe(
-      switchMap((loginResponse) => {
-        this.loggedInUser.set(loginResponse);
-        this.startUserPooling();
-        return this.fetchPixKeys().pipe(
-          map(() => loginResponse)
-        );
-      })
+  openCustomer(name: string, taxId: string): Observable<CustomerSnapshot> {
+    return this.requestCustomer(name, taxId).pipe(
+      tap(snapshot => {
+        this.customerSnapshot.set(snapshot);
+        this.startBalancePolling();
+      }),
+      switchMap(snapshot => this.fetchPixKeys().pipe(map(() => snapshot))),
     );
   }
 
   createPixKey(pixKey: string) {
-    const user = this.loggedInUser();
-    if (!user) {
-      throw new Error('User not logged in');
-    }
-    return this.http.post(`${this.config.baseUrl}/customers/${user.customer.id}/pix-keys`, {pixKey}).pipe(
-      tap(() => {
-        const updatedKeys = [...this.pixKeys$.getValue(), pixKey];
-        this.pixKeys$.next(updatedKeys);
-      })
+    const user = this.requireUser();
+    return this.http.post(`${this.config.baseUrl}/customers/${user.id}/pix-keys`, {pixKey}).pipe(
+      tap(() => this.pixKeys.update(keys => [...keys, pixKey])),
     );
   }
 
   fetchPixKeys() {
-    const user = this.loggedInUser();
-    if (!user) {
-      throw new Error('User not logged in');
-    }
-    return this.http.get<{ pixKey: string }[]>(`${this.config.baseUrl}/customers/${user.customer.id}/pix-keys`).pipe(
-      tap((keys) => this.pixKeys$.next(keys.map(k => k.pixKey)))
+    const user = this.requireUser();
+    return this.http.get<{ pixKey: string }[]>(`${this.config.baseUrl}/customers/${user.id}/pix-keys`).pipe(
+      tap(keys => this.pixKeys.set(keys.map(key => key.pixKey))),
     );
   }
 
-  logout() {
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = 0;
+  requireUser(): User {
+    const user = this.user();
+    if (!user) {
+      throw new Error('No demo customer is open');
     }
-    this.loggedInUser.set(null);
-    this.pixKeys$.next([]);
-    this.navigateToLogin();
+    return user;
   }
 
-  private navigateToLogin() {
-    this.router.navigate(['/login']).catch(error => console.log(error));
+  logout(): void {
+    this.stopBalancePolling();
+    this.customerSnapshot.set(null);
+    this.pixKeys.set([]);
+    void this.router.navigate(['/start']);
+  }
+
+  private requestCustomer(name: string, taxId: string): Observable<CustomerSnapshot> {
+    return this.http.post<CustomerSnapshot>(`${this.config.baseUrl}/customers`, {name, taxId});
+  }
+
+  private startBalancePolling(): void {
+    if (this.pollingId !== undefined) {
+      return;
+    }
+    this.pollingId = window.setInterval(() => {
+      const snapshot = this.customerSnapshot();
+      if (!snapshot) {
+        return;
+      }
+      this.requestCustomer(snapshot.customer.name, snapshot.customer.taxId).subscribe({
+        next: refreshed => this.customerSnapshot.set(refreshed),
+        error: () => undefined,
+      });
+    }, BALANCE_REFRESH_INTERVAL_MS);
+  }
+
+  private stopBalancePolling(): void {
+    if (this.pollingId === undefined) {
+      return;
+    }
+    window.clearInterval(this.pollingId);
+    this.pollingId = undefined;
   }
 }

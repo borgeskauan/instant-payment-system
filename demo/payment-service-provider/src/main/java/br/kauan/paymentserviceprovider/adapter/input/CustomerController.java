@@ -1,7 +1,7 @@
 package br.kauan.paymentserviceprovider.adapter.input;
 
-import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
-import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginResponse;
+import br.kauan.paymentserviceprovider.domain.dto.CustomerSnapshot;
+import br.kauan.paymentserviceprovider.domain.dto.OpenCustomerRequest;
 import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
 import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
 import br.kauan.paymentserviceprovider.domain.services.customer.CustomerService;
@@ -20,8 +20,8 @@ public class CustomerController {
     }
 
     @PostMapping("/customers")
-    public CustomerLoginResponse findOrCreateCustomer(@RequestBody CustomerLoginRequest request) {
-        return customerService.findOrCreateCustomer(request);
+    public CustomerSnapshot openCustomer(@RequestBody OpenCustomerRequest request) {
+        return customerService.openCustomer(request);
     }
 
     @PostMapping("/customers/{customerId}/pix-keys")

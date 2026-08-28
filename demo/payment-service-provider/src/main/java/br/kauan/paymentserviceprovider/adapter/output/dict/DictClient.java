@@ -47,6 +47,7 @@ public class DictClient {
                 .name(owner.name())
                 .taxId(owner.taxIdNumber())
                 .account(bankAccount)
+                .pixKey(response.key())
                 .build();
     }
 

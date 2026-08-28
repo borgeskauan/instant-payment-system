@@ -1,6 +1,7 @@
 export interface TransferRequest {
   amount: number;
   receiverPixKey: string;
+  description?: string;
 }
 
 export interface PixKeySearchResult {

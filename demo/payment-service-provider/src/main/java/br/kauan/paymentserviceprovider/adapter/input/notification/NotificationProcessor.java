@@ -40,12 +40,12 @@ public class NotificationProcessor {
             JsonNode jsonNode = objectMapper.readTree(notificationJson);
 
             if (jsonNode.has("TxInfAndSts")) {
-                processStatusReport(notificationJson);
+                processStatusReport(jsonNode);
                 return;
             }
 
             if (jsonNode.has("CdtTrfTxInf")) {
-                processPaymentTransaction(notificationJson);
+                processPaymentTransaction(jsonNode);
                 return;
             }
 
@@ -56,11 +56,10 @@ public class NotificationProcessor {
         }
     }
 
-    private void processPaymentTransaction(String notificationJson) throws Exception {
-        FIToFICustomerCreditTransfer creditTransfer = objectMapper.readValue(
-                notificationJson,
-                FIToFICustomerCreditTransfer.class
-        );
+    private void processPaymentTransaction(JsonNode notification) throws Exception {
+        FIToFICustomerCreditTransfer creditTransfer = objectMapper.treeToValue(
+                notification,
+                FIToFICustomerCreditTransfer.class);
 
         var transactions = paymentTransactionMapper.fromRegulatoryRequest(creditTransfer);
 
@@ -69,11 +68,10 @@ public class NotificationProcessor {
         incomingTransactionService.handleTransferRequests(transactions);
     }
 
-    private void processStatusReport(String notificationJson) throws Exception {
-        FIToFIPaymentStatusReport statusReport = objectMapper.readValue(
-                notificationJson,
-                FIToFIPaymentStatusReport.class
-        );
+    private void processStatusReport(JsonNode notification) throws Exception {
+        FIToFIPaymentStatusReport statusReport = objectMapper.treeToValue(
+                notification,
+                FIToFIPaymentStatusReport.class);
 
         var statusReports = statusReportMapper.fromRegulatoryReport(statusReport);
 

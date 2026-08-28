@@ -1,38 +1,34 @@
-import {Component, Signal} from '@angular/core';
-import {Router} from '@angular/router';
-import {User, UserService} from '../../services/user/user.service';
+import {Component, inject} from '@angular/core';
 import {DecimalPipe} from '@angular/common';
+import {Router} from '@angular/router';
+import {UserService} from '../../services/user/user.service';
 
 @Component({
   selector: 'app-home',
   templateUrl: './home.html',
   imports: [DecimalPipe],
-  styleUrls: ['./home.css']
 })
 export class Home {
-  customer: Signal<User>;
+  private readonly router = inject(Router);
+  private readonly userService = inject(UserService);
 
-  constructor(private router: Router, private userService: UserService) {
-    this.customer = this.userService.getUser();
+  readonly customer = this.userService.user;
 
-    for (let key of this.customer().pixKeys) {
-      console.log(`Pix Key: ${key}`);
+  constructor() {
+    if (!this.customer()) {
+      void this.router.navigate(['/start']);
     }
   }
 
-  goToTransfer() {
-    this.router.navigate(['transfer']).catch(error => console.log(error));
+  goToTransfer(): void {
+    void this.router.navigate(['/transfer']);
   }
 
-  goToCreatePixKey() {
-    this.router.navigate(['/create-pix-key']).catch(error => console.log(error));
+  goToCreatePixKey(): void {
+    void this.router.navigate(['/create-pix-key']);
   }
 
-  goToInfo() {
-    this.router.navigate(['/info']).catch(error => console.log(error));
-  }
-
-  logout() {
+  logout(): void {
     this.userService.logout();
   }
 

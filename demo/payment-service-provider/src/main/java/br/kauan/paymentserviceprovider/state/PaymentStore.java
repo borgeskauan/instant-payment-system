@@ -9,19 +9,20 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Repository
 public class PaymentStore {
 
-    private final Map<String, PaymentTransaction> payments = new ConcurrentHashMap<>();
-    private final Set<FinalStatusKey> appliedFinalStatuses = ConcurrentHashMap.newKeySet();
-    private final Set<FinalStatusKey> claimedFinalStatuses = ConcurrentHashMap.newKeySet();
+    private final Map<String, PaymentTransaction> payments = new HashMap<>();
+    private final Set<FinalStatusKey> appliedFinalStatuses = new HashSet<>();
+    private final Set<FinalStatusKey> claimedFinalStatuses = new HashSet<>();
 
     public synchronized List<PaymentTransaction> findAllByIds(Collection<String> paymentIds) {
         List<PaymentTransaction> foundPayments = new ArrayList<>(paymentIds.size());

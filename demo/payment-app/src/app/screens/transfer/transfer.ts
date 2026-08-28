@@ -2,108 +2,101 @@ import {Component} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {Router} from '@angular/router';
 import {PspService} from '../../services/psp/psp.service';
+import {UserService} from '../../services/user/user.service';
+
+type TransferStep = 'pix' | 'amount' | 'confirm';
 
 @Component({
   selector: 'app-transfer',
-  imports: [
-    FormsModule
-  ],
+  imports: [FormsModule],
   templateUrl: './transfer.html',
-  styleUrl: './transfer.css'
 })
 export class Transfer {
-  constructor(private router: Router, private pspService: PspService) {
+  step: TransferStep = 'pix';
+  pixKey = '';
+  amount: number | null = null;
+  loading = false;
+  errorMessage = '';
+  recipient = {name: '', taxId: '', institution: ''};
+
+  constructor(
+    private readonly router: Router,
+    private readonly pspService: PspService,
+    userService: UserService,
+  ) {
+    if (!userService.user()) {
+      void this.router.navigate(['/start']);
+    }
   }
 
-  step: 'pix' | 'amount' | 'confirm' = 'pix';
-  pixKey: string = '';
-  loading: boolean = false;
-  errorMessage: string = '';
-
-  recipient = {
-    name: '',
-    taxId: '',
-    institution: '',
-    found: false,
-  };
-
-  amount: number | null = null;
-
-  submitPixKey() {
+  submitPixKey(): void {
+    const pixKey = this.pixKey.trim();
     this.errorMessage = '';
-    this.loading = true;
+    if (!pixKey) {
+      this.errorMessage = 'Enter a PIX key.';
+      return;
+    }
 
-    this.pspService.searchPixKey(this.pixKey).subscribe({
-      next: result => {
-        this.recipient = {
-          name: result.name,
-          taxId: result.taxId,
-          institution: result.institution,
-          found: true,
-        };
+    this.loading = true;
+    this.pspService.searchPixKey(pixKey).subscribe({
+      next: recipient => {
+        this.pixKey = pixKey;
+        this.recipient = recipient;
         this.step = 'amount';
         this.loading = false;
       },
-      error: err => {
+      error: () => {
         this.loading = false;
-        this.errorMessage = 'An error occurred while searching for the PIX key. Please try again.';
-        console.error('Error searching PIX key:', err);
-      }
+        this.errorMessage = 'PIX key not found.';
+      },
     });
   }
 
-  backToPix() {
-    this.step = 'pix';
-    this.pixKey = '';
-    this.recipient = {name: '', taxId: '', institution: '', found: false};
-    this.amount = null;
+  proceedToConfirm(): void {
     this.errorMessage = '';
-  }
-
-  proceedToConfirm() {
-    this.errorMessage = '';
-
     if (!this.amount || this.amount <= 0) {
-      this.errorMessage = 'Please enter a valid amount.';
+      this.errorMessage = 'Enter a positive amount.';
       return;
     }
-
     this.step = 'confirm';
   }
 
-  backToAmount() {
-    this.step = 'amount';
-    this.errorMessage = '';
-  }
-
-  confirmTransfer() {
-    this.errorMessage = '';
-
+  confirmTransfer(): void {
     if (!this.amount || this.amount <= 0) {
-      this.errorMessage = 'Invalid amount. Please enter a valid amount.';
+      this.errorMessage = 'Enter a positive amount.';
       return;
     }
 
-    this.pspService.requestTransfer({amount: this.amount, receiverPixKey: this.pixKey}).subscribe({
+    this.loading = true;
+    this.errorMessage = '';
+    this.pspService.requestTransfer({
+      amount: this.amount,
+      receiverPixKey: this.pixKey,
+      description: 'Reference demo payment',
+    }).subscribe({
       next: () => {
-        alert(`✅ Transfer of $${this.amount} to ${this.recipient.name} confirmed!\nWithin minutes, your balance will be updated.`);
-
-        // Reset state after successful transfer
-        this.step = 'pix';
-        this.pixKey = '';
-        this.amount = null;
-        this.recipient = {name: '', taxId: '', institution: '', found: false};
-
-        this.router.navigate(['/home']).catch((error: any) => console.log(error));
+        const amount = new Intl.NumberFormat('pt-BR', {style: 'currency', currency: 'BRL'}).format(this.amount!);
+        window.alert(`${amount} payment submitted to ${this.recipient.name}. The balance will update after the final outcome.`);
+        void this.router.navigate(['/home']);
       },
-      error: (err: any) => {
-        this.errorMessage = 'An error occurred while processing the transfer. Please try again.';
-        console.error('Error confirming transfer:', err);
-      }
+      error: () => {
+        this.loading = false;
+        this.errorMessage = 'Could not submit the payment.';
+      },
     });
   }
 
-  goHome() {
-    this.router.navigate(['/home']).catch((error: any) => console.log(error));
+  back(): void {
+    this.errorMessage = '';
+    if (this.step === 'confirm') {
+      this.step = 'amount';
+      return;
+    }
+    if (this.step === 'amount') {
+      this.step = 'pix';
+      this.amount = null;
+      return;
+    }
+    void this.router.navigate(['/home']);
   }
 }

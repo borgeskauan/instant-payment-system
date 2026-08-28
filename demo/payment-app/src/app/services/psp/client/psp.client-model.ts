@@ -4,8 +4,8 @@ export interface TransferPreviewDetails {
 
 export interface TransferExecutionRequest {
   senderCustomerId: string;
-  receiver: Party;
-  amount: number; // or string if you prefer to handle BigDecimal as string
+  receiverPixKey: string;
+  amount: number;
   description?: string;
 }
 

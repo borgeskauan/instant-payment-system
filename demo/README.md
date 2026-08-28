@@ -18,7 +18,7 @@ Then start the reference demo:
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f demo/docker-compose.yml up -d --build
 ```
 
-Open <http://localhost:4200>. PSP A is available at `http://localhost:8081`; PSP B is available at `http://localhost:8082`. Log into PSP A as Alice, create Bob and a PIX key through PSP B, then submit the transfer through the web application. The [Bruno collection](../docs/collection/README.md) provides the same flow as explicit API calls.
+Open <http://localhost:4200>. PSP A is available at `http://localhost:8081`; PSP B is available at `http://localhost:8082`. Open Alice's demo account at PSP A, create Bob and a PIX key through PSP B, then submit the transfer through the web application. The [Bruno collection](../docs/collection/README.md) provides the same flow as explicit API calls.
 
 The automated smoke exercises the complete business path and verifies the final balance changes observed by both PSPs:
 
@@ -28,7 +28,7 @@ The automated smoke exercises the complete business path and verifies the final 
 
 ## Interface
 
-![Reference demo login screen](screenshots/payment-app.png)
+![Reference demo account screen](screenshots/payment-app.png)
 
 ## Reset
 
