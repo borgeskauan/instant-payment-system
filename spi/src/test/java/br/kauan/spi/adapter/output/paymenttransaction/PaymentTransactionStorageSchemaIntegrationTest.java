@@ -54,6 +54,21 @@ class PaymentTransactionStorageSchemaIntegrationTest {
     }
 
     @Test
+    void paymentStorageContainsOnlyFieldsUsedByTheCurrentJdbcModel() {
+        assertThat(columnTypes("payment_transaction_entity")).containsOnlyKeys(
+                "payment_id",
+                "state",
+                "sender_bank_code",
+                "receiver_bank_code",
+                "amount_cents",
+                "request_fingerprint",
+                "request_fingerprint_version",
+                "rejection_cause",
+                "external_reason_codes"
+        );
+    }
+
+    @Test
     void auditEventsRetainOnlyBusinessInvariantIndexes() {
         List<String> indexNames = jdbcTemplate.queryForList(
                 """

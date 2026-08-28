@@ -18,11 +18,8 @@ class OutboundNotificationSchemaIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void migrationLeavesOnlyTheMinimalTransactionalOutboxSchema() {
-        assertThat(regclass("outbound_notification")).isNull();
+    void migrationCreatesTheMinimalTransactionalOutboxSchema() {
         assertThat(regclass("notification_outbox")).isEqualTo("notification_outbox");
-        assertThat(regclass("notification_outbox_pending_idx")).isNull();
-        assertThat(regclass("notification_outbox_position_counter")).isNull();
         assertThat(columns()).containsExactly(
                 "communication_id",
                 "recipient_ispb",

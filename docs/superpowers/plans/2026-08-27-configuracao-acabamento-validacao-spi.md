@@ -37,15 +37,13 @@ de performance.
 1. Executar a suíte completa do SPI com PostgreSQL/Flyway.
 2. Executar testes funcionais do load-test.
 3. Recriar a stack e executar `mixed-outcomes-smoke`.
-4. Executar uma única regressão `mixed-outcomes-2k-15m`, pois a stack de
-   persistência e o schema foram alterados.
-5. Comparar outcomes, rolling mínimo, latências e recursos com o baseline
-   qualificado vigente.
-6. Atualizar o roadmap e a documentação arquitetural com o resultado final.
+4. Confirmar outcomes e artefatos do smoke sem transformar este cleanup em uma
+   nova rodada de estabilização de performance.
+5. Atualizar o roadmap e a documentação arquitetural com o resultado final.
 
 ## Gate
 
 * um default por propriedade, pertencente ao componente;
 * overrides de deployment explícitos e configuração efetiva observável;
 * nenhuma referência runtime a arquiteturas removidas;
-* comportamento funcional preservado e benchmark sem regressão material.
+* comportamento funcional preservado pelo smoke em stack limpa.

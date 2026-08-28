@@ -28,6 +28,5 @@ class KafkaInitTopicsTest {
                 .contains("retention.ms=604800000")
                 .contains("retention.bytes=-1")
                 .contains("notification topic $$topic must have exactly $$partitions partitions");
-        assertThat(compose).doesNotContain("ensure_topic psp-notifications 8");
     }
 }

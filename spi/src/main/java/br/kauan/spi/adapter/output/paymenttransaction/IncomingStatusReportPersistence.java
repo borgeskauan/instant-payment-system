@@ -8,6 +8,8 @@ import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.status.StatusReportOutcome;
+import br.kauan.spi.domain.entity.transfer.BankAccount;
+import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -85,11 +87,9 @@ class IncomingStatusReportPersistence {
             WHERE balance.bank_code = delta.bank_code
             """;
 
-    private final PaymentTransactionRowMapper repositoryMapper;
     private final JdbcTemplate jdbcTemplate;
 
-    IncomingStatusReportPersistence(PaymentTransactionRowMapper repositoryMapper, JdbcTemplate jdbcTemplate) {
-        this.repositoryMapper = repositoryMapper;
+    IncomingStatusReportPersistence(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -617,12 +617,18 @@ class IncomingStatusReportPersistence {
     }
 
     private PaymentTransactionCommand toPaymentTransaction(StatusReportActionRow actionRow) {
-        PaymentTransactionRow row = new PaymentTransactionRow();
-        row.setPaymentId(actionRow.paymentId());
-        row.setAmountCents(actionRow.amountCents());
-        row.setSenderBankCode(actionRow.senderBankCode());
-        row.setReceiverBankCode(actionRow.receiverBankCode());
-        return repositoryMapper.toDomain(row);
+        return PaymentTransactionCommand.builder()
+                .paymentId(actionRow.paymentId())
+                .amountCents(actionRow.amountCents())
+                .sender(party(actionRow.senderBankCode()))
+                .receiver(party(actionRow.receiverBankCode()))
+                .build();
+    }
+
+    private Party party(String bankCode) {
+        return Party.builder()
+                .account(BankAccount.builder().bankCode(bankCode).build())
+                .build();
     }
 
     private enum Action {

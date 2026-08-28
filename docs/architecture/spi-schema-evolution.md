@@ -64,6 +64,12 @@ para `BYTEA`, versão para `SMALLINT` e tipos de auditoria para representações
 compactas. O fillfactor da tabela de pagamentos foi caracterizado durante a
 estabilização e permaneceu em 50 para favorecer suas transições de estado.
 
+O baseline final também removeu da tabela de pagamentos os campos completos de
+pagador e recebedor que o fluxo JDBC nunca consultava. O hot path persiste apenas
+identidade, fingerprint, estado, valor e os ISPBs necessários para reserva,
+liquidação e rejeição; a notificação transacional continua carregando o payload
+externo completo.
+
 O commit `be45b59` removeu índices técnicos de auditoria sem consumidores e a
 primary key de `event_id`; o identificador continua obrigatório e gerado para
 ordenação/evidência, mas não participa da regra de negócio.
@@ -85,8 +91,8 @@ Shape constraints preservam estado, deltas financeiros e origem do motivo na
 mesma row. A definição vigente está em
 [`auditoria-transacoes-spi.md`](../board/Atividades/concluidas/auditoria-transacoes-spi.md).
 
-A tabela e a view de auditoria legada existiam somente para converter bancos
-experimentais. Elas não são recriadas no baseline, pois não existe histórico a
+O schema de auditoria anterior existia somente para converter bancos
+experimentais. Ele não é recriado no baseline, pois não existe histórico a
 preservar em um banco novo.
 
 ## Vocabulário final de estados e motivos

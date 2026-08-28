@@ -16,26 +16,9 @@ CREATE TYPE payment_audit_event_type AS ENUM (
 
 CREATE TABLE payment_transaction_entity (
     payment_id VARCHAR(255) PRIMARY KEY,
-    currency VARCHAR(3),
-    description VARCHAR(255),
     state payment_state NOT NULL,
-
-    sender_name VARCHAR(255),
-    sender_tax_id VARCHAR(255),
-    sender_pix_key VARCHAR(255),
-    sender_account_number VARCHAR(255),
-    sender_account_branch VARCHAR(255),
-    sender_account_type VARCHAR(50),
     sender_bank_code VARCHAR(50),
-
-    receiver_name VARCHAR(255),
-    receiver_tax_id VARCHAR(255),
-    receiver_pix_key VARCHAR(255),
-    receiver_account_number VARCHAR(255),
-    receiver_account_branch VARCHAR(255),
-    receiver_account_type VARCHAR(50),
     receiver_bank_code VARCHAR(50),
-
     amount_cents BIGINT,
     request_fingerprint BYTEA,
     request_fingerprint_version SMALLINT,

@@ -16,12 +16,9 @@ public class JdbcPaymentTransactionRepository implements PaymentTransactionRepos
     private final IncomingPaymentRequestPersistence incomingPaymentRequestPersistence;
     private final IncomingStatusReportPersistence incomingStatusReportPersistence;
 
-    public JdbcPaymentTransactionRepository(
-            PaymentTransactionRowMapper repositoryMapper,
-            JdbcTemplate jdbcTemplate
-    ) {
+    public JdbcPaymentTransactionRepository(JdbcTemplate jdbcTemplate) {
         this.incomingPaymentRequestPersistence = new IncomingPaymentRequestPersistence(jdbcTemplate);
-        this.incomingStatusReportPersistence = new IncomingStatusReportPersistence(repositoryMapper, jdbcTemplate);
+        this.incomingStatusReportPersistence = new IncomingStatusReportPersistence(jdbcTemplate);
     }
 
     @Override

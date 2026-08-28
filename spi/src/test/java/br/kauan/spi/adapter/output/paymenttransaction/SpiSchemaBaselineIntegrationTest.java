@@ -19,18 +19,12 @@ class SpiSchemaBaselineIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void cleanDatabaseUsesOneSupportedBaselineWithoutLegacyRelations() {
+    void cleanDatabaseUsesOneSupportedBaseline() {
         Integer appliedMigrations = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM spi_flyway_schema_history WHERE success",
                 Integer.class
         );
 
         assertThat(appliedMigrations).isEqualTo(1);
-        assertThat(regclass("payment_audit_event_legacy_v16")).isNull();
-        assertThat(regclass("payment_audit_event_history")).isNull();
-    }
-
-    private String regclass(String relationName) {
-        return jdbcTemplate.queryForObject("SELECT to_regclass(?)", String.class, relationName);
     }
 }

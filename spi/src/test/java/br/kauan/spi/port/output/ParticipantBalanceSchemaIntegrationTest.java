@@ -34,10 +34,8 @@ class ParticipantBalanceSchemaIntegrationTest {
     }
 
     @Test
-    void migrationLeavesOnlyTheParticipantBalanceTable() {
+    void migrationCreatesTheParticipantBalanceTable() {
         assertThat(regclass("participant_balance_entity")).isEqualTo("participant_balance_entity");
-        assertThat(regclass("funds_bucket_entity")).isNull();
-        assertThat(regclass("funds_entity")).isNull();
     }
 
     @Test

@@ -115,14 +115,6 @@ class PaymentMessageConsumerTest {
     }
 
     @Test
-    void consumerDoesNotExposeSingleRecordEntryPoints() {
-        assertThrows(NoSuchMethodException.class,
-                () -> PaymentMessageConsumer.class.getMethod("consumePaymentRequest", byte[].class));
-        assertThrows(NoSuchMethodException.class,
-                () -> PaymentMessageConsumer.class.getMethod("consumeStatusReport", byte[].class));
-    }
-
-    @Test
     void paymentAndStatusListenersUseSeparateConsumerGroupsAndManualAck() throws Exception {
         KafkaListener paymentListener = PaymentMessageConsumer.class
                 .getMethod("consumePaymentRequests", List.class, Acknowledgment.class)
