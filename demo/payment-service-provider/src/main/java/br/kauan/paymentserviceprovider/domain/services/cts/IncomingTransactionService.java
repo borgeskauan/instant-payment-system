@@ -7,6 +7,7 @@ import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.state.IncomingPaymentClassification;
 import br.kauan.paymentserviceprovider.state.PaymentStore;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,39 +37,34 @@ public class IncomingTransactionService {
     }
 
     public void handleTransferRequests(List<PaymentTransaction> transactions) {
-        log.info("[PIX FLOW - Step 4] PSP Recebedor received {} incoming transactions from SPI",
-                transactions.size());
-        processTransferRequests(transactions);
-    }
-
-    private void processTransferRequests(List<PaymentTransaction> transactions) {
         if (transactions.isEmpty()) {
             return;
         }
 
-        try {
-            List<StatusReport> statusReports = handleIncomingTransactions(transactions);
-            if (statusReports.isEmpty()) {
-                log.info("[PIX FLOW - Step 5] No accepted incoming transactions to report to SPI");
-                return;
-            }
-
-            var regulatoryStatusReport = statusReportMapper.toRegulatoryReport(statusReports);
-            byte[] statusBytes = objectMapper.writeValueAsBytes(regulatoryStatusReport);
-
-            log.info("[PIX FLOW - Step 5] PSP Recebedor sending {} acceptances (PACS.002) to SPI",
-                    statusReports.size());
-            transferRestClient.sendTransferStatus(statusBytes);
-            log.info("[PIX FLOW - Step 5] Acceptances sent successfully to kafka-producer (will be forwarded to SPI)");
-        } catch (Exception e) {
-            log.error("[PIX FLOW - Error] Failed to serialize status reports", e);
-            throw new RuntimeException("Failed to send status reports", e);
+        log.info("[PIX FLOW - Step 4] PSP Recebedor received {} incoming transactions from SPI",
+                transactions.size());
+        List<StatusReport> statusReports = classifyAcceptedPayments(transactions);
+        if (statusReports.isEmpty()) {
+            log.info("[PIX FLOW - Step 5] No accepted incoming transactions to report to SPI");
+            return;
         }
 
-        log.debug("[PIX FLOW - Step 5] Sent status reports for {} transactions", transactions.size());
+        byte[] statusBytes;
+        try {
+            var regulatoryStatusReport = statusReportMapper.toRegulatoryReport(statusReports);
+            statusBytes = objectMapper.writeValueAsBytes(regulatoryStatusReport);
+        } catch (JsonProcessingException e) {
+            log.error("[PIX FLOW - Error] Failed to serialize status reports", e);
+            throw new IllegalStateException("Failed to serialize status reports", e);
+        }
+
+        log.info("[PIX FLOW - Step 5] PSP Recebedor sending {} acceptances (PACS.002) to SPI",
+                statusReports.size());
+        transferRestClient.sendTransferStatus(statusBytes);
+        log.info("[PIX FLOW - Step 5] Acceptances sent successfully to kafka-producer (will be forwarded to SPI)");
     }
 
-    private List<StatusReport> handleIncomingTransactions(List<PaymentTransaction> transactions) {
+    private List<StatusReport> classifyAcceptedPayments(List<PaymentTransaction> transactions) {
         IncomingPaymentClassification classification = paymentStore.storeAndClassifyIncoming(transactions);
         if (!classification.divergentPayments().isEmpty()) {
             log.warn("[PIX FLOW - Step 4] PSP Recebedor detected {} divergent incoming transactions",

@@ -13,7 +13,6 @@ import io.grpc.stub.StreamObserver;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -25,7 +24,6 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Component
-@ConditionalOnProperty(prefix = "notification.gateway", name = "client-enabled", havingValue = "true", matchIfMissing = true)
 public class NotificationGatewayGrpcClient implements SmartLifecycle {
 
     private final NotificationGatewayProperties properties;

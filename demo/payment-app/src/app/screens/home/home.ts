@@ -4,9 +4,9 @@ import {Router} from '@angular/router';
 import {AppConfigService} from '../../services/config/app-config.service';
 import {UserService} from '../../services/user/user.service';
 import {PspService} from '../../services/psp/psp.service';
-import {PaymentSummary} from '../../services/psp/client/psp.client-model';
+import {PaymentSummary} from '../../services/psp/psp.model';
 
-const PAYMENT_REFRESH_INTERVAL_MS = 2000;
+const ACCOUNT_REFRESH_INTERVAL_MS = 2000;
 
 @Component({
   selector: 'app-home',
@@ -18,7 +18,7 @@ export class Home implements OnDestroy {
   private readonly userService = inject(UserService);
   private readonly config = inject(AppConfigService);
   private readonly pspService = inject(PspService);
-  private paymentPollingId?: number;
+  private refreshIntervalId?: number;
 
   readonly customer = this.userService.user;
   readonly demoRecipient = this.config.demoRecipient;
@@ -30,8 +30,8 @@ export class Home implements OnDestroy {
       void this.router.navigate(['/start']);
       return;
     }
-    this.refreshPayments();
-    this.paymentPollingId = window.setInterval(() => this.refreshPayments(), PAYMENT_REFRESH_INTERVAL_MS);
+    this.refreshAccount();
+    this.refreshIntervalId = window.setInterval(() => this.refreshAccount(), ACCOUNT_REFRESH_INTERVAL_MS);
   }
 
   goToTransfer(): void {
@@ -47,8 +47,8 @@ export class Home implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    if (this.paymentPollingId !== undefined) {
-      window.clearInterval(this.paymentPollingId);
+    if (this.refreshIntervalId !== undefined) {
+      window.clearInterval(this.refreshIntervalId);
     }
   }
 
@@ -56,7 +56,8 @@ export class Home implements OnDestroy {
     return name ? name.charAt(0).toUpperCase() : 'U';
   }
 
-  private refreshPayments(): void {
+  private refreshAccount(): void {
+    this.userService.refreshCustomer().subscribe({error: () => undefined});
     this.pspService.listPayments().subscribe({
       next: payments => this.payments.set(payments.slice(0, 5)),
       error: () => undefined,

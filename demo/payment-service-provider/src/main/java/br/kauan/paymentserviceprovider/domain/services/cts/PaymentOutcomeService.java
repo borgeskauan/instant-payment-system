@@ -12,8 +12,10 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 @Slf4j
@@ -27,7 +29,7 @@ public class PaymentOutcomeService {
         this.stateStore = stateStore;
     }
 
-    public void handleStatuses(List<StatusReport> statusReports) {
+    public synchronized void handleStatuses(List<StatusReport> statusReports) {
         if (statusReports.isEmpty()) {
             return;
         }
@@ -40,44 +42,64 @@ public class PaymentOutcomeService {
             log.info("PSP received {} rejected payment outcomes; local balance is unchanged", rejectedCount);
         }
         Map<String, PaymentTransaction> paymentsById = findPayments(statusReports);
+        List<FinalOutcome> newOutcomes = selectNewFinalOutcomes(statusReports);
         Map<BankAccountId, BigDecimal> balanceDeltas = new HashMap<>();
-        List<ClaimedOutcome> claimedOutcomes = new ArrayList<>();
-        int inProcessCount = 0;
 
-        for (StatusReport outcome : statusReports) {
-            PaymentTransaction payment = paymentsById.get(outcome.getOriginalPaymentId());
-            switch (outcome.getStatus()) {
-                case ACCEPTED_AND_SETTLED_FOR_RECEIVER -> claimAndAddDelta(
-                        outcome,
-                        payment.getReceiver().getAccount().getId(),
-                        payment.getAmount(),
-                        balanceDeltas,
-                        claimedOutcomes
-                );
-                case ACCEPTED_AND_SETTLED_FOR_SENDER -> claimAndAddDelta(
-                        outcome,
-                        payment.getSender().getAccount().getId(),
-                        payment.getAmount().negate(),
-                        balanceDeltas,
-                        claimedOutcomes
-                );
-                case ACCEPTED_IN_PROCESS -> inProcessCount++;
-                case REJECTED -> claim(outcome, claimedOutcomes);
+        for (FinalOutcome outcome : newOutcomes) {
+            PaymentTransaction payment = paymentsById.get(outcome.paymentId());
+            switch (outcome.status()) {
+                case ACCEPTED_AND_SETTLED_FOR_RECEIVER -> balanceDeltas.merge(
+                        payment.getReceiver().getAccount().getId(), payment.getAmount(), BigDecimal::add);
+                case ACCEPTED_AND_SETTLED_FOR_SENDER -> balanceDeltas.merge(
+                        payment.getSender().getAccount().getId(), payment.getAmount().negate(), BigDecimal::add);
+                case REJECTED -> {
+                }
+                case ACCEPTED_IN_PROCESS -> throw new IllegalStateException("In-process outcome cannot be final");
             }
         }
 
-        try {
-            if (!balanceDeltas.isEmpty()) {
-                stateStore.applyBalanceDeltas(balanceDeltas);
-            }
-            claimedOutcomes.forEach(this::markApplied);
-        } catch (RuntimeException e) {
-            claimedOutcomes.forEach(this::releaseClaim);
-            throw e;
+        if (!balanceDeltas.isEmpty()) {
+            stateStore.applyBalanceDeltas(balanceDeltas);
         }
+        newOutcomes.forEach(this::markApplied);
 
+        long inProcessCount = statusReports.stream()
+                .filter(report -> report.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS)
+                .count();
         log.info("PSP handled {} final outcomes and {} in-process outcomes",
-                claimedOutcomes.size(), inProcessCount);
+                newOutcomes.size(), inProcessCount);
+    }
+
+    private List<FinalOutcome> selectNewFinalOutcomes(List<StatusReport> outcomes) {
+        Map<String, Set<PaymentStatus>> statusesByPayment = new HashMap<>();
+        List<FinalOutcome> newOutcomes = new ArrayList<>();
+
+        for (StatusReport outcome : outcomes) {
+            if (outcome.getStatus() == PaymentStatus.ACCEPTED_IN_PROCESS) {
+                continue;
+            }
+
+            String paymentId = outcome.getOriginalPaymentId();
+            Set<PaymentStatus> statuses = statusesByPayment.computeIfAbsent(
+                    paymentId,
+                    id -> new HashSet<>(paymentStore.findAppliedFinalStatuses(id))
+            );
+            if (conflictsWith(outcome.getStatus(), statuses)) {
+                throw new IllegalArgumentException("Contradictory final outcome for payment: " + paymentId);
+            }
+            if (statuses.add(outcome.getStatus())) {
+                newOutcomes.add(new FinalOutcome(paymentId, outcome.getStatus()));
+            }
+        }
+        return newOutcomes;
+    }
+
+    private boolean conflictsWith(PaymentStatus status, Set<PaymentStatus> existingStatuses) {
+        if (status == PaymentStatus.REJECTED) {
+            return existingStatuses.contains(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+                    || existingStatuses.contains(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER);
+        }
+        return existingStatuses.contains(PaymentStatus.REJECTED);
     }
 
     private Map<String, PaymentTransaction> findPayments(List<StatusReport> outcomes) {
@@ -96,34 +118,10 @@ public class PaymentOutcomeService {
         return paymentsById;
     }
 
-    private void claimAndAddDelta(
-            StatusReport outcome,
-            BankAccountId accountId,
-            BigDecimal delta,
-            Map<BankAccountId, BigDecimal> balanceDeltas,
-            List<ClaimedOutcome> claimedOutcomes
-    ) {
-        if (claim(outcome, claimedOutcomes)) {
-            balanceDeltas.merge(accountId, delta, BigDecimal::add);
-        }
-    }
-
-    private boolean claim(StatusReport outcome, List<ClaimedOutcome> claimedOutcomes) {
-        if (!paymentStore.claimFinalStatus(outcome.getOriginalPaymentId(), outcome.getStatus())) {
-            return false;
-        }
-        claimedOutcomes.add(new ClaimedOutcome(outcome.getOriginalPaymentId(), outcome.getStatus()));
-        return true;
-    }
-
-    private void markApplied(ClaimedOutcome outcome) {
+    private void markApplied(FinalOutcome outcome) {
         paymentStore.markFinalStatusApplied(outcome.paymentId(), outcome.status());
     }
 
-    private void releaseClaim(ClaimedOutcome outcome) {
-        paymentStore.releaseFinalStatusClaim(outcome.paymentId(), outcome.status());
-    }
-
-    private record ClaimedOutcome(String paymentId, PaymentStatus status) {
+    private record FinalOutcome(String paymentId, PaymentStatus status) {
     }
 }

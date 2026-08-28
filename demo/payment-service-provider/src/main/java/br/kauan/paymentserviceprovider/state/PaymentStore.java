@@ -12,8 +12,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +24,7 @@ import java.util.Set;
 public class PaymentStore {
 
     private final Map<String, StoredPayment> payments = new HashMap<>();
-    private final Set<FinalStatusKey> appliedFinalStatuses = new HashSet<>();
-    private final Set<FinalStatusKey> claimedFinalStatuses = new HashSet<>();
+    private final Map<String, EnumSet<PaymentStatus>> appliedFinalStatuses = new HashMap<>();
 
     public synchronized List<PaymentTransaction> findAllByIds(Collection<String> paymentIds) {
         List<PaymentTransaction> foundPayments = new ArrayList<>(paymentIds.size());
@@ -88,27 +87,18 @@ public class PaymentStore {
         return new IncomingPaymentClassification(acceptedPayments, divergentPayments);
     }
 
-    public synchronized boolean claimFinalStatus(String paymentId, PaymentStatus status) {
-        FinalStatusKey key = new FinalStatusKey(paymentId, status);
-        if (appliedFinalStatuses.contains(key) || claimedFinalStatuses.contains(key)) {
-            return false;
-        }
-        claimedFinalStatuses.add(key);
-        return true;
+    public synchronized Set<PaymentStatus> findAppliedFinalStatuses(String paymentId) {
+        return Set.copyOf(appliedFinalStatuses.getOrDefault(paymentId, EnumSet.noneOf(PaymentStatus.class)));
     }
 
     public synchronized void markFinalStatusApplied(String paymentId, PaymentStatus status) {
-        FinalStatusKey key = new FinalStatusKey(paymentId, status);
-        claimedFinalStatuses.remove(key);
-        appliedFinalStatuses.add(key);
+        appliedFinalStatuses
+                .computeIfAbsent(paymentId, ignored -> EnumSet.noneOf(PaymentStatus.class))
+                .add(status);
         StoredPayment payment = payments.get(paymentId);
         if (payment != null) {
             payments.put(paymentId, payment.withStatus(toLifecycleStatus(status)));
         }
-    }
-
-    public synchronized void releaseFinalStatusClaim(String paymentId, PaymentStatus status) {
-        claimedFinalStatuses.remove(new FinalStatusKey(paymentId, status));
     }
 
     private boolean containsDivergentRecords(PaymentTransaction first, List<PaymentTransaction> records) {
@@ -157,8 +147,5 @@ public class PaymentStore {
             return Objects.equals(left, right);
         }
         return Objects.equals(left.getId(), right.getId()) && Objects.equals(left.getType(), right.getType());
-    }
-
-    private record FinalStatusKey(String paymentId, PaymentStatus status) {
     }
 }

@@ -1,9 +1,21 @@
 import {Injectable} from '@angular/core';
+import {HttpClient} from '@angular/common/http';
 import {map, Observable} from 'rxjs';
-import {PixKeySearchResult, TransferRequest} from './psp.model';
-import {PspClientService} from './client/psp-client.service';
+import {PaymentSummary, PixKeySearchResult, TransferRequest, TransferResult} from './psp.model';
 import {UserService} from '../user/user.service';
 import {AppConfigService} from '../config/app-config.service';
+
+interface TransferPreviewResponse {
+  receiver: {
+    name: string;
+    taxId: string;
+    account: {
+      id: {
+        bankCode: string;
+      };
+    };
+  };
+}
 
 @Injectable({
   providedIn: 'root'
@@ -11,16 +23,16 @@ import {AppConfigService} from '../config/app-config.service';
 export class PspService {
 
   constructor(
-    private pspClient: PspClientService,
-    private userService: UserService,
-    private config: AppConfigService,
+    private readonly http: HttpClient,
+    private readonly userService: UserService,
+    private readonly config: AppConfigService,
   ) {
   }
 
   requestTransfer(request: TransferRequest) {
     const currentCustomerId = this.userService.requireUser().id;
 
-    return this.pspClient.requestTransfer({
+    return this.http.post<TransferResult>(`${this.config.baseUrl}/transfer/execute`, {
       senderCustomerId: currentCustomerId,
       receiverPixKey: request.receiverPixKey,
       amount: request.amount,
@@ -29,11 +41,15 @@ export class PspService {
   }
 
   listPayments() {
-    return this.pspClient.listPayments(this.userService.requireUser().id);
+    const customerId = this.userService.requireUser().id;
+    return this.http.get<PaymentSummary[]>(`${this.config.baseUrl}/customers/${customerId}/payments`);
   }
 
   searchPixKey(pixKey: string): Observable<PixKeySearchResult> {
-    return this.pspClient.searchPixKey(pixKey).pipe(
+    return this.http.post<TransferPreviewResponse>(
+      `${this.config.baseUrl}/transfer/preview`,
+      {receiverPixKey: pixKey},
+    ).pipe(
       map(response => {
         const bankCode = response.receiver.account.id.bankCode;
         return {

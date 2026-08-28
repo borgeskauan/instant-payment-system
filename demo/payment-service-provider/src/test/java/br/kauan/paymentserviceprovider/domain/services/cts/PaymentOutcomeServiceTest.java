@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,8 +46,11 @@ class PaymentOutcomeServiceTest {
     void senderFinalOutcomeReplayDebitsLocalBalanceOnlyOnce() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER))
-                .thenReturn(true, false);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1"))
+                .thenReturn(
+                        Set.of(),
+                        Set.of(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
+                );
 
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)));
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)));
@@ -61,8 +65,11 @@ class PaymentOutcomeServiceTest {
     void receiverFinalOutcomeReplayCreditsLocalBalanceOnlyOnce() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER))
-                .thenReturn(true, false);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1"))
+                .thenReturn(
+                        Set.of(),
+                        Set.of(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)
+                );
 
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)));
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)));
@@ -76,8 +83,7 @@ class PaymentOutcomeServiceTest {
     void senderAndReceiverOutcomesUseIndependentIdempotencyKeys() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)).thenReturn(true);
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_RECEIVER)).thenReturn(true);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1")).thenReturn(Set.of());
 
         service.handleStatuses(List.of(
                 status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER),
@@ -95,8 +101,7 @@ class PaymentOutcomeServiceTest {
     void duplicateFinalOutcomesInSameBatchApplyOnlyOnce() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER))
-                .thenReturn(true, false);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1")).thenReturn(Set.of());
 
         service.handleStatuses(List.of(
                 status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER),
@@ -109,17 +114,16 @@ class PaymentOutcomeServiceTest {
     }
 
     @Test
-    void failedBalanceUpdateReleasesFinalOutcomeClaim() {
+    void failedBalanceUpdateDoesNotRecordTheFinalOutcome() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)).thenReturn(true);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1")).thenReturn(Set.of());
         doThrow(new IllegalStateException("balance update failed")).when(stateStore).applyBalanceDeltas(anyMap());
 
         assertThatThrownBy(() -> service.handleStatuses(
                 List.of(status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER))))
                 .isInstanceOf(IllegalStateException.class);
 
-        verify(paymentStore).releaseFinalStatusClaim("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
         verify(paymentStore, never()).markFinalStatusApplied("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
     }
 
@@ -127,7 +131,7 @@ class PaymentOutcomeServiceTest {
     void rejectedOutcomeUpdatesThePaymentWithoutChangingTheBalance() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
-        when(paymentStore.claimFinalStatus("E2E-1", PaymentStatus.REJECTED)).thenReturn(true);
+        when(paymentStore.findAppliedFinalStatuses("E2E-1")).thenReturn(Set.of());
 
         service.handleStatuses(List.of(status("E2E-1", PaymentStatus.REJECTED)));
 
@@ -136,7 +140,7 @@ class PaymentOutcomeServiceTest {
     }
 
     @Test
-    void unknownPaymentFailsBeforeAnyFinalOutcomeIsClaimed() {
+    void unknownPaymentFailsBeforeAnyFinalOutcomeIsApplied() {
         PaymentTransaction payment = payment("E2E-1");
         when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
 
@@ -145,8 +149,25 @@ class PaymentOutcomeServiceTest {
                 status("unknown", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
         ))).isInstanceOf(IllegalArgumentException.class);
 
-        verify(paymentStore, never()).claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
+        verify(paymentStore, never()).findAppliedFinalStatuses("E2E-1");
         verifyNoInteractions(stateStore);
+    }
+
+    @Test
+    void rejectedAndAcceptedOutcomesForTheSamePaymentAreContradictory() {
+        PaymentTransaction payment = payment("E2E-1");
+        when(paymentStore.findAllByIds(anyList())).thenReturn(List.of(payment));
+        when(paymentStore.findAppliedFinalStatuses("E2E-1")).thenReturn(Set.of());
+
+        assertThatThrownBy(() -> service.handleStatuses(List.of(
+                status("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER),
+                status("E2E-1", PaymentStatus.REJECTED)
+        )))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Contradictory final outcome");
+
+        verifyNoInteractions(stateStore);
+        verify(paymentStore, never()).markFinalStatusApplied("E2E-1", PaymentStatus.REJECTED);
     }
 
     private static StatusReport status(String paymentId, PaymentStatus status) {

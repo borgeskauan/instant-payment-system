@@ -6,7 +6,6 @@ external:
 
 notification:
   gateway:
-    client-enabled: ${NOTIFICATION_GATEWAY_CLIENT_ENABLED:true}
     host: ${NOTIFICATION_GATEWAY_HOST:localhost}
     port: ${NOTIFICATION_GATEWAY_PORT:9090}
     reconnect-delay: ${NOTIFICATION_GATEWAY_RECONNECT_DELAY:1s}

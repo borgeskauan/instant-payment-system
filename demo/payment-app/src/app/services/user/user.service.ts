@@ -4,8 +4,6 @@ import {Router} from '@angular/router';
 import {map, Observable, switchMap, tap} from 'rxjs';
 import {AppConfigService} from '../config/app-config.service';
 
-const BALANCE_REFRESH_INTERVAL_MS = 2000;
-
 interface CustomerSnapshot {
   customer: {
     id: string;
@@ -13,11 +11,6 @@ interface CustomerSnapshot {
     taxId: string;
   };
   bankAccount: {
-    account: {
-      id: {
-        bankCode: string;
-      };
-    };
     balance: number;
   };
 }
@@ -26,7 +19,6 @@ export interface User {
   id: string;
   name: string;
   taxId: string;
-  bankCode: string;
   balance: number;
   pixKeys: string[];
 }
@@ -36,7 +28,6 @@ export class UserService {
 
   private readonly customerSnapshot = signal<CustomerSnapshot | null>(null);
   private readonly pixKeys = signal<string[]>([]);
-  private pollingId?: number;
 
   readonly user = computed<User | null>(() => {
     const snapshot = this.customerSnapshot();
@@ -47,7 +38,6 @@ export class UserService {
       id: snapshot.customer.id,
       name: snapshot.customer.name,
       taxId: snapshot.customer.taxId,
-      bankCode: snapshot.bankAccount.account.id.bankCode,
       balance: snapshot.bankAccount.balance,
       pixKeys: this.pixKeys(),
     };
@@ -62,11 +52,15 @@ export class UserService {
 
   openCustomer(name: string, taxId: string): Observable<CustomerSnapshot> {
     return this.requestCustomer(name, taxId).pipe(
-      tap(snapshot => {
-        this.customerSnapshot.set(snapshot);
-        this.startBalancePolling();
-      }),
+      tap(snapshot => this.customerSnapshot.set(snapshot)),
       switchMap(snapshot => this.fetchPixKeys().pipe(map(() => snapshot))),
+    );
+  }
+
+  refreshCustomer(): Observable<CustomerSnapshot> {
+    const user = this.requireUser();
+    return this.requestCustomer(user.name, user.taxId).pipe(
+      tap(snapshot => this.customerSnapshot.set(snapshot)),
     );
   }
 
@@ -93,7 +87,6 @@ export class UserService {
   }
 
   logout(): void {
-    this.stopBalancePolling();
     this.customerSnapshot.set(null);
     this.pixKeys.set([]);
     void this.router.navigate(['/start']);
@@ -101,29 +94,5 @@ export class UserService {
 
   private requestCustomer(name: string, taxId: string): Observable<CustomerSnapshot> {
     return this.http.post<CustomerSnapshot>(`${this.config.baseUrl}/customers`, {name, taxId});
-  }
-
-  private startBalancePolling(): void {
-    if (this.pollingId !== undefined) {
-      return;
-    }
-    this.pollingId = window.setInterval(() => {
-      const snapshot = this.customerSnapshot();
-      if (!snapshot) {
-        return;
-      }
-      this.requestCustomer(snapshot.customer.name, snapshot.customer.taxId).subscribe({
-        next: refreshed => this.customerSnapshot.set(refreshed),
-        error: () => undefined,
-      });
-    }, BALANCE_REFRESH_INTERVAL_MS);
-  }
-
-  private stopBalancePolling(): void {
-    if (this.pollingId === undefined) {
-      return;
-    }
-    window.clearInterval(this.pollingId);
-    this.pollingId = undefined;
   }
 }

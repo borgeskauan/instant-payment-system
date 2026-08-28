@@ -30,11 +30,14 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - reset limpo documentado: PSPs efêmeros devem iniciar junto de um log de notificações vazio;
 - contrato final do PSP reduzido para abertura de conta de demonstração e execução por chave, com nova resolução autoritativa no servidor;
 - PSP reduzido novamente, de 68 para 66 arquivos Java de produção e de 2.432 para 2.331 linhas;
-- Angular reduzido a quatro telas e 18 arquivos de aplicação, sem endpoint `/info`, falsa semântica de login, cache de recebedor, specs-túmulo ou harness de teste vazio;
+- Angular reduzido a quatro telas e 16 arquivos de aplicação, sem endpoint `/info`, falsa semântica de login, cache de recebedor, specs-túmulo ou harness de teste vazio;
 - PSP passou a expor o histórico efêmero do cliente com estados `PROCESSING`, `SETTLED` e `REJECTED`; a UI acompanha o pagamento submetido por até 1,5 segundo e mantém os pagamentos recentes na conta;
 - a demo agora apresenta somente Alice no PSP A e Bob no PSP B; ambos podem enviar e receber pagamentos, apenas a chave do Bob é provisionada, e a chave da Alice pode ser criada pelo usuário pela interface;
 - as telas internas identificam o cliente e o PSP ativos, preservam uma largura adequada no desktop, aceitam envio por Enter e apresentam a instituição recebedora com nome e ISPB;
 - a linguagem da aplicação agora orienta usuários não técnicos por um caminho recomendado, oculta detalhes internos do sistema e permite abrir diretamente a conta do destinatário após um pagamento confirmado;
+- o processamento de outcomes finais mantém débito do pagador e crédito do recebedor como efeitos independentes e idempotentes, sem estado transitório de claim/release; outcomes terminais contraditórios falham antes de alterar saldos;
+- o Angular possui uma única fronteira HTTP do PSP, um único arquivo de modelos e um único ciclo de atualização da conta; estado morto do ISPB do usuário foi removido;
+- o PSP não possui mais uma flag de produção criada somente para desativar o Pull num context-load test, e o fluxo de pagamentos recebidos não possui mais wrapper ou tratamento genérico de falhas;
 - 30 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados após a segunda passagem.
 
 ## Trabalho restante — contrato do PSP e Angular
@@ -51,6 +54,10 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - [x] Fazer o `NotificationProcessor` classificar e materializar cada payload a partir de uma única leitura JSON.
 - [x] Usar coleções simples no `PaymentStore` quando a sincronização externa já serializar todos os acessos.
 - [x] Expor a visão local de pagamentos do cliente e usar o `paymentId`, não o saldo, para acompanhar o outcome final na UI.
+- [x] Simplificar a idempotência de outcomes finais, preservando separadamente os efeitos do pagador e do recebedor sem simular claims transacionais em memória.
+- [x] Consolidar cliente e modelos HTTP do Angular e deixar a tela de conta controlar um único ciclo de atualização de saldo e histórico.
+- [x] Remover a flag `notification.gateway.client-enabled` e o context-load test que existia para sustentá-la.
+- [x] Tornar o processamento de pagamentos recebidos um fluxo direto e preservar a causa correta de falhas de serialização e transporte.
 
 Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, preview do recebedor, PACS tipado, HTTP/2 com mTLS, Pull gRPC com cursor, idempotência e atualização visual dos dois saldos.
 

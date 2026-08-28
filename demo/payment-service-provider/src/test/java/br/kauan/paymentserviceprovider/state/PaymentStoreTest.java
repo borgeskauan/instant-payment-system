@@ -37,9 +37,10 @@ class PaymentStoreTest {
         PaymentTransaction payment = payment("E2E-1", "10000001", "20000001", "10.00");
         store.saveAll(List.of(payment));
 
-        assertThat(store.claimFinalStatus("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)).isTrue();
         store.markFinalStatusApplied("E2E-1", PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
 
+        assertThat(store.findAppliedFinalStatuses("E2E-1"))
+                .containsExactly(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER);
         assertThat(store.findAllByAccountId(payment.getSender().getAccount().getId()))
                 .singleElement()
                 .extracting(StoredPayment::status)
