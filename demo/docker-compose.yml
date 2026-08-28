@@ -92,12 +92,30 @@ services:
       - default
       - core
 
+  demo-seed:
+    build:
+      context: ./seed
+      dockerfile: Dockerfile
+    environment:
+      PSP_URL: http://psp-b:8080
+      CUSTOMER_NAME: Bob
+      CUSTOMER_TAX_ID: "22222222222"
+      PIX_KEY: bob@example.com
+    depends_on:
+      psp-b:
+        condition: service_started
+
   payment-app:
     build:
       context: ./payment-app
       dockerfile: Dockerfile
     ports:
       - "4200:80"
+    depends_on:
+      psp-a:
+        condition: service_started
+      demo-seed:
+        condition: service_completed_successfully
 
 networks:
   core:

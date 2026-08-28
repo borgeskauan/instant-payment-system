@@ -6,6 +6,14 @@
 
   <main class="flex flex-grow items-center justify-center p-6">
     <div class="w-full max-w-sm space-y-6 rounded-2xl bg-white p-6 shadow-md">
+      <div class="rounded-xl bg-blue-50 p-4 text-sm text-blue-900">
+        <p class="font-semibold">Ready-to-run scenario</p>
+        <p class="mt-1">
+          Alice starts at PSP A. {{ demoRecipient.name }} is ready at {{ demoRecipient.provider }} with
+          <span class="font-mono">{{ demoRecipient.pixKey }}</span>.
+        </p>
+      </div>
+
       @if (errorMessage) {
         <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
       }

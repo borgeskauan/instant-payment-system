@@ -1,6 +1,7 @@
 import {Component} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {Router} from '@angular/router';
+import {AppConfigService} from '../../services/config/app-config.service';
 import {PspService} from '../../services/psp/psp.service';
 import {UserService} from '../../services/user/user.service';
 
@@ -13,7 +14,7 @@ type TransferStep = 'pix' | 'amount' | 'confirm';
 })
 export class Transfer {
   step: TransferStep = 'pix';
-  pixKey = '';
+  pixKey: string;
   amount: number | null = null;
   loading = false;
   errorMessage = '';
@@ -22,8 +23,10 @@ export class Transfer {
   constructor(
     private readonly router: Router,
     private readonly pspService: PspService,
+    config: AppConfigService,
     userService: UserService,
   ) {
+    this.pixKey = config.demoRecipient.pixKey;
     if (!userService.user()) {
       void this.router.navigate(['/start']);
     }

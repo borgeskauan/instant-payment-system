@@ -15,10 +15,11 @@ export class OpenAccount {
   private readonly config = inject(AppConfigService);
 
   readonly providers = this.config.providers;
+  readonly demoRecipient = this.config.demoRecipient;
 
   selectedProviderId = this.providers[0].id;
-  name = '';
-  taxId = '';
+  name = 'Alice';
+  taxId = '11111111111';
   errorMessage = '';
   loading = false;
 
