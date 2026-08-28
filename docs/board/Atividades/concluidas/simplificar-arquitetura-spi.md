@@ -352,7 +352,7 @@ Estes itens não devem aumentar o escopo das fases acima:
 * auditoria de entradas recusadas:
   [`auditoria-rejeicoes-entrada.md`](../Backlog/operacao-testes/auditoria-rejeicoes-entrada.md);
 * replay idêntico como no-op:
-  [`replay-identico-como-noop-spi.md`](../Backlog/pos-projeto/replay-identico-como-noop-spi.md);
+  [`replay-identico-como-noop-spi.md`](replay-identico-como-noop-spi.md);
 * homologação multi-instância:
   [`homologar-execucao-multi-instancia.md`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md);
 * tuning adicional de throughput, CPU, memória ou latência;
