@@ -5,10 +5,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,13 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * advance over the exact offsets that were examined.
  */
 @Component
-public final class RecentNotificationBuffer {
+public final class RecentNotificationWindow {
 
     private final int capacityPerPartition;
     private final ConcurrentHashMap<Integer, PartitionWindow> windows = new ConcurrentHashMap<>();
 
-    public RecentNotificationBuffer(
-            @Value("${notification-gateway.kafka.ring-capacity-per-partition:4096}")
+    public RecentNotificationWindow(
+            @Value("${notification-gateway.kafka.recent-window-capacity-per-partition:4096}")
             int capacityPerPartition
     ) {
         if (capacityPerPartition < 1) {
@@ -35,8 +32,7 @@ public final class RecentNotificationBuffer {
     }
 
     public enum LookupState {
-        DATA,
-        KNOWN_TAIL,
+        HIT,
         MISS
     }
 
@@ -46,20 +42,12 @@ public final class RecentNotificationBuffer {
             long lastExaminedOffset,
             boolean atTail
     ) {
-        public Lookup {
-            notifications = List.copyOf(notifications);
-        }
-
-        private static Lookup data(
+        private static Lookup hit(
                 List<KafkaNotificationRecord> notifications,
                 long lastExaminedOffset,
                 boolean atTail
         ) {
-            return new Lookup(LookupState.DATA, notifications, lastExaminedOffset, atTail);
-        }
-
-        private static Lookup knownTail(long offset) {
-            return new Lookup(LookupState.KNOWN_TAIL, List.of(), offset, true);
+            return new Lookup(LookupState.HIT, notifications, lastExaminedOffset, atTail);
         }
 
         private static Lookup miss(long offset) {
@@ -67,34 +55,9 @@ public final class RecentNotificationBuffer {
         }
     }
 
-    public void addAll(List<KafkaNotificationRecord> records) {
-        if (records.isEmpty()) {
-            return;
-        }
-        for (KafkaNotificationRecord record : records) {
-            if (record.partition() < 0 || record.offset() < 0) {
-                throw new IllegalArgumentException("Kafka partition and offset must not be negative");
-            }
-            if (record.recipientIspb() == null || record.recipientIspb().isBlank()) {
-                throw new IllegalArgumentException("notification recipient must not be blank");
-            }
-            if (record.communicationId() == null || record.communicationId().isBlank()) {
-                throw new IllegalArgumentException("notification communication id must not be blank");
-            }
-            if (record.payload() == null) {
-                throw new IllegalArgumentException("notification payload must not be null");
-            }
-        }
-
-        Map<Integer, List<KafkaNotificationRecord>> byPartition = new HashMap<>();
-        for (KafkaNotificationRecord record : records) {
-            byPartition.computeIfAbsent(record.partition(), ignored -> new ArrayList<>()).add(record);
-        }
-        byPartition.forEach((partition, partitionRecords) -> {
-            partitionRecords.sort(Comparator.comparingLong(KafkaNotificationRecord::offset));
-            windows.computeIfAbsent(partition, ignored -> new PartitionWindow(capacityPerPartition))
-                    .addAll(partitionRecords);
-        });
+    public void add(KafkaNotificationRecord record) {
+        windows.computeIfAbsent(record.partition(), ignored -> new PartitionWindow(capacityPerPartition))
+                .add(record);
     }
 
     public Lookup lookup(
@@ -122,13 +85,7 @@ public final class RecentNotificationBuffer {
             this.capacity = capacity;
         }
 
-        synchronized void addAll(List<KafkaNotificationRecord> incoming) {
-            for (KafkaNotificationRecord record : incoming) {
-                add(record);
-            }
-        }
-
-        private void add(KafkaNotificationRecord record) {
+        synchronized void add(KafkaNotificationRecord record) {
             if (records.isEmpty()) {
                 records.put(record.offset(), record);
             } else if (record.offset() >= records.firstKey() && record.offset() <= records.lastKey()) {
@@ -156,7 +113,7 @@ public final class RecentNotificationBuffer {
                 return Lookup.miss(afterOffset);
             }
             if (afterOffset == tailOffset) {
-                return Lookup.knownTail(afterOffset);
+                return Lookup.hit(List.of(), afterOffset, true);
             }
 
             List<KafkaNotificationRecord> matches = new ArrayList<>(notificationLimit);
@@ -175,7 +132,7 @@ public final class RecentNotificationBuffer {
                     break;
                 }
             }
-            return Lookup.data(matches, lastExamined, lastExamined == tailOffset);
+            return Lookup.hit(matches, lastExamined, lastExamined == tailOffset);
         }
     }
 }

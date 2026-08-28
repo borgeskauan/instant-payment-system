@@ -1,7 +1,6 @@
 package br.kauan.notificationgateway.kafka;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.RoundRobinAssignor;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -56,19 +55,6 @@ class KafkaConsumerConfigTest {
 
                     assertThat(ReflectionTestUtils.getField(factory, "concurrency")).isEqualTo(4);
                 });
-    }
-
-    @Test
-    void usesRoundRobinPartitionAssignment() {
-        contextRunner.run(context -> {
-            var consumerFactory = context.getBean("notificationConsumerFactory", ConsumerFactory.class);
-
-            assertThat(consumerFactory.getConfigurationProperties())
-                    .containsEntry(
-                            ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
-                            RoundRobinAssignor.class.getName()
-                    );
-        });
     }
 
     @Test

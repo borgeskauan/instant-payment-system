@@ -8,19 +8,19 @@ import org.springframework.stereotype.Component;
 @Component
 public final class NotificationDeliveryReader {
 
-    private final RecentNotificationBuffer buffer;
+    private final RecentNotificationWindow recentWindow;
     private final HistoricalKafkaReader history;
     private final int scanLimit;
 
     public NotificationDeliveryReader(
-            RecentNotificationBuffer buffer,
+            RecentNotificationWindow recentWindow,
             HistoricalKafkaReader history,
             @Value("${notification-gateway.pull.kafka-scan-limit:4096}") int scanLimit
     ) {
         if (scanLimit < 15) {
             throw new IllegalArgumentException("Kafka scan limit must be at least 15");
         }
-        this.buffer = buffer;
+        this.recentWindow = recentWindow;
         this.history = history;
         this.scanLimit = scanLimit;
     }
@@ -31,14 +31,14 @@ public final class NotificationDeliveryReader {
             long afterOffset,
             int notificationLimit
     ) {
-        RecentNotificationBuffer.Lookup lookup = buffer.lookup(
+        RecentNotificationWindow.Lookup lookup = recentWindow.lookup(
                 partition,
                 recipientIspb,
                 afterOffset,
                 notificationLimit,
                 scanLimit
         );
-        if (lookup.state() == RecentNotificationBuffer.LookupState.MISS) {
+        if (lookup.state() == RecentNotificationWindow.LookupState.MISS) {
             return history.read(recipientIspb, partition, afterOffset, notificationLimit, scanLimit);
         }
         return new KafkaNotificationPage(

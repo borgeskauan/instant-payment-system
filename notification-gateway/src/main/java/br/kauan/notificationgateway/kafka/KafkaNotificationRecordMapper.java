@@ -11,8 +11,14 @@ public final class KafkaNotificationRecordMapper {
     }
 
     public static KafkaNotificationRecord map(ConsumerRecord<String, byte[]> record) {
+        if (record.partition() < 0 || record.offset() < 0) {
+            throw new IllegalArgumentException("Kafka partition and offset must not be negative");
+        }
         if (record.key() == null || record.key().isBlank()) {
             throw new IllegalArgumentException("Missing notification recipient Kafka key");
+        }
+        if (record.value() == null) {
+            throw new IllegalArgumentException("Missing notification payload");
         }
         return new KafkaNotificationRecord(
                 record.partition(),
@@ -25,7 +31,7 @@ public final class KafkaNotificationRecordMapper {
 
     private static String requiredHeader(ConsumerRecord<String, byte[]> record, String name) {
         Header header = record.headers().lastHeader(name);
-        if (header == null) {
+        if (header == null || header.value() == null) {
             throw new IllegalArgumentException("Missing Kafka header: " + name);
         }
         String value = new String(header.value(), StandardCharsets.UTF_8);

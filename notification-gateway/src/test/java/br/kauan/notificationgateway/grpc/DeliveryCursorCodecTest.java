@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.kafka.NotificationLog;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -24,7 +25,7 @@ class DeliveryCursorCodecTest {
     @Test
     void roundTripsThePspTopicPartitionAndLastExaminedOffsetAcrossRestart() {
         DeliveryCursorCodec issuer = new DeliveryCursorCodec(SECRET);
-        DeliveryCursor issued = new DeliveryCursor("20000001", "psp-notifications-v1", 3, 250L);
+        DeliveryCursor issued = new DeliveryCursor("20000001", NotificationLog.GENERATION, 3, 250L);
 
         String cursor = issuer.encode(issued);
 
@@ -36,13 +37,13 @@ class DeliveryCursorCodecTest {
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
 
         assertThat(codec.decode("", "20000001", 3))
-                .isEqualTo(new DeliveryCursor("20000001", "psp-notifications-v1", 3, -1L));
+                .isEqualTo(new DeliveryCursor("20000001", NotificationLog.GENERATION, 3, -1L));
     }
 
     @Test
     void rejectsTamperingAnotherPspAndAnotherPartition() {
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
-        String cursor = codec.encode(new DeliveryCursor("20000001", "psp-notifications-v1", 3, 250L));
+        String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, 3, 250L));
         String tampered = cursor.substring(0, cursor.length() - 1)
                 + (cursor.endsWith("A") ? "B" : "A");
 

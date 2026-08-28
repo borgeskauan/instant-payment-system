@@ -1,6 +1,6 @@
 package br.kauan.notificationgateway.kafka;
 
-import br.kauan.notificationgateway.delivery.RecentNotificationBuffer;
+import br.kauan.notificationgateway.delivery.RecentNotificationWindow;
 import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
@@ -19,26 +19,26 @@ class NotificationKafkaConsumerTest {
 
     @Test
     void appendsTheWholePollToTheSharedPartitionBufferAndSignalsItsRecipients() {
-        RecentNotificationBuffer buffer = new RecentNotificationBuffer(20);
+        RecentNotificationWindow window = new RecentNotificationWindow(20);
         PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(buffer, coordinator);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(window, coordinator);
 
         consumer.consume(List.of(
                 record(10, "20000001", "message-1"),
                 record(11, "20000002", "message-2")
         ));
 
-        assertThat(buffer.lookup(3, "20000001", 9, 15, 100).notifications())
+        assertThat(window.lookup(3, "20000001", 9, 15, 100).notifications())
                 .extracting(KafkaNotificationRecord::communicationId)
                 .containsExactly("message-1");
         verify(coordinator).signal(java.util.Set.of("20000001", "20000002"));
     }
 
     @Test
-    void malformedPollDoesNotPartiallyMutateTheBuffer() {
-        RecentNotificationBuffer buffer = new RecentNotificationBuffer(20);
+    void malformedPollFailsWithoutSignallingRecipients() {
+        RecentNotificationWindow window = new RecentNotificationWindow(20);
         PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(buffer, coordinator);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(window, coordinator);
         ConsumerRecord<String, byte[]> invalid = record(11, "20000001", "message-2");
         invalid.headers().remove("notification.communication-id");
 
@@ -46,14 +46,14 @@ class NotificationKafkaConsumerTest {
                 record(10, "20000001", "message-1"),
                 invalid
         ))).isInstanceOf(IllegalArgumentException.class);
-        assertThat(buffer.lookup(3, "20000001", 9, 15, 100).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+        assertThat(window.lookup(3, "20000001", 9, 15, 100).state())
+                .isEqualTo(RecentNotificationWindow.LookupState.HIT);
         verifyNoInteractions(coordinator);
     }
 
     private ConsumerRecord<String, byte[]> record(long offset, String ispb, String communicationId) {
         ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
-                "psp-notifications-v1", 3, offset, ispb, communicationId.getBytes(StandardCharsets.UTF_8)
+                NotificationLog.TOPIC, 3, offset, ispb, communicationId.getBytes(StandardCharsets.UTF_8)
         );
         RecordHeaders headers = new RecordHeaders();
         headers.add("notification.communication-id", communicationId.getBytes(StandardCharsets.UTF_8));

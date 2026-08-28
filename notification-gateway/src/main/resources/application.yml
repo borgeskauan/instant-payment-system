@@ -24,8 +24,7 @@ grpc:
 notification-gateway:
   kafka:
     listener-concurrency: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:1}
-    partition-count: ${NOTIFICATION_GATEWAY_KAFKA_PARTITION_COUNT:8}
-    ring-capacity-per-partition: ${NOTIFICATION_GATEWAY_KAFKA_RING_CAPACITY_PER_PARTITION:4096}
+    recent-window-capacity-per-partition: ${NOTIFICATION_GATEWAY_KAFKA_RECENT_WINDOW_CAPACITY_PER_PARTITION:4096}
   pull:
     cursor-secret: ${NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET:local-development-cursor-secret-change-me}
     long-poll-timeout-ms: ${NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS:30000}

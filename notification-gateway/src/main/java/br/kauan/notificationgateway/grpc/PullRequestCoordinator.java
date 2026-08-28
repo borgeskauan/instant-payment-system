@@ -13,9 +13,6 @@ public final class PullRequestCoordinator {
 
     private final ConcurrentHashMap<String, Session> active = new ConcurrentHashMap<>();
 
-    public PullRequestCoordinator() {
-    }
-
     Session begin(String recipientIspb) {
         Session session = new Session(recipientIspb);
         if (active.putIfAbsent(recipientIspb, session) != null) {

@@ -10,6 +10,7 @@ import br.kauan.notificationgateway.kafka.InvalidNotificationOffsetException;
 import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
 import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
 import br.kauan.notificationgateway.kafka.NotificationCursorExpiredException;
+import br.kauan.notificationgateway.kafka.NotificationLog;
 import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import com.google.protobuf.ByteString;
 import io.grpc.Status;
@@ -92,7 +93,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
             if (page.lastExaminedOffset() > cursor.lastExaminedOffset()) {
                 response.setNextCursor(cursorCodec.encode(new DeliveryCursor(
                         recipientIspb,
-                        DeliveryCursorCodec.TOPIC_GENERATION,
+                        NotificationLog.GENERATION,
                         partition,
                         page.lastExaminedOffset()
                 )));
@@ -100,7 +101,6 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
                 response.setNextCursor(request.getCursor());
             }
 
-            session.close();
             responseObserver.onNext(response.build());
             responseObserver.onCompleted();
         } catch (NotificationCursorExpiredException expiredCursor) {

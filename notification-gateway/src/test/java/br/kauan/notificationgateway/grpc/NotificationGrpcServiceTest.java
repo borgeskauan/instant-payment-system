@@ -7,6 +7,7 @@ import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
 import br.kauan.notificationgateway.kafka.KafkaNotificationPage;
 import br.kauan.notificationgateway.kafka.KafkaNotificationRecord;
 import br.kauan.notificationgateway.kafka.NotificationCursorExpiredException;
+import br.kauan.notificationgateway.kafka.NotificationLog;
 import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import io.grpc.Context;
 import io.grpc.Status;
@@ -32,7 +33,7 @@ class NotificationGrpcServiceTest {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
-        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        int partition = new NotificationPartitionResolver().partition("20000001");
         when(reader.read("20000001", partition, -1, 15)).thenReturn(new KafkaNotificationPage(
                 List.of(record(partition, 12, "first"), record(partition, 18, "second")),
                 18,
@@ -57,7 +58,7 @@ class NotificationGrpcServiceTest {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1_000);
-        int partition = new NotificationPartitionResolver(8).partition("20000001");
+        int partition = new NotificationPartitionResolver().partition("20000001");
         when(reader.read("20000001", partition, -1, 15))
                 .thenReturn(new KafkaNotificationPage(List.of(), 25, true));
         CapturingObserver observer = new CapturingObserver();
@@ -74,8 +75,8 @@ class NotificationGrpcServiceTest {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
-        int partition = new NotificationPartitionResolver(8).partition("20000001");
-        String cursor = codec.encode(new DeliveryCursor("20000001", DeliveryCursorCodec.TOPIC_GENERATION, partition, 20));
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, partition, 20));
         when(reader.read("20000001", partition, 20, 15))
                 .thenReturn(new KafkaNotificationPage(List.of(), 20, true));
         CapturingObserver observer = new CapturingObserver();
@@ -91,8 +92,8 @@ class NotificationGrpcServiceTest {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
         NotificationGrpcService service = service(reader, codec, 1);
-        int partition = new NotificationPartitionResolver(8).partition("20000001");
-        String cursor = codec.encode(new DeliveryCursor("20000001", DeliveryCursorCodec.TOPIC_GENERATION, partition, 20));
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, partition, 20));
         when(reader.read("20000001", partition, 20, 15)).thenThrow(new NotificationCursorExpiredException());
         CapturingObserver observer = new CapturingObserver();
 
@@ -111,7 +112,7 @@ class NotificationGrpcServiceTest {
                 reader,
                 new PullRequestCoordinator(),
                 codec,
-                new NotificationPartitionResolver(8),
+                new NotificationPartitionResolver(),
                 timeoutMillis
         );
     }

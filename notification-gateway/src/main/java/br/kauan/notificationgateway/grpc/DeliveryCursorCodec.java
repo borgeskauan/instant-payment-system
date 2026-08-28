@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.kafka.NotificationLog;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -14,7 +15,6 @@ import java.util.Base64;
 @Component
 public final class DeliveryCursorCodec {
 
-    public static final String TOPIC_GENERATION = "psp-notifications-v1";
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final String VERSION = "1";
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
@@ -37,7 +37,7 @@ public final class DeliveryCursorCodec {
     String encode(DeliveryCursor cursor) {
         if (cursor.lastExaminedOffset() < 0
                 || cursor.partition() < 0
-                || !TOPIC_GENERATION.equals(cursor.topicGeneration())) {
+                || !NotificationLog.GENERATION.equals(cursor.topicGeneration())) {
             throw new IllegalArgumentException("cannot issue cursor for an invalid notification log position");
         }
         byte[] payload = String.join(
@@ -54,7 +54,7 @@ public final class DeliveryCursorCodec {
 
     DeliveryCursor decode(String encoded, String expectedRecipientIspb, int expectedPartition) {
         if (encoded == null || encoded.isEmpty()) {
-            return new DeliveryCursor(expectedRecipientIspb, TOPIC_GENERATION, expectedPartition, -1L);
+            return new DeliveryCursor(expectedRecipientIspb, NotificationLog.GENERATION, expectedPartition, -1L);
         }
         try {
             String[] parts = encoded.split("\\.", -1);
@@ -69,7 +69,7 @@ public final class DeliveryCursorCodec {
             String[] fields = new String(payload, StandardCharsets.UTF_8).split(":", -1);
             if (fields.length != 5
                     || !VERSION.equals(fields[0])
-                    || !TOPIC_GENERATION.equals(fields[1])
+                    || !NotificationLog.GENERATION.equals(fields[1])
                     || !expectedRecipientIspb.equals(fields[2])) {
                 throw new InvalidDeliveryCursorException();
             }

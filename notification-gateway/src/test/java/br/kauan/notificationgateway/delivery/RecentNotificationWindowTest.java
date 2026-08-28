@@ -9,21 +9,21 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class RecentNotificationBufferTest {
+class RecentNotificationWindowTest {
 
-    private final RecentNotificationBuffer buffer = new RecentNotificationBuffer(6);
+    private final RecentNotificationWindow window = new RecentNotificationWindow(6);
 
     @Test
     void onePartitionWindowServesMultiplePspsAndAdvancesAcrossUnrelatedRecords() {
-        buffer.addAll(List.of(
+        addAll(
                 record(0, "20000001"),
                 record(1, "20000002"),
                 record(2, "20000001"),
                 record(3, "20000002")
-        ));
+        );
 
-        RecentNotificationBuffer.Lookup first = buffer.lookup(3, "20000001", -1, 15, 100);
-        RecentNotificationBuffer.Lookup second = buffer.lookup(3, "20000002", -1, 15, 100);
+        RecentNotificationWindow.Lookup first = window.lookup(3, "20000001", -1, 15, 100);
+        RecentNotificationWindow.Lookup second = window.lookup(3, "20000002", -1, 15, 100);
 
         assertThat(first.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(0L, 2L);
         assertThat(second.notifications()).extracting(KafkaNotificationRecord::offset).containsExactly(1L, 3L);
@@ -38,9 +38,9 @@ class RecentNotificationBufferTest {
         for (int offset = 0; offset < 6; offset++) {
             records.add(record(offset, "20000001"));
         }
-        buffer.addAll(records);
+        records.forEach(window::add);
 
-        RecentNotificationBuffer.Lookup page = buffer.lookup(3, "20000001", -1, 3, 100);
+        RecentNotificationWindow.Lookup page = window.lookup(3, "20000001", -1, 3, 100);
 
         assertThat(page.notifications()).extracting(KafkaNotificationRecord::offset)
                 .containsExactly(0L, 1L, 2L);
@@ -51,26 +51,32 @@ class RecentNotificationBufferTest {
     @Test
     void evictionAndDiscontinuousCoverageProduceACacheMiss() {
         for (int offset = 0; offset < 8; offset++) {
-            buffer.addAll(List.of(record(offset, "20000001")));
+            window.add(record(offset, "20000001"));
         }
 
-        assertThat(buffer.lookup(3, "20000001", -1, 15, 100).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+        assertThat(window.lookup(3, "20000001", -1, 15, 100).state())
+                .isEqualTo(RecentNotificationWindow.LookupState.MISS);
 
-        buffer.addAll(List.of(record(20, "20000001")));
+        window.add(record(20, "20000001"));
 
-        assertThat(buffer.lookup(3, "20000001", 7, 15, 100).state())
-                .isEqualTo(RecentNotificationBuffer.LookupState.MISS);
+        assertThat(window.lookup(3, "20000001", 7, 15, 100).state())
+                .isEqualTo(RecentNotificationWindow.LookupState.MISS);
     }
 
     @Test
     void cursorAtTheObservedPartitionTailDoesNotHitKafkaAgain() {
-        buffer.addAll(List.of(record(10, "20000001")));
+        window.add(record(10, "20000001"));
 
-        RecentNotificationBuffer.Lookup lookup = buffer.lookup(3, "20000001", 10, 15, 100);
+        RecentNotificationWindow.Lookup lookup = window.lookup(3, "20000001", 10, 15, 100);
 
-        assertThat(lookup.state()).isEqualTo(RecentNotificationBuffer.LookupState.KNOWN_TAIL);
+        assertThat(lookup.state()).isEqualTo(RecentNotificationWindow.LookupState.HIT);
         assertThat(lookup.notifications()).isEmpty();
+    }
+
+    private void addAll(KafkaNotificationRecord... records) {
+        for (KafkaNotificationRecord record : records) {
+            window.add(record);
+        }
     }
 
     private KafkaNotificationRecord record(long offset, String recipient) {

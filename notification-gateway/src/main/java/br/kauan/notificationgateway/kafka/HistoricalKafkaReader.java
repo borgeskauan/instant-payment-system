@@ -21,8 +21,6 @@ import java.util.function.IntFunction;
 @Component
 public final class HistoricalKafkaReader {
 
-    public static final String TOPIC = "psp-notifications-v1";
-
     private final IntFunction<Consumer<String, byte[]>> consumerFactory;
     private final Duration pollTimeout;
     private final Map<Integer, Consumer<String, byte[]>> consumers = new HashMap<>();
@@ -77,7 +75,7 @@ public final class HistoricalKafkaReader {
             int notificationLimit,
             int scanLimit
     ) {
-        TopicPartition topicPartition = new TopicPartition(TOPIC, partition);
+        TopicPartition topicPartition = new TopicPartition(NotificationLog.TOPIC, partition);
         Set<TopicPartition> singleton = Set.of(topicPartition);
         consumer.assign(singleton);
         long beginning = consumer.beginningOffsets(singleton).get(topicPartition);

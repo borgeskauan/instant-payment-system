@@ -18,10 +18,10 @@ class NotificationDeliveryReaderTest {
 
     @Test
     void servesContiguousRecentOffsetsFromMemoryWithoutKafkaSeek() {
-        RecentNotificationBuffer buffer = new RecentNotificationBuffer(10);
+        RecentNotificationWindow window = new RecentNotificationWindow(10);
         HistoricalKafkaReader history = mock(HistoricalKafkaReader.class);
-        NotificationDeliveryReader reader = new NotificationDeliveryReader(buffer, history, 100);
-        buffer.addAll(List.of(record(0, "memory")));
+        NotificationDeliveryReader reader = new NotificationDeliveryReader(window, history, 100);
+        window.add(record(0, "memory"));
 
         KafkaNotificationPage page = reader.read("20000001", 3, -1, 15);
 
@@ -32,9 +32,9 @@ class NotificationDeliveryReaderTest {
 
     @Test
     void readsKafkaDirectlyWhenTheCursorFallsOutsideMemoryCoverage() {
-        RecentNotificationBuffer buffer = new RecentNotificationBuffer(10);
+        RecentNotificationWindow window = new RecentNotificationWindow(10);
         HistoricalKafkaReader history = mock(HistoricalKafkaReader.class);
-        NotificationDeliveryReader reader = new NotificationDeliveryReader(buffer, history, 100);
+        NotificationDeliveryReader reader = new NotificationDeliveryReader(window, history, 100);
         KafkaNotificationPage historical = new KafkaNotificationPage(List.of(record(4, "historical")), 4, true);
         when(history.read("20000001", 3, 3, 15, 100)).thenReturn(historical);
 

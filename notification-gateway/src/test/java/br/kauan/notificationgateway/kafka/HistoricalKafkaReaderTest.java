@@ -39,7 +39,7 @@ class HistoricalKafkaReaderTest {
                 .containsExactly("wanted-1", "wanted-3");
         assertThat(page.lastExaminedOffset()).isEqualTo(4);
         assertThat(page.atTail()).isTrue();
-        verify(consumer).seek(new TopicPartition("psp-notifications-v1", 3), 0);
+        verify(consumer).seek(new TopicPartition(NotificationLog.TOPIC, 3), 0);
     }
 
     @Test
@@ -74,7 +74,7 @@ class HistoricalKafkaReaderTest {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         Consumer<String, byte[]> consumer = mock(Consumer.class);
-        TopicPartition partition = new TopicPartition("psp-notifications-v1", 3);
+        TopicPartition partition = new TopicPartition(NotificationLog.TOPIC, 3);
         when(consumer.beginningOffsets(any())).thenReturn(Map.of(partition, beginning));
         when(consumer.endOffsets(any())).thenReturn(Map.of(partition, end));
         when(consumer.poll(any(Duration.class))).thenReturn(new ConsumerRecords<>(Map.of(partition, records)));
@@ -83,7 +83,7 @@ class HistoricalKafkaReaderTest {
 
     private ConsumerRecord<String, byte[]> record(long offset, String recipient, String communicationId) {
         ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
-                "psp-notifications-v1",
+                NotificationLog.TOPIC,
                 3,
                 offset,
                 recipient,

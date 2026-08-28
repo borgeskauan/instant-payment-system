@@ -1,12 +1,11 @@
 package br.kauan.notificationgateway.kafka;
 
-import br.kauan.notificationgateway.delivery.RecentNotificationBuffer;
+import br.kauan.notificationgateway.delivery.RecentNotificationWindow;
 import br.kauan.notificationgateway.grpc.PullRequestCoordinator;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -15,21 +14,19 @@ import java.util.Set;
 @Component
 public class NotificationKafkaConsumer {
 
-    private static final String NOTIFICATIONS_TOPIC = "psp-notifications-v1";
-
-    private final RecentNotificationBuffer buffer;
+    private final RecentNotificationWindow recentWindow;
     private final PullRequestCoordinator coordinator;
 
     public NotificationKafkaConsumer(
-            RecentNotificationBuffer buffer,
+            RecentNotificationWindow recentWindow,
             PullRequestCoordinator coordinator
     ) {
-        this.buffer = buffer;
+        this.recentWindow = recentWindow;
         this.coordinator = coordinator;
     }
 
     @KafkaListener(
-            topics = NOTIFICATIONS_TOPIC,
+            topics = NotificationLog.TOPIC,
             groupId = "${spring.kafka.consumer.group-id}",
             containerFactory = "notificationKafkaListenerContainerFactory"
     )
@@ -38,14 +35,12 @@ public class NotificationKafkaConsumer {
             return;
         }
 
-        List<KafkaNotificationRecord> notifications = new ArrayList<>(records.size());
         Set<String> recipients = new HashSet<>();
         for (ConsumerRecord<String, byte[]> record : records) {
             KafkaNotificationRecord notification = KafkaNotificationRecordMapper.map(record);
-            notifications.add(notification);
+            recentWindow.add(notification);
             recipients.add(notification.recipientIspb());
         }
-        buffer.addAll(notifications);
-        coordinator.signal(Set.copyOf(recipients));
+        coordinator.signal(recipients);
     }
 }
