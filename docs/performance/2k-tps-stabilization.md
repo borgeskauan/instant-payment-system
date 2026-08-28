@@ -28,7 +28,7 @@ sem redefinir o contrato.
 
 Este documento é a síntese. O histórico completo de hipóteses, A/Bs e
 diagnósticos permanece no
-[`caderno de estabilização`](../board/Atividades/agora/estabilizar-teste-carga-budget-cpu.md).
+[`caderno de estabilização`](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md).
 
 ## Workload qualificado
 
