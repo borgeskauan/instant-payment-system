@@ -109,7 +109,7 @@ fn completed_bundle_requires_every_artifact_and_matching_profile() {
     let completed = bundle
         .load_completed(fixture_window())
         .expect("valid completed fixture");
-    assert_eq!(completed.plan.profile, "report-parity");
+    assert_eq!(completed.plan.profile, "report-contract");
     assert_eq!(completed.events.pacs008.len(), 4);
 
     let temp = copy_fixture();
@@ -131,7 +131,7 @@ fn fixture_window() -> GenerationWindow {
 }
 
 fn fixture_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-parity")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-contract")
 }
 
 fn copy_fixture() -> tempfile::TempDir {

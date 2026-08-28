@@ -5,7 +5,7 @@ use std::thread;
 
 use loadtool_contract::model::ExecutionPlan;
 use loadtool_generator::payment_state::PaymentStates;
-use loadtool_generator::planner::{Planner, requests_in_bucket};
+use loadtool_generator::planner::Planner;
 use loadtool_generator::replay::{ReplayDomain, ReplaySelector, stable_rotation};
 
 const PLAN: &str = r#"{
@@ -28,17 +28,6 @@ const PLAN: &str = r#"{
     {"name":"insufficient-funds","share":0.2,"participants":{"pairNumberStart":41,"hotPairCount":2,"coldPairCount":8,"hotTrafficShare":0.8},"amount":{"minimum":100,"maximum":100098},"funding":{"payer":{"mode":"fixed","balance":"0.00"},"receiver":{"mode":"fixed","balance":"0.00"},"resetIfExists":true},"provisioning":{"payerBalance":"0.00","receiverBalance":"0.00","resetIfExists":true},"expectations":{"httpStatus":"2xx","payerNotification":{"deliverySemantics":"at-least-once","status":"RJCT","reasonCodes":["AM04"]}}}
   ]
 }"#;
-
-#[test]
-fn integer_bucket_distribution_is_exact() {
-    let counts: Vec<u64> = (0..1000)
-        .map(|bucket| requests_in_bucket(2100, bucket))
-        .collect();
-
-    assert_eq!(counts.iter().sum::<u64>(), 2100);
-    assert_eq!(counts.iter().filter(|&&count| count == 2).count(), 900);
-    assert_eq!(counts.iter().filter(|&&count| count == 3).count(), 100);
-}
 
 #[test]
 fn stable_replay_vectors_and_quota_do_not_drift() {

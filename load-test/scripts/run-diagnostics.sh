@@ -17,20 +17,20 @@ readonly CONTAINER_STATS_FILE="container-stats.csv"
 readonly CONTAINER_STATS_LOG="container-stats.log"
 
 ENABLE_JFR=true
-ENABLE_POSTGRES_STATEMENTS=true
+ENABLE_SYSTEM_DIAGNOSTICS=true
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
 POSTGRES_ACTIVITY_PID=""
 POSTGRES_SERVER_LOG_SINCE=""
 CONTAINER_STATS_PID=""
 JFR_TARGET_DIR=""
-POSTGRES_STATEMENTS_TARGET_DIR=""
+SYSTEM_DIAGNOSTICS_TARGET_DIR=""
 RUN_DIR=""
 COMMAND=()
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") run --run-dir DIR [--no-jfr] [--no-postgres-statements] -- COMMAND...
+Usage: $(basename "$0") run --run-dir DIR [--no-jfr] [--no-system-diagnostics] -- COMMAND...
 EOF
 }
 
@@ -59,7 +59,7 @@ parse_args() {
                 shift 2
                 ;;
             --no-jfr) ENABLE_JFR=false; shift ;;
-            --no-postgres-statements) ENABLE_POSTGRES_STATEMENTS=false; shift ;;
+            --no-system-diagnostics) ENABLE_SYSTEM_DIAGNOSTICS=false; shift ;;
             --)
                 shift
                 COMMAND=("$@")
@@ -94,7 +94,7 @@ enable_postgres_statement_stats() {
         "${SCRIPTS_DIR}/postgres-statements.sh" enable-and-reset
     } > "$log_file" 2>&1
     POSTGRES_STATEMENTS_ACTIVE=true
-    POSTGRES_STATEMENTS_TARGET_DIR="$target_dir"
+    SYSTEM_DIAGNOSTICS_TARGET_DIR="$target_dir"
 }
 
 capture_postgres_statement_stats() {
@@ -246,7 +246,7 @@ stop_jfr_recordings() {
 
 start_optional_diagnostics() {
     local target_dir="$1"
-    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+    if [[ "$ENABLE_SYSTEM_DIAGNOSTICS" == true ]]; then
         start_postgres_server_log_capture
         enable_postgres_statement_stats "$target_dir"
         start_postgres_runtime_diagnostics "$target_dir"
@@ -258,7 +258,7 @@ start_optional_diagnostics() {
 collect_optional_diagnostics() {
     local target_dir="$1" failed=0 until=""
     [[ "$ENABLE_JFR" != true ]] || stop_jfr_recordings "$target_dir" || failed=1
-    if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
+    if [[ "$ENABLE_SYSTEM_DIAGNOSTICS" == true ]]; then
         until="$(iso_now)"
         stop_postgres_activity_sampler "$target_dir" || failed=1
         stop_container_stats "$target_dir" || failed=1
@@ -272,10 +272,10 @@ collect_optional_diagnostics() {
 
 cleanup_diagnostics() {
     trap - EXIT INT TERM
-    [[ -z "$POSTGRES_ACTIVITY_PID" ]] || stop_postgres_activity_sampler "$POSTGRES_STATEMENTS_TARGET_DIR" || true
-    [[ -z "$CONTAINER_STATS_PID" ]] || stop_container_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
+    [[ -z "$POSTGRES_ACTIVITY_PID" ]] || stop_postgres_activity_sampler "$SYSTEM_DIAGNOSTICS_TARGET_DIR" || true
+    [[ -z "$CONTAINER_STATS_PID" ]] || stop_container_stats "$SYSTEM_DIAGNOSTICS_TARGET_DIR" || true
     [[ "$JFR_ACTIVE" != true ]] || stop_jfr_recordings "$JFR_TARGET_DIR" || true
-    [[ "$POSTGRES_STATEMENTS_ACTIVE" != true ]] || disable_postgres_statement_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
+    [[ "$POSTGRES_STATEMENTS_ACTIVE" != true ]] || disable_postgres_statement_stats "$SYSTEM_DIAGNOSTICS_TARGET_DIR" || true
 }
 
 run_command() {

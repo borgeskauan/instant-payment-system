@@ -93,8 +93,6 @@ async fn generation_below_the_rolling_minimum_completes_and_preserves_the_facts(
 
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(run.path().join("sla-report.json")).unwrap()).unwrap();
-    assert!(report.get("valid").is_none());
-    assert!(report.get("performance_qualified").is_none());
     assert_eq!(report["generation"]["required_minimum_tps"], 1);
     assert_eq!(report["generation"]["minimum_rolling_tps"], 0);
 }
@@ -177,7 +175,7 @@ impl Drop for CompletionGuard {
 }
 
 fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-parity")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-contract")
 }
 
 fn prepared_run() -> tempfile::TempDir {

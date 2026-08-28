@@ -1,5 +1,5 @@
 {
-  "name": "report-parity",
+  "name": "report-contract",
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8443",

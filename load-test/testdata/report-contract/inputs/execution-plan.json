@@ -1,5 +1,5 @@
 {
-  "profile": "report-parity",
+  "profile": "report-contract",
   "offeredTxRate": 2,
   "requiredMinimumTxRate": 1,
   "warmupBootstrapOfferedTxRate": 1,

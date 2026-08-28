@@ -154,7 +154,7 @@ fn replay_identity_and_timing_do_not_create_violations() {
 }
 
 fn fixture_root() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-parity")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../testdata/report-contract")
 }
 
 fn copy_fixture() -> tempfile::TempDir {

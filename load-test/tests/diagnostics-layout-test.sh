@@ -85,7 +85,7 @@ export FAKE_POSTGRES_SERVER_LOG_INVOCATIONS="$tmp_dir/postgres-server-log-invoca
 source "$ROOT_DIR/scripts/run-diagnostics.sh"
 
 ENABLE_JFR=false
-ENABLE_POSTGRES_STATEMENTS=true
+ENABLE_SYSTEM_DIAGNOSTICS=true
 start_optional_diagnostics "$tmp_dir/result"
 collect_optional_diagnostics "$tmp_dir/result"
 
@@ -149,7 +149,7 @@ fi
 
 mkdir -p "$tmp_dir/disabled/logs" "$tmp_dir/disabled/diagnostics"
 ENABLE_JFR=false
-ENABLE_POSTGRES_STATEMENTS=false
+ENABLE_SYSTEM_DIAGNOSTICS=false
 start_optional_diagnostics "$tmp_dir/disabled"
 collect_optional_diagnostics "$tmp_dir/disabled"
 test ! -e "$tmp_dir/disabled/logs/postgres-server.log"
@@ -158,7 +158,7 @@ mkdir -p "$tmp_dir/command-failure"
 set +e
     "$ROOT_DIR/scripts/run-diagnostics.sh" run \
     --run-dir "$tmp_dir/command-failure" \
-    --no-jfr --no-postgres-statements \
+    --no-jfr --no-system-diagnostics \
     -- bash -c 'exit 17'
 command_status=$?
 set -e

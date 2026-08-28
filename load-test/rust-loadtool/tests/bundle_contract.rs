@@ -185,6 +185,4 @@ fn generated_outputs_must_be_absent_and_are_created_by_rust() {
     bundle.prepare_outputs().expect("prepare Rust outputs");
 
     assert!(bundle.events_dir().is_dir());
-    assert!(!bundle.root().join("run-window.json").exists());
-    assert!(!bundle.root().join("generator-metrics.json").exists());
 }

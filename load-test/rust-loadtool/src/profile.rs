@@ -39,7 +39,6 @@ struct SourceCentralTransfer {
     base_url: String,
     ca_cert: String,
     client_cert_root: String,
-    #[serde(default)]
     server_name: String,
 }
 
@@ -49,7 +48,6 @@ struct SourceGateway {
     address: String,
     ca_cert: String,
     client_cert_root: String,
-    #[serde(default)]
     server_name: String,
 }
 
@@ -281,10 +279,6 @@ fn build(name: &str, source: SourceProfile) -> Result<ExecutionPlan> {
 }
 
 fn validate_connections(name: &str, connections: &SourceConnections) -> Result<()> {
-    let _server_names_default_to_localhost = (
-        connections.central_transfer.server_name.as_str(),
-        connections.notification_gateway.server_name.as_str(),
-    );
     for (field, value) in [
         (
             "connections.centralTransfer.baseUrl",
@@ -299,6 +293,10 @@ fn validate_connections(name: &str, connections: &SourceConnections) -> Result<(
             connections.central_transfer.client_cert_root.as_str(),
         ),
         (
+            "connections.centralTransfer.serverName",
+            connections.central_transfer.server_name.as_str(),
+        ),
+        (
             "connections.notificationGateway.address",
             connections.notification_gateway.address.as_str(),
         ),
@@ -309,6 +307,10 @@ fn validate_connections(name: &str, connections: &SourceConnections) -> Result<(
         (
             "connections.notificationGateway.clientCertRoot",
             connections.notification_gateway.client_cert_root.as_str(),
+        ),
+        (
+            "connections.notificationGateway.serverName",
+            connections.notification_gateway.server_name.as_str(),
         ),
     ] {
         if value.is_empty() {

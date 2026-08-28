@@ -9,12 +9,6 @@ use loadtool_contract::model::{ExecutionPlan, Provisioning, Scenario, percentage
 const BLOCK_SIZE: u64 = 100;
 const FUNDING_SAFETY_MULTIPLIER: i64 = 16;
 
-pub fn requests_in_bucket(rate: u64, bucket: u64) -> u64 {
-    let current = u128::from(bucket) * u128::from(rate) / 1000;
-    let next = u128::from(bucket + 1) * u128::from(rate) / 1000;
-    u64::try_from(next - current).expect("one bucket count fits in u64")
-}
-
 #[derive(Clone, Copy, Debug)]
 struct Assignment {
     scenario_index: usize,

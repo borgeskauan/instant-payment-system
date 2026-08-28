@@ -37,8 +37,9 @@ fn recorder(temp: &tempfile::TempDir, capacity: usize) -> EventRecorder {
 fn recorder_writes_the_exact_persisted_csv_contract() {
     let temp = tempfile::tempdir().expect("temp dir");
     let recorder = recorder(&temp, 16);
+    let sender = recorder.sender().expect("event sender");
 
-    recorder
+    sender
         .record(Event::Pacs008Completed {
             sequence: 0,
             created_offset_ns: 1,
@@ -48,7 +49,7 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
             replay_selected: true,
         })
         .unwrap();
-    recorder
+    sender
         .record(Event::Pacs002Completed {
             sequence: 0,
             request_started_offset_ns: 4,
@@ -57,7 +58,7 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
             replay_selected: false,
         })
         .unwrap();
-    recorder
+    sender
         .record(Event::Notification {
             sequence: 0,
             participant: Participant::Payer,
@@ -67,7 +68,7 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
             reason_codes: vec!["AM04".to_owned()],
         })
         .unwrap();
-    recorder
+    sender
         .record(Event::ReplayCompleted {
             sequence: 0,
             sender: Participant::Receiver,
@@ -77,6 +78,7 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
             http_status: 200,
         })
         .unwrap();
+    drop(sender);
     recorder.close().expect("close recorder");
 
     assert_eq!(
@@ -113,10 +115,11 @@ fn recorder_writes_the_exact_persisted_csv_contract() {
 fn recorder_never_silently_drops_events_when_its_bounded_queue_is_full() {
     let temp = tempfile::tempdir().expect("temp dir");
     let recorder = recorder(&temp, 1);
+    let sender = recorder.sender().expect("event sender");
     let mut full = false;
 
     for sequence in 0..100_000 {
-        let result = recorder.record(Event::Pacs008Completed {
+        let result = sender.record(Event::Pacs008Completed {
             sequence: sequence % 1_000,
             created_offset_ns: sequence,
             request_started_offset_ns: sequence,
@@ -131,6 +134,7 @@ fn recorder_never_silently_drops_events_when_its_bounded_queue_is_full() {
     }
 
     assert!(full, "a saturated queue must be reported to its producer");
+    drop(sender);
     assert!(
         recorder.close().is_err(),
         "queue saturation invalidates close"

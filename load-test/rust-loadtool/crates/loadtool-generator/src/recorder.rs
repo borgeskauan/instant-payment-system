@@ -100,10 +100,6 @@ impl EventRecorder {
         })
     }
 
-    pub fn record(&self, event: Event) -> Result<()> {
-        self.sender()?.record(event)
-    }
-
     pub fn sender(&self) -> Result<EventSender> {
         Ok(EventSender {
             sender: self

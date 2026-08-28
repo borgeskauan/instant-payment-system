@@ -473,13 +473,3 @@ async fn finish_original<F>(
         ));
     }
 }
-
-#[cfg(test)]
-mod generator_tests {
-    use super::*;
-
-    #[test]
-    fn pacer_channel_holds_the_complete_preparation_window() {
-        assert_eq!(PACER_CHANNEL_CAPACITY, 2);
-    }
-}

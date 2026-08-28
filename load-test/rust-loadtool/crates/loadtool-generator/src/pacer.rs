@@ -379,13 +379,3 @@ fn bucket_offset(bucket_index: u64) -> Option<Duration> {
     let nanos = BUCKET.as_nanos().checked_mul(u128::from(bucket_index))?;
     Some(Duration::from_nanos(u64::try_from(nanos).ok()?))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pacer_starts_its_spin_fifty_microseconds_before_the_boundary() {
-        assert_eq!(SPIN_TAIL, Duration::from_micros(50));
-    }
-}

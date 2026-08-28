@@ -13,8 +13,8 @@ const PROFILES: [&str; 6] = [
 
 #[test]
 fn four_k_diagnostic_preserves_the_official_workload_shape() {
-    let plan = rust_loadtool::profile::compile(&profiles_dir(), "mixed-outcomes-4k-diagnostic")
-        .unwrap();
+    let plan =
+        rust_loadtool::profile::compile(&profiles_dir(), "mixed-outcomes-4k-diagnostic").unwrap();
 
     assert_eq!(plan.profile, "mixed-outcomes-4k-diagnostic");
     assert_eq!(plan.load.offered_tx_rate, 4000);
@@ -147,7 +147,7 @@ fn source_contract_is_strict_and_assigns_consecutive_participant_ranges() {
 }
 
 #[test]
-fn invalid_rates_durations_shares_funding_and_expectations_are_rejected() {
+fn invalid_profile_values_are_rejected() {
     let original = fs::read_to_string(profiles_dir().join("uniform-smoke.json")).unwrap();
     let cases = [
         (
@@ -176,6 +176,14 @@ fn invalid_rates_durations_shares_funding_and_expectations_are_rejected() {
         (
             "bad-status",
             original.replace("\"status\": \"ACSC\"", "\"status\": \"accepted\""),
+        ),
+        (
+            "empty-server-name",
+            original.replacen("\"serverName\": \"localhost\"", "\"serverName\": \"\"", 1),
+        ),
+        (
+            "missing-server-name",
+            original.replacen(",\n      \"serverName\": \"localhost\"", "", 1),
         ),
     ];
     let temp = tempfile::tempdir().unwrap();
