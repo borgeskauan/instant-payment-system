@@ -1,6 +1,6 @@
 # Simplificar PSP, DICT e Angular da reference demo
 
-- [ ] Reduzir PSP, DICT e Angular ao estado mínimo necessário para demonstrar o happy path
+- [x] Reduzir PSP, DICT e Angular ao estado mínimo necessário para demonstrar o happy path
 
 ## Objetivo
 
@@ -75,6 +75,6 @@ Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, pr
 - testes dos dois projetos, builds, Composes, smoke e `git diff --check` passam;
 - nenhuma persistência, autenticação real ou modelagem de PSP de produção entra no diff.
 
-## Validação pendente
+## Validação
 
-- [ ] Validar manualmente o fluxo da aplicação Angular.
+- [x] Fluxo da aplicação Angular validado manualmente.
