@@ -31,7 +31,7 @@
       "completionTimeout": "30s"
     },
     "duration": "10s",
-    "drain": "10s"
+    "drain": "20s"
   },
   "replay": {
     "pacs008": {

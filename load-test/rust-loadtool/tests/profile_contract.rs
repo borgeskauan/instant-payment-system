@@ -33,7 +33,7 @@ fn every_checked_in_profile_compiles_to_its_stable_execution_shape() {
     let profiles = profiles_dir();
     let expected = [
         ("uniform-smoke", 2000, 2000, 60, 60, 30, 1, "131497920.00"),
-        ("mixed-outcomes-smoke", 105, 100, 5, 10, 10, 2, "10400.00"),
+        ("mixed-outcomes-smoke", 105, 100, 5, 10, 20, 2, "10400.00"),
         (
             "mixed-outcomes-2k-diagnostic",
             2100,
