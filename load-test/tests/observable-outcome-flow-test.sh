@@ -40,10 +40,10 @@ SH
 chmod +x "$tmp_dir/diagnostics"
 export PATH="$tmp_dir/bin:$PATH"
 
-"$RUNNER" --no-jfr --no-spi-trace --no-postgres-statements observable >/dev/null
+"$RUNNER" --no-jfr --no-postgres-statements observable >/dev/null
 cat > "$tmp_dir/expected" <<'EOF'
 build
-diagnostics run --run-dir RESULT --no-jfr --no-spi-trace --no-postgres-statements -- BINARY run --run-dir RESULT --client-cert-root CERTS
+diagnostics run --run-dir RESULT --no-jfr --no-postgres-statements -- BINARY run --run-dir RESULT --client-cert-root CERTS
 run run --run-dir RESULT --client-cert-root CERTS
 EOF
 sed -E \

@@ -74,9 +74,9 @@ O bootstrap aceita até 30 segundos para concluir cada request enquanto a JVM
 está fria; steady e active mantêm o timeout normal de 5 segundos. O gate não
 tenta inferir quiescência interna por lag Kafka ou por sleeps fixos.
 
-JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Use
-`--no-jfr`, `--no-spi-trace` ou `--no-postgres-statements` apenas quando o
-experimento precisar desativá-los.
+JFR e diagnósticos PostgreSQL ficam ativos por padrão. Os checkpoints
+semânticos amostrados do SPI fazem parte da gravação JFR. Use `--no-jfr` ou
+`--no-postgres-statements` apenas quando o experimento precisar desativá-los.
 
 O gerador registra somente as evidências necessárias para reconstruir a
 workload. A seção de geração do relatório informa pagamentos originais

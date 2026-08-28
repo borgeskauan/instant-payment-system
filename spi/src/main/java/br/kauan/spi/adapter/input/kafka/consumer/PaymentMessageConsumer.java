@@ -1,11 +1,7 @@
 package br.kauan.spi.adapter.input.kafka.consumer;
 
 import br.kauan.spi.Utils;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentDuplicateDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentStatusReportDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.NotAuthenticatedDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.UnauthorizedPspDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
@@ -14,7 +10,6 @@ import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -33,29 +28,16 @@ public class PaymentMessageConsumer {
 
     private final InboundPaymentMessageDecoder messageDecoder;
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
-    private final InvalidPayloadDlqPublisher invalidPayloadDlqPublisher;
-    private final DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher;
-    private final DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher;
-    private final NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher;
-    private final UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher;
+    private final DlqPublisher dlqPublisher;
 
-    @Autowired
     public PaymentMessageConsumer(
             InboundPaymentMessageDecoder messageDecoder,
             PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
-            InvalidPayloadDlqPublisher invalidPayloadDlqPublisher,
-            DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher,
-            DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher,
-            NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher,
-            UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher
+            DlqPublisher dlqPublisher
     ) {
         this.messageDecoder = messageDecoder;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
-        this.invalidPayloadDlqPublisher = invalidPayloadDlqPublisher;
-        this.divergentDuplicateDlqPublisher = divergentDuplicateDlqPublisher;
-        this.divergentStatusReportDlqPublisher = divergentStatusReportDlqPublisher;
-        this.notAuthenticatedDlqPublisher = notAuthenticatedDlqPublisher;
-        this.unauthorizedPspDlqPublisher = unauthorizedPspDlqPublisher;
+        this.dlqPublisher = dlqPublisher;
         log.debug("PaymentMessageConsumer initialized - ready to consume from topics '{}' and '{}'",
                 PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
@@ -87,7 +69,7 @@ public class PaymentMessageConsumer {
                 String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
                 var payment = messageDecoder.toPaymentTransaction(record);
                 if (!Objects.equals(authenticatedIspb, Utils.getBankCode(payment.getSender()))) {
-                    unauthorizedPspDlqPublisher.publish(
+                    dlqPublisher.publish(
                             record,
                             new UnauthorizedPspException(payment.getPaymentId(), authenticatedIspb)
                     );
@@ -95,9 +77,9 @@ public class PaymentMessageConsumer {
                 }
                 payments.add(new AuthenticatedPaymentRequest(sourceOrdinal, authenticatedIspb, payment));
             } catch (NotAuthenticatedException e) {
-                notAuthenticatedDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
-                invalidPayloadDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             }
         }
 
@@ -123,7 +105,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedPaymentRequest divergentDuplicate : result.divergentDuplicates()) {
-            divergentDuplicateDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, divergentDuplicate.sourceOrdinal()),
                     new DivergentDuplicatePaymentException(divergentDuplicate.command().getPaymentId())
             );
@@ -135,7 +117,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedPaymentRequest unauthorizedRequest : result.unauthorizedRequests()) {
-            unauthorizedPspDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, unauthorizedRequest.sourceOrdinal()),
                     new UnauthorizedPspException(
                             unauthorizedRequest.command().getPaymentId(),
@@ -178,9 +160,9 @@ public class PaymentMessageConsumer {
                         statusReport
                 ));
             } catch (NotAuthenticatedException e) {
-                notAuthenticatedDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
-                invalidPayloadDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             }
         }
 
@@ -206,7 +188,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedStatusReport divergentStatusReport : result.divergentStatusReports()) {
-            divergentStatusReportDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, divergentStatusReport.sourceOrdinal()),
                     new DivergentStatusReportException(
                             divergentStatusReport.command().getOriginalPaymentId()
@@ -220,7 +202,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedStatusReport unauthorizedStatusReport : result.unauthorizedStatusReports()) {
-            unauthorizedPspDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, unauthorizedStatusReport.sourceOrdinal()),
                     new UnauthorizedPspException(
                             unauthorizedStatusReport.command().getOriginalPaymentId(),

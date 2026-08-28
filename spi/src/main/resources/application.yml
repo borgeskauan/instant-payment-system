@@ -34,7 +34,6 @@ spring:
     web-application-type: reactive
 
 spi:
-  default-initial-balance: 1_000_000_000
   kafka:
     payment-request-listener-concurrency: 1
     status-report-listener-concurrency: 3
@@ -48,13 +47,6 @@ spi:
       max-poll-records: 500
       fetch-min-bytes: 16384
       fetch-max-wait-ms: 125
-    force-unknown-processing-error: false
-  trace:
-    file: /tmp/spi-trace.csv
-    queue-capacity: 8192
-    flush-interval-ms: 250
-    batch-size: 1024
-    sample-rate: 100
   notification-outbox:
     queue-capacity: 1024
     recovery-batch-size: 256

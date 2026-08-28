@@ -8,15 +8,6 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 mkdir -p "$tmp_dir/scripts" "$tmp_dir/result/logs" "$tmp_dir/result/diagnostics"
 
-cat > "$tmp_dir/scripts/spi-trace.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-echo "spi trace $1"
-if [[ "$1" == copy ]]; then
-    printf 'timestamp,event\n' > "$2/spi-trace.csv"
-fi
-SH
-
 cat > "$tmp_dir/scripts/postgres-statements.sh" <<'SH'
 #!/bin/bash
 set -euo pipefail
@@ -84,7 +75,6 @@ while :; do sleep 0.1; done
 SH
 
 chmod +x \
-    "$tmp_dir/scripts/spi-trace.sh" \
     "$tmp_dir/scripts/postgres-statements.sh" \
     "$tmp_dir/scripts/postgres-server-log.sh" \
     "$tmp_dir/scripts/postgres-runtime.sh" \
@@ -95,22 +85,15 @@ export FAKE_POSTGRES_SERVER_LOG_INVOCATIONS="$tmp_dir/postgres-server-log-invoca
 source "$ROOT_DIR/scripts/run-diagnostics.sh"
 
 ENABLE_JFR=false
-
-start_spi_trace "$tmp_dir/result/logs/spi-trace.log"
-stop_spi_trace "$tmp_dir/result"
-copy_spi_trace "$tmp_dir/result"
-
 ENABLE_POSTGRES_STATEMENTS=true
 start_optional_diagnostics "$tmp_dir/result"
 collect_optional_diagnostics "$tmp_dir/result"
 
 for artifact in \
-    "$tmp_dir/result/diagnostics/spi-trace.csv" \
     "$tmp_dir/result/diagnostics/postgres-statements.csv" \
     "$tmp_dir/result/diagnostics/postgres-activity.csv" \
     "$tmp_dir/result/diagnostics/postgres-io.csv" \
     "$tmp_dir/result/diagnostics/container-stats.csv" \
-    "$tmp_dir/result/logs/spi-trace.log" \
     "$tmp_dir/result/logs/postgres-statements.log" \
     "$tmp_dir/result/logs/postgres-runtime.log" \
     "$tmp_dir/result/logs/container-stats.log"; do
@@ -166,7 +149,6 @@ fi
 
 mkdir -p "$tmp_dir/disabled/logs" "$tmp_dir/disabled/diagnostics"
 ENABLE_JFR=false
-ENABLE_SPI_TRACE=false
 ENABLE_POSTGRES_STATEMENTS=false
 start_optional_diagnostics "$tmp_dir/disabled"
 collect_optional_diagnostics "$tmp_dir/disabled"
@@ -174,9 +156,9 @@ test ! -e "$tmp_dir/disabled/logs/postgres-server.log"
 
 mkdir -p "$tmp_dir/command-failure"
 set +e
-"$ROOT_DIR/scripts/run-diagnostics.sh" run \
+    "$ROOT_DIR/scripts/run-diagnostics.sh" run \
     --run-dir "$tmp_dir/command-failure" \
-    --no-jfr --no-spi-trace --no-postgres-statements \
+    --no-jfr --no-postgres-statements \
     -- bash -c 'exit 17'
 command_status=$?
 set -e
@@ -192,7 +174,7 @@ for child_status in 0 17; do
     mkdir -p "$result"
     set +e
     "$ROOT_DIR/scripts/run-diagnostics.sh" run \
-        --run-dir "$result" --no-jfr --no-spi-trace \
+        --run-dir "$result" --no-jfr \
         -- bash -c "exit $child_status"
     wrapper_status=$?
     set -e

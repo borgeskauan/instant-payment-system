@@ -1,6 +1,6 @@
 package br.kauan.spi.domain.services.tracing;
 
-public enum SpiTraceEvent {
+public enum SpiPaymentStage {
     REQUEST_CONSUMED("request_consumed"),
     REQUEST_SAVED("request_saved"),
     ACCEPTANCE_NOTIFICATION_ENQUEUED("acceptance_notification_enqueued"),
@@ -10,11 +10,11 @@ public enum SpiTraceEvent {
 
     private final String eventName;
 
-    SpiTraceEvent(String eventName) {
+    SpiPaymentStage(String eventName) {
         this.eventName = eventName;
     }
 
-    public String eventName() {
+    String eventName() {
         return eventName;
     }
 }

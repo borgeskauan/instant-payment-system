@@ -40,7 +40,7 @@ class NotificationObligationServiceTest {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationObligationService service = service(repository);
 
-        service.storeAcceptanceObligations(List.of());
+        service.storeTransactionObligations(List.of(), List.of());
         service.storeStatusObligations(List.of(), List.of());
 
         verifyNoInteractions(repository);
@@ -53,7 +53,7 @@ class NotificationObligationServiceTest {
         PaymentTransactionCommand first = payment("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand second = payment("E2E-2", "10000002", "20000002");
 
-        service.storeAcceptanceObligations(List.of(first, second));
+        service.storeTransactionObligations(List.of(first, second), List.of());
 
         List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations)
@@ -154,7 +154,7 @@ class NotificationObligationServiceTest {
             payments.add(payment("E2E-" + index, "10000001", "20000001"));
         }
 
-        service.storeAcceptanceObligations(payments);
+        service.storeTransactionObligations(payments, List.of());
 
         List<NotificationPublication> obligations = capturedObligations(repository);
         assertThat(obligations).hasSize(2)
@@ -204,7 +204,10 @@ class NotificationObligationServiceTest {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationObligationService service = service(repository);
 
-        service.storeAcceptanceObligations(List.of(payment("E2E-1", "10000001", "20000001")));
+        service.storeTransactionObligations(
+                List.of(payment("E2E-1", "10000001", "20000001")),
+                List.of()
+        );
 
         NotificationPublication obligation = capturedObligations(repository).getFirst();
         assertThat(obligation.communicationId())
@@ -219,9 +222,10 @@ class NotificationObligationServiceTest {
                 new DataAccessResourceFailureException("database unavailable");
         doThrow(databaseFailure).when(repository).insertAll(anyList());
 
-        assertThatThrownBy(() -> service.storeAcceptanceObligations(List.of(
-                payment("E2E-1", "10000001", "20000001")
-        ))).isSameAs(databaseFailure);
+        assertThatThrownBy(() -> service.storeTransactionObligations(
+                List.of(payment("E2E-1", "10000001", "20000001")),
+                List.of()
+        )).isSameAs(databaseFailure);
     }
 
     @Test
@@ -230,10 +234,13 @@ class NotificationObligationServiceTest {
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         NotificationObligationService service = service(repository, eventPublisher);
 
-        service.storeAcceptanceObligations(List.of(
-                payment("E2E-REPLAY", "10000001", "20000001"),
-                payment("E2E-NEW", "10000002", "20000002")
-        ));
+        service.storeTransactionObligations(
+                List.of(
+                        payment("E2E-REPLAY", "10000001", "20000001"),
+                        payment("E2E-NEW", "10000002", "20000002")
+                ),
+                List.of()
+        );
 
         ArgumentCaptor<OutboundNotificationBatchReady> event =
                 ArgumentCaptor.forClass(OutboundNotificationBatchReady.class);
@@ -255,10 +262,13 @@ class NotificationObligationServiceTest {
                 new DataAccessResourceFailureException("database unavailable");
         doThrow(databaseFailure).when(repository).insertAll(anyList());
 
-        assertThatThrownBy(() -> service.storeAcceptanceObligations(List.of(
-                payment("E2E-CONFLICT", "10000001", "20000001"),
-                payment("E2E-NEW", "10000002", "20000002")
-        ))).isSameAs(databaseFailure);
+        assertThatThrownBy(() -> service.storeTransactionObligations(
+                List.of(
+                        payment("E2E-CONFLICT", "10000001", "20000001"),
+                        payment("E2E-NEW", "10000002", "20000002")
+                ),
+                List.of()
+        )).isSameAs(databaseFailure);
 
         verifyNoInteractions(eventPublisher);
     }

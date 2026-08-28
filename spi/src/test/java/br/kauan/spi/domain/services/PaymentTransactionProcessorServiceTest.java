@@ -11,8 +11,6 @@ import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.audit.PaymentAuditService;
 import br.kauan.spi.domain.services.notification.NotificationObligationService;
-import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
-import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
 import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
@@ -35,12 +33,10 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         PaymentAuditService auditService = mock(PaymentAuditService.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 auditService,
-                notificationService,
-                traceRecorder
+                notificationService
         );
         StatusReportCommand statusReport = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -60,8 +56,6 @@ class PaymentTransactionProcessorServiceTest {
         verify(paymentTransactionRepository).classifyAndApplyIncomingStatusReports(authenticatedReports(statusReport));
         verify(auditService).storeOutcomeEvents(List.of(paymentTransaction), List.of());
         verify(notificationService).storeStatusObligations(List.of(paymentTransaction), List.of());
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
         assertThat(result.divergentStatusReports()).isEmpty();
     }
 
@@ -70,12 +64,10 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         PaymentAuditService auditService = mock(PaymentAuditService.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 auditService,
-                notificationService,
-                traceRecorder
+                notificationService
         );
         StatusReportCommand firstReport = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -103,22 +95,16 @@ class PaymentTransactionProcessorServiceTest {
         );
         verify(notificationService).storeStatusObligations(List.of(firstPayment, secondPayment), List.of());
         verify(auditService).storeOutcomeEvents(List.of(firstPayment, secondPayment), List.of());
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.SETTLEMENT_COMPLETED);
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.SETTLEMENT_COMPLETED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED);
     }
 
     @Test
     void statusReportResultWithoutSettledPaymentsSkipsConfirmation() {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 mock(PaymentAuditService.class),
-                notificationService,
-                traceRecorder
+                notificationService
         );
         StatusReportCommand statusReport = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -138,12 +124,10 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         PaymentAuditService auditService = mock(PaymentAuditService.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 auditService,
-                notificationService,
-                traceRecorder
+                notificationService
         );
         StatusReportCommand firstReport = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -184,8 +168,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 mock(PaymentAuditService.class),
-                mock(NotificationObligationService.class),
-                mock(SpiTraceRecorder.class)
+                mock(NotificationObligationService.class)
         );
         StatusReportCommand first = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -212,8 +195,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 mock(PaymentAuditService.class),
-                notificationService,
-                mock(SpiTraceRecorder.class)
+                notificationService
         );
         StatusReportCommand accepted = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -256,8 +238,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 mock(PaymentAuditService.class),
-                mock(NotificationObligationService.class),
-                mock(SpiTraceRecorder.class)
+                mock(NotificationObligationService.class)
         );
         StatusReportCommand divergent = StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
@@ -283,12 +264,10 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         PaymentAuditService auditService = mock(PaymentAuditService.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 auditService,
-                notificationService,
-                traceRecorder
+                notificationService
         );
         PaymentTransactionCommand firstPayment = paymentTransaction("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand secondPayment = paymentTransaction("E2E-2", "10000002", "20000002");
@@ -308,14 +287,10 @@ class PaymentTransactionProcessorServiceTest {
                 authenticatedPayments(firstPayment, secondPayment)
         );
         verify(auditService).storeAdmissionEvents(List.of(firstPayment, secondPayment), List.of());
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.REQUEST_SAVED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.REQUEST_SAVED);
         verify(notificationService).storeTransactionObligations(
                 List.of(firstPayment, secondPayment),
                 List.of()
         );
-        verify(traceRecorder).record("E2E-1", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
-        verify(traceRecorder).record("E2E-2", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
     }
 
     @Test
@@ -323,12 +298,10 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionRepository paymentTransactionRepository = mock(PaymentTransactionRepository.class);
         PaymentAuditService auditService = mock(PaymentAuditService.class);
         NotificationObligationService notificationService = mock(NotificationObligationService.class);
-        SpiTraceRecorder traceRecorder = mock(SpiTraceRecorder.class);
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 paymentTransactionRepository,
                 auditService,
-                notificationService,
-                traceRecorder
+                notificationService
         );
         PaymentTransactionCommand waitingDuplicate = paymentTransaction("E2E-WAITING", "10000001", "20000001");
         PaymentTransactionCommand advancedDuplicate = paymentTransaction("E2E-SETTLED", "10000002", "20000002");
@@ -351,9 +324,6 @@ class PaymentTransactionProcessorServiceTest {
 
         verify(notificationService).storeTransactionObligations(List.of(waitingDuplicate), List.of());
         verify(auditService).storeAdmissionEvents(List.of(), List.of());
-        verify(traceRecorder).record("E2E-WAITING", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
-        verify(traceRecorder, never()).record("E2E-SETTLED", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
-        verify(traceRecorder, never()).record("E2E-DIVERGENT", SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
         org.assertj.core.api.Assertions.assertThat(result.divergentDuplicates())
                 .extracting(AuthenticatedPaymentRequest::command)
                 .containsExactly(divergentDuplicate);
@@ -367,8 +337,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 repository,
                 auditService,
-                notificationService,
-                mock(SpiTraceRecorder.class)
+                notificationService
         );
         PaymentTransactionCommand payment = paymentTransaction("E2E-NO-FUNDS");
         PaymentRejection rejection = new PaymentRejection(
@@ -389,7 +358,6 @@ class PaymentTransactionProcessorServiceTest {
 
         verify(auditService).storeAdmissionEvents(List.of(payment), List.of(rejection));
         verify(notificationService).storeTransactionObligations(List.of(), List.of(rejection));
-        verify(notificationService, never()).storeAcceptanceObligations(org.mockito.ArgumentMatchers.anyList());
         verify(notificationService, never()).storeStatusObligations(
                 org.mockito.ArgumentMatchers.anyList(),
                 org.mockito.ArgumentMatchers.anyList()
@@ -403,8 +371,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = new PaymentTransactionProcessorService(
                 repository,
                 mock(PaymentAuditService.class),
-                notificationService,
-                mock(SpiTraceRecorder.class)
+                notificationService
         );
         PaymentTransactionCommand accepted = paymentTransaction(
                 "E2E-ACCEPTED",
@@ -436,7 +403,6 @@ class PaymentTransactionProcessorServiceTest {
                 List.of(accepted),
                 List.of(rejection)
         );
-        verify(notificationService, never()).storeAcceptanceObligations(org.mockito.ArgumentMatchers.anyList());
         verify(notificationService, never()).storeStatusObligations(
                 org.mockito.ArgumentMatchers.anyList(),
                 org.mockito.ArgumentMatchers.anyList()

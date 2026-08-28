@@ -5,8 +5,8 @@ import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 import br.kauan.spi.domain.services.audit.PaymentAuditService;
 import br.kauan.spi.domain.services.notification.NotificationObligationService;
-import br.kauan.spi.domain.services.tracing.SpiTraceEvent;
-import br.kauan.spi.domain.services.tracing.SpiTraceRecorder;
+import br.kauan.spi.domain.services.tracing.SpiPaymentStage;
+import br.kauan.spi.domain.services.tracing.SpiPaymentStageEvent;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
@@ -26,18 +26,15 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final PaymentAuditService paymentAuditService;
     private final NotificationObligationService notificationObligationService;
-    private final SpiTraceRecorder traceRecorder;
 
     public PaymentTransactionProcessorService(
             PaymentTransactionRepository paymentTransactionRepository,
             PaymentAuditService paymentAuditService,
-            NotificationObligationService notificationObligationService,
-            SpiTraceRecorder traceRecorder
+            NotificationObligationService notificationObligationService
     ) {
         this.paymentTransactionRepository = paymentTransactionRepository;
         this.paymentAuditService = paymentAuditService;
         this.notificationObligationService = notificationObligationService;
-        this.traceRecorder = traceRecorder;
     }
 
     @Override
@@ -64,11 +61,14 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
             );
         }
         for (var paymentTransaction : persistenceResult.createdPayments()) {
-            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.REQUEST_SAVED);
+            SpiPaymentStageEvent.record(paymentTransaction.getPaymentId(), SpiPaymentStage.REQUEST_SAVED);
         }
         if (!persistenceResult.acceptanceRequests().isEmpty()) {
             for (var paymentTransaction : persistenceResult.acceptanceRequests()) {
-                traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.ACCEPTANCE_NOTIFICATION_ENQUEUED);
+                SpiPaymentStageEvent.record(
+                        paymentTransaction.getPaymentId(),
+                        SpiPaymentStage.ACCEPTANCE_NOTIFICATION_ENQUEUED
+                );
             }
         }
         return persistenceResult;
@@ -103,13 +103,13 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         }
 
         for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
-            traceRecorder.record(paymentTransaction.getPaymentId(), SpiTraceEvent.SETTLEMENT_COMPLETED);
+            SpiPaymentStageEvent.record(paymentTransaction.getPaymentId(), SpiPaymentStage.SETTLEMENT_COMPLETED);
         }
 
         for (PaymentTransactionCommand paymentTransaction : persistenceResult.settledPayments()) {
-            traceRecorder.record(
+            SpiPaymentStageEvent.record(
                     paymentTransaction.getPaymentId(),
-                    SpiTraceEvent.CONFIRMATION_NOTIFICATION_ENQUEUED
+                    SpiPaymentStage.CONFIRMATION_NOTIFICATION_ENQUEUED
             );
         }
 

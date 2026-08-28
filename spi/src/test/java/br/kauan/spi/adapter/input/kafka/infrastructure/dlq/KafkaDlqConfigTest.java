@@ -1,5 +1,10 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.dlq;
 
+import br.kauan.spi.adapter.input.kafka.consumer.DivergentDuplicatePaymentException;
+import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
+import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
+import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
+import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -70,7 +75,7 @@ class KafkaDlqConfigTest {
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
-        DeadLetterPublishingRecoverer recoverer = config.invalidPayloadDeadLetterPublishingRecoverer(kafkaTemplate);
+        DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
                 "spi-payment-status-reports",
                 5,
@@ -78,7 +83,7 @@ class KafkaDlqConfigTest {
                 "status-key",
                 "raw-invalid".getBytes(StandardCharsets.UTF_8));
 
-        recoverer.accept(sourceRecord, null, new IllegalArgumentException("invalid protobuf"));
+        recoverer.accept(sourceRecord, null, new InvalidInboundPayloadException("invalid protobuf"));
 
         var captor = forClass(ProducerRecord.class);
         verify(kafkaTemplate).send(captor.capture());
@@ -97,7 +102,7 @@ class KafkaDlqConfigTest {
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
-        DeadLetterPublishingRecoverer recoverer = config.divergentStatusReportDeadLetterPublishingRecoverer(kafkaTemplate);
+        DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
                 "spi-payment-status-reports",
                 5,
@@ -105,7 +110,7 @@ class KafkaDlqConfigTest {
                 "status-key",
                 "status-payload".getBytes(StandardCharsets.UTF_8));
 
-        recoverer.accept(sourceRecord, null, new IllegalStateException("divergent status"));
+        recoverer.accept(sourceRecord, null, new DivergentStatusReportException("E2E-1"));
 
         var captor = forClass(ProducerRecord.class);
         verify(kafkaTemplate).send(captor.capture());
@@ -122,8 +127,7 @@ class KafkaDlqConfigTest {
     void notAuthenticatedDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
         KafkaDlqConfig config = new KafkaDlqConfig();
         KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
-        DeadLetterPublishingRecoverer recoverer =
-                config.notAuthenticatedDeadLetterPublishingRecoverer(kafkaTemplate);
+        DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
                 "spi-payment-requests",
                 2,
@@ -132,7 +136,7 @@ class KafkaDlqConfigTest {
                 new byte[0]
         );
 
-        recoverer.accept(sourceRecord, null, new IllegalStateException("missing identity"));
+        recoverer.accept(sourceRecord, null, new NotAuthenticatedException("missing identity"));
 
         assertThat(capturedErrorType(kafkaTemplate)).isEqualTo("NOT_AUTHENTICATED");
     }
@@ -141,8 +145,7 @@ class KafkaDlqConfigTest {
     void unauthorizedPspDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
         KafkaDlqConfig config = new KafkaDlqConfig();
         KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
-        DeadLetterPublishingRecoverer recoverer =
-                config.unauthorizedPspDeadLetterPublishingRecoverer(kafkaTemplate);
+        DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
                 "spi-payment-status-reports",
                 3,
@@ -151,9 +154,27 @@ class KafkaDlqConfigTest {
                 new byte[0]
         );
 
-        recoverer.accept(sourceRecord, null, new IllegalStateException("wrong PSP"));
+        recoverer.accept(sourceRecord, null, new UnauthorizedPspException("E2E-1", "10000001"));
 
         assertThat(capturedErrorType(kafkaTemplate)).isEqualTo("UNAUTHORIZED_PSP");
+    }
+
+    @Test
+    void divergentDuplicateUsesItsExistingErrorTypeThroughTheSingleRecoverer() {
+        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
+        DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
+        ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
+                "spi-payment-requests",
+                1,
+                12L,
+                "payment-key",
+                new byte[0]
+        );
+
+        recoverer.accept(sourceRecord, null, new DivergentDuplicatePaymentException("E2E-1"));
+
+        assertThat(capturedErrorType(kafkaTemplate)).isEqualTo("DIVERGENT_DUPLICATE");
     }
 
     @Test

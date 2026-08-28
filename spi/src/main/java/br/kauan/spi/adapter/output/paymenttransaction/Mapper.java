@@ -1,6 +1,5 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.domain.entity.status.PaymentStatus;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
@@ -9,49 +8,6 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class Mapper {
-
-    public Entity toEntity(PaymentTransactionCommand transaction, PaymentStatus status) {
-        Entity entity = new Entity();
-        entity.setPaymentId(transaction.getPaymentId());
-        entity.setAmountCents(transaction.getAmountCents());
-        entity.setCurrency(transaction.getCurrency());
-        entity.setDescription(transaction.getDescription());
-        entity.setStatus(status);
-
-        var sender = transaction.getSender();
-
-        // Map sender fields
-        if (sender != null) {
-            entity.setSenderName(sender.getName());
-            entity.setSenderTaxId(sender.getTaxId());
-            entity.setSenderPixKey(sender.getPixKey());
-
-            if (sender.getAccount() != null) {
-                entity.setSenderAccountNumber(sender.getAccount().getNumber());
-                entity.setSenderAccountBranch(sender.getAccount().getBranch());
-                entity.setSenderAccountType(sender.getAccount().getType().name());
-                entity.setSenderBankCode(sender.getAccount().getBankCode());
-            }
-        }
-
-        var receiver = transaction.getReceiver();
-
-        // Map receiver fields
-        if (receiver != null) {
-            entity.setReceiverName(receiver.getName());
-            entity.setReceiverTaxId(receiver.getTaxId());
-            entity.setReceiverPixKey(receiver.getPixKey());
-
-            if (receiver.getAccount() != null) {
-                entity.setReceiverAccountNumber(receiver.getAccount().getNumber());
-                entity.setReceiverAccountBranch(receiver.getAccount().getBranch());
-                entity.setReceiverAccountType(receiver.getAccount().getType().name());
-                entity.setReceiverBankCode(receiver.getAccount().getBankCode());
-            }
-        }
-
-        return entity;
-    }
 
     public PaymentTransactionCommand toDomain(Entity entity) {
         return PaymentTransactionCommand.builder()

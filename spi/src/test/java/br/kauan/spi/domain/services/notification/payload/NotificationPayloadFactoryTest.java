@@ -25,7 +25,7 @@ class NotificationPayloadFactoryTest {
 
     @Test
     void buildsPaymentNotificationWithExistingJsonShape() {
-        Object payload = factory.paymentNotification(List.of(paymentTransaction("E2E-1")));
+        Object payload = factory.paymentNotification("MSG-1", List.of(paymentTransaction("E2E-1")));
 
         assertThat(serialized(payload))
                 .contains("\"GrpHdr\"")
@@ -39,7 +39,7 @@ class NotificationPayloadFactoryTest {
 
     @Test
     void buildsStatusNotificationWithExistingJsonShape() {
-        Object payload = factory.statusNotification(List.of(StatusReportCommand.builder()
+        Object payload = factory.statusNotification("MSG-1", List.of(StatusReportCommand.builder()
                 .originalPaymentId("E2E-1")
                 .status(PaymentStatus.ACCEPTED_AND_SETTLED_FOR_SENDER)
                 .build()));

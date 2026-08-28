@@ -17,14 +17,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Component
 public class NotificationPayloadFactory {
-
-    public Map<String, Object> paymentNotification(List<PaymentTransactionCommand> transactions) {
-        return paymentNotification(UUID.randomUUID().toString(), transactions);
-    }
 
     public Map<String, Object> paymentNotification(
             String messageId,
@@ -34,10 +29,6 @@ public class NotificationPayloadFactory {
                 "GrpHdr", groupHeader(messageId, transactions.size()),
                 "CdtTrfTxInf", paymentItems(transactions)
         );
-    }
-
-    public Map<String, Object> statusNotification(List<StatusReportCommand> statusReports) {
-        return statusNotification(UUID.randomUUID().toString(), statusReports);
     }
 
     public Map<String, Object> statusNotification(

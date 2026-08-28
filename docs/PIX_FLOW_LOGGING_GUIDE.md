@@ -89,9 +89,9 @@ Processing payment transaction batch for ISPB: {ispb}, transactions: {count}
 [PIX FLOW - Step 4] SPI forwarding acceptance request to PSP Recebedor (Bank: {bank})
 ```
 
-**Service:** `NotificationObligationService.storeAcceptanceObligations()` (SPI)
+**Service:** `NotificationObligationService.storeTransactionObligations()` (SPI)
 ```
-Acceptance notification obligations stored. payments={count}
+Transaction notification obligations stored. acceptanceRequests={count}, rejected={count}
 ```
 
 **Consumer:** `NotificationConsumer.consumeNotification()` (PSP Recebedor)

@@ -1,5 +1,10 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.dlq;
 
+import br.kauan.spi.adapter.input.kafka.consumer.DivergentDuplicatePaymentException;
+import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
+import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
+import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
+import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -62,59 +67,36 @@ public class KafkaDlqConfig {
     public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(
             @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
     ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, BATCH_PROCESSING_ERROR);
-    }
-
-    @Bean
-    public DeadLetterPublishingRecoverer invalidPayloadDeadLetterPublishingRecoverer(
-            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
-    ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, INVALID_PAYLOAD);
-    }
-
-    @Bean
-    public DeadLetterPublishingRecoverer divergentDuplicateDeadLetterPublishingRecoverer(
-            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
-    ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, DIVERGENT_DUPLICATE);
-    }
-
-    @Bean
-    public DeadLetterPublishingRecoverer divergentStatusReportDeadLetterPublishingRecoverer(
-            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
-    ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, DIVERGENT_STATUS_REPORT);
-    }
-
-    @Bean
-    public DeadLetterPublishingRecoverer notAuthenticatedDeadLetterPublishingRecoverer(
-            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
-    ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, NOT_AUTHENTICATED);
-    }
-
-    @Bean
-    public DeadLetterPublishingRecoverer unauthorizedPspDeadLetterPublishingRecoverer(
-            @Qualifier("dlqKafkaTemplate") KafkaTemplate<String, byte[]> kafkaTemplate
-    ) {
-        return createDeadLetterPublishingRecoverer(kafkaTemplate, UNAUTHORIZED_PSP);
-    }
-
-    private DeadLetterPublishingRecoverer createDeadLetterPublishingRecoverer(
-            KafkaTemplate<String, byte[]> kafkaTemplate,
-            String errorType
-    ) {
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (record, exception) -> new TopicPartition(record.topic() + ".dlq", record.partition()));
         recoverer.setHeadersFunction((record, exception) -> DlqHeaders.from(
                 record,
                 consumerGroupForTopic(record.topic()),
-                errorType,
+                errorType(exception),
                 exception));
         recoverer.setFailIfSendResultIsError(true);
         recoverer.setWaitForSendResultTimeout(DLQ_SEND_TIMEOUT);
         return recoverer;
+    }
+
+    private String errorType(Exception exception) {
+        if (exception instanceof InvalidInboundPayloadException) {
+            return INVALID_PAYLOAD;
+        }
+        if (exception instanceof DivergentDuplicatePaymentException) {
+            return DIVERGENT_DUPLICATE;
+        }
+        if (exception instanceof DivergentStatusReportException) {
+            return DIVERGENT_STATUS_REPORT;
+        }
+        if (exception instanceof NotAuthenticatedException) {
+            return NOT_AUTHENTICATED;
+        }
+        if (exception instanceof UnauthorizedPspException) {
+            return UNAUTHORIZED_PSP;
+        }
+        return BATCH_PROCESSING_ERROR;
     }
 
     private String consumerGroupForTopic(String topic) {

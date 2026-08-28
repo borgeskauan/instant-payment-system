@@ -106,7 +106,8 @@ ativos, piso exigido de 2.000 TPS e 30 segundos de drain. Mix, participantes,
 funding e replays de 5% permanecem idênticos a
 `mixed-outcomes-2k-15m`.
 
-JFR, SPI trace e diagnósticos PostgreSQL ficam ativos por padrão. Além dos
+JFR e diagnósticos PostgreSQL ficam ativos por padrão. Os checkpoints
+semânticos amostrados do SPI são eventos da própria gravação JFR. Além dos
 artefatos já existentes, o bundle inclui:
 
 - `diagnostics/postgres-activity.csv`, com waits e bloqueadores a cada 250 ms;

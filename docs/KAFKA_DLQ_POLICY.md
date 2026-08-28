@@ -109,15 +109,7 @@ Kafka auto commit is disabled for these consumers.
 
 Hikari connection timeouts are intentionally low for the SPI. The goal is to detect database outages quickly and enter Kafka pause/backoff, not to wait tens of seconds per retry attempt.
 
-The SPI has a manual test hook:
-
-```yaml
-spi:
-  kafka:
-    force-unknown-processing-error: false
-```
-
-When enabled, this forces an unknown processing error after protobuf parsing. It is useful to verify that mapper/trace/use-case failures do not get classified as invalid payload and are recovered through the normal retry-to-DLQ path.
+Unknown processing failures are exercised through automated consumer and error-handler tests. The production SPI does not expose a fault-injection property.
 
 ## Manual Validation Summary
 
@@ -126,7 +118,6 @@ The following manual scenarios were validated during the DLQ implementation:
 - invalid bytes sent to `spi-payment-requests` were published to `spi-payment-requests.dlq`;
 - database outage did not publish to DLQ and left the source record uncommitted until PostgreSQL returned;
 - after PostgreSQL returned, the same source record was processed and the consumer lag returned to zero;
-- forced unknown processing error retried through the short retry handler and then published to DLQ.
 
 The following behavior is covered by automated tests because it is awkward to force manually:
 

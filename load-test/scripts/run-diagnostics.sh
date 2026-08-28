@@ -17,9 +17,7 @@ readonly CONTAINER_STATS_FILE="container-stats.csv"
 readonly CONTAINER_STATS_LOG="container-stats.log"
 
 ENABLE_JFR=true
-ENABLE_SPI_TRACE=true
 ENABLE_POSTGRES_STATEMENTS=true
-SPI_TRACE_ACTIVE=false
 JFR_ACTIVE=false
 POSTGRES_STATEMENTS_ACTIVE=false
 POSTGRES_ACTIVITY_PID=""
@@ -32,7 +30,7 @@ COMMAND=()
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") run --run-dir DIR [--no-jfr] [--no-spi-trace] [--no-postgres-statements] -- COMMAND...
+Usage: $(basename "$0") run --run-dir DIR [--no-jfr] [--no-postgres-statements] -- COMMAND...
 EOF
 }
 
@@ -61,7 +59,6 @@ parse_args() {
                 shift 2
                 ;;
             --no-jfr) ENABLE_JFR=false; shift ;;
-            --no-spi-trace) ENABLE_SPI_TRACE=false; shift ;;
             --no-postgres-statements) ENABLE_POSTGRES_STATEMENTS=false; shift ;;
             --)
                 shift
@@ -86,29 +83,6 @@ parse_args() {
         echo "A command is required after --." >&2
         return 2
     fi
-}
-
-start_spi_trace() {
-    local log_file="$1"
-    log_phase "starting SPI trace collection"
-    "${SCRIPTS_DIR}/spi-trace.sh" start > "$log_file" 2>&1
-    SPI_TRACE_ACTIVE=true
-}
-
-stop_spi_trace() {
-    local target_dir="$1"
-    local log_file="/dev/null"
-    [[ -z "$target_dir" ]] || log_file="$target_dir/logs/spi-trace.log"
-    log_phase "stopping SPI trace collection"
-    "${SCRIPTS_DIR}/spi-trace.sh" stop >> "$log_file" 2>&1
-    SPI_TRACE_ACTIVE=false
-}
-
-copy_spi_trace() {
-    local target_dir="$1"
-    log_phase "copying SPI trace"
-    mkdir -p "$target_dir/diagnostics"
-    "${SCRIPTS_DIR}/spi-trace.sh" copy "$target_dir/diagnostics" >> "$target_dir/logs/spi-trace.log" 2>&1
 }
 
 enable_postgres_statement_stats() {
@@ -279,16 +253,11 @@ start_optional_diagnostics() {
         start_container_stats "$target_dir"
     fi
     [[ "$ENABLE_JFR" != true ]] || start_jfr_recordings "$target_dir"
-    [[ "$ENABLE_SPI_TRACE" != true ]] || start_spi_trace "$target_dir/logs/spi-trace.log"
 }
 
 collect_optional_diagnostics() {
     local target_dir="$1" failed=0 until=""
     [[ "$ENABLE_JFR" != true ]] || stop_jfr_recordings "$target_dir" || failed=1
-    if [[ "$ENABLE_SPI_TRACE" == true ]]; then
-        stop_spi_trace "$target_dir" || failed=1
-        copy_spi_trace "$target_dir" || failed=1
-    fi
     if [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]]; then
         until="$(iso_now)"
         stop_postgres_activity_sampler "$target_dir" || failed=1
@@ -305,7 +274,6 @@ cleanup_diagnostics() {
     trap - EXIT INT TERM
     [[ -z "$POSTGRES_ACTIVITY_PID" ]] || stop_postgres_activity_sampler "$POSTGRES_STATEMENTS_TARGET_DIR" || true
     [[ -z "$CONTAINER_STATS_PID" ]] || stop_container_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
-    [[ "$SPI_TRACE_ACTIVE" != true ]] || stop_spi_trace "$RUN_DIR" || true
     [[ "$JFR_ACTIVE" != true ]] || stop_jfr_recordings "$JFR_TARGET_DIR" || true
     [[ "$POSTGRES_STATEMENTS_ACTIVE" != true ]] || disable_postgres_statement_stats "$POSTGRES_STATEMENTS_TARGET_DIR" || true
 }

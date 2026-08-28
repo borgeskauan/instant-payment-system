@@ -11,7 +11,6 @@ readonly DIAGNOSTICS_SCRIPT="${DIAGNOSTICS_SCRIPT:-${LOAD_TEST_DIR}/scripts/run-
 PROFILE_NAME="uniform-smoke"
 RUN_TAG=""
 ENABLE_JFR=true
-ENABLE_SPI_TRACE=true
 ENABLE_POSTGRES_STATEMENTS=true
 PREPARED_DIR=""
 RESULT_DIR=""
@@ -19,7 +18,7 @@ LOADTOOL_BIN=""
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--profile NAME] [--no-jfr] [--no-spi-trace] [--no-postgres-statements] RUN_TAG
+Usage: $(basename "$0") [--profile NAME] [--no-jfr] [--no-postgres-statements] RUN_TAG
 
 Run a previously prepared workload. The default profile is uniform-smoke.
 EOF
@@ -41,7 +40,6 @@ parse_args() {
                 shift 2
                 ;;
             --no-jfr) ENABLE_JFR=false; shift ;;
-            --no-spi-trace) ENABLE_SPI_TRACE=false; shift ;;
             --no-postgres-statements) ENABLE_POSTGRES_STATEMENTS=false; shift ;;
             -h|--help)
                 usage
@@ -126,7 +124,6 @@ create_result_bundle() {
 run_prepared_workload() {
     local -a diagnostics=(run --run-dir "$RESULT_DIR")
     [[ "$ENABLE_JFR" == true ]] || diagnostics+=(--no-jfr)
-    [[ "$ENABLE_SPI_TRACE" == true ]] || diagnostics+=(--no-spi-trace)
     [[ "$ENABLE_POSTGRES_STATEMENTS" == true ]] || diagnostics+=(--no-postgres-statements)
     diagnostics+=(-- "$LOADTOOL_BIN" run --run-dir "$RESULT_DIR" --client-cert-root "$PREPARED_DIR/certs")
 

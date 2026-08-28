@@ -45,15 +45,6 @@ public class NotificationObligationService {
         this.eventPublisher = eventPublisher;
     }
 
-    public void storeAcceptanceObligations(List<PaymentTransactionCommand> paymentTransactions) {
-        if (paymentTransactions.isEmpty()) {
-            return;
-        }
-
-        store(acceptanceObligations(paymentTransactions));
-        log.debug("Acceptance notification obligations stored. payments={}", paymentTransactions.size());
-    }
-
     public void storeTransactionObligations(
             List<PaymentTransactionCommand> acceptanceRequests,
             List<PaymentRejection> rejectedPayments
