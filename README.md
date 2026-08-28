@@ -1,7 +1,10 @@
 # Instant Payment System
 
-Simulação local de um fluxo Pix com ingresso HTTP/mTLS, processamento pelo SPI,
-Kafka, PostgreSQL e entrega de notificações aos PSPs.
+Simulação local de um fluxo Pix com ingresso HTTP/mTLS, processamento pelo SPI, Kafka, PostgreSQL e entrega de notificações aos PSPs.
+
+## Core
+
+O core benchmarkado é formado por `kafka-producer`, SPI, `notification-gateway` e o load tool Rust. Corretude, capacidade e resultados de performance se referem somente a esses componentes e à infraestrutura que os suporta.
 
 ## Quick start
 
@@ -121,7 +124,6 @@ docker compose -f infra/docker-compose.yml down -v --remove-orphans
 Esse comando apaga permanentemente os dados persistidos do PostgreSQL e Kafka.
 As imagens Docker são preservadas.
 
-## Fluxo manual com PSPs
+## Reference demo
 
-Para exercitar o fluxo manualmente com dois PSPs simulados, consulte a
-[coleção Bruno](docs/collection/README.md).
+A [reference demo](demo/README.md) agrupa DICT, dois PSPs simulados e a aplicação Angular para apresentar o fluxo interativamente. Ela não faz parte do core benchmarkado e não recebe suas garantias de performance, durabilidade ou disponibilidade.

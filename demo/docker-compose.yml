@@ -1,0 +1,123 @@
+name: reference-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: dict
+      POSTGRES_PASSWORD: demo
+    volumes:
+      - dict-data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U postgres -d dict || exit 1
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  dict:
+    build:
+      context: ./dict
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/dict
+      SPRING_DATASOURCE_PASSWORD: demo
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  certs-init:
+    build:
+      context: ../infra/certs
+      dockerfile: Dockerfile
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /certs/generate-local-mtls-certs.sh psp 11111111
+        /certs/generate-local-mtls-certs.sh psp 22222222
+    volumes:
+      - ../infra/certs:/certs
+
+  funds-init:
+    image: curlimages/curl:8.10.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until curl -fsS -X PUT http://spi:8002/internal/funds/11111111 -H 'Content-Type: application/json' -d '{"balance":1000,"resetIfExists":true}'; do sleep 2; done
+        curl -fsS -X PUT http://spi:8002/internal/funds/22222222 -H 'Content-Type: application/json' -d '{"balance":1000,"resetIfExists":true}'
+    networks:
+      - core
+
+  psp-a:
+    build:
+      context: ./payment-service-provider
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    environment: &psp-environment
+      BANK_CODE: "11111111"
+      EXTERNAL_DICT_URL: http://dict:8003
+      EXTERNAL_CENTRAL_TRANSFER_URL: https://kafka-producer:8001
+      NOTIFICATION_GATEWAY_HOST: notification-gateway
+      NOTIFICATION_GATEWAY_PORT: "9090"
+      NOTIFICATION_GATEWAY_TLS_CERTIFICATE_CHAIN: /certs/psp/client.crt
+      NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY: /certs/psp/client.key
+      NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION: /certs/ca/ca.crt
+      CENTRAL_TRANSFER_TLS_CERTIFICATE_CHAIN: /certs/psp/client.crt
+      CENTRAL_TRANSFER_TLS_PRIVATE_KEY: /certs/psp/client.key
+      CENTRAL_TRANSFER_TLS_TRUST_CERT_COLLECTION: /certs/ca/ca.crt
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m"
+    volumes:
+      - ../infra/certs/local/psp-11111111:/certs/psp:ro
+      - ../infra/certs/local/ca:/certs/ca:ro
+    depends_on:
+      dict:
+        condition: service_started
+      certs-init:
+        condition: service_completed_successfully
+      funds-init:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - core
+
+  psp-b:
+    build:
+      context: ./payment-service-provider
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8080"
+    environment:
+      <<: *psp-environment
+      BANK_CODE: "22222222"
+    volumes:
+      - ../infra/certs/local/psp-22222222:/certs/psp:ro
+      - ../infra/certs/local/ca:/certs/ca:ro
+    depends_on:
+      dict:
+        condition: service_started
+      certs-init:
+        condition: service_completed_successfully
+      funds-init:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - core
+
+  payment-app:
+    build:
+      context: ./payment-app
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+
+networks:
+  core:
+    external: true
+    name: infra_default
+
+volumes:
+  dict-data:

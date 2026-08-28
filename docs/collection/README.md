@@ -1,10 +1,10 @@
 # Bruno Transfer Flow
 
-Start two PSP containers before running these requests:
+Start the core and the reference demo as described in [`demo/README.md`](../../demo/README.md). To start only the two PSP containers manually, use:
 
 ```bash
-payment-service-provider/start-psp.sh 11111111 --host-port 8081 --replace
-payment-service-provider/start-psp.sh 22222222 --host-port 8082 --replace
+demo/payment-service-provider/start-psp.sh 11111111 --host-port 8081 --replace
+demo/payment-service-provider/start-psp.sh 22222222 --host-port 8082 --replace
 ```
 
 The launcher automatically creates each PSP settlement account in the local SPI

@@ -1,0 +1,37 @@
+external:
+  dict:
+    url: ${EXTERNAL_DICT_URL:http://localhost:8003}
+  central-transfer:
+    url: ${EXTERNAL_CENTRAL_TRANSFER_URL:https://localhost:8001}
+
+notification:
+  gateway:
+    client-enabled: ${NOTIFICATION_GATEWAY_CLIENT_ENABLED:true}
+    host: ${NOTIFICATION_GATEWAY_HOST:localhost}
+    port: ${NOTIFICATION_GATEWAY_PORT:9090}
+    reconnect-delay: ${NOTIFICATION_GATEWAY_RECONNECT_DELAY:1s}
+    tls:
+      certificate-chain: ${NOTIFICATION_GATEWAY_TLS_CERTIFICATE_CHAIN:}
+      private-key: ${NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY:}
+      trust-cert-collection: ${NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION:}
+
+spring:
+  ssl:
+    bundle:
+      pem:
+        central-transfer:
+          keystore:
+            certificate: ${CENTRAL_TRANSFER_TLS_CERTIFICATE_CHAIN}
+            private-key: ${CENTRAL_TRANSFER_TLS_PRIVATE_KEY}
+          truststore:
+            certificate: ${CENTRAL_TRANSFER_TLS_TRUST_CERT_COLLECTION}
+
+  h2:
+    console:
+      enabled: true
+
+  jpa:
+    defer-datasource-initialization: true
+
+bank:
+  code: ${BANK_CODE}
