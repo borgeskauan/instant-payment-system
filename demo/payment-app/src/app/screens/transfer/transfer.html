@@ -1,80 +1,97 @@
-<div class="flex min-h-screen flex-col bg-gray-50">
-  <header class="flex items-center justify-between bg-blue-600 px-4 py-3 text-white shadow">
-    <div>
-      <h1 class="text-lg font-semibold">
-        @switch (step) {
-          @case ('pix') { Find recipient }
-          @case ('amount') { Enter amount }
-          @case ('confirm') { Review payment }
-          @case ('result') { Payment status }
-        }
-      </h1>
-      <p class="text-xs opacity-80">{{ customerName }} · {{ providerName }}</p>
+<div class="app-shell flex flex-col">
+  <header class="app-topbar">
+    <div class="mx-auto flex w-full max-w-md items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div>
+        <p class="eyebrow text-blue-200">{{ customerName }} · {{ providerName }}</p>
+        <h1 class="mt-0.5 text-lg font-bold">
+          @switch (step) {
+            @case ('pix') { Find recipient }
+            @case ('amount') { Enter amount }
+            @case ('confirm') { Review payment }
+            @case ('result') { Payment status }
+          }
+        </h1>
+      </div>
+      @if (step !== 'result') {
+        <button (click)="back()" class="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold ring-1 ring-white/15 transition hover:bg-white/20">
+          {{ step === 'pix' ? 'Cancel' : 'Back' }}
+        </button>
+      }
     </div>
-    @if (step !== 'result') {
-      <button (click)="back()" class="text-sm underline hover:opacity-80">
-        {{ step === 'pix' ? 'Cancel' : 'Back' }}
-      </button>
-    }
   </header>
 
-  <main class="mx-auto w-full max-w-md flex-grow space-y-6 p-4">
+  <main class="page-container flex-grow space-y-5">
     @if (step !== 'result') {
-      <div class="space-y-2">
-        <div class="flex items-center justify-between text-xs font-medium text-gray-500">
-          <span>Recipient</span>
-          <span>Amount</span>
-          <span>Review</span>
+      <div class="surface-card p-4">
+        <div class="mb-3 flex items-center justify-between text-xs font-semibold text-slate-400">
+          <span [class.text-blue-700]="stepNumber >= 1">Recipient</span>
+          <span [class.text-blue-700]="stepNumber >= 2">Amount</span>
+          <span [class.text-blue-700]="stepNumber >= 3">Review</span>
         </div>
         <div class="grid grid-cols-3 gap-2">
-          <span class="h-1 rounded-full bg-blue-600"></span>
-          <span class="h-1 rounded-full" [class.bg-blue-600]="stepNumber >= 2" [class.bg-gray-200]="stepNumber < 2"></span>
-          <span class="h-1 rounded-full" [class.bg-blue-600]="stepNumber >= 3" [class.bg-gray-200]="stepNumber < 3"></span>
+          <span class="h-1.5 rounded-full bg-blue-600"></span>
+          <span class="h-1.5 rounded-full transition-colors" [class.bg-blue-600]="stepNumber >= 2" [class.bg-slate-200]="stepNumber < 2"></span>
+          <span class="h-1.5 rounded-full transition-colors" [class.bg-blue-600]="stepNumber >= 3" [class.bg-slate-200]="stepNumber < 3"></span>
         </div>
       </div>
     }
 
     @if (errorMessage) {
-      <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
+      <div class="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{{ errorMessage }}</div>
     }
 
     @if (step !== 'pix') {
-      <div class="space-y-2 rounded-xl bg-white p-4 shadow">
-        <p class="text-sm text-gray-500">Recipient</p>
-        <p class="text-lg font-semibold text-gray-800">{{ recipient.name }}</p>
-        <p class="text-sm text-gray-700">Tax ID: {{ recipient.taxId }}</p>
-        <p class="text-sm text-gray-700">{{ recipient.institution }} · ISPB {{ recipient.bankCode }}</p>
-      </div>
+      <section class="surface-card flex items-center gap-4 p-4">
+        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-lg font-bold text-blue-700">{{ recipient.name.charAt(0) }}</div>
+        <div class="min-w-0">
+          <p class="eyebrow text-slate-400">Recipient</p>
+          <p class="mt-0.5 truncate text-lg font-bold text-slate-900">{{ recipient.name }}</p>
+          <p class="mt-0.5 text-xs text-slate-500">{{ recipient.institution }} · ISPB {{ recipient.bankCode }}</p>
+        </div>
+      </section>
     }
 
     @switch (step) {
       @case ('pix') {
-        <form (ngSubmit)="submitPixKey()" class="space-y-6">
+        <form (ngSubmit)="submitPixKey()" class="surface-card space-y-6 p-5 sm:p-6">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="7.5" cy="15.5" r="3.5" /><path d="m10 13 8-8m-2 2 2 2m-5 1 2 2" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-xl font-bold tracking-tight text-slate-900">Who are you paying?</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-500">Enter a PIX key to retrieve the recipient directly from the demo DICT.</p>
+          </div>
           <label class="block">
-            <span class="font-medium text-gray-700">PIX key</span>
+            <span class="text-sm font-bold text-slate-700">PIX key</span>
             <input
               type="text"
               name="pixKey"
               [(ngModel)]="pixKey"
               placeholder="receiver@example.com"
-              class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="form-input mt-2"
             />
           </label>
           <button
             type="submit"
             [disabled]="loading"
-            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700 disabled:opacity-50"
+            class="primary-button"
           >
             {{ loading ? 'Looking up...' : 'Continue' }}
           </button>
         </form>
       }
       @case ('amount') {
-        <form (ngSubmit)="proceedToConfirm()" class="space-y-6">
+        <form (ngSubmit)="proceedToConfirm()" class="surface-card space-y-6 p-5 sm:p-6">
+          <div>
+            <p class="eyebrow text-blue-600">Payment amount</p>
+            <h2 class="mt-1 text-xl font-bold tracking-tight text-slate-900">How much do you want to send?</h2>
+          </div>
           <label class="block">
-            <span class="font-medium text-gray-700">Amount</span>
+            <span class="text-sm font-bold text-slate-700">Amount</span>
             <div class="relative mt-2">
-              <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 font-medium text-gray-500">R$</span>
+              <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 font-bold text-slate-500">R$</span>
               <input
                 type="number"
                 name="amount"
@@ -83,69 +100,82 @@
                 step="0.01"
                 [(ngModel)]="amount"
                 placeholder="0.00"
-                class="w-full rounded-xl border border-gray-300 py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                class="form-input py-4 pl-12 text-xl font-bold"
               />
             </div>
           </label>
           <button
             type="submit"
-            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700"
+            class="primary-button"
           >
             Review payment
           </button>
         </form>
       }
       @case ('confirm') {
-        <div class="rounded-xl bg-white p-4 shadow">
-          <p class="text-sm text-gray-500">Amount</p>
-          <p class="text-2xl font-bold text-green-600">R$ {{ amount | number:'1.2-2' }}</p>
-        </div>
-        <button
-          (click)="confirmTransfer()"
-          [disabled]="loading"
-          class="w-full rounded-xl bg-green-600 py-3 font-semibold text-white shadow transition hover:bg-green-700 disabled:opacity-50"
-        >
-          {{ loading ? 'Submitting...' : 'Send payment' }}
-        </button>
+        <section class="surface-card space-y-6 p-5 sm:p-6">
+          <div>
+            <p class="eyebrow text-blue-600">Review</p>
+            <h2 class="mt-1 text-xl font-bold tracking-tight text-slate-900">Everything looks right?</h2>
+          </div>
+          <div class="rounded-2xl bg-slate-950 p-5 text-white">
+            <p class="text-xs font-medium uppercase tracking-wider text-slate-400">You are sending</p>
+            <p class="mt-2 text-3xl font-bold tracking-tight">R$ {{ amount | number:'1.2-2' }}</p>
+            <div class="my-4 h-px bg-white/10"></div>
+            <p class="text-sm text-slate-300">To <span class="font-bold text-white">{{ recipient.name }}</span></p>
+            <p class="mt-1 break-all font-mono text-xs text-slate-400">{{ pixKey }}</p>
+          </div>
+          <button
+            (click)="confirmTransfer()"
+            [disabled]="loading"
+            class="primary-button"
+          >
+            {{ loading ? 'Submitting...' : 'Send payment' }}
+          </button>
+        </section>
       }
       @case ('result') {
-        <div class="space-y-5 rounded-xl bg-white p-6 text-center shadow">
+        <section class="surface-card space-y-6 p-7 text-center">
           @switch (paymentResult) {
             @case ('checking') {
-              <div class="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600"></div>
+              <div class="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600"></div>
               <div>
-                <h2 class="text-xl font-semibold text-gray-900">Processing payment</h2>
-                <p class="mt-2 text-sm text-gray-500">Waiting briefly for the final outcome.</p>
+                <p class="eyebrow text-blue-600">Submitted</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Processing payment</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">Waiting briefly for the final outcome from the payment system.</p>
               </div>
             }
             @case ('settled') {
-              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-2xl text-green-700">&#10003;</div>
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700 ring-8 ring-emerald-50">&#10003;</div>
               <div>
-                <h2 class="text-xl font-semibold text-gray-900">Payment confirmed</h2>
-                <p class="mt-2 text-sm text-gray-500">{{ formattedAmount }} was sent to {{ recipient.name }}.</p>
+                <p class="eyebrow text-emerald-600">Settled</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Payment confirmed</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">{{ formattedAmount }} was sent to {{ recipient.name }}.</p>
               </div>
             }
             @case ('rejected') {
-              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl text-red-700">&#10005;</div>
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-3xl text-red-700 ring-8 ring-red-50">&#10005;</div>
               <div>
-                <h2 class="text-xl font-semibold text-gray-900">Payment rejected</h2>
-                <p class="mt-2 text-sm text-gray-500">The payment was not completed.</p>
+                <p class="eyebrow text-red-600">Rejected</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Payment rejected</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">The payment was not completed.</p>
               </div>
             }
             @case ('processing') {
-              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-2xl text-blue-700">&#8230;</div>
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 text-3xl text-blue-700 ring-8 ring-blue-50">&#8230;</div>
               <div>
-                <h2 class="text-xl font-semibold text-gray-900">Payment is still processing</h2>
-                <p class="mt-2 text-sm text-gray-500">You can follow its status from your account.</p>
+                <p class="eyebrow text-blue-600">Pending outcome</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Still processing</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">You can follow the final status from your account.</p>
               </div>
             }
           }
-        </div>
+        </section>
 
         @if (paymentResult !== 'checking') {
           <button
             (click)="back()"
-            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700"
+            class="primary-button"
           >
             Back to account
           </button>

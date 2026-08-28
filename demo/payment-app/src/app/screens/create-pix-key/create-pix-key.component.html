@@ -1,33 +1,45 @@
-<div class="flex min-h-screen flex-col bg-gray-50">
-  <header class="flex items-center justify-between bg-blue-600 px-4 py-3 text-white shadow">
-    <div>
-      <h1 class="text-lg font-semibold">Register PIX key</h1>
-      <p class="text-xs opacity-80">{{ customerName }} · {{ providerName }}</p>
+<div class="app-shell flex flex-col">
+  <header class="app-topbar">
+    <div class="mx-auto flex w-full max-w-md items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div>
+        <p class="eyebrow text-blue-200">{{ customerName }} · {{ providerName }}</p>
+        <h1 class="mt-0.5 text-lg font-bold">Register PIX key</h1>
+      </div>
+      <button (click)="cancel()" class="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold ring-1 ring-white/15 transition hover:bg-white/20">Cancel</button>
     </div>
-    <button (click)="cancel()" class="text-sm underline hover:opacity-80">Cancel</button>
   </header>
 
-  <main class="mx-auto w-full max-w-md flex-grow space-y-6 p-4">
+  <main class="page-container flex-grow">
     @if (errorMessage) {
-      <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
+      <div class="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{{ errorMessage }}</div>
     }
 
-    <form (ngSubmit)="savePixKey()" class="space-y-6">
+    <form (ngSubmit)="savePixKey()" class="surface-card space-y-6 p-5 sm:p-6">
+      <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-700">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="7.5" cy="15.5" r="3.5" /><path d="m10 13 8-8m-2 2 2 2m-5 1 2 2" />
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-xl font-bold tracking-tight text-slate-900">Create a new key</h2>
+        <p class="mt-2 text-sm leading-6 text-slate-500">This key will identify {{ customerName }} when another demo customer sends a payment.</p>
+      </div>
       <label class="block">
-        <span class="font-medium text-gray-700">PIX key</span>
+        <span class="text-sm font-bold text-slate-700">PIX key</span>
         <input
           type="text"
           name="pixKey"
           [(ngModel)]="pixKey"
           placeholder="alice@example.com"
-          class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          class="form-input mt-2"
         />
+        <span class="mt-2 block text-xs text-slate-400">For the demo, any unique text value is accepted.</span>
       </label>
 
       <button
         type="submit"
         [disabled]="loading"
-        class="w-full rounded-xl bg-green-600 py-3 font-semibold text-white shadow transition hover:bg-green-700 disabled:opacity-50"
+        class="primary-button"
       >
         {{ loading ? 'Registering...' : 'Register key' }}
       </button>
