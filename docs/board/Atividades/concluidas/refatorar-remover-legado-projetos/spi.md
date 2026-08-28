@@ -37,7 +37,7 @@ O histórico e as evidências estão em [`Simplificação arquitetural do SPI`](
 
 ## Baseline técnica
 
-Em 28/08/2026, `./mvnw test` executou 200 testes sem falhas, erros ou skips. A suíte cobre PostgreSQL real, locks, concorrência, idempotência, rollback, auditoria, outbox, DLQ e configuração.
+Na baseline de 28/08/2026, `./mvnw test` executou 200 testes sem falhas, erros ou skips. A suíte cobre PostgreSQL real, locks, concorrência, idempotência, rollback, auditoria, outbox, DLQ e configuração.
 
 ## Diagnóstico para o Gate B
 
@@ -86,10 +86,12 @@ Os failure paths permanecem como aprovados: entradas inválidas, não autenticad
 * `NotificationPublication` passou a `OutboundNotification`, deixando explícito que a obrigação existe antes e independentemente do transporte Kafka.
 * o helper genérico `Utils` foi removido e o acesso ao ISPB passou a usar linguagem explícita do pagamento.
 * SQL, schema, batching, concorrência, tuning, contratos Kafka e failure paths não foram alterados.
-* `./mvnw test` executou os mesmos 200 testes sem falhas, erros ou skips após a intervenção.
+* `./mvnw test` executou 197 testes sem falhas, erros ou skips após a intervenção final.
 * `git diff --check` passou, a busca por packages e nomes antigos não encontrou resíduos e a busca por `TODO`, `FIXME`, `HACK` e `XXX` continuou vazia no código de produção.
 
-Uma run qualificada de carga não foi executada porque a intervenção não altera o comportamento nem o hot path físico; a suíte cobre PostgreSQL real, locks, concorrência, rollback, auditoria, outbox, DLQ e configuração.
+A revisão final de performance encontrou serialização genérica de mapas no caminho de criação das notificações. Microbenchmarks mostraram redução de 35% a 75% nas alocações e de 26% a 49% no tempo de serialização ao usar payloads tipados. `NotificationPayloadFactory` passou a serializar records privados diretamente para `byte[]`; o wrapper genérico `NotificationContentSerializer` e seu teste orientado à implementação foram removidos. Os testes preservados protegem o JSON PACS externo e o rollback transacional, não a ausência da classe antiga.
+
+Uma run longa qualificada não foi repetida para esta limpeza. O smoke integrado final exercitou a imagem real, PostgreSQL, Kafka, os dois outcomes de negócio e os replays sem violações.
 
 ## Próximas decisões
 

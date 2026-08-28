@@ -1,6 +1,6 @@
 # Refatorar e remover código legado dos projetos
 
-- [ ] Concluir o cleanup dos projetos que compõem o MVP
+- [x] Concluir o cleanup dos projetos que compõem o MVP
 
 ## Objetivo
 
@@ -243,13 +243,17 @@ Load-tool e infraestrutura devem repetir integralmente a metodologia obrigatóri
 
 ## Critério de conclusão
 
-- [ ] Todos os projetos em escopo possuem objetivo e inventário de negócio aprovados pelo usuário.
-- [ ] Todas as decisões `manter`, `remover` e `separar` estão registradas.
-- [ ] Todos os projetos possuem diagnóstico técnico apresentado e intervenção aprovada explicitamente no Gate B.
-- [ ] Funcionalidades rejeitadas e código morto foram removidos verticalmente.
-- [ ] Ownership e dependências deixam regras de negócio fora de adapters técnicos sem impor camadas artificiais.
-- [ ] Ambiguidades, failure paths e trabalho implícito foram resolvidos ou associados a tasks reais.
-- [ ] Simplificações mantidas reduziram o contexto necessário para compreender o sistema.
-- [ ] Ganhos de performance incluídos possuem evidência e não adicionam arquitetura.
-- [ ] Testes focados, configuração integrada e smoke final preservam os contratos aprovados.
-- [ ] O estado final e suas limitações estão registrados para a posterior reorganização da documentação.
+- [x] Todos os projetos em escopo possuem objetivo e inventário de negócio aprovados pelo usuário.
+- [x] Todas as decisões `manter`, `remover` e `separar` estão registradas.
+- [x] Todos os projetos possuem diagnóstico técnico apresentado e intervenção aprovada explicitamente no Gate B.
+- [x] Funcionalidades rejeitadas e código morto foram removidos verticalmente.
+- [x] Ownership e dependências deixam regras de negócio fora de adapters técnicos sem impor camadas artificiais.
+- [x] Ambiguidades, failure paths e trabalho implícito foram resolvidos ou associados a tasks reais.
+- [x] Simplificações mantidas reduziram o contexto necessário para compreender o sistema.
+- [x] Ganhos de performance incluídos possuem evidência e não adicionam arquitetura.
+- [x] Testes focados, configuração integrada e smoke final preservam os contratos aprovados.
+- [x] O estado final e suas limitações estão registrados para a posterior reorganização da documentação.
+
+## Evidência integrada de encerramento
+
+Em 28/08/2026, o preparador oficial recriou volumes e containers, validou readiness, provisionou os participantes e publicou o ambiente `mixed-outcomes-smoke`. A execução pública subsequente gerou os 1.050 pagamentos originais planejados, sustentou rolling mínimo de 103 TPS para o piso de 100 TPS, observou 1.300 outcomes corretos sem ausência ou contradição, aceitou 65 de 65 replays PACS.008 e 51 de 51 replays PACS.002 e permaneceu abaixo do SLA de 1 segundo com p99 de 285 ms e máximo de 318 ms. O resultado local está em `load-test/results/cleanup-final-rerun/20260828_111613`.

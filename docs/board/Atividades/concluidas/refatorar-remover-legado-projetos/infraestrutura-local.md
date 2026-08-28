@@ -98,8 +98,8 @@ Nenhum mecanismo morto foi comprovado no Compose, no Dockerfile ou no script de 
 * `infra/tests/compose-contract-test.sh` passou;
 * `docker compose -f infra/docker-compose.yml config --quiet` passou e reconheceu `postgres-data` e `kafka-data`;
 * `bash -n infra/tests/compose-contract-test.sh infra/certs/generate-local-mtls-certs.sh` passou;
-* a suíte do Notification Gateway passou com 37 testes;
+* a suíte do Notification Gateway passou com 40 testes;
 * o teste diretamente afetado `KafkaConsumerConfigTest#performanceDefaultsDoNotFragmentAvailableStatusReportBatches` passou;
 * `git diff --check` e as buscas finais por referências vigentes removidas passaram.
 
-A execução mais ampla dos testes do SPI ficou limitada pelo ambiente local: `/home` estava montado como somente leitura, impedindo o plugin Protobuf de ajustar o executável em `.m2` e o Byte Buddy de anexar seu agente. Isso ocorreu antes do exercício do comportamento alterado e não foi tratado como falha funcional nem como sucesso da suíte completa.
+O preparador oficial recriou PostgreSQL e Kafka com volumes novos, construiu as imagens, aguardou readiness, capturou a configuração efetiva do SPI, provisionou fundos e gerou certificados. A suíte final do SPI passou com 197 testes, e o smoke integrado concluiu o fluxo completo sem violações.

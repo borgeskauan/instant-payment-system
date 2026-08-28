@@ -36,12 +36,16 @@ As ambiguidades relevantes de ownership, progresso e sequência foram resolvidas
 
 ## Evidências
 
-* 39 testes do Gateway passaram sem falha;
+* 40 testes do Gateway passaram sem falha;
 * o Compose permaneceu válido;
 * `git diff --check` passou.
 
 A revisão final de ownership eliminou a dependência Kafka → gRPC: `PullRequestCoordinator`, os modelos de delivery e os erros semânticos passaram para `delivery`, enquanto `HistoricalKafkaReader` passou a implementar o port `NotificationHistory`. O protocolo, o cursor, a posição Kafka, o cache e o comportamento de long polling permaneceram inalterados.
 
 A configuração própria do componente passou a ser vinculada e validada por `NotificationGatewayProperties`. `application.yml` é o único baseline, os consumidores deixaram de repetir fallbacks em `@Value` e os overrides usam a resolução canônica do Spring. A configuração padrão do consumer Kafka passou a ser lida por `KafkaProperties`, sem reconstruir em paralelo os valores já pertencentes ao Spring Boot.
+
+O teste final da imagem encontrou uma ambiguidade de construção introduzida durante essa centralização: `NotificationGrpcService` possuía dois construtores e o Spring não conseguia selecionar a dependência principal. A classe voltou a ter um único construtor, e um teste de contexto passou a proteger o wiring real da fronteira gRPC. O preparador oficial e o smoke integrado passaram depois da correção.
+
+Dois ganhos locais de performance foram avaliados e deliberadamente rejeitados: evitar `ByteString.copyFrom` economizaria menos de 0,5% de um core, e manter HMAC em `ThreadLocal` economizaria cerca de 0,09% de um core no workload observado. Nenhum estado ou mecanismo próprio foi adicionado por ganhos absolutos tão pequenos.
 
 A arquitetura de entrega vigente está documentada em [`Entrega durável de notificações pelo Kafka`](../../../../architecture/kafka-durable-notification-delivery.md).

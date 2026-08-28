@@ -36,7 +36,7 @@ Ser a borda autenticada de ingresso dos PSPs: receber PACS.008 e PACS.002, conve
 
 - [x] Aprovar o objetivo essencial, o inventário de negócio e os contratos externos.
 - [x] Inventariar a implementação e classificar complexidade essencial, acidental, código morto, ambiguidades e failure paths.
-- [ ] Aprovar a intervenção técnica no Gate B antes de alterar código.
+- [x] Aprovar a intervenção técnica no Gate B antes de alterar código.
 
 ## Diagnóstico técnico
 
@@ -98,6 +98,8 @@ Ser a borda autenticada de ingresso dos PSPs: receber PACS.008 e PACS.002, conve
 * O contrato de publicação parcial, a identidade autenticada, o mTLS, o protobuf, os tópicos e os parâmetros Kafka foram preservados.
 * `./mvnw test` executou 36 testes sem falhas, erros ou skips.
 * `docker compose config --quiet` e `git diff --check` passaram.
+
+O diagnóstico JFR final mostrou aproximadamente 30% de um core distribuído entre Netty/TLS, serialização e cliente Kafka, sem hotspot dominante. Microbenchmarks estimaram o mapper em cerca de 1,1% de um core e a validação completa da SAN do certificado em aproximadamente 0,02% de um core no workload observado. Cache e serialização proprietária foram rejeitados por baixo retorno absoluto e maior estado ou manutenção.
 
 ## Conclusão
 

@@ -138,3 +138,5 @@ A suíte Rust passou de 86 para 83 testes porque três testes sem comportamento 
 * `bash -n` passou nos runners, scripts e testes shell;
 * `git diff --check` passou;
 * as buscas finais não encontraram referências ativas à flag antiga, à fixture histórica, ao helper do pacer de 1 ms ou aos contratos removidos.
+
+O smoke integrado de encerramento revelou que `mixed-outcomes-smoke` usava o mesmo valor de 10 segundos para o atraso do replay e para o drain. A última repetição PACS.002 podia, portanto, ser admitida sem tempo para concluir antes do deadline absoluto. O drain do profile foi ampliado para 20 segundos; taxa, duração ativa, cenários e SLA permaneceram inalterados. O teste de contrato do profile e o smoke oficial passaram, com todas as 116 repetições iniciadas aceitas e nenhuma violação.
