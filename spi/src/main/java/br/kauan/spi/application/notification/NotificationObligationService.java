@@ -1,15 +1,13 @@
-package br.kauan.spi.domain.services.notification;
+package br.kauan.spi.application.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
-import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
+import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.status.NotificationStatus;
 import br.kauan.spi.domain.entity.status.NotificationStatusItem;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -53,7 +51,7 @@ public class NotificationObligationService {
             return;
         }
 
-        List<NotificationPublication> obligations = new ArrayList<>();
+        List<OutboundNotification> obligations = new ArrayList<>();
         obligations.addAll(acceptanceObligations(acceptanceRequests));
         obligations.addAll(statusObligations(List.of(), rejectedPayments));
         store(obligations);
@@ -64,7 +62,7 @@ public class NotificationObligationService {
         );
     }
 
-    private List<NotificationPublication> acceptanceObligations(
+    private List<OutboundNotification> acceptanceObligations(
             List<PaymentTransactionCommand> paymentTransactions
     ) {
         if (paymentTransactions.isEmpty()) {
@@ -79,7 +77,7 @@ public class NotificationObligationService {
                     .add(paymentTransaction);
         }
 
-        List<NotificationPublication> obligations = new ArrayList<>();
+        List<OutboundNotification> obligations = new ArrayList<>();
         for (Map.Entry<String, List<PaymentTransactionCommand>> recipient : byRecipient.entrySet()) {
             forEachChunk(recipient.getValue(), chunk -> obligations.add(paymentObligation(
                     recipient.getKey(),
@@ -105,7 +103,7 @@ public class NotificationObligationService {
         );
     }
 
-    private List<NotificationPublication> statusObligations(
+    private List<OutboundNotification> statusObligations(
             List<PaymentSettlement> settlements,
             List<PaymentRejection> rejectedPayments
     ) {
@@ -146,7 +144,7 @@ public class NotificationObligationService {
             );
         }
 
-        List<NotificationPublication> obligations = new ArrayList<>();
+        List<OutboundNotification> obligations = new ArrayList<>();
         for (Map.Entry<String, List<NotificationStatusItem>> recipient : byRecipient.entrySet()) {
             forEachChunk(recipient.getValue(), chunk -> obligations.add(statusObligation(
                     recipient.getKey(),
@@ -171,7 +169,7 @@ public class NotificationObligationService {
         byRecipient.computeIfAbsent(recipientIspb, ignored -> new ArrayList<>()).add(statusReport);
     }
 
-    private NotificationPublication paymentObligation(
+    private OutboundNotification paymentObligation(
             String recipientIspb,
             List<PaymentTransactionCommand> paymentTransactions
     ) {
@@ -179,14 +177,14 @@ public class NotificationObligationService {
         byte[] payload = contentSerializer.serialize(
                 payloadFactory.paymentNotification(messageId, paymentTransactions)
         );
-        return NotificationPublication.create(
+        return OutboundNotification.create(
                 recipientIspb,
                 payload,
                 messageId
         );
     }
 
-    private NotificationPublication statusObligation(
+    private OutboundNotification statusObligation(
             String recipientIspb,
             List<NotificationStatusItem> statusReports
     ) {
@@ -194,7 +192,7 @@ public class NotificationObligationService {
         byte[] payload = contentSerializer.serialize(
                 payloadFactory.statusNotification(messageId, statusReports)
         );
-        return NotificationPublication.create(
+        return OutboundNotification.create(
                 recipientIspb,
                 payload,
                 messageId
@@ -210,7 +208,7 @@ public class NotificationObligationService {
         }
     }
 
-    private void store(List<NotificationPublication> obligations) {
+    private void store(List<OutboundNotification> obligations) {
         if (obligations.isEmpty()) {
             return;
         }

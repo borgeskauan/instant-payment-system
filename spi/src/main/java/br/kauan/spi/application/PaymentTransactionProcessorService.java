@@ -1,10 +1,10 @@
-package br.kauan.spi.domain.services;
+package br.kauan.spi.application;
 
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
-import br.kauan.spi.domain.services.audit.PaymentAuditService;
-import br.kauan.spi.domain.services.notification.NotificationObligationService;
+import br.kauan.spi.application.audit.PaymentAuditService;
+import br.kauan.spi.application.notification.NotificationObligationService;
 import br.kauan.spi.domain.services.tracing.SpiPaymentStage;
 import br.kauan.spi.domain.services.tracing.SpiPaymentStageEvent;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;

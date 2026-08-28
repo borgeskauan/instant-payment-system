@@ -1,6 +1,8 @@
-package br.kauan.spi.domain.services.audit;
+package br.kauan.spi.application.audit;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
+import br.kauan.spi.domain.entity.audit.PaymentAuditEvent;
+import br.kauan.spi.domain.entity.audit.PaymentAuditEventType;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;

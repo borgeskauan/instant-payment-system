@@ -2,7 +2,7 @@ package br.kauan.spi.adapter.output.audit;
 
 import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
-import br.kauan.spi.domain.services.audit.PaymentAuditEvent;
+import br.kauan.spi.domain.entity.audit.PaymentAuditEvent;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;

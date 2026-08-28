@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services.audit;
+package br.kauan.spi.domain.entity.audit;
 
 import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
 import br.kauan.spi.domain.entity.status.PaymentState;

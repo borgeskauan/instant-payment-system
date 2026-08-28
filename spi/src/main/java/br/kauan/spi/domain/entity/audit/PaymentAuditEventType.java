@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services.audit;
+package br.kauan.spi.domain.entity.audit;
 
 public enum PaymentAuditEventType {
     PAYMENT_RESERVED,

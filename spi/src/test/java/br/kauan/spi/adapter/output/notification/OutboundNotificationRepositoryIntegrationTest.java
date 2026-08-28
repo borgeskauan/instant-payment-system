@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.application.notification.OutboundNotification;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,8 +37,8 @@ class OutboundNotificationRepositoryIntegrationTest {
 
     @Test
     void insertsNotificationsInBulkAndRejectsADuplicateMessageId() {
-        NotificationPublication first = notification(PAYMENT_PREFIX + "1", "original");
-        NotificationPublication second = notification(PAYMENT_PREFIX + "2", "second");
+        OutboundNotification first = notification(PAYMENT_PREFIX + "1", "original");
+        OutboundNotification second = notification(PAYMENT_PREFIX + "2", "second");
 
         repository.insertAll(List.of(first, second));
 
@@ -59,26 +59,26 @@ class OutboundNotificationRepositoryIntegrationTest {
 
     @Test
     void readsOldestRowsAndDeletesTheExactBatch() throws InterruptedException {
-        NotificationPublication first = notification(PAYMENT_PREFIX + "ORDER-1", "first");
-        NotificationPublication second = notification(PAYMENT_PREFIX + "ORDER-2", "second");
-        NotificationPublication third = notification(PAYMENT_PREFIX + "ORDER-3", "third");
+        OutboundNotification first = notification(PAYMENT_PREFIX + "ORDER-1", "first");
+        OutboundNotification second = notification(PAYMENT_PREFIX + "ORDER-2", "second");
+        OutboundNotification third = notification(PAYMENT_PREFIX + "ORDER-3", "third");
         repository.insertAll(List.of(first));
         Thread.sleep(5);
         repository.insertAll(List.of(second, third));
 
         assertThat(repository.findOldest(2))
-                .extracting(NotificationPublication::communicationId)
+                .extracting(OutboundNotification::communicationId)
                 .containsExactly(first.communicationId(), second.communicationId());
 
         repository.deleteAll(List.of(first.communicationId(), second.communicationId()));
 
         assertThat(repository.findOldest(10))
-                .extracting(NotificationPublication::communicationId)
+                .extracting(OutboundNotification::communicationId)
                 .containsExactly(third.communicationId());
     }
 
-    private NotificationPublication notification(String paymentId, String payload) {
-        return NotificationPublication.create(
+    private OutboundNotification notification(String paymentId, String payload) {
+        return OutboundNotification.create(
                 "20000001",
                 bytes(payload),
                 paymentId

@@ -1,7 +1,8 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
+import br.kauan.spi.application.notification.OutboundNotification;
+import br.kauan.spi.application.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.config.NotificationOutboxProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -89,7 +90,7 @@ public class NotificationOutboxPipeline {
 
     private void recoverCommittedRows() {
         while (running.get()) {
-            List<NotificationPublication> recovered = repository.findOldest(recoveryBatchSize);
+            List<OutboundNotification> recovered = repository.findOldest(recoveryBatchSize);
             if (recovered.isEmpty()) {
                 return;
             }
@@ -118,7 +119,7 @@ public class NotificationOutboxPipeline {
 
     private void publishRetainingUntilSuccess(OutboundNotificationBatchReady batch) {
         List<String> communicationIds = batch.notifications().stream()
-                .map(NotificationPublication::communicationId)
+                .map(OutboundNotification::communicationId)
                 .toList();
         while (running.get()) {
             try {

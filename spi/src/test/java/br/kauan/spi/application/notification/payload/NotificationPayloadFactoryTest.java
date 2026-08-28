@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services.notification.payload;
+package br.kauan.spi.application.notification.payload;
 
 import br.kauan.spi.domain.entity.status.NotificationStatus;
 import br.kauan.spi.domain.entity.status.NotificationStatusItem;
@@ -6,7 +6,7 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.notification.NotificationContentSerializer;
+import br.kauan.spi.application.notification.NotificationContentSerializer;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

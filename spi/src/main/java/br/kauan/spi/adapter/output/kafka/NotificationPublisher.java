@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output.kafka;
 
+import br.kauan.spi.application.notification.OutboundNotification;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -23,9 +24,9 @@ public class NotificationPublisher {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public CompletableFuture<Void> publishAll(List<NotificationPublication> notifications) {
+    public CompletableFuture<Void> publishAll(List<OutboundNotification> notifications) {
         List<CompletableFuture<?>> confirmations = new ArrayList<>(notifications.size());
-        for (NotificationPublication notification : notifications) {
+        for (OutboundNotification notification : notifications) {
             try {
                 confirmations.add(kafkaTemplate.send(producerRecord(notification)));
             } catch (RuntimeException failure) {
@@ -35,7 +36,7 @@ public class NotificationPublisher {
         return CompletableFuture.allOf(confirmations.toArray(CompletableFuture[]::new));
     }
 
-    private ProducerRecord<String, byte[]> producerRecord(NotificationPublication notification) {
+    private ProducerRecord<String, byte[]> producerRecord(OutboundNotification notification) {
         ProducerRecord<String, byte[]> record =
                 new ProducerRecord<>(NOTIFICATION_TOPIC, notification.recipientIspb(), notification.payload());
         addHeader(record, "notification.communication-id", notification.communicationId());

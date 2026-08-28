@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.application.notification.OutboundNotification;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -54,7 +54,7 @@ public class OutboundNotificationRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public void insertAll(List<NotificationPublication> notifications) {
+    public void insertAll(List<OutboundNotification> notifications) {
         if (notifications.isEmpty()) {
             return;
         }
@@ -64,7 +64,7 @@ public class OutboundNotificationRepository {
             String[] recipientIspbs = new String[notifications.size()];
             byte[][] payloads = new byte[notifications.size()][];
             for (int index = 0; index < notifications.size(); index++) {
-                NotificationPublication notification = notifications.get(index);
+                OutboundNotification notification = notifications.get(index);
                 communicationIds[index] = notification.communicationId();
                 recipientIspbs[index] = notification.recipientIspb();
                 payloads[index] = notification.payload();
@@ -99,13 +99,13 @@ public class OutboundNotificationRepository {
         }
     }
 
-    public List<NotificationPublication> findOldest(int limit) {
+    public List<OutboundNotification> findOldest(int limit) {
         if (limit < 1) {
             throw new IllegalArgumentException("Outbox recovery limit must be positive");
         }
         return jdbcTemplate.query(
                 FIND_OLDEST_SQL,
-                (resultSet, ignored) -> NotificationPublication.create(
+                (resultSet, ignored) -> OutboundNotification.create(
                         resultSet.getString("recipient_ispb"),
                         resultSet.getBytes("payload"),
                         resultSet.getString("communication_id")

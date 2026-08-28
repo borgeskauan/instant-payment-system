@@ -1,4 +1,4 @@
-package br.kauan.spi.port.output;
+package br.kauan.spi.adapter.output.funds;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;

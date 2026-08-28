@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services.notification.payload;
+package br.kauan.spi.application.notification.payload;
 
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.status.NotificationStatusItem;

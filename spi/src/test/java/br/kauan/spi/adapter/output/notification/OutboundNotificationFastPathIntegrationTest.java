@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.application.notification.OutboundNotification;
+import br.kauan.spi.application.notification.OutboundNotificationBatchReady;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,7 +56,7 @@ class OutboundNotificationFastPathIntegrationTest {
 
     @Test
     void committedRowsEnterThePipelineOnlyAfterTheBusinessTransactionCommits() {
-        NotificationPublication notification = notification(PAYMENT_PREFIX + "COMMIT");
+        OutboundNotification notification = notification(PAYMENT_PREFIX + "COMMIT");
         OutboundNotificationBatchReady batch = new OutboundNotificationBatchReady(List.of(notification));
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
@@ -72,7 +73,7 @@ class OutboundNotificationFastPathIntegrationTest {
 
     @Test
     void rolledBackRowsAreNeitherPersistedNorAdmitted() {
-        NotificationPublication notification = notification(PAYMENT_PREFIX + "ROLLBACK");
+        OutboundNotification notification = notification(PAYMENT_PREFIX + "ROLLBACK");
         OutboundNotificationBatchReady batch = new OutboundNotificationBatchReady(List.of(notification));
 
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
@@ -87,7 +88,7 @@ class OutboundNotificationFastPathIntegrationTest {
 
     @Test
     void failedFastPathAdmissionDoesNotUndoOrFailTheCommittedOutbox() {
-        NotificationPublication notification = notification(PAYMENT_PREFIX + "FAILED-FAST-PATH");
+        OutboundNotification notification = notification(PAYMENT_PREFIX + "FAILED-FAST-PATH");
         OutboundNotificationBatchReady batch = new OutboundNotificationBatchReady(List.of(notification));
         doThrow(new IllegalStateException("pipeline unavailable")).when(pipeline).enqueue(batch);
 
@@ -108,7 +109,7 @@ class OutboundNotificationFastPathIntegrationTest {
         );
     }
 
-    private NotificationPublication notification(String id) {
-        return NotificationPublication.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
+    private OutboundNotification notification(String id) {
+        return OutboundNotification.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
     }
 }

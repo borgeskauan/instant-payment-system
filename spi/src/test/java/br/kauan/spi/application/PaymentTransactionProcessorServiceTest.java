@@ -1,5 +1,7 @@
-package br.kauan.spi.domain.services;
+package br.kauan.spi.application;
 
+import br.kauan.spi.application.audit.PaymentAuditService;
+import br.kauan.spi.application.notification.NotificationObligationService;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
 import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
@@ -11,8 +13,6 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.audit.PaymentAuditService;
-import br.kauan.spi.domain.services.notification.NotificationObligationService;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;

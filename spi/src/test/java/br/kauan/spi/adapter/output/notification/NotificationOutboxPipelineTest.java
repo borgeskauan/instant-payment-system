@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.application.notification.OutboundNotification;
+import br.kauan.spi.application.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
 import br.kauan.spi.config.NotificationOutboxProperties;
 import org.junit.jupiter.api.AfterEach;
@@ -34,7 +35,7 @@ class NotificationOutboxPipelineTest {
     void drainsCommittedRowsBeforeStartupCompletes() {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationPublisher publisher = mock(NotificationPublisher.class);
-        List<NotificationPublication> recovered = List.of(notification("recovered"));
+        List<OutboundNotification> recovered = List.of(notification("recovered"));
         when(repository.findOldest(20)).thenReturn(recovered, List.of());
         when(publisher.publishAll(recovered)).thenReturn(CompletableFuture.completedFuture(null));
         pipeline = pipeline(repository, publisher);
@@ -54,7 +55,7 @@ class NotificationOutboxPipelineTest {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         when(repository.findOldest(20)).thenReturn(List.of());
-        List<NotificationPublication> notifications = List.of(notification("one"), notification("two"));
+        List<OutboundNotification> notifications = List.of(notification("one"), notification("two"));
         CompletableFuture<Void> firstAttempt = new CompletableFuture<>();
         CompletableFuture<Void> secondAttempt = new CompletableFuture<>();
         when(publisher.publishAll(notifications)).thenReturn(firstAttempt, secondAttempt);
@@ -80,7 +81,7 @@ class NotificationOutboxPipelineTest {
         OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
         NotificationPublisher publisher = mock(NotificationPublisher.class);
         when(repository.findOldest(20)).thenReturn(List.of());
-        List<NotificationPublication> notifications = List.of(notification("one"), notification("two"));
+        List<OutboundNotification> notifications = List.of(notification("one"), notification("two"));
         when(publisher.publishAll(notifications)).thenReturn(CompletableFuture.completedFuture(null));
         org.mockito.Mockito.doThrow(new IllegalStateException("delete failed"))
                 .doNothing()
@@ -107,7 +108,7 @@ class NotificationOutboxPipelineTest {
         );
     }
 
-    private NotificationPublication notification(String id) {
-        return NotificationPublication.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
+    private OutboundNotification notification(String id) {
+        return OutboundNotification.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
     }
 }

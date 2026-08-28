@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services.notification;
+package br.kauan.spi.application.notification;
 
 public class NotificationException extends RuntimeException {
 

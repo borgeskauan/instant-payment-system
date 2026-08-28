@@ -1,4 +1,4 @@
-package br.kauan.spi.domain.services;
+package br.kauan.spi.application;
 
 import br.kauan.spi.port.output.FundsRepository;
 import org.junit.jupiter.api.Test;

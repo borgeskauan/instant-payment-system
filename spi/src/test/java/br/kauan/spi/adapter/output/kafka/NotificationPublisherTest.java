@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output.kafka;
 
+import br.kauan.spi.application.notification.OutboundNotification;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -29,7 +30,7 @@ class NotificationPublisherTest {
                 CompletableFuture.completedFuture(sendResult());
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(brokerConfirmation);
         byte[] storedPayload = "{\"a\":1}".getBytes(StandardCharsets.UTF_8);
-        NotificationPublication notification = NotificationPublication.create(
+        OutboundNotification notification = OutboundNotification.create(
                 "20000001",
                 storedPayload,
                 "message-1"

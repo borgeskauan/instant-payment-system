@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.admin;
 
-import br.kauan.spi.domain.services.ParticipantSettlementAccountService;
+import br.kauan.spi.application.ParticipantSettlementAccountService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

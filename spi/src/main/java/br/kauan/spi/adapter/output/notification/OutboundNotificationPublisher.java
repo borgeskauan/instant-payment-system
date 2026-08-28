@@ -1,5 +1,6 @@
 package br.kauan.spi.adapter.output.notification;
 
+import br.kauan.spi.application.notification.OutboundNotificationBatchReady;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;

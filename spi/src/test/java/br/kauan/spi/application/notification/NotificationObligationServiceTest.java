@@ -1,8 +1,7 @@
-package br.kauan.spi.domain.services.notification;
+package br.kauan.spi.application.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
-import br.kauan.spi.adapter.output.notification.OutboundNotificationBatchReady;
 import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
+import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
@@ -10,7 +9,6 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.notification.payload.NotificationPayloadFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -55,9 +53,9 @@ class NotificationObligationServiceTest {
 
         service.storeTransactionObligations(List.of(first, second), List.of());
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations)
-                .extracting(NotificationPublication::recipientIspb)
+                .extracting(OutboundNotification::recipientIspb)
                 .containsExactly("20000001", "20000002");
         assertThat(payload(obligations.get(0)))
                 .contains("\"NbOfTxs\":1")
@@ -68,7 +66,7 @@ class NotificationObligationServiceTest {
                 .contains("\"EndToEndId\":\"E2E-2\"")
                 .doesNotContain("\"EndToEndId\":\"E2E-1\"");
         assertThat(obligations)
-                .extracting(NotificationPublication::communicationId)
+                .extracting(OutboundNotification::communicationId)
                 .allSatisfy(communicationId -> assertThatCode(
                         () -> java.util.UUID.fromString(communicationId)
                 ).doesNotThrowAnyException());
@@ -86,9 +84,9 @@ class NotificationObligationServiceTest {
                 List.of(PaymentRejection.receiverRejected(rejected, List.of(StatusReasonCode.of("AB03"))))
         );
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations)
-                .extracting(NotificationPublication::recipientIspb)
+                .extracting(OutboundNotification::recipientIspb)
                 .containsExactly("20000001", "10000001", "10000002");
         assertThat(obligations)
                 .allSatisfy(obligation -> assertThat(payload(obligation)).contains("\"NbOfTxs\":1"));
@@ -110,9 +108,9 @@ class NotificationObligationServiceTest {
                 List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations)
-                .extracting(NotificationPublication::recipientIspb)
+                .extracting(OutboundNotification::recipientIspb)
                 .containsExactly("20000001", "10000002");
         assertThat(payload(obligations.getFirst()))
                 .contains("\"EndToEndId\":\"E2E-ACCEPTED\"");
@@ -138,9 +136,9 @@ class NotificationObligationServiceTest {
                 List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations)
-                .extracting(NotificationPublication::recipientIspb)
+                .extracting(OutboundNotification::recipientIspb)
                 .containsExactly("10000001");
         assertThat(payload(obligations.getFirst()))
                 .contains("\"TxSts\":\"RJCT\"")
@@ -159,9 +157,9 @@ class NotificationObligationServiceTest {
 
         service.storeTransactionObligations(payments, List.of());
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations).hasSize(2)
-                .extracting(NotificationPublication::recipientIspb)
+                .extracting(OutboundNotification::recipientIspb)
                 .containsExactly("20000001", "20000001");
         JsonNode first = document(obligations.getFirst());
         JsonNode second = document(obligations.getLast());
@@ -186,9 +184,9 @@ class NotificationObligationServiceTest {
                 List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
-        List<NotificationPublication> obligations = capturedObligations(repository);
+        List<OutboundNotification> obligations = capturedObligations(repository);
         assertThat(obligations).hasSize(2);
-        NotificationPublication payerMessage = obligations.stream()
+        OutboundNotification payerMessage = obligations.stream()
                 .filter(notification -> notification.recipientIspb().equals("10000001"))
                 .findFirst()
                 .orElseThrow();
@@ -212,7 +210,7 @@ class NotificationObligationServiceTest {
                 List.of()
         );
 
-        NotificationPublication obligation = capturedObligations(repository).getFirst();
+        OutboundNotification obligation = capturedObligations(repository).getFirst();
         assertThat(obligation.communicationId())
                 .isEqualTo(document(obligation).at("/GrpHdr/MsgId").asText());
     }
@@ -292,17 +290,17 @@ class NotificationObligationServiceTest {
         );
     }
 
-    private List<NotificationPublication> capturedObligations(OutboundNotificationRepository repository) {
-        ArgumentCaptor<List<NotificationPublication>> captor = ArgumentCaptor.forClass(List.class);
+    private List<OutboundNotification> capturedObligations(OutboundNotificationRepository repository) {
+        ArgumentCaptor<List<OutboundNotification>> captor = ArgumentCaptor.forClass(List.class);
         verify(repository).insertAll(captor.capture());
         return captor.getValue();
     }
 
-    private String payload(NotificationPublication notification) {
+    private String payload(OutboundNotification notification) {
         return new String(notification.payload(), StandardCharsets.UTF_8);
     }
 
-    private JsonNode document(NotificationPublication notification) throws Exception {
+    private JsonNode document(OutboundNotification notification) throws Exception {
         return OBJECT_MAPPER.readTree(notification.payload());
     }
 

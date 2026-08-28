@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.notification;
 
-import br.kauan.spi.adapter.output.kafka.NotificationPublication;
+import br.kauan.spi.application.notification.OutboundNotification;
+import br.kauan.spi.application.notification.OutboundNotificationBatchReady;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -36,7 +37,7 @@ class OutboundNotificationPublisherTest {
         verify(pipeline).enqueue(batch);
     }
 
-    private NotificationPublication notification(String id) {
-        return NotificationPublication.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
+    private OutboundNotification notification(String id) {
+        return OutboundNotification.create("20000001", id.getBytes(StandardCharsets.UTF_8), id);
     }
 }
