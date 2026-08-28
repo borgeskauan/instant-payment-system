@@ -31,7 +31,8 @@ services:
       - deadlock_timeout=1s
     ports:
       - "5432:5432"
-    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: pg_isready -U postgres || exit 1
       <<: *default-healthcheck
@@ -144,7 +145,7 @@ services:
         ensure_notification_log psp-notifications-v1 8
 
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
     profiles:
       - kafka-ui
@@ -186,16 +187,6 @@ services:
       - ./certs/local/ca:/certs/ca:ro
     environment:
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
-      GRPC_SERVER_SECURITY_CERTIFICATE_CHAIN: file:/certs/gateway/server.crt
-      GRPC_SERVER_SECURITY_PRIVATE_KEY: file:/certs/gateway/server.key
-      GRPC_SERVER_SECURITY_TRUST_CERT_COLLECTION: file:/certs/ca/ca.crt
-      LOGGING_LEVEL_BR_KAUAN_NOTIFICATIONGATEWAY: ${LOGGING_LEVEL_BR_KAUAN_NOTIFICATIONGATEWAY:-INFO}
-      NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY: ${NOTIFICATION_GATEWAY_KAFKA_LISTENER_CONCURRENCY:-1}
-      NOTIFICATION_GATEWAY_KAFKA_RECENT_WINDOW_CAPACITY_PER_PARTITION: ${NOTIFICATION_GATEWAY_KAFKA_RECENT_WINDOW_CAPACITY_PER_PARTITION:-4096}
-      NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET: ${NOTIFICATION_GATEWAY_CURSOR_HMAC_SECRET:-local-development-cursor-secret-change-me}
-      NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS: ${NOTIFICATION_GATEWAY_PULL_LONG_POLL_TIMEOUT_MS:-30000}
-      NOTIFICATION_GATEWAY_PULL_KAFKA_SCAN_LIMIT: ${NOTIFICATION_GATEWAY_PULL_KAFKA_SCAN_LIMIT:-4096}
-      NOTIFICATION_GATEWAY_PULL_KAFKA_POLL_TIMEOUT: ${NOTIFICATION_GATEWAY_PULL_KAFKA_POLL_TIMEOUT:-100ms}
       JAVA_TOOL_OPTIONS: "-Xms160m -Xmx256m -XX:MaxDirectMemorySize=96m -Xss256k"
     depends_on:
       certs-init:
@@ -272,4 +263,5 @@ services:
         condition: service_completed_successfully
 
 volumes:
+  postgres-data:
   kafka-data:

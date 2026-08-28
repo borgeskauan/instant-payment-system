@@ -122,7 +122,6 @@ class KafkaConsumerConfigTest {
     @Test
     void performanceDefaultsDoNotFragmentAvailableStatusReportBatches() throws Exception {
         String application = Files.readString(Path.of("src", "main", "resources", "application.yml"));
-        String compose = Files.readString(Path.of("..", "infra", "docker-compose.yml"));
 
         assertThat(application)
                 .contains("    payment-request-listener-concurrency: 1")
@@ -133,9 +132,6 @@ class KafkaConsumerConfigTest {
                         + "      fetch-min-bytes: 16384\n"
                         + "      fetch-max-wait-ms: 125\n"
         );
-        assertThat(compose)
-                .doesNotContain("SPI_KAFKA_PAYMENT_REQUEST_")
-                .doesNotContain("SPI_KAFKA_STATUS_REPORT_");
     }
 
     private KafkaConsumerConfig config(

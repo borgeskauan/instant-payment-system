@@ -214,7 +214,7 @@ Ao concluir cada projeto:
 | [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 | [Kafka Producer](refatorar-remover-legado-projetos/kafka-producer.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 | Load-tool e scripts | pendente | pendente | não iniciado nesta task | definir objetivo e apresentar inventário de negócio |
-| Infraestrutura compartilhada | pendente | pendente | não iniciado | definir resultado operacional e apresentar inventário observável |
+| [Ambiente local compartilhado](refatorar-remover-legado-projetos/infraestrutura-local.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 
 ## Registros por projeto
 
@@ -224,7 +224,8 @@ Registros existentes:
 
 * [SPI](refatorar-remover-legado-projetos/spi.md);
 * [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md);
-* [Kafka Producer](refatorar-remover-legado-projetos/kafka-producer.md).
+* [Kafka Producer](refatorar-remover-legado-projetos/kafka-producer.md);
+* [Ambiente local compartilhado](refatorar-remover-legado-projetos/infraestrutura-local.md).
 
 Load-tool e infraestrutura devem repetir integralmente a metodologia obrigatória. Nenhum inventário técnico começa antes do Gate A e nenhuma alteração começa antes do Gate B.
 
