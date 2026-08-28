@@ -8,4 +8,5 @@ export interface PixKeySearchResult {
   name: string;
   taxId: string;
   institution: string;
+  bankCode: string;
 }

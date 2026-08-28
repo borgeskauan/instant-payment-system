@@ -13,6 +13,13 @@ export interface DemoRecipient {
   provider: string;
 }
 
+export interface DemoAccount {
+  id: string;
+  name: string;
+  taxId: string;
+  providerId: string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -28,6 +35,11 @@ export class AppConfigService {
     provider: 'PSP B',
   };
 
+  readonly demoAccounts: DemoAccount[] = [
+    {id: 'alice', name: 'Alice', taxId: '11111111111', providerId: 'psp-a'},
+    {id: 'bob', name: 'Bob', taxId: '22222222222', providerId: 'psp-b'},
+  ];
+
   private readonly selectedProvider = signal(this.providers[0]);
   readonly provider = this.selectedProvider.asReadonly();
 
@@ -41,5 +53,17 @@ export class AppConfigService {
       throw new Error(`Unknown demo PSP: ${providerId}`);
     }
     this.selectedProvider.set(provider);
+  }
+
+  providerById(providerId: string): DemoPsp {
+    const provider = this.providers.find(candidate => candidate.id === providerId);
+    if (!provider) {
+      throw new Error(`Unknown demo PSP: ${providerId}`);
+    }
+    return provider;
+  }
+
+  providerByBankCode(bankCode: string): DemoPsp | undefined {
+    return this.providers.find(candidate => candidate.bankCode === bankCode);
   }
 }

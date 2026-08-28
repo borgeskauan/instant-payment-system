@@ -31,7 +31,10 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - contrato final do PSP reduzido para abertura de conta de demonstração e execução por chave, com nova resolução autoritativa no servidor;
 - PSP reduzido novamente, de 68 para 66 arquivos Java de produção e de 2.432 para 2.331 linhas;
 - Angular reduzido a quatro telas e 18 arquivos de aplicação, sem endpoint `/info`, falsa semântica de login, cache de recebedor, specs-túmulo ou harness de teste vazio;
-- 27 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados após a segunda passagem.
+- PSP passou a expor o histórico efêmero do cliente com estados `PROCESSING`, `SETTLED` e `REJECTED`; a UI acompanha o pagamento submetido por até 1,5 segundo e mantém os pagamentos recentes na conta;
+- a demo agora apresenta somente Alice no PSP A e Bob no PSP B; ambos podem enviar e receber pagamentos, apenas a chave do Bob é provisionada, e a chave da Alice pode ser criada pelo usuário pela interface;
+- as telas internas identificam o cliente e o PSP ativos, preservam uma largura adequada no desktop, aceitam envio por Enter e apresentam a instituição recebedora com nome e ISPB;
+- 30 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados após a segunda passagem.
 
 ## Trabalho restante — contrato do PSP e Angular
 
@@ -46,6 +49,7 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - [x] Consolidar `PspService` e `TransferRequestService` em uma fronteira coesa de transferência de saída, removendo DTOs e modelos intermediários sem função.
 - [x] Fazer o `NotificationProcessor` classificar e materializar cada payload a partir de uma única leitura JSON.
 - [x] Usar coleções simples no `PaymentStore` quando a sincronização externa já serializar todos os acessos.
+- [x] Expor a visão local de pagamentos do cliente e usar o `paymentId`, não o saldo, para acompanhar o outcome final na UI.
 
 Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, preview do recebedor, PACS tipado, HTTP/2 com mTLS, Pull gRPC com cursor, idempotência e atualização visual dos dois saldos.
 
@@ -59,8 +63,9 @@ Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, pr
 - o navegador não envia dados autoritativos do recebedor no execute;
 - os nomes do contrato não apresentam criação de cliente como autenticação;
 - nenhuma tela, endpoint, cache ou camada intermediária permanece sem contribuir para o happy path;
+- histórico, tela de resultado e saldo apresentam a mesma visão local de pagamento do PSP;
 - testes dos dois projetos, builds, Composes, smoke e `git diff --check` passam;
-- nenhuma feature nova, persistência, autenticação real ou modelagem de PSP de produção entra no diff.
+- nenhuma persistência, autenticação real ou modelagem de PSP de produção entra no diff.
 
 ## Validação pendente
 

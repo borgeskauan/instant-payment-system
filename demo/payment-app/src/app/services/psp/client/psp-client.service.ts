@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import {HttpClient} from '@angular/common/http';
-import {TransferExecutionRequest, TransferPreviewDetails} from './psp.client-model';
+import {PaymentSummary, TransferDetails, TransferExecutionRequest, TransferPreviewDetails} from './psp.client-model';
 import {AppConfigService} from '../../config/app-config.service';
 
 @Injectable({
@@ -15,6 +15,10 @@ export class PspClientService {
   }
 
   requestTransfer(request: TransferExecutionRequest) {
-    return this.http.post(`${this.config.baseUrl}/transfer/execute`, request);
+    return this.http.post<TransferDetails>(`${this.config.baseUrl}/transfer/execute`, request);
+  }
+
+  listPayments(customerId: string) {
+    return this.http.get<PaymentSummary[]>(`${this.config.baseUrl}/customers/${customerId}/payments`);
   }
 }

@@ -97,11 +97,11 @@ services:
       context: ./seed
       dockerfile: Dockerfile
     environment:
-      PSP_URL: http://psp-b:8080
-      CUSTOMER_NAME: Bob
-      CUSTOMER_TAX_ID: "22222222222"
-      PIX_KEY: bob@example.com
+      PSP_A_URL: http://psp-a:8080
+      PSP_B_URL: http://psp-b:8080
     depends_on:
+      psp-a:
+        condition: service_started
       psp-b:
         condition: service_started
 

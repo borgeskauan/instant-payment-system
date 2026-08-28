@@ -1,62 +1,40 @@
 <div class="flex min-h-screen flex-col bg-gray-50">
   <header class="bg-blue-600 px-4 py-6 text-center text-white shadow">
     <h1 class="text-2xl font-bold">Instant Payment Demo</h1>
-    <p class="text-sm opacity-80">Open an ephemeral customer at one of the simulated PSPs</p>
+    <p class="text-sm opacity-80">Choose a customer to explore the payment flow</p>
   </header>
 
   <main class="flex flex-grow items-center justify-center p-6">
     <div class="w-full max-w-sm space-y-6 rounded-2xl bg-white p-6 shadow-md">
       <div class="rounded-xl bg-blue-50 p-4 text-sm text-blue-900">
         <p class="font-semibold">Ready-to-run scenario</p>
-        <p class="mt-1">
-          Alice starts at PSP A. {{ demoRecipient.name }} is ready at {{ demoRecipient.provider }} with
-          <span class="font-mono">{{ demoRecipient.pixKey }}</span>.
-        </p>
+        <p class="mt-1">Bob's key <span class="font-mono">{{ demoRecipient.pixKey }}</span> is ready for the first payment. You can also register a key for Alice and send money back.</p>
       </div>
 
       @if (errorMessage) {
         <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
       }
 
-      <label class="block">
-        <span class="font-medium text-gray-700">Institution</span>
-        <select
-          [(ngModel)]="selectedProviderId"
-          class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          @for (provider of providers; track provider.id) {
-            <option [value]="provider.id">{{ provider.name }} · ISPB {{ provider.bankCode }}</option>
-          }
-        </select>
-      </label>
-
-      <label class="block">
-        <span class="font-medium text-gray-700">Customer name</span>
-        <input
-          type="text"
-          [(ngModel)]="name"
-          placeholder="Alice"
-          class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </label>
-
-      <label class="block">
-        <span class="font-medium text-gray-700">Tax ID</span>
-        <input
-          type="text"
-          [(ngModel)]="taxId"
-          placeholder="11111111111"
-          class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </label>
-
-      <button
-        (click)="openAccount()"
-        [disabled]="loading"
-        class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700 disabled:opacity-50"
-      >
-        {{ loading ? 'Opening...' : 'Open demo account' }}
-      </button>
+      <div class="space-y-3">
+        @for (account of accounts; track account.id) {
+          <button
+            (click)="openAccount(account)"
+            [disabled]="loadingAccountId !== ''"
+            class="w-full rounded-xl border border-gray-200 p-4 text-left shadow-sm transition hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <p class="text-lg font-semibold text-gray-900">{{ account.name }}</p>
+                <p class="text-sm text-gray-600">Customer at {{ providerName(account) }}</p>
+                <p class="mt-1 text-xs text-gray-400">ISPB {{ providerBankCode(account) }}</p>
+              </div>
+              <span class="text-sm font-semibold text-blue-600">
+                {{ loadingAccountId === account.id ? 'Opening...' : 'View account' }}
+              </span>
+            </div>
+          </button>
+        }
+      </div>
     </div>
   </main>
 </div>

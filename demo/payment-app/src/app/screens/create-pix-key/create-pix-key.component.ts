@@ -2,6 +2,7 @@ import {Component} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {Router} from '@angular/router';
 import {UserService} from '../../services/user/user.service';
+import {AppConfigService} from '../../services/config/app-config.service';
 
 @Component({
   selector: 'app-create-pix-key',
@@ -12,12 +13,17 @@ export class CreatePixKeyComponent {
   pixKey = '';
   errorMessage = '';
   loading = false;
+  readonly customerName: string;
+  readonly providerName: string;
 
   constructor(
     private readonly router: Router,
     private readonly userService: UserService,
+    config: AppConfigService,
   ) {
-    if (!this.userService.user()) {
+    this.providerName = config.provider().name;
+    this.customerName = this.userService.user()?.name ?? '';
+    if (!this.customerName) {
       void this.router.navigate(['/start']);
     }
   }

@@ -1,18 +1,39 @@
 <div class="flex min-h-screen flex-col bg-gray-50">
   <header class="flex items-center justify-between bg-blue-600 px-4 py-3 text-white shadow">
-    <h1 class="text-lg font-semibold">
-      @switch (step) {
-        @case ('pix') { Find recipient }
-        @case ('amount') { Enter amount }
-        @case ('confirm') { Review payment }
-      }
-    </h1>
-    <button (click)="back()" class="text-sm underline hover:opacity-80">
-      {{ step === 'pix' ? 'Cancel' : 'Back' }}
-    </button>
+    <div>
+      <h1 class="text-lg font-semibold">
+        @switch (step) {
+          @case ('pix') { Find recipient }
+          @case ('amount') { Enter amount }
+          @case ('confirm') { Review payment }
+          @case ('result') { Payment status }
+        }
+      </h1>
+      <p class="text-xs opacity-80">{{ customerName }} · {{ providerName }}</p>
+    </div>
+    @if (step !== 'result') {
+      <button (click)="back()" class="text-sm underline hover:opacity-80">
+        {{ step === 'pix' ? 'Cancel' : 'Back' }}
+      </button>
+    }
   </header>
 
-  <main class="flex-grow space-y-6 p-4">
+  <main class="mx-auto w-full max-w-md flex-grow space-y-6 p-4">
+    @if (step !== 'result') {
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs font-medium text-gray-500">
+          <span>Recipient</span>
+          <span>Amount</span>
+          <span>Review</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <span class="h-1 rounded-full bg-blue-600"></span>
+          <span class="h-1 rounded-full" [class.bg-blue-600]="stepNumber >= 2" [class.bg-gray-200]="stepNumber < 2"></span>
+          <span class="h-1 rounded-full" [class.bg-blue-600]="stepNumber >= 3" [class.bg-gray-200]="stepNumber < 3"></span>
+        </div>
+      </div>
+    }
+
     @if (errorMessage) {
       <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
     }
@@ -22,52 +43,62 @@
         <p class="text-sm text-gray-500">Recipient</p>
         <p class="text-lg font-semibold text-gray-800">{{ recipient.name }}</p>
         <p class="text-sm text-gray-700">Tax ID: {{ recipient.taxId }}</p>
-        <p class="text-sm text-gray-700">Institution: {{ recipient.institution }}</p>
+        <p class="text-sm text-gray-700">{{ recipient.institution }} · ISPB {{ recipient.bankCode }}</p>
       </div>
     }
 
     @switch (step) {
       @case ('pix') {
-        <label class="block">
-          <span class="font-medium text-gray-700">PIX key</span>
-          <input
-            type="text"
-            [(ngModel)]="pixKey"
-            placeholder="receiver@example.com"
-            class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </label>
-        <button
-          (click)="submitPixKey()"
-          [disabled]="loading"
-          class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700 disabled:opacity-50"
-        >
-          {{ loading ? 'Looking up...' : 'Continue' }}
-        </button>
+        <form (ngSubmit)="submitPixKey()" class="space-y-6">
+          <label class="block">
+            <span class="font-medium text-gray-700">PIX key</span>
+            <input
+              type="text"
+              name="pixKey"
+              [(ngModel)]="pixKey"
+              placeholder="receiver@example.com"
+              class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+          <button
+            type="submit"
+            [disabled]="loading"
+            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700 disabled:opacity-50"
+          >
+            {{ loading ? 'Looking up...' : 'Continue' }}
+          </button>
+        </form>
       }
       @case ('amount') {
-        <label class="block">
-          <span class="font-medium text-gray-700">Amount</span>
-          <input
-            type="number"
-            min="0.01"
-            step="0.01"
-            [(ngModel)]="amount"
-            placeholder="0.00"
-            class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </label>
-        <button
-          (click)="proceedToConfirm()"
-          class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700"
-        >
-          Review payment
-        </button>
+        <form (ngSubmit)="proceedToConfirm()" class="space-y-6">
+          <label class="block">
+            <span class="font-medium text-gray-700">Amount</span>
+            <div class="relative mt-2">
+              <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 font-medium text-gray-500">R$</span>
+              <input
+                type="number"
+                name="amount"
+                inputmode="decimal"
+                min="0.01"
+                step="0.01"
+                [(ngModel)]="amount"
+                placeholder="0.00"
+                class="w-full rounded-xl border border-gray-300 py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </label>
+          <button
+            type="submit"
+            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700"
+          >
+            Review payment
+          </button>
+        </form>
       }
       @case ('confirm') {
         <div class="rounded-xl bg-white p-4 shadow">
           <p class="text-sm text-gray-500">Amount</p>
-          <p class="text-2xl font-bold text-green-600">R$ {{ amount }}</p>
+          <p class="text-2xl font-bold text-green-600">R$ {{ amount | number:'1.2-2' }}</p>
         </div>
         <button
           (click)="confirmTransfer()"
@@ -76,6 +107,49 @@
         >
           {{ loading ? 'Submitting...' : 'Send payment' }}
         </button>
+      }
+      @case ('result') {
+        <div class="space-y-5 rounded-xl bg-white p-6 text-center shadow">
+          @switch (paymentResult) {
+            @case ('checking') {
+              <div class="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600"></div>
+              <div>
+                <h2 class="text-xl font-semibold text-gray-900">Processing payment</h2>
+                <p class="mt-2 text-sm text-gray-500">Waiting briefly for the final outcome.</p>
+              </div>
+            }
+            @case ('settled') {
+              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-2xl text-green-700">&#10003;</div>
+              <div>
+                <h2 class="text-xl font-semibold text-gray-900">Payment confirmed</h2>
+                <p class="mt-2 text-sm text-gray-500">{{ formattedAmount }} was sent to {{ recipient.name }}.</p>
+              </div>
+            }
+            @case ('rejected') {
+              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-2xl text-red-700">&#10005;</div>
+              <div>
+                <h2 class="text-xl font-semibold text-gray-900">Payment rejected</h2>
+                <p class="mt-2 text-sm text-gray-500">The payment was not completed.</p>
+              </div>
+            }
+            @case ('processing') {
+              <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-2xl text-blue-700">&#8230;</div>
+              <div>
+                <h2 class="text-xl font-semibold text-gray-900">Payment is still processing</h2>
+                <p class="mt-2 text-sm text-gray-500">You can follow its status from your account.</p>
+              </div>
+            }
+          }
+        </div>
+
+        @if (paymentResult !== 'checking') {
+          <button
+            (click)="back()"
+            class="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white shadow transition hover:bg-blue-700"
+          >
+            Back to account
+          </button>
+        }
       }
     }
   </main>

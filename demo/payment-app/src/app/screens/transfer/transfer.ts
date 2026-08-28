@@ -1,24 +1,40 @@
-import {Component} from '@angular/core';
+import {Component, OnDestroy} from '@angular/core';
+import {DecimalPipe} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {Router} from '@angular/router';
 import {AppConfigService} from '../../services/config/app-config.service';
 import {PspService} from '../../services/psp/psp.service';
 import {UserService} from '../../services/user/user.service';
 
-type TransferStep = 'pix' | 'amount' | 'confirm';
+type TransferStep = 'pix' | 'amount' | 'confirm' | 'result';
+type PaymentResult = 'checking' | 'settled' | 'rejected' | 'processing';
+
+const OUTCOME_WAIT_MS = 1500;
+const OUTCOME_POLL_INTERVAL_MS = 150;
 
 @Component({
   selector: 'app-transfer',
-  imports: [FormsModule],
+  imports: [DecimalPipe, FormsModule],
   templateUrl: './transfer.html',
 })
-export class Transfer {
+export class Transfer implements OnDestroy {
   step: TransferStep = 'pix';
   pixKey: string;
   amount: number | null = null;
   loading = false;
   errorMessage = '';
-  recipient = {name: '', taxId: '', institution: ''};
+  recipient = {name: '', taxId: '', institution: '', bankCode: ''};
+  paymentResult: PaymentResult = 'checking';
+  formattedAmount = '';
+  readonly customerName: string;
+  readonly providerName: string;
+  private paymentId = '';
+  private paymentPollTimer?: number;
+  private destroyed = false;
+
+  get stepNumber(): number {
+    return this.step === 'pix' ? 1 : this.step === 'amount' ? 2 : 3;
+  }
 
   constructor(
     private readonly router: Router,
@@ -26,8 +42,10 @@ export class Transfer {
     config: AppConfigService,
     userService: UserService,
   ) {
-    this.pixKey = config.demoRecipient.pixKey;
-    if (!userService.user()) {
+    this.pixKey = config.provider().id === 'psp-a' ? config.demoRecipient.pixKey : '';
+    this.providerName = config.provider().name;
+    this.customerName = userService.user()?.name ?? '';
+    if (!this.customerName) {
       void this.router.navigate(['/start']);
     }
   }
@@ -77,10 +95,13 @@ export class Transfer {
       receiverPixKey: this.pixKey,
       description: 'Reference demo payment',
     }).subscribe({
-      next: () => {
-        const amount = new Intl.NumberFormat('pt-BR', {style: 'currency', currency: 'BRL'}).format(this.amount!);
-        window.alert(`${amount} payment submitted to ${this.recipient.name}. The balance will update after the final outcome.`);
-        void this.router.navigate(['/home']);
+      next: transfer => {
+        this.loading = false;
+        this.paymentId = transfer.transferId;
+        this.formattedAmount = new Intl.NumberFormat('pt-BR', {style: 'currency', currency: 'BRL'}).format(this.amount!);
+        this.paymentResult = 'checking';
+        this.step = 'result';
+        this.pollPayment(performance.now() + OUTCOME_WAIT_MS);
       },
       error: () => {
         this.loading = false;
@@ -91,6 +112,10 @@ export class Transfer {
 
   back(): void {
     this.errorMessage = '';
+    if (this.step === 'result') {
+      void this.router.navigate(['/home']);
+      return;
+    }
     if (this.step === 'confirm') {
       this.step = 'amount';
       return;
@@ -101,5 +126,45 @@ export class Transfer {
       return;
     }
     void this.router.navigate(['/home']);
+  }
+
+  ngOnDestroy(): void {
+    this.destroyed = true;
+    if (this.paymentPollTimer !== undefined) {
+      window.clearTimeout(this.paymentPollTimer);
+    }
+  }
+
+  private pollPayment(deadline: number): void {
+    this.pspService.listPayments().subscribe({
+      next: payments => {
+        const payment = payments.find(candidate => candidate.paymentId === this.paymentId);
+        if (payment?.status === 'SETTLED') {
+          this.paymentResult = 'settled';
+          return;
+        }
+        if (payment?.status === 'REJECTED') {
+          this.paymentResult = 'rejected';
+          return;
+        }
+        this.scheduleNextPoll(deadline);
+      },
+      error: () => this.scheduleNextPoll(deadline),
+    });
+  }
+
+  private scheduleNextPoll(deadline: number): void {
+    if (this.destroyed) {
+      return;
+    }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      this.paymentResult = 'processing';
+      return;
+    }
+    this.paymentPollTimer = window.setTimeout(
+      () => this.pollPayment(deadline),
+      Math.min(OUTCOME_POLL_INTERVAL_MS, remaining),
+    );
   }
 }

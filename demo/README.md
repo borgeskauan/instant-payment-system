@@ -18,9 +18,9 @@ Then start the reference demo:
 LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f demo/docker-compose.yml up -d --build
 ```
 
-Open <http://localhost:4200>. PSP A is available at `http://localhost:8081`; PSP B is available at `http://localhost:8082`. The environment prepares Bob at PSP B with `bob@example.com`; open the prefilled Alice account at PSP A and submit a payment to that key. Manual customer and key registration remain available for exploring the demo. The [Bruno collection](../docs/collection/README.md) provides the same flow as explicit API calls.
+Open <http://localhost:4200>. PSP A is available at `http://localhost:8081`; PSP B is available at `http://localhost:8082`. The environment prepares Alice at PSP A and Bob at PSP B. Both can send and receive payments. Only Bob's `bob@example.com` key is pre-provisioned so the first payment works immediately; Alice starts without a key and the user may register one through the interface before sending money back from Bob. Choose either customer from the opening screen. The application briefly waits for the final outcome and keeps the latest payment statuses on both account screens. The [Bruno collection](../docs/collection/README.md) provides the same flow as explicit API calls.
 
-The automated smoke exercises the complete business path and verifies the final balance changes observed by both PSPs:
+The automated smoke exercises the complete business path and verifies the final balance changes and `SETTLED` payment histories observed by both PSPs:
 
 ```bash
 ./demo/smoke.sh

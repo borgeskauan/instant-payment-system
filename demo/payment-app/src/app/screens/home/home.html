@@ -7,13 +7,13 @@
         </div>
         <div>
           <h1 class="text-lg font-semibold">{{ customer.name }}</h1>
-          <p class="text-xs opacity-80">ISPB {{ customer.bankCode }}</p>
+          <p class="text-xs opacity-80">{{ provider().name }} · ISPB {{ customer.bankCode }}</p>
         </div>
       </div>
-      <button class="text-sm font-medium hover:underline" (click)="logout()">Close account</button>
+      <button class="text-sm font-medium hover:underline" (click)="logout()">Switch customer</button>
     </header>
 
-    <main class="flex-grow space-y-6 p-4">
+    <main class="mx-auto w-full max-w-md flex-grow space-y-6 p-4">
       <div class="rounded-2xl bg-white p-6 text-center shadow-md">
         <p class="text-gray-500">Available balance</p>
         <p class="mt-2 text-4xl font-bold text-green-600">
@@ -23,19 +23,61 @@
       </div>
 
       <div class="rounded-2xl bg-white p-6 shadow-md">
-        <h2 class="text-lg font-semibold">Try a payment</h2>
-        <p class="mt-2 text-sm text-gray-600">
-          {{ demoRecipient.name }} is ready at {{ demoRecipient.provider }}.
-        </p>
-        <p class="mt-2 rounded-xl bg-gray-100 p-3 font-mono text-sm text-gray-800">
-          {{ demoRecipient.pixKey }}
-        </p>
+        <h2 class="text-lg font-semibold">Send a PIX</h2>
+        @if (provider().id === 'psp-a') {
+          <p class="mt-2 text-sm text-gray-600">
+            {{ demoRecipient.name }} is ready at {{ demoRecipient.provider }}.
+          </p>
+          <p class="mt-2 rounded-xl bg-gray-100 p-3 font-mono text-sm text-gray-800">
+            {{ demoRecipient.pixKey }}
+          </p>
+        } @else {
+          <p class="mt-2 text-sm text-gray-600">Enter any registered PIX key. To send money back to Alice, register a key from her account first.</p>
+        }
         <button
           (click)="goToTransfer()"
           class="mt-4 w-full rounded-xl bg-blue-600 py-3 font-semibold text-white transition hover:bg-blue-700"
         >
-          Send to {{ demoRecipient.name }}
+          {{ provider().id === 'psp-a' ? 'Send to Bob' : 'Start payment' }}
         </button>
+      </div>
+
+      <div class="rounded-2xl bg-white p-6 shadow-md">
+        <h2 class="mb-3 text-lg font-semibold">Recent payments</h2>
+        @if (payments().length === 0) {
+          <p class="text-sm text-gray-500">No payments yet.</p>
+        } @else {
+          <ul class="divide-y divide-gray-100">
+            @for (payment of payments(); track payment.paymentId) {
+              <li class="flex items-center justify-between gap-4 py-3">
+                <div class="min-w-0">
+                  <p class="truncate font-medium text-gray-900">
+                    {{ payment.direction === 'OUTGOING' ? 'To' : 'From' }} {{ payment.counterparty.name }}
+                  </p>
+                  <p class="text-xs text-gray-500">{{ payment.createdAt | date:'short' }}</p>
+                  <span class="mt-1 inline-flex rounded-full px-2 py-1 text-xs font-medium"
+                     [class.bg-green-100]="payment.status === 'SETTLED'"
+                     [class.text-green-700]="payment.status === 'SETTLED'"
+                     [class.bg-red-100]="payment.status === 'REJECTED'"
+                     [class.text-red-700]="payment.status === 'REJECTED'"
+                     [class.bg-blue-100]="payment.status === 'PROCESSING'"
+                     [class.text-blue-700]="payment.status === 'PROCESSING'">
+                    @switch (payment.status) {
+                      @case ('SETTLED') { Confirmed }
+                      @case ('REJECTED') { Rejected }
+                      @case ('PROCESSING') { Processing }
+                    }
+                  </span>
+                </div>
+                <p class="shrink-0 font-semibold"
+                   [class.text-red-600]="payment.direction === 'OUTGOING'"
+                   [class.text-green-600]="payment.direction === 'INCOMING'">
+                  {{ payment.direction === 'OUTGOING' ? '-' : '+' }} R$ {{ payment.amount | number:'1.2-2' }}
+                </p>
+              </li>
+            }
+          </ul>
+        }
       </div>
 
       <div class="rounded-2xl bg-white p-6 shadow-md">
@@ -49,22 +91,13 @@
             }
           </ul>
         }
+        <button
+          (click)="goToCreatePixKey()"
+          class="mt-4 w-full rounded-xl border border-green-600 py-3 font-semibold text-green-700 transition hover:bg-green-50"
+        >
+          Register PIX key
+        </button>
       </div>
     </main>
-
-    <footer class="space-y-3 bg-white p-4 shadow-inner">
-      <button
-        (click)="goToTransfer()"
-        class="w-full rounded-2xl bg-blue-600 py-4 font-semibold text-white shadow transition hover:bg-blue-700"
-      >
-        Send payment
-      </button>
-      <button
-        (click)="goToCreatePixKey()"
-        class="w-full rounded-2xl bg-green-600 py-4 font-semibold text-white shadow transition hover:bg-green-700"
-      >
-        Register PIX key
-      </button>
-    </footer>
   </div>
 }

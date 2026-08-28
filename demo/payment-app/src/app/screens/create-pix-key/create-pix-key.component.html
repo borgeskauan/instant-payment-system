@@ -1,30 +1,36 @@
 <div class="flex min-h-screen flex-col bg-gray-50">
   <header class="flex items-center justify-between bg-blue-600 px-4 py-3 text-white shadow">
-    <h1 class="text-lg font-semibold">Register PIX key</h1>
+    <div>
+      <h1 class="text-lg font-semibold">Register PIX key</h1>
+      <p class="text-xs opacity-80">{{ customerName }} · {{ providerName }}</p>
+    </div>
     <button (click)="cancel()" class="text-sm underline hover:opacity-80">Cancel</button>
   </header>
 
-  <main class="flex-grow space-y-6 p-4">
+  <main class="mx-auto w-full max-w-md flex-grow space-y-6 p-4">
     @if (errorMessage) {
       <div class="rounded-lg bg-red-100 p-3 text-sm text-red-700">{{ errorMessage }}</div>
     }
 
-    <label class="block">
-      <span class="font-medium text-gray-700">PIX key</span>
-      <input
-        type="text"
-        [(ngModel)]="pixKey"
-        placeholder="alice@example.com"
-        class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-      />
-    </label>
+    <form (ngSubmit)="savePixKey()" class="space-y-6">
+      <label class="block">
+        <span class="font-medium text-gray-700">PIX key</span>
+        <input
+          type="text"
+          name="pixKey"
+          [(ngModel)]="pixKey"
+          placeholder="alice@example.com"
+          class="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </label>
 
-    <button
-      (click)="savePixKey()"
-      [disabled]="loading"
-      class="w-full rounded-xl bg-green-600 py-3 font-semibold text-white shadow transition hover:bg-green-700 disabled:opacity-50"
-    >
-      {{ loading ? 'Registering...' : 'Register key' }}
-    </button>
+      <button
+        type="submit"
+        [disabled]="loading"
+        class="w-full rounded-xl bg-green-600 py-3 font-semibold text-white shadow transition hover:bg-green-700 disabled:opacity-50"
+      >
+        {{ loading ? 'Registering...' : 'Register key' }}
+      </button>
+    </form>
   </main>
 </div>
