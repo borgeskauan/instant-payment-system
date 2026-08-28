@@ -11,8 +11,7 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(
         prefix = "spi.notification-runtime",
         name = "enabled",
-        havingValue = "true",
-        matchIfMissing = true
+        havingValue = "true"
 )
 public class NotificationRuntimeCoordinator implements ApplicationRunner {
 

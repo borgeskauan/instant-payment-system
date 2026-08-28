@@ -2,8 +2,8 @@ package br.kauan.spi.adapter.output.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
+import br.kauan.spi.config.NotificationOutboxProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -29,18 +29,13 @@ public class NotificationOutboxPipeline {
     public NotificationOutboxPipeline(
             OutboundNotificationRepository repository,
             NotificationPublisher publisher,
-            @Value("${spi.notification-outbox.queue-capacity:1024}") int queueCapacity,
-            @Value("${spi.notification-outbox.recovery-batch-size:256}") int recoveryBatchSize,
-            @Value("${spi.notification-outbox.retry-delay:100ms}") Duration retryDelay
+            NotificationOutboxProperties properties
     ) {
-        if (queueCapacity < 1 || recoveryBatchSize < 1 || retryDelay.isNegative()) {
-            throw new IllegalArgumentException("Notification outbox pipeline settings must be positive");
-        }
         this.repository = repository;
         this.publisher = publisher;
-        this.queue = new ArrayBlockingQueue<>(queueCapacity);
-        this.recoveryBatchSize = recoveryBatchSize;
-        this.retryDelay = retryDelay;
+        this.queue = new ArrayBlockingQueue<>(properties.queueCapacity());
+        this.recoveryBatchSize = properties.recoveryBatchSize();
+        this.retryDelay = properties.retryDelay();
     }
 
     public synchronized void startAndRecover() {

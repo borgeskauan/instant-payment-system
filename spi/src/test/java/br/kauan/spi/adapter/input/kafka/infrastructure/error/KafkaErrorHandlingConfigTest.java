@@ -1,11 +1,14 @@
 package br.kauan.spi.adapter.input.kafka.infrastructure.error;
 
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.KafkaDlqConfig;
+import br.kauan.spi.config.SpiKafkaProperties;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -88,7 +91,17 @@ class KafkaErrorHandlingConfigTest {
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
-        DeadLetterPublishingRecoverer recoverer = new br.kauan.spi.adapter.input.kafka.infrastructure.dlq.KafkaDlqConfig()
+        KafkaProperties kafka = new KafkaProperties();
+        kafka.setBootstrapServers(List.of("localhost:9092"));
+        SpiKafkaProperties spi = new SpiKafkaProperties(
+                1,
+                1,
+                "spi-payment-request-consumer-group",
+                "spi-status-report-consumer-group",
+                new SpiKafkaProperties.ConsumerBatch(500, 57_344, 100),
+                new SpiKafkaProperties.ConsumerBatch(500, 16_384, 125)
+        );
+        DeadLetterPublishingRecoverer recoverer = new KafkaDlqConfig(kafka, spi)
                 .deadLetterPublishingRecoverer(kafkaTemplate);
         DefaultErrorHandler dlqErrorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(0L, 0L));
         DefaultErrorHandler infrastructureErrorHandler = errorConfig.infrastructureKafkaErrorHandler(

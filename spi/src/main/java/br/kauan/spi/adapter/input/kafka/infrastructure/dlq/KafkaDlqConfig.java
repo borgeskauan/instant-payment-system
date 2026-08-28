@@ -5,12 +5,13 @@ import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
 import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
 import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
 import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
+import br.kauan.spi.config.SpiKafkaProperties;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -34,20 +35,19 @@ public class KafkaDlqConfig {
     private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
     private static final Duration DLQ_SEND_TIMEOUT = Duration.ofSeconds(10);
 
-    @Value("${spring.kafka.bootstrap-servers}")
-    private String bootstrapServers;
+    private final KafkaProperties kafkaProperties;
+    private final SpiKafkaProperties spiKafkaProperties;
 
-    @Value("${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}")
-    private String paymentRequestGroupId = "spi-payment-request-consumer-group";
-
-    @Value("${spi.kafka.status-report-group-id:spi-status-report-consumer-group}")
-    private String statusReportGroupId = "spi-status-report-consumer-group";
+    public KafkaDlqConfig(KafkaProperties kafkaProperties, SpiKafkaProperties spiKafkaProperties) {
+        this.kafkaProperties = kafkaProperties;
+        this.spiKafkaProperties = spiKafkaProperties;
+    }
 
     @Bean
     public ProducerFactory<String, byte[]> dlqProducerFactory() {
         Map<String, Object> config = new HashMap<>();
 
-        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaProperties.getBootstrapServers());
         config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class);
         config.put(ProducerConfig.ACKS_CONFIG, "all");
@@ -101,8 +101,8 @@ public class KafkaDlqConfig {
 
     private String consumerGroupForTopic(String topic) {
         return switch (topic) {
-            case "spi-payment-requests" -> paymentRequestGroupId;
-            case "spi-payment-status-reports" -> statusReportGroupId;
+            case "spi-payment-requests" -> spiKafkaProperties.paymentRequestGroupId();
+            case "spi-payment-status-reports" -> spiKafkaProperties.statusReportGroupId();
             default -> "unknown";
         };
     }

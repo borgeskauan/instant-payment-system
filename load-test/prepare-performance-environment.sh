@@ -120,6 +120,19 @@ reset_and_start_stack() {
         docker compose -f "$COMPOSE_FILE" up -d --build
 }
 
+capture_spi_runtime_configuration() {
+    local configuration
+    log_phase "capturing the effective SPI runtime configuration"
+    if ! configuration="$(
+        docker logs spi 2>&1 \
+            | awk '/event=spi_runtime_configuration/{line=$0} END{if(line == "") exit 1; print line}'
+    )"; then
+        echo "SPI effective runtime configuration was not found in the startup log." >&2
+        return 1
+    fi
+    printf '%s\n' "$configuration" > "${STAGING_DIR}/inputs/spi-runtime-config.log"
+}
+
 generate_certificates() {
     local plan="${STAGING_DIR}/inputs/execution-plan.json"
     local normalized record first hot cold count pair suffix
@@ -157,6 +170,7 @@ main() {
     reset_and_start_stack
     log_phase "waiting for the performance stack to become ready"
     "$STACK_READINESS_SCRIPT"
+    capture_spi_runtime_configuration
     log_phase "provisioning profile funds"
     "$PROVISION_PROFILE_FUNDS_SCRIPT" --execution-plan "${STAGING_DIR}/inputs/execution-plan.json"
     log_phase "generating PSP certificates"

@@ -2,6 +2,7 @@ package br.kauan.spi.adapter.output.notification;
 
 import br.kauan.spi.adapter.output.kafka.NotificationPublication;
 import br.kauan.spi.adapter.output.kafka.NotificationPublisher;
+import br.kauan.spi.config.NotificationOutboxProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -99,7 +100,11 @@ class NotificationOutboxPipelineTest {
             OutboundNotificationRepository repository,
             NotificationPublisher publisher
     ) {
-        return new NotificationOutboxPipeline(repository, publisher, 2, 20, Duration.ofMillis(1));
+        return new NotificationOutboxPipeline(
+                repository,
+                publisher,
+                new NotificationOutboxProperties(2, 20, Duration.ofMillis(1))
+        );
     }
 
     private NotificationPublication notification(String id) {

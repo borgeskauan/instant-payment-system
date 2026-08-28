@@ -30,7 +30,7 @@ spring:
 spi:
   kafka:
     payment-request-listener-concurrency: 1
-    status-report-listener-concurrency: 3
+    status-report-listener-concurrency: 1
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group
     payment-request:
@@ -45,6 +45,8 @@ spi:
     queue-capacity: 1024
     recovery-batch-size: 256
     retry-delay: 100ms
+  notification-runtime:
+    enabled: true
 
 server:
   port: 8002

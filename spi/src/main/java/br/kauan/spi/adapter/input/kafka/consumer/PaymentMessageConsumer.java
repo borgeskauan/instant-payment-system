@@ -44,7 +44,7 @@ public class PaymentMessageConsumer {
 
     @KafkaListener(
             topics = PAYMENT_REQUESTS_TOPIC,
-            groupId = "${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
+            groupId = "${spi.kafka.payment-request-group-id}",
             containerFactory = "paymentRequestKafkaListenerContainerFactory"
     )
     public void consumePaymentRequests(
@@ -129,7 +129,7 @@ public class PaymentMessageConsumer {
 
     @KafkaListener(
             topics = PAYMENT_STATUS_REPORTS_TOPIC,
-            groupId = "${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
+            groupId = "${spi.kafka.status-report-group-id}",
             containerFactory = "statusReportKafkaListenerContainerFactory"
     )
     public void consumeStatusReports(

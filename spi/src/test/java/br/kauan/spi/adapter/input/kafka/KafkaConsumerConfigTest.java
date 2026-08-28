@@ -1,7 +1,9 @@
 package br.kauan.spi.adapter.input.kafka;
 
+import br.kauan.spi.config.SpiKafkaProperties;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.CommonErrorHandler;
@@ -10,6 +12,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -18,9 +21,7 @@ class KafkaConsumerConfigTest {
 
     @Test
     void paymentAndStatusFactoriesUseTheirOwnConfiguredConcurrency() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "paymentRequestListenerConcurrency", 8);
-        ReflectionTestUtils.setField(config, "statusReportListenerConcurrency", 1);
+        KafkaConsumerConfig config = config(8, 1, true, defaultPaymentBatch(), defaultStatusBatch());
         ConsumerFactory<String, byte[]> paymentConsumerFactory = mock(ConsumerFactory.class);
         ConsumerFactory<String, byte[]> statusConsumerFactory = mock(ConsumerFactory.class);
         CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
@@ -42,8 +43,7 @@ class KafkaConsumerConfigTest {
 
     @Test
     void listenerFactoriesUseKafkaErrorHandler() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "paymentRequestListenerConcurrency", 4);
+        KafkaConsumerConfig config = config(4, 1, true, defaultPaymentBatch(), defaultStatusBatch());
         CommonErrorHandler errorHandler = mock(CommonErrorHandler.class);
 
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
@@ -56,9 +56,7 @@ class KafkaConsumerConfigTest {
 
     @Test
     void listenerFactoriesUseConfiguredAutoStartup() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "listenerAutoStartup", false);
-        ReflectionTestUtils.setField(config, "statusReportListenerConcurrency", 1);
+        KafkaConsumerConfig config = config(1, 1, false, defaultPaymentBatch(), defaultStatusBatch());
 
         ConcurrentKafkaListenerContainerFactory<String, byte[]> factory =
                 config.statusReportKafkaListenerContainerFactory(
@@ -70,9 +68,7 @@ class KafkaConsumerConfigTest {
 
     @Test
     void consumerFactoriesShareTransportSafetySettings() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
-        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
+        KafkaConsumerConfig config = config(1, 1, true, defaultPaymentBatch(), defaultStatusBatch());
 
         var paymentRequestConsumerFactory = config.paymentRequestConsumerFactory();
         var statusReportConsumerFactory = config.statusReportConsumerFactory();
@@ -89,15 +85,13 @@ class KafkaConsumerConfigTest {
 
     @Test
     void paymentRequestConsumerFactoryUsesDedicatedBatchingSettings() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
-        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
-        ReflectionTestUtils.setField(config, "paymentRequestMaxPollRecords", 500);
-        ReflectionTestUtils.setField(config, "paymentRequestFetchMinBytes", 131_072);
-        ReflectionTestUtils.setField(config, "paymentRequestFetchMaxWaitMs", 100);
-        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 300);
-        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 1_024);
-        ReflectionTestUtils.setField(config, "statusReportFetchMaxWaitMs", 10);
+        KafkaConsumerConfig config = config(
+                1,
+                1,
+                true,
+                new SpiKafkaProperties.ConsumerBatch(500, 131_072, 100),
+                new SpiKafkaProperties.ConsumerBatch(300, 1_024, 10)
+        );
 
         var consumerFactory = config.paymentRequestConsumerFactory();
 
@@ -109,15 +103,13 @@ class KafkaConsumerConfigTest {
 
     @Test
     void statusReportConsumerFactoryUsesDedicatedBatchingSettings() {
-        KafkaConsumerConfig config = new KafkaConsumerConfig();
-        ReflectionTestUtils.setField(config, "bootstrapServers", "localhost:9092");
-        ReflectionTestUtils.setField(config, "autoOffsetReset", "earliest");
-        ReflectionTestUtils.setField(config, "paymentRequestMaxPollRecords", 500);
-        ReflectionTestUtils.setField(config, "paymentRequestFetchMinBytes", 131_072);
-        ReflectionTestUtils.setField(config, "paymentRequestFetchMaxWaitMs", 100);
-        ReflectionTestUtils.setField(config, "statusReportMaxPollRecords", 220);
-        ReflectionTestUtils.setField(config, "statusReportFetchMinBytes", 16_384);
-        ReflectionTestUtils.setField(config, "statusReportFetchMaxWaitMs", 125);
+        KafkaConsumerConfig config = config(
+                1,
+                1,
+                true,
+                new SpiKafkaProperties.ConsumerBatch(500, 131_072, 100),
+                new SpiKafkaProperties.ConsumerBatch(220, 16_384, 125)
+        );
 
         var consumerFactory = config.statusReportConsumerFactory();
 
@@ -132,15 +124,47 @@ class KafkaConsumerConfigTest {
         String application = Files.readString(Path.of("src", "main", "resources", "application.yml"));
         String compose = Files.readString(Path.of("..", "infra", "docker-compose.yml"));
 
-        assertThat(application).contains(
+        assertThat(application)
+                .contains("    payment-request-listener-concurrency: 1")
+                .contains("    status-report-listener-concurrency: 1")
+                .contains(
                 "    status-report:\n"
                         + "      max-poll-records: 500\n"
                         + "      fetch-min-bytes: 16384\n"
                         + "      fetch-max-wait-ms: 125\n"
         );
         assertThat(compose)
-                .contains("SPI_KAFKA_STATUS_REPORT_MAX_POLL_RECORDS: 500")
-                .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MIN_BYTES: 16384")
-                .contains("SPI_KAFKA_STATUS_REPORT_FETCH_MAX_WAIT_MS: 125");
+                .doesNotContain("SPI_KAFKA_PAYMENT_REQUEST_")
+                .doesNotContain("SPI_KAFKA_STATUS_REPORT_");
+    }
+
+    private KafkaConsumerConfig config(
+            int paymentConcurrency,
+            int statusConcurrency,
+            boolean autoStartup,
+            SpiKafkaProperties.ConsumerBatch paymentBatch,
+            SpiKafkaProperties.ConsumerBatch statusBatch
+    ) {
+        KafkaProperties kafka = new KafkaProperties();
+        kafka.setBootstrapServers(List.of("localhost:9092"));
+        kafka.getConsumer().setAutoOffsetReset("earliest");
+        kafka.getListener().setAutoStartup(autoStartup);
+        SpiKafkaProperties spi = new SpiKafkaProperties(
+                paymentConcurrency,
+                statusConcurrency,
+                "spi-payment-request-consumer-group",
+                "spi-status-report-consumer-group",
+                paymentBatch,
+                statusBatch
+        );
+        return new KafkaConsumerConfig(kafka, spi);
+    }
+
+    private SpiKafkaProperties.ConsumerBatch defaultPaymentBatch() {
+        return new SpiKafkaProperties.ConsumerBatch(500, 57_344, 100);
+    }
+
+    private SpiKafkaProperties.ConsumerBatch defaultStatusBatch() {
+        return new SpiKafkaProperties.ConsumerBatch(500, 16_384, 125);
     }
 }

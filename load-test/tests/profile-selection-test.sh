@@ -10,6 +10,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 mkdir -p "$tmp_dir/bin" "$tmp_dir/prepared/uniform-smoke/inputs" "$tmp_dir/prepared/uniform-smoke/certs"
 printf '{"name":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/profile.json"
 printf '{"profile":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json"
+printf '%s\n' 'event=spi_runtime_configuration payment_request_listener_concurrency=1' > "$tmp_dir/prepared/uniform-smoke/inputs/spi-runtime-config.log"
 export RESULTS_DIR="$tmp_dir/results"
 export PREPARED_ENVIRONMENT_ROOT="$tmp_dir/prepared"
 export RUST_LOADTOOL_TARGET_DIR="$tmp_dir/target"
@@ -58,6 +59,7 @@ grep -q 'Prepared environment' "$tmp_dir/missing.log"
 result="$(find "$RESULTS_DIR/default-tag" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 cmp "$tmp_dir/prepared/uniform-smoke/inputs/profile.json" "$result/inputs/profile.json"
 cmp "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json" "$result/inputs/execution-plan.json"
+cmp "$tmp_dir/prepared/uniform-smoke/inputs/spi-runtime-config.log" "$result/inputs/spi-runtime-config.log"
 
 python3 - "$LOADTOOL_COMMAND_LOG" "$result" "$tmp_dir/prepared/uniform-smoke/certs" <<'PY'
 import shlex

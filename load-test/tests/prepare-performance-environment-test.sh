@@ -58,6 +58,11 @@ if [[ "$*" == *" up -d --build" ]]; then
     printf '%s\n' up >> "$FLOW_LOG"
     exit "${DOCKER_UP_STATUS:-0}"
 fi
+if [[ "$*" == "logs spi" ]]; then
+    printf '%s\n' runtime-config >> "$FLOW_LOG"
+    printf '%s\n' 'event=spi_runtime_configuration payment_request_listener_concurrency=1 status_report_listener_concurrency=1'
+    exit "${DOCKER_LOGS_STATUS:-0}"
+fi
 exit 91
 SH
 chmod +x "$tmp_dir/fake-bin/docker"
@@ -118,6 +123,7 @@ validate uniform-smoke
 down
 up
 readiness
+runtime-config
 funding --execution-plan ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/inputs/execution-plan.json
 cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 10000001
 cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 20000001
@@ -127,6 +133,7 @@ EOF
 diff -u "$tmp_dir/expected-flow" "$FLOW_LOG"
 test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/profile.json"
 test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/execution-plan.json"
+test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/spi-runtime-config.log"
 test -d "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/certs"
 cmp "$tmp_dir/profiles/uniform-smoke.json" "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/profile.json"
 
@@ -137,12 +144,13 @@ fi
 test -d "$PREPARED_ENVIRONMENT_ROOT/explicit-smoke"
 grep -q '^validate explicit-smoke$' "$FLOW_LOG"
 
-for stage in down up readiness funding cert; do
+for stage in down up readiness runtime-config funding cert; do
     rm -rf "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke"
     case "$stage" in
         down) variable=DOCKER_DOWN_STATUS ;;
         up) variable=DOCKER_UP_STATUS ;;
         readiness) variable=READINESS_STATUS ;;
+        runtime-config) variable=DOCKER_LOGS_STATUS ;;
         funding) variable=FUNDING_STATUS ;;
         cert) variable=CERT_STATUS ;;
     esac

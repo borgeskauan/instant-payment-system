@@ -5,12 +5,14 @@ import br.kauan.spi.adapter.input.kafka.consumer.DivergentStatusReportException;
 import br.kauan.spi.adapter.input.kafka.consumer.InvalidInboundPayloadException;
 import br.kauan.spi.adapter.input.kafka.consumer.NotAuthenticatedException;
 import br.kauan.spi.adapter.input.kafka.consumer.UnauthorizedPspException;
+import br.kauan.spi.config.SpiKafkaProperties;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Headers;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -34,7 +36,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void deadLetterPublishingRecovererPublishesToSourceDlqOnSamePartitionWithSpiHeaders() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -71,7 +73,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void invalidPayloadDeadLetterPublishingRecovererPublishesWithInvalidPayloadErrorType() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -98,7 +100,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void divergentStatusReportDeadLetterPublishingRecovererPublishesWithDivergentStatusReportErrorType() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -125,7 +127,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void notAuthenticatedDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
         DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
@@ -143,7 +145,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void unauthorizedPspDeadLetterPublishingRecovererPublishesWithSecurityErrorType() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
         DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
@@ -161,7 +163,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void divergentDuplicateUsesItsExistingErrorTypeThroughTheSingleRecoverer() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = successfulKafkaTemplate();
         DeadLetterPublishingRecoverer recoverer = config.deadLetterPublishingRecoverer(kafkaTemplate);
         ConsumerRecord<String, byte[]> sourceRecord = new ConsumerRecord<>(
@@ -179,7 +181,7 @@ class KafkaDlqConfigTest {
 
     @Test
     void batchLevelRecoveryPublishesEveryRecordIndividuallyToDlq() {
-        KafkaDlqConfig config = new KafkaDlqConfig();
+        KafkaDlqConfig config = config();
         KafkaTemplate<String, byte[]> kafkaTemplate = mock(KafkaTemplate.class);
         when(kafkaTemplate.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -228,6 +230,20 @@ class KafkaDlqConfigTest {
 
     private static String header(Headers headers, String name) {
         return new String(headers.lastHeader(name).value(), StandardCharsets.UTF_8);
+    }
+
+    private static KafkaDlqConfig config() {
+        KafkaProperties kafka = new KafkaProperties();
+        kafka.setBootstrapServers(List.of("localhost:9092"));
+        SpiKafkaProperties spi = new SpiKafkaProperties(
+                1,
+                1,
+                "spi-payment-request-consumer-group",
+                "spi-status-report-consumer-group",
+                new SpiKafkaProperties.ConsumerBatch(500, 57_344, 100),
+                new SpiKafkaProperties.ConsumerBatch(500, 16_384, 125)
+        );
+        return new KafkaDlqConfig(kafka, spi);
     }
 
     @SuppressWarnings("unchecked")

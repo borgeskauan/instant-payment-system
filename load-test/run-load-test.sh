@@ -75,7 +75,7 @@ resolve_prepared_environment() {
         echo "Prepared environment for profile '$PROFILE_NAME' does not exist: $PREPARED_DIR" >&2
         return 2
     fi
-    for input in profile.json execution-plan.json; do
+    for input in profile.json execution-plan.json spi-runtime-config.log; do
         if [[ ! -f "$PREPARED_DIR/inputs/$input" ]]; then
             echo "Prepared environment is missing inputs/$input: $PREPARED_DIR" >&2
             return 2
@@ -118,6 +118,7 @@ create_result_bundle() {
     mkdir -p "$RESULT_DIR/inputs" "$RESULT_DIR/logs" "$RESULT_DIR/diagnostics"
     cp "$PREPARED_DIR/inputs/profile.json" "$RESULT_DIR/inputs/profile.json"
     cp "$PREPARED_DIR/inputs/execution-plan.json" "$RESULT_DIR/inputs/execution-plan.json"
+    cp "$PREPARED_DIR/inputs/spi-runtime-config.log" "$RESULT_DIR/inputs/spi-runtime-config.log"
     RESULT_DIR="$(cd "$RESULT_DIR" && pwd)"
 }
 

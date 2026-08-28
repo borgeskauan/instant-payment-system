@@ -131,9 +131,9 @@ class PaymentMessageConsumerTest {
                 .getMethod("consumeStatusReports", List.class, Acknowledgment.class)
                 .getAnnotation(KafkaListener.class);
 
-        assertEquals("${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
+        assertEquals("${spi.kafka.payment-request-group-id}",
                 paymentListener.groupId());
-        assertEquals("${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
+        assertEquals("${spi.kafka.status-report-group-id}",
                 statusListener.groupId());
         assertEquals("paymentRequestKafkaListenerContainerFactory", paymentListener.containerFactory());
         assertEquals("statusReportKafkaListenerContainerFactory", statusListener.containerFactory());
