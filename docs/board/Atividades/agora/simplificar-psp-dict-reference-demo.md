@@ -1,14 +1,14 @@
-# Simplificar PSP e DICT da reference demo
+# Simplificar PSP, DICT e Angular da reference demo
 
-- [ ] Reduzir PSP e DICT ao estado mínimo necessário para demonstrar o happy path
+- [ ] Reduzir PSP, DICT e Angular ao estado mínimo necessário para demonstrar o happy path
 
 ## Objetivo
 
-Manter uma reference demo pequena e reproduzível, sem transformar PSP ou DICT em produtos paralelos ao core benchmarkado. A ordem de prioridade é simplicidade por adesão ao objetivo, manutenção e somente depois performance.
+Manter uma reference demo pequena e reproduzível, sem transformar PSP, DICT ou Angular em produtos paralelos ao core benchmarkado. A ordem de prioridade é simplicidade por adesão ao objetivo, manutenção e somente depois performance.
 
 ## Gate A — aprovado
 
-O PSP existe para simular pagador e recebedor, criar ou recuperar clientes e contas, cadastrar e listar chaves, consultar destinatário, iniciar o pagamento, aceitar automaticamente pagamentos recebidos e refletir outcomes finais de forma idempotente no saldo visual. Login não é autenticação; saldo local é uma projeção da demo; persistência local é efêmera; preview com o destinatário completo permanece uma simplificação explícita. Tratamento próprio de rejeições foi removido do escopo.
+O PSP existe para simular pagador e recebedor, criar ou recuperar clientes e contas, cadastrar e listar chaves, consultar destinatário, iniciar o pagamento, aceitar automaticamente pagamentos recebidos e refletir outcomes finais de forma idempotente no saldo visual. Login não é autenticação; saldo local é uma projeção da demo; persistência local é efêmera; o preview existe somente para visualização e a execução volta a resolver a chave no PSP. Tratamento próprio de rejeições foi removido do escopo.
 
 O DICT existe somente para cadastrar uma associação única entre chave e destinatário e resolvê-la por chave exata. Suporte amplo a tipos de chave, validadores CPF/CNPJ, timestamps e metadados não consumidos foram removidos do escopo. Chave desconhecida significa `404`; duplicada significa `409`.
 
@@ -30,6 +30,22 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - reset limpo documentado: PSPs efêmeros devem iniciar junto de um log de notificações vazio;
 - 26 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados.
 
+## Trabalho restante — contrato do PSP e Angular
+
+- [ ] Remover a tela Angular e o endpoint `/info`, pois não participam do fluxo demonstrado.
+- [ ] Manter o preview visual, mas fazer `/transfer/execute` receber `senderCustomerId`, `receiverPixKey`, valor e descrição, resolvendo novamente a chave no PSP.
+- [ ] Remover do Angular o cache do objeto completo do recebedor e não confiar em um `Party` devolvido pelo navegador.
+- [ ] Não introduzir `previewId`, armazenamento temporário, expiração ou lifecycle adicional.
+- [ ] Substituir a falsa semântica de login por localizar ou criar um cliente de demonstração, alinhando nomes de DTOs, serviços e textos visíveis.
+- [ ] Simplificar o estado Angular para signals diretos, removendo a combinação de `BehaviorSubject`, `toSignal` e `computed` com efeitos colaterais.
+- [ ] Preservar somente o polling necessário para que o saldo final apareça na interface, com responsabilidade e nome explícitos.
+- [ ] Remover specs Angular que apenas instanciam componentes ou serviços e o harness associado caso nenhum teste semântico dependa dele.
+- [ ] Consolidar `PspService` e `TransferRequestService` em uma fronteira coesa de transferência de saída, removendo DTOs e modelos intermediários sem função.
+- [ ] Fazer o `NotificationProcessor` classificar e materializar cada payload a partir de uma única leitura JSON.
+- [ ] Usar coleções simples no `PaymentStore` quando a sincronização externa já serializar todos os acessos.
+
+Preservar DICT separado, dois PSPs efêmeros, criação e listagem de chaves, preview do recebedor, PACS tipado, HTTP/2 com mTLS, Pull gRPC com cursor, idempotência e atualização visual dos dois saldos.
+
 ## Critérios de conclusão
 
 - PSP e DICT preservam somente o happy path aprovado e as garantias essenciais do protocolo;
@@ -37,8 +53,11 @@ Na segunda passagem do PSP, remover serviços e mappers de uso único, consolida
 - saldo inicial local e fundos provisionados partem do mesmo valor;
 - contas ausentes e chaves inválidas não são mascaradas por criação implícita ou erro interno genérico;
 - o reset limpo documenta que o estado efêmero dos PSPs deve começar junto de um log de notificações vazio;
+- o navegador não envia dados autoritativos do recebedor no execute;
+- os nomes do contrato não apresentam criação de cliente como autenticação;
+- nenhuma tela, endpoint, cache ou camada intermediária permanece sem contribuir para o happy path;
 - testes dos dois projetos, builds, Composes, smoke e `git diff --check` passam;
-- nenhum tuning amplo, feature nova ou modernização do frontend entra no diff.
+- nenhuma feature nova, persistência, autenticação real ou modelagem de PSP de produção entra no diff.
 
 ## Validação pendente
 
