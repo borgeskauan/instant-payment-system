@@ -1,12 +1,12 @@
 package br.kauan.spi.domain.entity.status;
 
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 
 import java.util.List;
 import java.util.Objects;
 
 public record PaymentSettlement(
-        PaymentTransactionCommand payment,
+        PaymentReference payment,
         List<StatusReasonCode> reasonCodes
 ) {
     public PaymentSettlement {

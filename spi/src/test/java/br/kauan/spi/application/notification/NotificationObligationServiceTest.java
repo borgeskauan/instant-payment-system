@@ -1,6 +1,5 @@
 package br.kauan.spi.application.notification;
 
-import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
@@ -9,6 +8,8 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
+import br.kauan.spi.port.output.OutboundNotificationStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void emptyInputsDoNotStoreOutboundNotifications() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
 
         service.storeTransactionObligations(List.of(), List.of());
@@ -46,7 +47,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void acceptanceRequestsForDifferentReceiversBecomeSeparateMessagesInOneBulkInsert() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         PaymentTransactionCommand first = payment("E2E-1", "10000001", "20000001");
         PaymentTransactionCommand second = payment("E2E-2", "10000002", "20000002");
@@ -74,14 +75,14 @@ class NotificationObligationServiceTest {
 
     @Test
     void settledAndRejectedPaymentsBecomeOneCombinedBulkInsert() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         PaymentTransactionCommand settled = payment("E2E-SETTLED", "10000001", "20000001");
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000002", "20000002");
 
         service.storeStatusObligations(
-                List.of(new PaymentSettlement(settled, List.of())),
-                List.of(PaymentRejection.receiverRejected(rejected, List.of(StatusReasonCode.of("AB03"))))
+                List.of(new PaymentSettlement(PaymentReference.from(settled), List.of())),
+                List.of(PaymentRejection.receiverRejected(PaymentReference.from(rejected), List.of(StatusReasonCode.of("AB03"))))
         );
 
         List<OutboundNotification> obligations = capturedObligations(repository);
@@ -97,7 +98,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void pacs008AcceptanceAndRejectionBecomeOneCombinedBulkInsertAndEvent() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         NotificationObligationService service = service(repository, eventPublisher);
         PaymentTransactionCommand accepted = payment("E2E-ACCEPTED", "10000001", "20000001");
@@ -127,7 +128,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void insufficientFundsRejectionUsesAm04InThePayerRjctObligation() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         PaymentTransactionCommand rejected = payment("E2E-INSUFFICIENT", "10000001", "20000001");
 
@@ -148,7 +149,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void acceptanceRequestsForOneReceiverAreChunkedAtFifteenItems() throws Exception {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         List<PaymentTransactionCommand> payments = new ArrayList<>();
         for (int index = 1; index <= 16; index++) {
@@ -174,13 +175,13 @@ class NotificationObligationServiceTest {
 
     @Test
     void statusResultsForOneRecipientShareAPacs002WithMixedStatuses() throws Exception {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         PaymentTransactionCommand settled = payment("E2E-SETTLED", "10000001", "20000001");
         PaymentTransactionCommand rejected = payment("E2E-REJECTED", "10000001", "30000001");
 
         service.storeStatusObligations(
-                List.of(new PaymentSettlement(settled, List.of())),
+                List.of(new PaymentSettlement(PaymentReference.from(settled), List.of())),
                 List.of(PaymentRejection.insufficientFunds(rejected))
         );
 
@@ -202,7 +203,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void communicationIdIsThePacsGroupHeaderMessageId() throws Exception {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
 
         service.storeTransactionObligations(
@@ -217,7 +218,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void databaseResourceFailurePropagatesWithoutNotificationWrapper() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         NotificationObligationService service = service(repository);
         DataAccessResourceFailureException databaseFailure =
                 new DataAccessResourceFailureException("database unavailable");
@@ -231,7 +232,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void schedulesEveryStoredObligationForAfterCommitBestEffortDelivery() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         NotificationObligationService service = service(repository, eventPublisher);
 
@@ -256,7 +257,7 @@ class NotificationObligationServiceTest {
 
     @Test
     void doesNotScheduleKafkaWhenTheOutboundInsertFails() {
-        OutboundNotificationRepository repository = mock(OutboundNotificationRepository.class);
+        OutboundNotificationStore repository = mock(OutboundNotificationStore.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         NotificationObligationService service = service(repository, eventPublisher);
         DataAccessResourceFailureException databaseFailure =
@@ -274,12 +275,12 @@ class NotificationObligationServiceTest {
         verifyNoInteractions(eventPublisher);
     }
 
-    private NotificationObligationService service(OutboundNotificationRepository repository) {
+    private NotificationObligationService service(OutboundNotificationStore repository) {
         return service(repository, mock(ApplicationEventPublisher.class));
     }
 
     private NotificationObligationService service(
-            OutboundNotificationRepository repository,
+            OutboundNotificationStore repository,
             ApplicationEventPublisher eventPublisher
     ) {
         return new NotificationObligationService(
@@ -290,7 +291,7 @@ class NotificationObligationServiceTest {
         );
     }
 
-    private List<OutboundNotification> capturedObligations(OutboundNotificationRepository repository) {
+    private List<OutboundNotification> capturedObligations(OutboundNotificationStore repository) {
         ArgumentCaptor<List<OutboundNotification>> captor = ArgumentCaptor.forClass(List.class);
         verify(repository).insertAll(captor.capture());
         return captor.getValue();

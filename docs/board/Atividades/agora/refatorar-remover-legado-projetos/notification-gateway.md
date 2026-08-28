@@ -4,7 +4,7 @@
 
 | Gate A — negócio | Gate B — técnica | estado | próxima ação |
 | --- | --- | --- | --- |
-| aprovado | aprovado | cleanup e simplificação do tailer validados | revisar o diff e encerrar a etapa |
+| aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 
 ## Objetivo essencial
 

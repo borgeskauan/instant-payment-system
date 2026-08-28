@@ -12,4 +12,18 @@ public class PaymentTransactionCommand {
     private String description;
     private Party sender;
     private Party receiver;
+
+    public String senderIspb() {
+        return bankCode(sender);
+    }
+
+    public String receiverIspb() {
+        return bankCode(receiver);
+    }
+
+    private String bankCode(Party party) {
+        return party == null || party.getAccount() == null
+                ? null
+                : party.getAccount().getBankCode();
+    }
 }

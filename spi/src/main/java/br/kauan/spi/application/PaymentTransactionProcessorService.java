@@ -103,12 +103,12 @@ public class PaymentTransactionProcessorService implements PaymentTransactionPro
         }
 
         for (PaymentSettlement settlement : persistenceResult.settlements()) {
-            SpiPaymentStageEvent.record(settlement.payment().getPaymentId(), SpiPaymentStage.SETTLEMENT_COMPLETED);
+            SpiPaymentStageEvent.record(settlement.payment().paymentId(), SpiPaymentStage.SETTLEMENT_COMPLETED);
         }
 
         for (PaymentSettlement settlement : persistenceResult.settlements()) {
             SpiPaymentStageEvent.record(
-                    settlement.payment().getPaymentId(),
+                    settlement.payment().paymentId(),
                     SpiPaymentStage.CONFIRMATION_NOTIFICATION_ENQUEUED
             );
         }

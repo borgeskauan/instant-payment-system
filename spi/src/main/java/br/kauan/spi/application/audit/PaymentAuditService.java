@@ -1,12 +1,13 @@
 package br.kauan.spi.application.audit;
 
-import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
 import br.kauan.spi.domain.entity.audit.PaymentAuditEvent;
 import br.kauan.spi.domain.entity.audit.PaymentAuditEventType;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.port.output.PaymentAuditStore;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -14,15 +15,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static br.kauan.spi.Utils.getBankCode;
-
 @Service
 public class PaymentAuditService {
 
-    private final PaymentAuditRepository auditRepository;
+    private final PaymentAuditStore auditStore;
 
-    public PaymentAuditService(PaymentAuditRepository auditRepository) {
-        this.auditRepository = auditRepository;
+    public PaymentAuditService(PaymentAuditStore auditStore) {
+        this.auditStore = auditStore;
     }
 
     public void storeAdmissionEvents(
@@ -50,8 +49,8 @@ public class PaymentAuditService {
                     null,
                     rejection == null ? PaymentState.WAITING_ACCEPTANCE : PaymentState.REJECTED,
                     amountCents,
-                    requiredIspb(getBankCode(payment.getSender())),
-                    requiredIspb(getBankCode(payment.getReceiver())),
+                    requiredIspb(payment.senderIspb()),
+                    requiredIspb(payment.receiverIspb()),
                     rejection == null ? Math.negateExact(amountCents) : null,
                     null,
                     rejection == null ? null : rejection.cause(),
@@ -59,7 +58,7 @@ public class PaymentAuditService {
             ));
         }
         requireNoUnknownRejections(rejectionByPaymentId);
-        auditRepository.insertAll(events);
+        auditStore.insertAll(events);
     }
 
     public void storeOutcomeEvents(
@@ -72,17 +71,17 @@ public class PaymentAuditService {
 
         List<PaymentAuditEvent> events = new ArrayList<>(settlements.size() + rejectedPayments.size());
         for (PaymentSettlement settlement : settlements) {
-            PaymentTransactionCommand payment = settlement.payment();
+            PaymentReference payment = settlement.payment();
             validatePayment(payment);
-            long amountCents = payment.getAmountCents();
+            long amountCents = payment.amountCents();
             events.add(new PaymentAuditEvent(
-                    payment.getPaymentId(),
+                    payment.paymentId(),
                     PaymentAuditEventType.PAYMENT_SETTLED,
                     PaymentState.WAITING_ACCEPTANCE,
                     PaymentState.SETTLED,
                     amountCents,
-                    requiredIspb(getBankCode(payment.getSender())),
-                    requiredIspb(getBankCode(payment.getReceiver())),
+                    requiredIspb(payment.senderIspb()),
+                    requiredIspb(payment.receiverIspb()),
                     null,
                     amountCents,
                     null,
@@ -90,24 +89,24 @@ public class PaymentAuditService {
             ));
         }
         for (PaymentRejection rejection : rejectedPayments) {
-            PaymentTransactionCommand payment = rejection.payment();
+            PaymentReference payment = rejection.payment();
             validatePayment(payment);
-            long amountCents = payment.getAmountCents();
+            long amountCents = payment.amountCents();
             events.add(new PaymentAuditEvent(
-                    payment.getPaymentId(),
+                    payment.paymentId(),
                     PaymentAuditEventType.PAYMENT_REJECTED,
                     PaymentState.WAITING_ACCEPTANCE,
                     PaymentState.REJECTED,
                     amountCents,
-                    requiredIspb(getBankCode(payment.getSender())),
-                    requiredIspb(getBankCode(payment.getReceiver())),
+                    requiredIspb(payment.senderIspb()),
+                    requiredIspb(payment.receiverIspb()),
                     amountCents,
                     null,
                     rejection.cause(),
                     rejection.externalReasonCodes()
             ));
         }
-        auditRepository.insertAll(events);
+        auditStore.insertAll(events);
     }
 
     private void validatePayment(PaymentTransactionCommand payment) {
@@ -119,12 +118,18 @@ public class PaymentAuditService {
         }
     }
 
+    private void validatePayment(PaymentReference payment) {
+        if (payment == null) {
+            throw new IllegalArgumentException("Payment cannot be null");
+        }
+    }
+
     private Map<String, PaymentRejection> rejectionsByPaymentId(List<PaymentRejection> rejectedPayments) {
         Map<String, PaymentRejection> rejectionByPaymentId = new HashMap<>();
         for (PaymentRejection rejection : rejectedPayments) {
             validatePayment(rejection.payment());
-            if (rejectionByPaymentId.put(rejection.payment().getPaymentId(), rejection) != null) {
-                throw new IllegalArgumentException("Duplicate rejected payment: " + rejection.payment().getPaymentId());
+            if (rejectionByPaymentId.put(rejection.payment().paymentId(), rejection) != null) {
+                throw new IllegalArgumentException("Duplicate rejected payment: " + rejection.payment().paymentId());
             }
         }
         return rejectionByPaymentId;

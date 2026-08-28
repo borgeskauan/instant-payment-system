@@ -12,6 +12,7 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -91,12 +92,12 @@ class PaymentAuditServiceTest {
         PaymentTransactionCommand settledPayment = payment("E2E-AUDIT-SETTLED", 2_500L);
         PaymentTransactionCommand rejectedPayment = payment("E2E-AUDIT-REJECTED", 1_200L);
         PaymentRejection rejection = PaymentRejection.receiverRejected(
-                rejectedPayment,
+                PaymentReference.from(rejectedPayment),
                 List.of(StatusReasonCode.of("AB03"))
         );
 
         service.storeOutcomeEvents(
-                List.of(new PaymentSettlement(settledPayment, List.of(StatusReasonCode.of("AC01")))),
+                List.of(new PaymentSettlement(PaymentReference.from(settledPayment), List.of(StatusReasonCode.of("AC01")))),
                 List.of(rejection)
         );
 

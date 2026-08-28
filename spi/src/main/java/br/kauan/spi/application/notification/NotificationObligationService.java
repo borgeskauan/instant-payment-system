@@ -1,6 +1,5 @@
 package br.kauan.spi.application.notification;
 
-import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
 import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.status.NotificationStatus;
 import br.kauan.spi.domain.entity.status.NotificationStatusItem;
@@ -8,6 +7,7 @@ import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.port.output.OutboundNotificationStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -18,8 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static br.kauan.spi.Utils.getBankCode;
-
 @Slf4j
 @Service
 public class NotificationObligationService {
@@ -28,18 +26,18 @@ public class NotificationObligationService {
 
     private final NotificationPayloadFactory payloadFactory;
     private final NotificationContentSerializer contentSerializer;
-    private final OutboundNotificationRepository outboundNotificationRepository;
+    private final OutboundNotificationStore outboundNotificationStore;
     private final ApplicationEventPublisher eventPublisher;
 
     public NotificationObligationService(
             NotificationPayloadFactory payloadFactory,
             NotificationContentSerializer contentSerializer,
-            OutboundNotificationRepository outboundNotificationRepository,
+            OutboundNotificationStore outboundNotificationStore,
             ApplicationEventPublisher eventPublisher
     ) {
         this.payloadFactory = payloadFactory;
         this.contentSerializer = contentSerializer;
-        this.outboundNotificationRepository = outboundNotificationRepository;
+        this.outboundNotificationStore = outboundNotificationStore;
         this.eventPublisher = eventPublisher;
     }
 
@@ -72,7 +70,7 @@ public class NotificationObligationService {
         Map<String, List<PaymentTransactionCommand>> byRecipient = new LinkedHashMap<>();
         for (PaymentTransactionCommand paymentTransaction : paymentTransactions) {
             validatePaymentTransaction(paymentTransaction);
-            String receiverIspb = validatedIspb(getBankCode(paymentTransaction.getReceiver()));
+            String receiverIspb = validatedIspb(paymentTransaction.receiverIspb());
             byRecipient.computeIfAbsent(receiverIspb, ignored -> new ArrayList<>())
                     .add(paymentTransaction);
         }
@@ -114,31 +112,29 @@ public class NotificationObligationService {
         Map<String, List<NotificationStatusItem>> byRecipient = new LinkedHashMap<>();
 
         for (PaymentSettlement settlement : settlements) {
-            PaymentTransactionCommand paymentTransaction = settlement.payment();
-            validatePaymentTransaction(paymentTransaction);
-            String receiverIspb = validatedIspb(getBankCode(paymentTransaction.getReceiver()));
-            String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
+            var payment = settlement.payment();
+            String receiverIspb = validatedIspb(payment.receiverIspb());
+            String senderIspb = validatedIspb(payment.senderIspb());
             addStatus(byRecipient,
                     receiverIspb,
-                    paymentTransaction,
+                    payment.paymentId(),
                     NotificationStatus.ACCC,
                     settlement.reasonCodes()
             );
             addStatus(byRecipient,
                     senderIspb,
-                    paymentTransaction,
+                    payment.paymentId(),
                     NotificationStatus.ACSC,
                     settlement.reasonCodes()
             );
         }
 
         for (PaymentRejection rejection : rejectedPayments) {
-            PaymentTransactionCommand paymentTransaction = rejection.payment();
-            validatePaymentTransaction(paymentTransaction);
-            String senderIspb = validatedIspb(getBankCode(paymentTransaction.getSender()));
+            var payment = rejection.payment();
+            String senderIspb = validatedIspb(payment.senderIspb());
             addStatus(byRecipient,
                     senderIspb,
-                    paymentTransaction,
+                    payment.paymentId(),
                     NotificationStatus.RJCT,
                     notificationReasons(rejection)
             );
@@ -157,12 +153,12 @@ public class NotificationObligationService {
     private void addStatus(
             Map<String, List<NotificationStatusItem>> byRecipient,
             String recipientIspb,
-            PaymentTransactionCommand paymentTransaction,
+            String paymentId,
             NotificationStatus status,
             List<StatusReasonCode> reasonCodes
     ) {
         NotificationStatusItem statusReport = new NotificationStatusItem(
-                paymentTransaction.getPaymentId(),
+                paymentId,
                 status,
                 reasonCodes
         );
@@ -212,7 +208,7 @@ public class NotificationObligationService {
         if (obligations.isEmpty()) {
             return;
         }
-        outboundNotificationRepository.insertAll(obligations);
+        outboundNotificationStore.insertAll(obligations);
         eventPublisher.publishEvent(new OutboundNotificationBatchReady(obligations));
     }
 

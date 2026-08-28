@@ -1,6 +1,5 @@
 package br.kauan.spi.domain.services.payment;
 
-import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 
 import java.util.ArrayList;
@@ -157,7 +156,7 @@ public final class PaymentAdmissionPolicy {
     }
 
     private String payerIspb(AuthenticatedPaymentRequest paymentRequest) {
-        return Utils.getBankCode(paymentRequest.command().getSender());
+        return paymentRequest.command().senderIspb();
     }
 
     private int mapCapacity(int expectedSize) {

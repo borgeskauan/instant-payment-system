@@ -1,6 +1,5 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
-import br.kauan.spi.Utils;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
@@ -421,8 +420,8 @@ class IncomingPaymentRequestPersistence {
             PaymentTransactionCommand paymentTransaction = paymentRequest.command();
             paymentIds[index] = paymentTransaction.getPaymentId();
             amountCents[index] = paymentTransaction.getAmountCents();
-            senderBankCodes[index] = Utils.getBankCode(paymentTransaction.getSender());
-            receiverBankCodes[index] = Utils.getBankCode(paymentTransaction.getReceiver());
+            senderBankCodes[index] = paymentTransaction.senderIspb();
+            receiverBankCodes[index] = paymentTransaction.receiverIspb();
             requestFingerprints[index] = incomingRow.fingerprint().bytes();
             requestFingerprintVersions[index] = incomingRow.fingerprint().version();
         }

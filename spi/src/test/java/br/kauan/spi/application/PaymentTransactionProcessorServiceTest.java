@@ -13,6 +13,7 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.PaymentTransactionRepository;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
@@ -38,7 +39,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = service(repository, auditService, notificationService);
         IncomingStatusReportCommand report = accepted("E2E-1", "AC01");
         PaymentSettlement settlement = new PaymentSettlement(
-                payment("E2E-1"),
+                PaymentReference.from(payment("E2E-1")),
                 List.of(StatusReasonCode.of("AC01"))
         );
         when(repository.classifyAndApplyIncomingStatusReports(authenticatedReports(report)))
@@ -64,7 +65,7 @@ class PaymentTransactionProcessorServiceTest {
         PaymentTransactionProcessorService service = service(repository, auditService, notificationService);
         IncomingStatusReportCommand report = rejected("E2E-1", "AB03");
         PaymentRejection rejection = PaymentRejection.receiverRejected(
-                payment("E2E-1"),
+                PaymentReference.from(payment("E2E-1")),
                 List.of(StatusReasonCode.of("AB03"))
         );
         when(repository.classifyAndApplyIncomingStatusReports(authenticatedReports(report)))

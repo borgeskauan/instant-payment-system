@@ -8,9 +8,7 @@ import br.kauan.spi.domain.entity.status.PaymentSettlement;
 import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.status.StatusReportOutcome;
-import br.kauan.spi.domain.entity.transfer.BankAccount;
-import br.kauan.spi.domain.entity.transfer.Party;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 import br.kauan.spi.domain.services.payment.StatusTransitionPolicy;
 import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Candidate;
 import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Classification;
@@ -124,11 +122,11 @@ class IncomingStatusReportPersistence {
 
             switch (actionRow.action()) {
                 case SETTLED_PAYMENT -> settlements.add(new PaymentSettlement(
-                        toPaymentTransaction(actionRow),
+                        toPaymentReference(actionRow),
                         actionRow.externalReasonCodes()
                 ));
                 case REJECTED_NOTIFICATION -> rejectedPayments.add(PaymentRejection.receiverRejected(
-                        toPaymentTransaction(actionRow),
+                        toPaymentReference(actionRow),
                         actionRow.externalReasonCodes()
                 ));
                 case STATUS_REPORT_CONFLICT -> addExpandedOrdinals(
@@ -489,19 +487,13 @@ class IncomingStatusReportPersistence {
         return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
-    private PaymentTransactionCommand toPaymentTransaction(StatusReportActionRow actionRow) {
-        return PaymentTransactionCommand.builder()
-                .paymentId(actionRow.paymentId())
-                .amountCents(actionRow.amountCents())
-                .sender(party(actionRow.senderBankCode()))
-                .receiver(party(actionRow.receiverBankCode()))
-                .build();
-    }
-
-    private Party party(String bankCode) {
-        return Party.builder()
-                .account(BankAccount.builder().bankCode(bankCode).build())
-                .build();
+    private PaymentReference toPaymentReference(StatusReportActionRow actionRow) {
+        return new PaymentReference(
+                actionRow.paymentId(),
+                actionRow.amountCents(),
+                actionRow.senderBankCode(),
+                actionRow.receiverBankCode()
+        );
     }
 
     private enum Action {

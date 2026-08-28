@@ -1,11 +1,12 @@
 package br.kauan.spi.domain.entity.status;
 
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
 
 import java.util.List;
 
 public record PaymentRejection(
-        PaymentTransactionCommand payment,
+        PaymentReference payment,
         PaymentRejectionCause cause,
         List<StatusReasonCode> externalReasonCodes
 ) {
@@ -24,11 +25,15 @@ public record PaymentRejection(
     }
 
     public static PaymentRejection insufficientFunds(PaymentTransactionCommand payment) {
-        return new PaymentRejection(payment, PaymentRejectionCause.INSUFFICIENT_FUNDS, List.of());
+        return new PaymentRejection(
+                PaymentReference.from(payment),
+                PaymentRejectionCause.INSUFFICIENT_FUNDS,
+                List.of()
+        );
     }
 
     public static PaymentRejection receiverRejected(
-            PaymentTransactionCommand payment,
+            PaymentReference payment,
             List<StatusReasonCode> reasonCodes
     ) {
         return new PaymentRejection(payment, null, reasonCodes);

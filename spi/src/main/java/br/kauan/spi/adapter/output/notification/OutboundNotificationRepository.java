@@ -1,6 +1,7 @@
 package br.kauan.spi.adapter.output.notification;
 
 import br.kauan.spi.application.notification.OutboundNotification;
+import br.kauan.spi.port.output.OutboundNotificationStore;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -11,7 +12,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 @Repository
-public class OutboundNotificationRepository {
+public class OutboundNotificationRepository implements OutboundNotificationStore {
 
     private static final String INSERT_ALL_SQL = """
             INSERT INTO notification_outbox (
@@ -54,6 +55,7 @@ public class OutboundNotificationRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    @Override
     public void insertAll(List<OutboundNotification> notifications) {
         if (notifications.isEmpty()) {
             return;

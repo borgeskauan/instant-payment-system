@@ -3,6 +3,7 @@ package br.kauan.spi.adapter.output.audit;
 import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.status.StatusReasonCode;
 import br.kauan.spi.domain.entity.audit.PaymentAuditEvent;
+import br.kauan.spi.port.output.PaymentAuditStore;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -12,7 +13,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 @Repository
-public class PaymentAuditRepository {
+public class PaymentAuditRepository implements PaymentAuditStore {
 
     private static final String INSERT_SQL = """
             INSERT INTO payment_audit_event (
@@ -76,6 +77,7 @@ public class PaymentAuditRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    @Override
     public void insertAll(List<PaymentAuditEvent> events) {
         if (events.isEmpty()) {
             return;

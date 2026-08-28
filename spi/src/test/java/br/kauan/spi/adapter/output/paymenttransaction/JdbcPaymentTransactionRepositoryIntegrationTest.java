@@ -100,7 +100,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
         assertThat(result.acceptanceRequests()).isEmpty();
         assertThat(result.rejectedPayments())
                 .extracting(
-                        rejection -> rejection.payment().getPaymentId(),
+                        rejection -> rejection.payment().paymentId(),
                         PaymentRejection::cause,
                         PaymentRejection::externalReasonCodes
                 )
@@ -125,7 +125,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
 
         assertThat(result.acceptanceRequests()).containsExactly(first, laterSmall);
         assertThat(result.rejectedPayments())
-                .extracting(rejection -> rejection.payment().getPaymentId())
+                .extracting(rejection -> rejection.payment().paymentId())
                 .containsExactly(tooLarge.getPaymentId());
         assertThat(balance("11111111")).isEqualByComparingTo("0.00");
     }
@@ -221,7 +221,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
         ));
 
         assertThat(result.settlements())
-                .extracting(settlement -> settlement.payment().getPaymentId())
+                .extracting(settlement -> settlement.payment().paymentId())
                 .containsExactly(payment.getPaymentId());
         assertThat(result.settlements().getFirst().reasonCodes())
                 .extracting(StatusReasonCode::value)
@@ -246,7 +246,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
         StatusReportPersistenceResult result = apply(report, report);
 
         assertThat(result.settlements())
-                .extracting(settlement -> settlement.payment().getPaymentId())
+                .extracting(settlement -> settlement.payment().paymentId())
                 .containsExactly(payment.getPaymentId());
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(balance("11111111")).isEqualByComparingTo("990.00");
@@ -288,7 +288,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
         ));
 
         assertThat(first.rejectedPayments())
-                .extracting(rejection -> rejection.payment().getPaymentId())
+                .extracting(rejection -> rejection.payment().paymentId())
                 .containsExactly(payment.getPaymentId());
         assertThat(first.rejectedPayments().getFirst().externalReasonCodes())
                 .extracting(StatusReasonCode::value)
@@ -453,7 +453,7 @@ class JdbcPaymentTransactionRepositoryIntegrationTest {
         ));
 
         assertThat(result.settlements())
-                .extracting(settlement -> settlement.payment().getPaymentId())
+                .extracting(settlement -> settlement.payment().paymentId())
                 .containsExactly(payment.getPaymentId());
         assertThat(result.divergentStatusReports()).isEmpty();
         assertThat(result.unauthorizedStatusReports())

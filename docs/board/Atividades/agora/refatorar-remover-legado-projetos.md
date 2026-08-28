@@ -210,8 +210,8 @@ Ao concluir cada projeto:
 
 | projeto | Gate A — negócio | Gate B — técnica | estado | próxima ação |
 | --- | --- | --- | --- | --- |
-| [SPI](refatorar-remover-legado-projetos/spi.md) | pendente retrospectivamente | inválido até o Gate A | cleanup técnico anterior preservado | apresentar objetivo e inventário de negócio antes de qualquer nova alteração |
-| [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md) | aprovado | aprovado | cleanup e simplificação do tailer validados | revisar diff e encerrar a etapa |
+| [SPI](refatorar-remover-legado-projetos/spi.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
+| [Notification Gateway](refatorar-remover-legado-projetos/notification-gateway.md) | aprovado | aprovado | concluído | nenhuma; etapa encerrada |
 | Kafka Producer | pendente | pendente | não iniciado | definir objetivo e apresentar inventário de negócio |
 | DICT | pendente | pendente | não iniciado | definir objetivo e apresentar inventário de negócio |
 | Load-tool e scripts | pendente | pendente | não iniciado nesta task | definir objetivo e apresentar inventário de negócio |
