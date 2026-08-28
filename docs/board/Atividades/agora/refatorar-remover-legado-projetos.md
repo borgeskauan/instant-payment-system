@@ -320,17 +320,17 @@ funcionalidade ou responsabilidade compreensível externamente.
   produção e consolidar duplicações encontradas.
 - [x] Cobrir a matriz de falhas com testes semânticos, incluindo destino,
   confirmação do offset e ausência de descarte silencioso.
-- [ ] Revisar a fronteira hexagonal das classes de persistência de pagamentos e
+- [x] Revisar a fronteira hexagonal das classes de persistência de pagamentos e
   status.
-- [ ] Classificar seus blocos como política de domínio, orquestração da
+- [x] Classificar seus blocos como política de domínio, orquestração da
   aplicação ou mecanismo de persistência.
-- [ ] Extrair para o core somente decisões puras de admissão/duplicidade,
+- [x] Extrair para o core somente decisões puras de admissão/duplicidade,
   reserva de liquidez e transição/replay de status.
-- [ ] Manter no adapter JDBC SQL, arrays, row mapping, locks determinísticos,
+- [x] Manter no adapter JDBC SQL, arrays, row mapping, locks determinísticos,
   updates condicionais, mutações agregadas e controle de recursos.
-- [ ] Preservar a transação, a atomicidade, o batching e a quantidade de idas ao
+- [x] Preservar a transação, a atomicidade, o batching e a quantidade de idas ao
   banco.
-- [ ] Testar políticas extraídas sem PostgreSQL e preservar testes de integração
+- [x] Testar políticas extraídas sem PostgreSQL e preservar testes de integração
   PostgreSQL para locking, concorrência e atomicidade.
 
 O histórico, as decisões e as evidências estão em
@@ -392,6 +392,8 @@ Restrições:
 O resultado desejado admite mais alguns arquivos, mas deve reduzir branches de
 negócio dentro dos adapters, tornar as regras legíveis sem PostgreSQL e manter a
 complexidade transacional essencial próxima do JDBC.
+
+Classificação aplicada: admissão/duplicidade, reserva em ordem de origem e transição/replay de status são políticas puras do core; a coordenação entre decisões e persistência permanece nos adapters; SQL, arrays, row mapping, locks, aquisição condicional, deltas agregados e recursos JDBC permanecem mecanismos de persistência. A suíte completa do SPI passou com 200 testes e nenhuma falha, incluindo os testes PostgreSQL de locking, concorrência, rollback e atomicidade.
 
 ### Etapa 1 — Notification Gateway
 

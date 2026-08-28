@@ -6,6 +6,15 @@ import br.kauan.spi.domain.entity.status.PaymentRejection;
 import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
 import br.kauan.spi.domain.entity.status.PaymentState;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.payment.LiquidityReservationPolicy;
+import br.kauan.spi.domain.services.payment.LiquidityReservationPolicy.ReservationBatch;
+import br.kauan.spi.domain.services.payment.LiquidityReservationPolicy.ReservationOutcome;
+import br.kauan.spi.domain.services.payment.LiquidityReservationPolicy.ReservationPlan;
+import br.kauan.spi.domain.services.payment.PaymentAdmissionPolicy;
+import br.kauan.spi.domain.services.payment.PaymentAdmissionPolicy.Candidate;
+import br.kauan.spi.domain.services.payment.PaymentAdmissionPolicy.Classification;
+import br.kauan.spi.domain.services.payment.PaymentAdmissionPolicy.ExistingPayment;
+import br.kauan.spi.domain.services.payment.PaymentAdmissionPolicy.PreparedBatch;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,9 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 
 class IncomingPaymentRequestPersistence {
 
@@ -98,9 +105,13 @@ class IncomingPaymentRequestPersistence {
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final PaymentAdmissionPolicy admissionPolicy;
+    private final LiquidityReservationPolicy reservationPolicy;
 
     IncomingPaymentRequestPersistence(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+        this.admissionPolicy = new PaymentAdmissionPolicy();
+        this.reservationPolicy = new LiquidityReservationPolicy();
     }
 
     PaymentTransactionPersistenceResult storeAndClassify(
@@ -110,24 +121,21 @@ class IncomingPaymentRequestPersistence {
             return new PaymentTransactionPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
-        validateUniqueSourceOrdinals(paymentRequests);
-        BatchLocalPaymentClassification batchLocalClassification =
-                classifyPaymentRequestsWithinBatch(paymentRequests);
+        PreparedBatch preparedBatch = admissionPolicy.prepare(paymentRequests);
         List<AuthenticatedPaymentRequest> createdRequests = new ArrayList<>();
-        List<IncomingPaymentRow> conflictRows = new ArrayList<>();
-        Set<Integer> divergentDuplicateOrdinals = new LinkedHashSet<>();
-        Set<Integer> unauthorizedRequestOrdinals =
-                new LinkedHashSet<>(batchLocalClassification.unauthorizedRequestOrdinals());
-
-        classifyNonHomogeneousGroups(
-                batchLocalClassification.nonHomogeneousGroups(),
-                divergentDuplicateOrdinals,
-                unauthorizedRequestOrdinals
+        List<Candidate> conflictRows = new ArrayList<>();
+        Classification nonHomogeneousClassification = classifyNonHomogeneousGroups(
+                preparedBatch.nonHomogeneousGroups()
         );
+        Set<Integer> divergentDuplicateOrdinals =
+                new LinkedHashSet<>(nonHomogeneousClassification.divergentOrdinals());
+        Set<Integer> unauthorizedRequestOrdinals =
+                new LinkedHashSet<>(preparedBatch.unauthorizedOrdinals());
+        unauthorizedRequestOrdinals.addAll(nonHomogeneousClassification.unauthorizedOrdinals());
 
-        Set<String> createdPaymentIds = insertCandidates(batchLocalClassification.insertionCandidates());
-        for (IncomingPaymentRow candidate : batchLocalClassification.insertionCandidates()) {
-            String paymentId = candidate.paymentRequest().command().getPaymentId();
+        Set<String> createdPaymentIds = insertCandidates(preparedBatch.insertionCandidates());
+        for (Candidate candidate : preparedBatch.insertionCandidates()) {
+            String paymentId = candidate.paymentId();
             if (createdPaymentIds.remove(paymentId)) {
                 createdRequests.add(candidate.paymentRequest());
             } else {
@@ -138,31 +146,14 @@ class IncomingPaymentRequestPersistence {
             throw new IllegalStateException("Insert returned unknown payment IDs: " + createdPaymentIds);
         }
 
-        Map<String, ExistingPaymentRow> existingPayments = selectConflicts(conflictRows);
-        for (IncomingPaymentRow conflictRow : conflictRows) {
-            String paymentId = conflictRow.paymentRequest().command().getPaymentId();
-            ExistingPaymentRow existingPayment = existingPayments.get(paymentId);
-            if (existingPayment == null) {
-                throw new IllegalStateException("Payment conflict could not be reclassified: " + paymentId);
-            }
-
-            if (!Objects.equals(
-                    conflictRow.paymentRequest().authenticatedIspb(),
-                    existingPayment.senderBankCode()
-            )) {
-                addExpandedOrdinals(
-                        unauthorizedRequestOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
-                        conflictRow.ordinal()
-                );
-            } else if (!sameFingerprint(conflictRow, existingPayment)) {
-                addExpandedOrdinals(
-                        divergentDuplicateOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
-                        conflictRow.ordinal()
-                );
-            }
-        }
+        Map<String, ExistingPayment> existingPayments = selectConflicts(conflictRows);
+        Classification conflictClassification = admissionPolicy.classifyInsertionConflicts(
+                conflictRows,
+                existingPayments,
+                preparedBatch.originalOrdinalsByRepresentative()
+        );
+        divergentDuplicateOrdinals.addAll(conflictClassification.divergentOrdinals());
+        unauthorizedRequestOrdinals.addAll(conflictClassification.unauthorizedOrdinals());
 
         createdRequests.sort((first, second) -> Integer.compare(
                 first.sourceOrdinal(),
@@ -193,30 +184,6 @@ class IncomingPaymentRequestPersistence {
         );
     }
 
-    private void validateUniqueSourceOrdinals(
-            List<AuthenticatedPaymentRequest> paymentRequests
-    ) {
-        Set<Integer> sourceOrdinals = new LinkedHashSet<>(mapCapacity(paymentRequests.size()));
-        for (AuthenticatedPaymentRequest paymentRequest : paymentRequests) {
-            if (!sourceOrdinals.add(paymentRequest.sourceOrdinal())) {
-                throw new IllegalArgumentException(
-                        "Payment request source ordinals must be unique: " + paymentRequest.sourceOrdinal());
-            }
-        }
-    }
-
-    private void addExpandedOrdinals(
-            Set<Integer> classifiedOrdinals,
-            Map<Integer, List<Integer>> originalOrdinalsByRepresentative,
-            int representativeOrdinal
-    ) {
-        List<Integer> originalOrdinals = originalOrdinalsByRepresentative.get(representativeOrdinal);
-        if (originalOrdinals == null) {
-            throw new IllegalStateException("Unknown payment request representative ordinal: " + representativeOrdinal);
-        }
-        classifiedOrdinals.addAll(originalOrdinals);
-    }
-
     private List<AuthenticatedPaymentRequest> requestsWithOrdinals(
             List<AuthenticatedPaymentRequest> paymentRequests,
             Set<Integer> classifiedOrdinals
@@ -230,7 +197,7 @@ class IncomingPaymentRequestPersistence {
         return classifiedRequests;
     }
 
-    private Set<String> insertCandidates(List<IncomingPaymentRow> insertionCandidates) {
+    private Set<String> insertCandidates(List<Candidate> insertionCandidates) {
         if (insertionCandidates.isEmpty()) {
             return Set.of();
         }
@@ -285,80 +252,43 @@ class IncomingPaymentRequestPersistence {
         });
     }
 
-    private void classifyNonHomogeneousGroups(
-            List<List<IncomingPaymentRow>> nonHomogeneousGroups,
-            Set<Integer> divergentDuplicateOrdinals,
-            Set<Integer> unauthorizedRequestOrdinals
-    ) {
+    private Classification classifyNonHomogeneousGroups(List<List<Candidate>> nonHomogeneousGroups) {
         if (nonHomogeneousGroups.isEmpty()) {
-            return;
+            return new Classification(Set.of(), Set.of());
         }
 
         Set<String> paymentIds = new LinkedHashSet<>(nonHomogeneousGroups.size());
-        for (List<IncomingPaymentRow> paymentRows : nonHomogeneousGroups) {
-            paymentIds.add(paymentRows.get(0).paymentRequest().command().getPaymentId());
+        for (List<Candidate> paymentRows : nonHomogeneousGroups) {
+            paymentIds.add(paymentRows.getFirst().paymentId());
         }
-        Map<String, ExistingPaymentRow> existingPayments = selectExistingPayments(paymentIds);
-
-        for (List<IncomingPaymentRow> paymentRows : nonHomogeneousGroups) {
-            ExistingPaymentRow existingPayment = existingPayments.get(
-                    paymentRows.get(0).paymentRequest().command().getPaymentId()
-            );
-            if (existingPayment == null) {
-                for (IncomingPaymentRow paymentRow : paymentRows) {
-                    divergentDuplicateOrdinals.add(paymentRow.ordinal());
-                }
-                continue;
-            }
-
-            List<IncomingPaymentRow> ownerRows = new ArrayList<>(paymentRows.size());
-            for (IncomingPaymentRow paymentRow : paymentRows) {
-                if (Objects.equals(
-                        paymentRow.paymentRequest().authenticatedIspb(),
-                        existingPayment.senderBankCode()
-                )) {
-                    ownerRows.add(paymentRow);
-                } else {
-                    unauthorizedRequestOrdinals.add(paymentRow.ordinal());
-                }
-            }
-            if (ownerRows.isEmpty()) {
-                continue;
-            }
-
-            IncomingPaymentRow representative = ownerRows.get(0);
-            boolean ownerRowsDiverge = ownerRows.stream()
-                    .anyMatch(row -> !sameFingerprint(representative, row));
-            if (ownerRowsDiverge || !sameFingerprint(representative, existingPayment)) {
-                for (IncomingPaymentRow ownerRow : ownerRows) {
-                    divergentDuplicateOrdinals.add(ownerRow.ordinal());
-                }
-            }
-        }
+        return admissionPolicy.classifyNonHomogeneousGroups(
+                nonHomogeneousGroups,
+                selectExistingPayments(paymentIds)
+        );
     }
 
-    private Map<String, ExistingPaymentRow> selectConflicts(List<IncomingPaymentRow> conflictRows) {
+    private Map<String, ExistingPayment> selectConflicts(List<Candidate> conflictRows) {
         if (conflictRows.isEmpty()) {
             return Map.of();
         }
 
         Set<String> paymentIds = new LinkedHashSet<>(conflictRows.size());
-        for (IncomingPaymentRow conflictRow : conflictRows) {
-            paymentIds.add(conflictRow.paymentRequest().command().getPaymentId());
+        for (Candidate conflictRow : conflictRows) {
+            paymentIds.add(conflictRow.paymentId());
         }
-        Map<String, ExistingPaymentRow> existingPayments = selectExistingPayments(paymentIds);
+        Map<String, ExistingPayment> existingPayments = selectExistingPayments(paymentIds);
         if (existingPayments.size() != paymentIds.size()) {
             throw new IllegalStateException("Not every payment conflict could be reclassified");
         }
         return existingPayments;
     }
 
-    private Map<String, ExistingPaymentRow> selectExistingPayments(Set<String> paymentIds) {
+    private Map<String, ExistingPayment> selectExistingPayments(Set<String> paymentIds) {
         if (paymentIds.isEmpty()) {
             return Map.of();
         }
 
-        return jdbcTemplate.execute((ConnectionCallback<Map<String, ExistingPaymentRow>>) connection -> {
+        return jdbcTemplate.execute((ConnectionCallback<Map<String, ExistingPayment>>) connection -> {
             Array paymentIdArray = null;
             try {
                 paymentIdArray = connection.createArrayOf("text", paymentIds.toArray(String[]::new));
@@ -366,10 +296,10 @@ class IncomingPaymentRequestPersistence {
                 try (var statement = connection.prepareStatement(SELECT_CONFLICTS_SQL)) {
                     statement.setArray(1, paymentIdArray);
                     try (ResultSet resultSet = statement.executeQuery()) {
-                        Map<String, ExistingPaymentRow> existingPayments =
+                        Map<String, ExistingPayment> existingPayments =
                                 new LinkedHashMap<>(mapCapacity(paymentIds.size()));
                         while (resultSet.next()) {
-                            ExistingPaymentRow existingPayment = new ExistingPaymentRow(
+                            ExistingPayment existingPayment = new ExistingPayment(
                                     resultSet.getString("payment_id"),
                                     resultSet.getString("sender_bank_code"),
                                     resultSet.getBytes("request_fingerprint"),
@@ -396,53 +326,15 @@ class IncomingPaymentRequestPersistence {
         }
 
         return jdbcTemplate.execute((ConnectionCallback<List<ReservationOutcome>>) connection -> {
-            Map<String, List<AuthenticatedPaymentRequest>> requestsByPayer = new TreeMap<>();
-            for (AuthenticatedPaymentRequest createdRequest : createdRequests) {
-                String payerIspb = Utils.getBankCode(createdRequest.command().getSender());
-                requestsByPayer.computeIfAbsent(payerIspb, ignored -> new ArrayList<>())
-                        .add(createdRequest);
-            }
-            for (List<AuthenticatedPaymentRequest> payerRequests : requestsByPayer.values()) {
-                payerRequests.sort((first, second) -> Integer.compare(
-                        first.sourceOrdinal(),
-                        second.sourceOrdinal()
-                ));
-            }
-
+            ReservationBatch batch = reservationPolicy.prepare(createdRequests);
             Map<String, Long> lockedBalances = lockBalances(
                     connection,
-                    requestsByPayer.keySet().toArray(String[]::new)
+                    batch.requestsByPayer().keySet().toArray(String[]::new)
             );
-            if (lockedBalances.size() != requestsByPayer.size()) {
-                throw new IllegalStateException("Required participant balance is missing");
-            }
-            Map<String, Long> debitsByPayer = new TreeMap<>();
-            List<String> insufficientPaymentIds = new ArrayList<>();
-            List<ReservationOutcome> outcomes = new ArrayList<>(createdRequests.size());
-
-            for (Map.Entry<String, List<AuthenticatedPaymentRequest>> payerEntry : requestsByPayer.entrySet()) {
-                String payerIspb = payerEntry.getKey();
-                long remainingBalance = lockedBalances.get(payerIspb);
-                for (AuthenticatedPaymentRequest paymentRequest : payerEntry.getValue()) {
-                    long amountCents = paymentRequest.command().getAmountCents();
-                    if (remainingBalance >= amountCents) {
-                        remainingBalance = Math.subtractExact(remainingBalance, amountCents);
-                        debitsByPayer.merge(payerIspb, amountCents, Math::addExact);
-                        outcomes.add(new ReservationOutcome(paymentRequest, true));
-                    } else {
-                        insufficientPaymentIds.add(paymentRequest.command().getPaymentId());
-                        outcomes.add(new ReservationOutcome(paymentRequest, false));
-                    }
-                }
-            }
-
-            applyDebits(connection, debitsByPayer);
-            rejectInsufficientPayments(connection, insufficientPaymentIds);
-            outcomes.sort((first, second) -> Integer.compare(
-                    first.paymentRequest().sourceOrdinal(),
-                    second.paymentRequest().sourceOrdinal()
-            ));
-            return outcomes;
+            ReservationPlan plan = reservationPolicy.plan(batch, lockedBalances);
+            applyDebits(connection, plan.debitsByPayer());
+            rejectInsufficientPayments(connection, plan.insufficientPaymentIds());
+            return plan.outcomes();
         });
     }
 
@@ -514,90 +406,7 @@ class IncomingPaymentRequestPersistence {
         }
     }
 
-    private BatchLocalPaymentClassification classifyPaymentRequestsWithinBatch(
-            List<AuthenticatedPaymentRequest> paymentRequests
-    ) {
-        Map<String, List<IncomingPaymentRow>> rowsByPaymentId =
-                new LinkedHashMap<>(mapCapacity(paymentRequests.size()));
-        List<IncomingPaymentRow> allIncomingRows = incomingRows(paymentRequests);
-        Set<Integer> unauthorizedRequestOrdinals = new LinkedHashSet<>();
-        for (IncomingPaymentRow incomingRow : allIncomingRows) {
-            if (!Objects.equals(
-                    incomingRow.paymentRequest().authenticatedIspb(),
-                    Utils.getBankCode(incomingRow.paymentRequest().command().getSender())
-            )) {
-                unauthorizedRequestOrdinals.add(incomingRow.ordinal());
-                continue;
-            }
-            rowsByPaymentId.computeIfAbsent(
-                    incomingRow.paymentRequest().command().getPaymentId(),
-                    ignored -> new ArrayList<>()
-            ).add(incomingRow);
-        }
-
-        List<IncomingPaymentRow> insertionCandidates = new ArrayList<>(rowsByPaymentId.size());
-        Map<Integer, List<Integer>> originalOrdinalsByRepresentative =
-                new LinkedHashMap<>(mapCapacity(paymentRequests.size()));
-        List<List<IncomingPaymentRow>> nonHomogeneousGroups = new ArrayList<>();
-
-        for (List<IncomingPaymentRow> paymentRows : rowsByPaymentId.values()) {
-            List<Integer> originalOrdinals = new ArrayList<>(paymentRows.size());
-            IncomingPaymentRow firstRow = paymentRows.get(0);
-            boolean homogeneous = true;
-            for (IncomingPaymentRow paymentRow : paymentRows) {
-                originalOrdinals.add(paymentRow.ordinal());
-                if (!sameSecurityAndFingerprint(firstRow, paymentRow)) {
-                    homogeneous = false;
-                }
-            }
-
-            if (homogeneous) {
-                insertionCandidates.add(firstRow);
-                originalOrdinalsByRepresentative.put(firstRow.ordinal(), originalOrdinals);
-            } else {
-                nonHomogeneousGroups.add(paymentRows);
-            }
-        }
-
-        return new BatchLocalPaymentClassification(
-                insertionCandidates,
-                originalOrdinalsByRepresentative,
-                nonHomogeneousGroups,
-                unauthorizedRequestOrdinals
-        );
-    }
-
-    private boolean sameSecurityAndFingerprint(IncomingPaymentRow firstRow, IncomingPaymentRow row) {
-        return Objects.equals(
-                firstRow.paymentRequest().authenticatedIspb(),
-                row.paymentRequest().authenticatedIspb()
-        ) && sameFingerprint(firstRow, row);
-    }
-
-    private boolean sameFingerprint(IncomingPaymentRow firstRow, IncomingPaymentRow row) {
-        return firstRow.requestFingerprint().equals(row.requestFingerprint());
-    }
-
-    private boolean sameFingerprint(IncomingPaymentRow incoming, ExistingPaymentRow existing) {
-        return incoming.requestFingerprint().matches(
-                existing.requestFingerprint(),
-                existing.requestFingerprintVersion()
-        );
-    }
-
-    private List<IncomingPaymentRow> incomingRows(List<AuthenticatedPaymentRequest> paymentRequests) {
-        List<IncomingPaymentRow> incomingRows = new ArrayList<>(paymentRequests.size());
-        for (AuthenticatedPaymentRequest paymentRequest : paymentRequests) {
-            PaymentTransactionCommand paymentTransaction = paymentRequest.command();
-            incomingRows.add(new IncomingPaymentRow(
-                    paymentRequest,
-                    RequestFingerprint.calculate(paymentTransaction)
-            ));
-        }
-        return incomingRows;
-    }
-
-    private IncomingPaymentArrays incomingPaymentArrays(List<IncomingPaymentRow> incomingRows) {
+    private IncomingPaymentArrays incomingPaymentArrays(List<Candidate> incomingRows) {
         int size = incomingRows.size();
         String[] paymentIds = new String[size];
         Long[] amountCents = new Long[size];
@@ -607,15 +416,15 @@ class IncomingPaymentRequestPersistence {
         Short[] requestFingerprintVersions = new Short[size];
 
         for (int index = 0; index < incomingRows.size(); index++) {
-            IncomingPaymentRow incomingRow = incomingRows.get(index);
+            Candidate incomingRow = incomingRows.get(index);
             AuthenticatedPaymentRequest paymentRequest = incomingRow.paymentRequest();
             PaymentTransactionCommand paymentTransaction = paymentRequest.command();
             paymentIds[index] = paymentTransaction.getPaymentId();
             amountCents[index] = paymentTransaction.getAmountCents();
             senderBankCodes[index] = Utils.getBankCode(paymentTransaction.getSender());
             receiverBankCodes[index] = Utils.getBankCode(paymentTransaction.getReceiver());
-            requestFingerprints[index] = incomingRow.requestFingerprint().bytes();
-            requestFingerprintVersions[index] = incomingRow.requestFingerprint().version();
+            requestFingerprints[index] = incomingRow.fingerprint().bytes();
+            requestFingerprintVersions[index] = incomingRow.fingerprint().version();
         }
 
         return new IncomingPaymentArrays(
@@ -645,29 +454,6 @@ class IncomingPaymentRequestPersistence {
         return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
-    private record IncomingPaymentRow(
-            AuthenticatedPaymentRequest paymentRequest,
-            RequestFingerprint requestFingerprint
-    ) {
-        private int ordinal() {
-            return paymentRequest.sourceOrdinal();
-        }
-    }
-
-    private record ReservationOutcome(
-            AuthenticatedPaymentRequest paymentRequest,
-            boolean reserved
-    ) {
-    }
-
-    private record BatchLocalPaymentClassification(
-            List<IncomingPaymentRow> insertionCandidates,
-            Map<Integer, List<Integer>> originalOrdinalsByRepresentative,
-            List<List<IncomingPaymentRow>> nonHomogeneousGroups,
-            Set<Integer> unauthorizedRequestOrdinals
-    ) {
-    }
-
     private record IncomingPaymentArrays(
             String[] paymentIds,
             Long[] amountCents,
@@ -688,11 +474,4 @@ class IncomingPaymentRequestPersistence {
         }
     }
 
-    private record ExistingPaymentRow(
-            String paymentId,
-            String senderBankCode,
-            byte[] requestFingerprint,
-            Short requestFingerprintVersion
-    ) {
-    }
 }

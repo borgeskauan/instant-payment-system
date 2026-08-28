@@ -15,6 +15,7 @@ import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.payment.RequestFingerprint;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.junit.jupiter.api.BeforeEach;

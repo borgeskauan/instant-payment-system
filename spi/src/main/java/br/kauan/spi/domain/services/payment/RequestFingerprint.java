@@ -1,4 +1,4 @@
-package br.kauan.spi.adapter.output.paymenttransaction;
+package br.kauan.spi.domain.services.payment;
 
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
@@ -32,7 +32,7 @@ public final class RequestFingerprint {
         return version;
     }
 
-    boolean matches(byte[] candidateBytes, Short candidateVersion) {
+    public boolean matches(byte[] candidateBytes, Short candidateVersion) {
         return candidateVersion != null
                 && version == candidateVersion
                 && Arrays.equals(bytes, candidateBytes);

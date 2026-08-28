@@ -11,6 +11,13 @@ import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Candidate;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Classification;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Decision;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.LockedPayment;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.PreparedBatch;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Transition;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,7 +31,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -88,9 +94,11 @@ class IncomingStatusReportPersistence {
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final StatusTransitionPolicy transitionPolicy;
 
     IncomingStatusReportPersistence(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+        this.transitionPolicy = new StatusTransitionPolicy();
     }
 
     StatusReportPersistenceResult classifyAndApply(List<AuthenticatedStatusReport> statusReports) {
@@ -98,16 +106,15 @@ class IncomingStatusReportPersistence {
             return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
-        BatchLocalStatusReportClassification batchLocalClassification =
-                classifyStatusReportsWithinBatch(statusReports);
-        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
+        PreparedBatch preparedBatch = transitionPolicy.prepare(statusReports);
+        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = preparedBatch.reportsByOrdinal();
         List<PaymentSettlement> settlements = new ArrayList<>();
         List<PaymentRejection> rejectedPayments = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
 
         List<StatusReportActionRow> actionRows = classifyAndApplyStatusReports(
-                batchLocalClassification.statusReportsToClassify()
+                preparedBatch.candidatesToClassify()
         );
         for (StatusReportActionRow actionRow : actionRows) {
             AuthenticatedStatusReport statusReport = reportsByOrdinal.get(actionRow.ordinal());
@@ -126,12 +133,12 @@ class IncomingStatusReportPersistence {
                 ));
                 case STATUS_REPORT_CONFLICT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        preparedBatch.originalOrdinalsByRepresentative(),
                         actionRow.ordinal()
                 );
                 case UNAUTHORIZED_PSP -> addExpandedOrdinals(
                         unauthorizedStatusReportOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        preparedBatch.originalOrdinalsByRepresentative(),
                         actionRow.ordinal()
                 );
             }
@@ -145,67 +152,38 @@ class IncomingStatusReportPersistence {
         );
     }
 
-    private List<StatusReportActionRow> classifyAndApplyStatusReports(List<StatusReportRow> statusReports) {
+    private List<StatusReportActionRow> classifyAndApplyStatusReports(List<Candidate> statusReports) {
         return jdbcTemplate.execute((ConnectionCallback<List<StatusReportActionRow>>) connection -> {
-            Map<Integer, StatusReportRow> reportsByOrdinal = new LinkedHashMap<>();
-            for (StatusReportRow statusReport : statusReports) {
+            Map<Integer, Candidate> reportsByOrdinal = new LinkedHashMap<>();
+            for (Candidate statusReport : statusReports) {
                 reportsByOrdinal.put(statusReport.ordinal(), statusReport);
             }
 
-            List<LockedStatusReportRow> lockedRows = lockExistingPayments(
+            List<LockedPayment> lockedRows = lockExistingPayments(
                     connection,
                     statusReports,
                     reportsByOrdinal
             );
-            Map<Integer, LockedStatusReportRow> lockedByOrdinal = new LinkedHashMap<>();
-            for (LockedStatusReportRow lockedRow : lockedRows) {
-                lockedByOrdinal.put(lockedRow.ordinal(), lockedRow);
-            }
-
             List<StatusReportActionRow> actions = new ArrayList<>();
-            Map<String, List<LockedStatusReportRow>> authorizedByPaymentId = new LinkedHashMap<>();
-            for (StatusReportRow statusReport : statusReports) {
-                LockedStatusReportRow lockedRow = lockedByOrdinal.get(statusReport.ordinal());
-                if (lockedRow == null) {
-                    actions.add(classificationAction(statusReport, Action.STATUS_REPORT_CONFLICT));
-                } else if (!Objects.equals(lockedRow.authenticatedIspb(), lockedRow.receiverBankCode())) {
-                    actions.add(classificationAction(lockedRow, Action.UNAUTHORIZED_PSP));
-                } else {
-                    authorizedByPaymentId.computeIfAbsent(
-                            lockedRow.paymentId(),
-                            ignored -> new ArrayList<>()
-                    ).add(lockedRow);
+            Decision decision = transitionPolicy.decide(statusReports, lockedRows);
+            for (Classification classification : decision.classifications()) {
+                Candidate statusReport = reportsByOrdinal.get(classification.ordinal());
+                if (statusReport == null) {
+                    throw new IllegalStateException("Unknown status report ordinal: " + classification.ordinal());
                 }
+                actions.add(classificationAction(
+                        statusReport,
+                        switch (classification.type()) {
+                            case STATUS_REPORT_CONFLICT -> Action.STATUS_REPORT_CONFLICT;
+                            case UNAUTHORIZED_PSP -> Action.UNAUTHORIZED_PSP;
+                        }
+                ));
             }
 
-            List<TransitionCandidate> transitionCandidates = new ArrayList<>();
-            for (List<LockedStatusReportRow> paymentRows : authorizedByPaymentId.values()) {
-                if (hasConflictingIdentity(paymentRows)) {
-                    for (LockedStatusReportRow paymentRow : paymentRows) {
-                        actions.add(classificationAction(paymentRow, Action.STATUS_REPORT_CONFLICT));
-                    }
-                    continue;
-                }
-
-                LockedStatusReportRow paymentRow = paymentRows.getFirst();
-                if (paymentRow.existingState() == PaymentState.WAITING_ACCEPTANCE) {
-                    PaymentState resultingState = paymentRow.requestedOutcome() == StatusReportOutcome.ACCEPTED
-                            ? PaymentState.SETTLED
-                            : PaymentState.REJECTED;
-                    transitionCandidates.add(new TransitionCandidate(
-                            paymentRow,
-                            resultingState,
-                            paymentRow.requestedReasonCodes()
-                    ));
-                } else if (!terminalReplayIsNoOp(paymentRow)) {
-                    actions.add(classificationAction(paymentRow, Action.STATUS_REPORT_CONFLICT));
-                }
-            }
-
-            lockRequiredBalances(connection, transitionCandidates);
+            lockRequiredBalances(connection, decision.transitions());
             List<AcquiredTransition> acquiredTransitions = acquireTransitions(
                     connection,
-                    transitionCandidates
+                    decision.transitions()
             );
             applyBalanceDeltas(connection, acquiredTransitions);
             for (AcquiredTransition transition : acquiredTransitions) {
@@ -227,34 +205,10 @@ class IncomingStatusReportPersistence {
         });
     }
 
-    private boolean hasConflictingIdentity(List<LockedStatusReportRow> paymentRows) {
-        LockedStatusReportRow first = paymentRows.getFirst();
-        for (LockedStatusReportRow paymentRow : paymentRows) {
-            if (paymentRow.requestedOutcome() != first.requestedOutcome()
-                    || !paymentRow.requestedReasonCodes().equals(first.requestedReasonCodes())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean terminalReplayIsNoOp(LockedStatusReportRow paymentRow) {
-        if (paymentRow.existingRejectionCause() != null) {
-            return false;
-        }
-
-        boolean sameOutcome = switch (paymentRow.requestedOutcome()) {
-            case ACCEPTED -> paymentRow.existingState() == PaymentState.SETTLED;
-            case REJECTED -> paymentRow.existingState() == PaymentState.REJECTED;
-        };
-        return sameOutcome
-                && paymentRow.existingExternalReasonCodes().equals(paymentRow.requestedReasonCodes());
-    }
-
-    private List<LockedStatusReportRow> lockExistingPayments(
+    private List<LockedPayment> lockExistingPayments(
             Connection connection,
-            List<StatusReportRow> statusReports,
-            Map<Integer, StatusReportRow> reportsByOrdinal
+            List<Candidate> statusReports,
+            Map<Integer, Candidate> reportsByOrdinal
     ) throws SQLException {
         IncomingStatusReportArrays incoming = incomingStatusReportArrays(statusReports);
         Array ordinalArray = null;
@@ -272,14 +226,14 @@ class IncomingStatusReportPersistence {
                 statement.setArray(3, requestedOutcomeArray);
                 statement.setArray(4, authenticatedIspbArray);
                 try (ResultSet resultSet = statement.executeQuery()) {
-                    List<LockedStatusReportRow> rows = new ArrayList<>(statusReports.size());
+                    List<LockedPayment> rows = new ArrayList<>(statusReports.size());
                     while (resultSet.next()) {
                         int ordinal = resultSet.getInt(1);
-                        StatusReportRow incomingReport = reportsByOrdinal.get(ordinal);
+                        Candidate incomingReport = reportsByOrdinal.get(ordinal);
                         if (incomingReport == null) {
                             throw new IllegalStateException("Unknown status report ordinal: " + ordinal);
                         }
-                        rows.add(new LockedStatusReportRow(
+                        rows.add(new LockedPayment(
                                 ordinal,
                                 resultSet.getString(2),
                                 StatusReportOutcome.valueOf(resultSet.getString(3)),
@@ -323,10 +277,10 @@ class IncomingStatusReportPersistence {
 
     private void lockRequiredBalances(
             Connection connection,
-            List<TransitionCandidate> transitionCandidates
+            List<Transition> transitionCandidates
     ) throws SQLException {
         Set<String> requiredIspbs = new TreeSet<>();
-        for (TransitionCandidate candidate : transitionCandidates) {
+        for (Transition candidate : transitionCandidates) {
             requiredIspbs.add(candidate.resultingState() == PaymentState.SETTLED
                     ? candidate.payment().receiverBankCode()
                     : candidate.payment().senderBankCode());
@@ -357,14 +311,14 @@ class IncomingStatusReportPersistence {
 
     private List<AcquiredTransition> acquireTransitions(
             Connection connection,
-            List<TransitionCandidate> transitionCandidates
+            List<Transition> transitionCandidates
     ) throws SQLException {
         if (transitionCandidates.isEmpty()) {
             return List.of();
         }
 
-        Map<TransitionKey, List<TransitionCandidate>> candidatesByTransition = new LinkedHashMap<>();
-        for (TransitionCandidate candidate : transitionCandidates) {
+        Map<TransitionKey, List<Transition>> candidatesByTransition = new LinkedHashMap<>();
+        for (Transition candidate : transitionCandidates) {
             TransitionKey key = new TransitionKey(
                     candidate.resultingState(),
                     candidate.externalReasonCodes()
@@ -373,11 +327,11 @@ class IncomingStatusReportPersistence {
         }
 
         List<AcquiredTransition> acquired = new ArrayList<>(transitionCandidates.size());
-        for (Map.Entry<TransitionKey, List<TransitionCandidate>> entry : candidatesByTransition.entrySet()) {
-            List<TransitionCandidate> candidates = entry.getValue();
+        for (Map.Entry<TransitionKey, List<Transition>> entry : candidatesByTransition.entrySet()) {
+            List<Transition> candidates = entry.getValue();
             acquireTransitionsForKey(connection, entry.getKey(), candidates);
-            for (TransitionCandidate candidate : candidates) {
-                LockedStatusReportRow payment = candidate.payment();
+            for (Transition candidate : candidates) {
+                LockedPayment payment = candidate.payment();
                 acquired.add(new AcquiredTransition(
                         payment.ordinal(),
                         payment.paymentId(),
@@ -396,7 +350,7 @@ class IncomingStatusReportPersistence {
     private void acquireTransitionsForKey(
             Connection connection,
             TransitionKey transition,
-            List<TransitionCandidate> transitionCandidates
+            List<Transition> transitionCandidates
     ) throws SQLException {
         String[] paymentIds = new String[transitionCandidates.size()];
         for (int index = 0; index < transitionCandidates.size(); index++) {
@@ -461,19 +415,7 @@ class IncomingStatusReportPersistence {
         }
     }
 
-    private StatusReportActionRow classificationAction(StatusReportRow statusReport, Action action) {
-        return new StatusReportActionRow(
-                statusReport.ordinal(),
-                action,
-                statusReport.statusReport().command().originalPaymentId(),
-                null,
-                null,
-                null,
-                List.of()
-        );
-    }
-
-    private StatusReportActionRow classificationAction(LockedStatusReportRow statusReport, Action action) {
+    private StatusReportActionRow classificationAction(Candidate statusReport, Action action) {
         return new StatusReportActionRow(
                 statusReport.ordinal(),
                 action,
@@ -483,21 +425,6 @@ class IncomingStatusReportPersistence {
                 null,
                 List.of()
         );
-    }
-
-    private Map<Integer, AuthenticatedStatusReport> reportsByOrdinal(
-            List<AuthenticatedStatusReport> statusReports
-    ) {
-        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-        for (AuthenticatedStatusReport statusReport : statusReports) {
-            if (reportsByOrdinal.put(statusReport.sourceOrdinal(), statusReport) != null) {
-                throw new IllegalArgumentException(
-                        "Status report source ordinals must be unique: " + statusReport.sourceOrdinal()
-                );
-            }
-        }
-        return reportsByOrdinal;
     }
 
     private void addExpandedOrdinals(
@@ -510,60 +437,6 @@ class IncomingStatusReportPersistence {
             throw new IllegalStateException("Unknown status report representative ordinal: " + representativeOrdinal);
         }
         classifiedOrdinals.addAll(originalOrdinals);
-    }
-
-    private BatchLocalStatusReportClassification classifyStatusReportsWithinBatch(
-            List<AuthenticatedStatusReport> statusReports
-    ) {
-        Map<String, List<StatusReportRow>> rowsByPaymentId =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-        for (AuthenticatedStatusReport statusReport : statusReports) {
-            rowsByPaymentId.computeIfAbsent(
-                    statusReport.command().originalPaymentId(),
-                    ignored -> new ArrayList<>()
-            ).add(new StatusReportRow(statusReport));
-        }
-
-        List<StatusReportRow> statusReportsToClassify = new ArrayList<>(rowsByPaymentId.size());
-        Map<Integer, List<Integer>> originalOrdinalsByRepresentative =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-
-        for (List<StatusReportRow> statusReportRows : rowsByPaymentId.values()) {
-            List<Integer> originalOrdinals = new ArrayList<>(statusReportRows.size());
-            StatusReportRow firstRow = statusReportRows.getFirst();
-            boolean homogeneous = true;
-            for (StatusReportRow statusReportRow : statusReportRows) {
-                originalOrdinals.add(statusReportRow.ordinal());
-                if (!sameSecurityAndCommand(firstRow, statusReportRow)) {
-                    homogeneous = false;
-                }
-            }
-
-            if (homogeneous) {
-                statusReportsToClassify.add(firstRow);
-                originalOrdinalsByRepresentative.put(firstRow.ordinal(), originalOrdinals);
-            } else {
-                for (StatusReportRow statusReportRow : statusReportRows) {
-                    statusReportsToClassify.add(statusReportRow);
-                    originalOrdinalsByRepresentative.put(
-                            statusReportRow.ordinal(),
-                            List.of(statusReportRow.ordinal())
-                    );
-                }
-            }
-        }
-
-        return new BatchLocalStatusReportClassification(
-                statusReportsToClassify,
-                originalOrdinalsByRepresentative
-        );
-    }
-
-    private boolean sameSecurityAndCommand(StatusReportRow firstRow, StatusReportRow row) {
-        return Objects.equals(
-                firstRow.statusReport().authenticatedIspb(),
-                row.statusReport().authenticatedIspb()
-        ) && firstRow.statusReport().command().equals(row.statusReport().command());
     }
 
     private List<AuthenticatedStatusReport> reportsWithOrdinals(
@@ -579,7 +452,7 @@ class IncomingStatusReportPersistence {
         return classifiedReports;
     }
 
-    private IncomingStatusReportArrays incomingStatusReportArrays(List<StatusReportRow> statusReports) {
+    private IncomingStatusReportArrays incomingStatusReportArrays(List<Candidate> statusReports) {
         int size = statusReports.size();
         Integer[] ordinals = new Integer[size];
         String[] paymentIds = new String[size];
@@ -587,7 +460,7 @@ class IncomingStatusReportPersistence {
         String[] authenticatedIspbs = new String[size];
 
         for (int index = 0; index < statusReports.size(); index++) {
-            StatusReportRow statusReportRow = statusReports.get(index);
+            Candidate statusReportRow = statusReports.get(index);
             AuthenticatedStatusReport authenticatedStatusReport = statusReportRow.statusReport();
             IncomingStatusReportCommand statusReport = authenticatedStatusReport.command();
             ordinals[index] = statusReportRow.ordinal();
@@ -638,34 +511,6 @@ class IncomingStatusReportPersistence {
         UNAUTHORIZED_PSP
     }
 
-    private record StatusReportRow(AuthenticatedStatusReport statusReport) {
-        private int ordinal() {
-            return statusReport.sourceOrdinal();
-        }
-    }
-
-    private record LockedStatusReportRow(
-            int ordinal,
-            String paymentId,
-            StatusReportOutcome requestedOutcome,
-            List<StatusReasonCode> requestedReasonCodes,
-            String authenticatedIspb,
-            PaymentState existingState,
-            PaymentRejectionCause existingRejectionCause,
-            List<StatusReasonCode> existingExternalReasonCodes,
-            long amountCents,
-            String senderBankCode,
-            String receiverBankCode
-    ) {
-    }
-
-    private record TransitionCandidate(
-            LockedStatusReportRow payment,
-            PaymentState resultingState,
-            List<StatusReasonCode> externalReasonCodes
-    ) {
-    }
-
     private record TransitionKey(
             PaymentState resultingState,
             List<StatusReasonCode> externalReasonCodes
@@ -680,12 +525,6 @@ class IncomingStatusReportPersistence {
             String senderBankCode,
             String receiverBankCode,
             List<StatusReasonCode> externalReasonCodes
-    ) {
-    }
-
-    private record BatchLocalStatusReportClassification(
-            List<StatusReportRow> statusReportsToClassify,
-            Map<Integer, List<Integer>> originalOrdinalsByRepresentative
     ) {
     }
 
