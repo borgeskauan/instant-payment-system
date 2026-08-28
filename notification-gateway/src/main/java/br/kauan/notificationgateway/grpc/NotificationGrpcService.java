@@ -40,21 +40,11 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
             NotificationPartitionResolver partitionResolver,
             NotificationGatewayProperties properties
     ) {
-        this(reader, coordinator, cursorCodec, partitionResolver, properties.pull().longPollTimeout());
-    }
-
-    NotificationGrpcService(
-            NotificationDeliveryReader reader,
-            PullRequestCoordinator coordinator,
-            DeliveryCursorCodec cursorCodec,
-            NotificationPartitionResolver partitionResolver,
-            Duration longPollTimeout
-    ) {
         this.reader = reader;
         this.coordinator = coordinator;
         this.cursorCodec = cursorCodec;
         this.partitionResolver = partitionResolver;
-        this.longPollTimeout = longPollTimeout;
+        this.longPollTimeout = properties.pull().longPollTimeout();
     }
 
     @Override

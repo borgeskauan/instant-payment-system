@@ -1,5 +1,6 @@
 package br.kauan.notificationgateway.grpc;
 
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
 import br.kauan.notificationgateway.delivery.DeliveryNotification;
 import br.kauan.notificationgateway.delivery.DeliveryPage;
 import br.kauan.notificationgateway.delivery.NotificationCursorExpiredException;
@@ -14,6 +15,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -29,6 +31,22 @@ class NotificationGrpcServiceTest {
 
     private static final byte[] SECRET =
             "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+
+    @Test
+    void springCanWireTheGrpcServiceFromItsApplicationDependencies() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(NotificationDeliveryReader.class, () -> mock(NotificationDeliveryReader.class));
+            context.registerBean(PullRequestCoordinator.class, PullRequestCoordinator::new);
+            context.registerBean(DeliveryCursorCodec.class, () -> new DeliveryCursorCodec(SECRET));
+            context.registerBean(NotificationPartitionResolver.class, NotificationPartitionResolver::new);
+            context.registerBean(NotificationGatewayProperties.class, () -> properties(1));
+            context.register(NotificationGrpcService.class);
+
+            context.refresh();
+
+            assertThat(context.getBean(NotificationGrpcService.class)).isNotNull();
+        }
+    }
 
     @Test
     void returnsTheAuthenticatedPspPayloadsAndIssuesItsLastExaminedKafkaOffset() throws Exception {
@@ -115,7 +133,19 @@ class NotificationGrpcServiceTest {
                 new PullRequestCoordinator(),
                 codec,
                 new NotificationPartitionResolver(),
-                Duration.ofMillis(timeoutMillis)
+                properties(timeoutMillis)
+        );
+    }
+
+    private NotificationGatewayProperties properties(long timeoutMillis) {
+        return new NotificationGatewayProperties(
+                new NotificationGatewayProperties.Kafka(1, 1),
+                new NotificationGatewayProperties.Pull(
+                        new String(SECRET, StandardCharsets.UTF_8),
+                        Duration.ofMillis(timeoutMillis),
+                        15,
+                        Duration.ofMillis(1)
+                )
         );
     }
 
