@@ -5,10 +5,9 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportM
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
-import br.kauan.paymentserviceprovider.port.output.IncomingPaymentRequestClassification;
-import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
+import br.kauan.paymentserviceprovider.state.IncomingPaymentClassification;
+import br.kauan.paymentserviceprovider.state.PaymentStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -17,21 +16,20 @@ import java.util.List;
 
 @Service
 @Slf4j
-@Transactional
 public class IncomingTransactionService {
     
-    private final PaymentRepository paymentRepository;
+    private final PaymentStore paymentStore;
     private final StatusReportMapper statusReportMapper;
     private final CentralTransferSystemRestClient transferRestClient;
     private final ObjectMapper objectMapper;
 
     public IncomingTransactionService(
-            PaymentRepository paymentRepository,
+            PaymentStore paymentStore,
             StatusReportMapper statusReportMapper,
             CentralTransferSystemRestClient transferRestClient,
             ObjectMapper objectMapper
     ) {
-        this.paymentRepository = paymentRepository;
+        this.paymentStore = paymentStore;
         this.statusReportMapper = statusReportMapper;
         this.transferRestClient = transferRestClient;
         this.objectMapper = objectMapper;
@@ -71,19 +69,17 @@ public class IncomingTransactionService {
     }
 
     private List<StatusReport> handleIncomingTransactions(List<PaymentTransaction> transactions) {
-        IncomingPaymentRequestClassification classification =
-                paymentRepository.storeAndClassifyIncomingRequests(transactions);
-        if (!classification.divergentPaymentRequests().isEmpty()) {
+        IncomingPaymentClassification classification = paymentStore.storeAndClassifyIncoming(transactions);
+        if (!classification.divergentPayments().isEmpty()) {
             log.warn("[PIX FLOW - Step 4] PSP Recebedor detected {} divergent incoming transactions",
-                    classification.divergentPaymentRequests().size());
+                    classification.divergentPayments().size());
         }
 
         log.info("[PIX FLOW - Step 4] PSP Recebedor classified {} incoming transactions for acceptance. Auto-approving payments.",
-                classification.acceptedPaymentRequests().size());
+                classification.acceptedPayments().size());
 
-        List<StatusReport> statusReports = new ArrayList<>(classification.acceptedPaymentRequests().size());
-        for (PaymentTransaction transaction : classification.acceptedPaymentRequests()) {
-            // TODO: Implement proper business logic for transaction approval
+        List<StatusReport> statusReports = new ArrayList<>(classification.acceptedPayments().size());
+        for (PaymentTransaction transaction : classification.acceptedPayments()) {
             statusReports.add(buildApprovedStatusReport(transaction.getPaymentId()));
         }
         return statusReports;

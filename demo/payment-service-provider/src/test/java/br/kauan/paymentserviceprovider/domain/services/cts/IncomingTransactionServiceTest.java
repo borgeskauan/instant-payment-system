@@ -3,12 +3,11 @@ package br.kauan.paymentserviceprovider.domain.services.cts;
 import br.kauan.paymentserviceprovider.adapter.output.listener.CentralTransferSystemRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPaymentStatusReport;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
-import br.kauan.paymentserviceprovider.port.output.IncomingPaymentRequestClassification;
-import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
+import br.kauan.paymentserviceprovider.state.IncomingPaymentClassification;
+import br.kauan.paymentserviceprovider.state.PaymentStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,21 +24,18 @@ import static org.mockito.Mockito.when;
 
 class IncomingTransactionServiceTest {
 
-    private static final String BANK_CODE = "20000001";
-
-    private PaymentRepository paymentRepository;
+    private PaymentStore paymentStore;
     private StatusReportMapper statusReportMapper;
     private CentralTransferSystemRestClient transferRestClient;
     private IncomingTransactionService service;
 
     @BeforeEach
     void setUp() {
-        new GlobalVariables().setBankCode(BANK_CODE);
-        paymentRepository = mock(PaymentRepository.class);
+        paymentStore = mock(PaymentStore.class);
         statusReportMapper = mock(StatusReportMapper.class);
         transferRestClient = mock(CentralTransferSystemRestClient.class);
         service = new IncomingTransactionService(
-                paymentRepository,
+                paymentStore,
                 statusReportMapper,
                 transferRestClient,
                 new ObjectMapper()
@@ -50,8 +46,8 @@ class IncomingTransactionServiceTest {
     void emitsAcceptedInProcessOnlyForClassifiedAcceptedRequests() {
         PaymentTransaction accepted = PaymentTransaction.builder().paymentId("E2E-1").build();
         PaymentTransaction divergent = PaymentTransaction.builder().paymentId("E2E-2").build();
-        when(paymentRepository.storeAndClassifyIncomingRequests(List.of(accepted, divergent)))
-                .thenReturn(new IncomingPaymentRequestClassification(List.of(accepted), List.of(divergent)));
+        when(paymentStore.storeAndClassifyIncoming(List.of(accepted, divergent)))
+                .thenReturn(new IncomingPaymentClassification(List.of(accepted), List.of(divergent)));
         when(statusReportMapper.toRegulatoryReport(anyList()))
                 .thenReturn(FIToFIPaymentStatusReport.builder().build());
 
@@ -68,8 +64,8 @@ class IncomingTransactionServiceTest {
     @Test
     void doesNotSendStatusReportWhenEveryIncomingRequestIsDivergent() {
         PaymentTransaction divergent = PaymentTransaction.builder().paymentId("E2E-1").build();
-        when(paymentRepository.storeAndClassifyIncomingRequests(List.of(divergent)))
-                .thenReturn(new IncomingPaymentRequestClassification(List.of(), List.of(divergent)));
+        when(paymentStore.storeAndClassifyIncoming(List.of(divergent)))
+                .thenReturn(new IncomingPaymentClassification(List.of(), List.of(divergent)));
 
         service.handleTransferRequests(List.of(divergent));
 

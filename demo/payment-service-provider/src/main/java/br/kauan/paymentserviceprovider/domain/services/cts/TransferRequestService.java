@@ -2,38 +2,34 @@ package br.kauan.paymentserviceprovider.domain.services.cts;
 
 import br.kauan.paymentserviceprovider.adapter.output.listener.CentralTransferSystemRestClient;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.PaymentTransactionMapper;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferDetails;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.TransferRequest;
-import br.kauan.paymentserviceprovider.domain.entity.mappers.PaymentTransactionFactory;
-import br.kauan.paymentserviceprovider.port.output.PaymentRepository;
+import br.kauan.paymentserviceprovider.state.PaymentStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.UUID;
 
 @Service
 @Slf4j
-@Transactional
 public class TransferRequestService {
-    
-    private final PaymentTransactionFactory paymentTransactionFactory;
-    private final PaymentRepository paymentRepository;
+
+    private static final String CURRENCY_BRL = "BRL";
+
+    private final PaymentStore paymentStore;
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final CentralTransferSystemRestClient transferRestClient;
     private final ObjectMapper objectMapper;
 
     public TransferRequestService(
-            PaymentTransactionFactory paymentTransactionFactory,
-            PaymentRepository paymentRepository,
+            PaymentStore paymentStore,
             PaymentTransactionMapper paymentTransactionMapper,
             CentralTransferSystemRestClient transferRestClient,
             ObjectMapper objectMapper) {
-        this.paymentTransactionFactory = paymentTransactionFactory;
-        this.paymentRepository = paymentRepository;
+        this.paymentStore = paymentStore;
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.transferRestClient = transferRestClient;
         this.objectMapper = objectMapper;
@@ -43,16 +39,23 @@ public class TransferRequestService {
         log.info("[PIX FLOW - Step 3] PSP Pagador preparing transfer request. Amount: {}, Receiver: {}", 
                 transferRequest.getAmount(), transferRequest.getReceiver().getName());
 
-        PaymentTransaction transaction = paymentTransactionFactory.createPaymentTransaction(transferRequest);
+        PaymentTransaction transaction = PaymentTransaction.builder()
+                .paymentId(UUID.randomUUID().toString())
+                .amount(transferRequest.getAmount())
+                .currency(CURRENCY_BRL)
+                .sender(transferRequest.getSender())
+                .receiver(transferRequest.getReceiver())
+                .description(transferRequest.getDescription())
+                .build();
 
-        paymentRepository.saveAll(List.of(transaction));
+        paymentStore.saveAll(List.of(transaction));
         log.debug("[PIX FLOW - Step 3] Saved payment transaction with ID: {}", transaction.getPaymentId());
 
         try {
             var regulatoryRequest = paymentTransactionMapper.toRegulatoryRequest(transaction);
             byte[] requestBytes = objectMapper.writeValueAsBytes(regulatoryRequest);
-            log.info("[PIX FLOW - Step 3] Sending PACS.008 transfer request to kafka-producer for bank: {}, payload size: {} bytes", 
-                    GlobalVariables.getBankCode(), requestBytes.length);
+            log.info("[PIX FLOW - Step 3] Sending PACS.008 transfer request to kafka-producer; payload size: {} bytes",
+                    requestBytes.length);
             transferRestClient.requestTransfer(requestBytes);
             log.info("[PIX FLOW - Step 3] Transfer request sent successfully to kafka-producer (will be forwarded to SPI)");
         } catch (Exception e) {

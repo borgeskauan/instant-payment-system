@@ -15,7 +15,8 @@ import java.util.Comparator;
 import java.util.List;
 
 @SpringBootTest(properties = {
-        "bank.code=12345678",
+        "psp.bank-code=12345678",
+        "psp.initial-balance=1000",
         "notification.gateway.client-enabled=false",
         "notification.gateway.reconnect-delay=1m"
 })

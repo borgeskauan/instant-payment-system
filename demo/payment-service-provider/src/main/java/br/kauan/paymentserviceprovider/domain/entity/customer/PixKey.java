@@ -9,5 +9,4 @@ public class PixKey {
     private String customerId;
 
     private String pixKey;
-    private String type;
 }

@@ -25,8 +25,6 @@ Generate a PSP client certificate for an ISPB:
 infra/certs/generate-local-mtls-certs.sh psp 12345678
 ```
 
-When using `demo/payment-service-provider/start-psp.sh` with mTLS enabled, the PSP certificate is generated automatically. The script does not run `init`; the local CA must already exist.
-
 Generate a PSP client certificate under a custom root:
 
 ```bash

@@ -15,6 +15,10 @@ notification:
       private-key: ${NOTIFICATION_GATEWAY_TLS_PRIVATE_KEY:}
       trust-cert-collection: ${NOTIFICATION_GATEWAY_TLS_TRUST_CERT_COLLECTION:}
 
+psp:
+  bank-code: ${BANK_CODE}
+  initial-balance: ${PSP_INITIAL_BALANCE:1000}
+
 spring:
   ssl:
     bundle:
@@ -25,13 +29,3 @@ spring:
             private-key: ${CENTRAL_TRANSFER_TLS_PRIVATE_KEY}
           truststore:
             certificate: ${CENTRAL_TRANSFER_TLS_TRUST_CERT_COLLECTION}
-
-  h2:
-    console:
-      enabled: true
-
-  jpa:
-    defer-datasource-initialization: true
-
-bank:
-  code: ${BANK_CODE}

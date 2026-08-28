@@ -4,9 +4,8 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.PaymentTransa
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.FIToFICustomerCreditTransfer;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.services.cts.IncomingTransactionService;
-import br.kauan.paymentserviceprovider.domain.services.cts.StatusProcessingService;
+import br.kauan.paymentserviceprovider.domain.services.cts.PaymentOutcomeService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -18,32 +17,26 @@ public class NotificationProcessor {
 
     private final PaymentTransactionMapper paymentTransactionMapper;
     private final StatusReportMapper statusReportMapper;
-    private final StatusProcessingService statusProcessingService;
+    private final PaymentOutcomeService paymentOutcomeService;
     private final IncomingTransactionService incomingTransactionService;
     private final ObjectMapper objectMapper;
 
     public NotificationProcessor(
             PaymentTransactionMapper paymentTransactionMapper,
             StatusReportMapper statusReportMapper,
-            StatusProcessingService statusProcessingService,
+            PaymentOutcomeService paymentOutcomeService,
             IncomingTransactionService incomingTransactionService,
             ObjectMapper objectMapper
     ) {
         this.paymentTransactionMapper = paymentTransactionMapper;
         this.statusReportMapper = statusReportMapper;
-        this.statusProcessingService = statusProcessingService;
+        this.paymentOutcomeService = paymentOutcomeService;
         this.incomingTransactionService = incomingTransactionService;
         this.objectMapper = objectMapper;
     }
 
-    public void process(String ispb, String notificationJson) {
+    public void process(String notificationJson) {
         try {
-            String currentBankCode = GlobalVariables.getBankCode();
-            if (!currentBankCode.equals(ispb)) {
-                log.trace("Ignoring notification for ISPB: {} (current bank: {})", ispb, currentBankCode);
-                return;
-            }
-
             JsonNode jsonNode = objectMapper.readTree(notificationJson);
 
             if (jsonNode.has("TxInfAndSts")) {
@@ -56,9 +49,9 @@ public class NotificationProcessor {
                 return;
             }
 
-            throw new IllegalArgumentException("Unknown notification type received for ISPB: " + ispb);
+            throw new IllegalArgumentException("Unknown notification type");
         } catch (Exception e) {
-            log.error("Error processing notification for ISPB: {}", ispb, e);
+            log.error("Error processing notification", e);
             throw new NotificationProcessingException("Failed to process notification", e);
         }
     }
@@ -86,6 +79,6 @@ public class NotificationProcessor {
 
         log.info("Processing status notification with {} reports", statusReports.size());
 
-        statusProcessingService.handleStatuses(statusReports);
+        paymentOutcomeService.handleStatuses(statusReports);
     }
 }

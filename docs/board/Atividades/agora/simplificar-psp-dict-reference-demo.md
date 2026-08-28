@@ -1,0 +1,45 @@
+# Simplificar PSP e DICT da reference demo
+
+- [ ] Reduzir PSP e DICT ao estado mínimo necessário para demonstrar o happy path
+
+## Objetivo
+
+Manter uma reference demo pequena e reproduzível, sem transformar PSP ou DICT em produtos paralelos ao core benchmarkado. A ordem de prioridade é simplicidade por adesão ao objetivo, manutenção e somente depois performance.
+
+## Gate A — aprovado
+
+O PSP existe para simular pagador e recebedor, criar ou recuperar clientes e contas, cadastrar e listar chaves, consultar destinatário, iniciar o pagamento, aceitar automaticamente pagamentos recebidos e refletir outcomes finais de forma idempotente no saldo visual. Login não é autenticação; saldo local é uma projeção da demo; persistência local é efêmera; preview com o destinatário completo permanece uma simplificação explícita. Tratamento próprio de rejeições foi removido do escopo.
+
+O DICT existe somente para cadastrar uma associação única entre chave e destinatário e resolvê-la por chave exata. Suporte amplo a tipos de chave, validadores CPF/CNPJ, timestamps e metadados não consumidos foram removidos do escopo. Chave desconhecida significa `404`; duplicada significa `409`.
+
+## Gate B — aprovado
+
+No PSP, substituir H2/JPA por estado em memória, remover dependências e camadas de passagem, substituir estado global por configuração tipada, usar o mesmo saldo inicial da demo no PSP e no core, substituir Feign pelo cliente do Spring, eliminar o handler vazio e impedir criação implícita de contas. Preservar PACS tipado, HTTP/2/mTLS, Pull gRPC e idempotência.
+
+No DICT, substituir PostgreSQL/JPA/Flyway por um diretório concorrente em memória, remover ports, adapters e dependências sem função, manter DTOs mínimos e adicionar testes semânticos de cadastro, consulta, ausência e conflito.
+
+Na segunda passagem do PSP, remover serviços e mappers de uso único, consolidar processamento e liquidação em um único serviço de outcomes, remover estados e motivos internos sem efeito observável, tornar o cadastro de chave imutável e restringir CORS à origem da demo.
+
+## Resultado
+
+- PSP reduzido de 97 para 68 arquivos Java de produção e de 3.349 para 2.432 linhas;
+- DICT reduzido a 7 arquivos Java e 123 linhas de produção;
+- PostgreSQL, JPA, Flyway, H2, Feign, estado global, camadas de passagem e modelagem interna sem efeito observável removidos da reference demo;
+- launcher standalone removido; inicialização, certificados e provisionamento da demo agora possuem uma única fronteira no Docker Compose;
+- saldo inicial centralizado por `DEMO_INITIAL_BALANCE` para provisionamento do core e projeção local do PSP;
+- reset limpo documentado: PSPs efêmeros devem iniciar junto de um log de notificações vazio;
+- 26 testes do PSP, 4 testes do DICT, build Angular, validação dos Composes e smoke end-to-end aprovados.
+
+## Critérios de conclusão
+
+- PSP e DICT preservam somente o happy path aprovado e as garantias essenciais do protocolo;
+- nenhuma persistência ou camada existe apenas por cerimônia arquitetural;
+- saldo inicial local e fundos provisionados partem do mesmo valor;
+- contas ausentes e chaves inválidas não são mascaradas por criação implícita ou erro interno genérico;
+- o reset limpo documenta que o estado efêmero dos PSPs deve começar junto de um log de notificações vazio;
+- testes dos dois projetos, builds, Composes, smoke e `git diff --check` passam;
+- nenhum tuning amplo, feature nova ou modernização do frontend entra no diff.
+
+## Validação pendente
+
+- [ ] Validar manualmente o fluxo da aplicação Angular.

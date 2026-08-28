@@ -1,7 +1,6 @@
 package br.kauan.paymentserviceprovider.adapter.output.pacs.mappers;
 
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.ExternalPaymentTransactionStatusCode;
-import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.ExternalStatusReasonCode;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.CashAccountTypeChoice;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.ExternalCashAccountTypeCode;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
@@ -26,7 +25,6 @@ public class CodeMapping {
             case ACCEPTED_AND_SETTLED_FOR_SENDER -> ExternalPaymentTransactionStatusCode.ACSC;
             case ACCEPTED_IN_PROCESS -> ExternalPaymentTransactionStatusCode.ACSP;
             case REJECTED -> ExternalPaymentTransactionStatusCode.RJCT;
-            case WAITING_ACCEPTANCE, ACCEPTED_AND_SETTLED -> throw new IllegalArgumentException("No external mapping for status: " + paymentStatus);
         };
     }
 
@@ -46,9 +44,5 @@ public class CodeMapping {
             case SALARY -> ExternalCashAccountTypeCode.SLRY;
             case PAYMENT -> ExternalCashAccountTypeCode.TRAN;
         };
-    }
-
-    public ExternalStatusReasonCode mapReasonCodeToExternalStatusReasonCode(String code) {
-        return ExternalStatusReasonCode.AB_03; // TODO: mapear corretamente
     }
 }

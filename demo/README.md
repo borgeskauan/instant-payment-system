@@ -32,10 +32,13 @@ The automated smoke exercises the complete business path and verifies the final 
 
 ## Reset
 
-The demo owns its DICT database and the PSPs use ephemeral local state. Reset all demo state without touching the core:
+DICT and PSP state are intentionally ephemeral, while the notification cursor refers to the durable core notification log. A clean demonstration therefore starts with both stacks empty; restarting only the demo against an existing core history is not supported.
 
 ```bash
-docker compose -f demo/docker-compose.yml down -v --remove-orphans
+docker compose -f demo/docker-compose.yml down --remove-orphans
+docker compose -f infra/docker-compose.yml down -v --remove-orphans
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f infra/docker-compose.yml up -d --build
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f demo/docker-compose.yml up -d --build
 ```
 
 ## Scope

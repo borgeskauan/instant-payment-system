@@ -1,74 +1,67 @@
 package br.kauan.paymentserviceprovider.domain.services.customer;
 
-import br.kauan.paymentserviceprovider.adapter.output.customer.CustomerRepository;
+import br.kauan.paymentserviceprovider.adapter.output.dict.DictClient;
+import br.kauan.paymentserviceprovider.config.PspProperties;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginRequest;
 import br.kauan.paymentserviceprovider.domain.dto.CustomerLoginResponse;
-import br.kauan.paymentserviceprovider.domain.dto.PixKeyCreationRequest;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccount;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountId;
+import br.kauan.paymentserviceprovider.domain.entity.commons.BankAccountType;
 import br.kauan.paymentserviceprovider.domain.entity.customer.Customer;
 import br.kauan.paymentserviceprovider.domain.entity.customer.CustomerBankAccount;
 import br.kauan.paymentserviceprovider.domain.entity.customer.PixKey;
-import br.kauan.paymentserviceprovider.port.output.CustomerBankAccountRepository;
-import br.kauan.paymentserviceprovider.port.output.ExternalPartyRepository;
-import br.kauan.paymentserviceprovider.port.output.PixKeyRepository;
+import br.kauan.paymentserviceprovider.state.PspStateStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.UUID;
+
+import static br.kauan.paymentserviceprovider.commons.Util.generateRandomNumberString;
 
 @Slf4j
 @Service
 public class CustomerService {
 
-    private static final String DEFAULT_PIX_KEY_TYPE = "EMAIL";
-
-    private final CustomerRepository customerRepository;
-    private final PixKeyRepository pixKeyRepository;
-    private final ExternalPartyRepository externalPartyRepository;
-    private final CustomerBankAccountRepository customerBankAccountRepository;
-    private final CustomerBankAccountService customerBankAccountService;
+    private final PspStateStore stateStore;
+    private final DictClient dictClient;
+    private final PspProperties properties;
 
     public CustomerService(
-            CustomerRepository customerRepository,
-            PixKeyRepository pixKeyRepository,
-            ExternalPartyRepository externalPartyRepository,
-            CustomerBankAccountRepository customerBankAccountRepository,
-            CustomerBankAccountService customerBankAccountService
+            PspStateStore stateStore,
+            DictClient dictClient,
+            PspProperties properties
     ) {
-        this.customerRepository = customerRepository;
-        this.pixKeyRepository = pixKeyRepository;
-        this.externalPartyRepository = externalPartyRepository;
-        this.customerBankAccountRepository = customerBankAccountRepository;
-        this.customerBankAccountService = customerBankAccountService;
+        this.stateStore = stateStore;
+        this.dictClient = dictClient;
+        this.properties = properties;
     }
 
-    @Transactional
-    public CustomerLoginResponse loginCustomer(CustomerLoginRequest request) {
-        log.info("Attempting to login customer with taxId: {}", request.getTaxId());
+    public synchronized CustomerLoginResponse findOrCreateCustomer(CustomerLoginRequest request) {
+        log.info("Finding or creating demo customer with taxId: {}", request.getTaxId());
 
-        return customerRepository.findByTaxId(request.getTaxId())
+        return stateStore.findCustomerByTaxId(request.getTaxId())
                 .map(this::handleExistingCustomer)
                 .orElseGet(() -> createNewCustomer(request));
     }
 
-    @Transactional
-    public void createPixKey(PixKeyCreationRequest request) {
-        log.info("Creating PIX key for customer: {}", request.getCustomerId());
+    public void createPixKey(String customerId, String pixKeyValue) {
+        log.info("Creating PIX key for customer: {}", customerId);
 
-        var customer = findCustomerById(request.getCustomerId());
-        var customerBankAccount = findCustomerBankAccount(request.getCustomerId());
+        var customer = findCustomerById(customerId);
+        var customerBankAccount = findCustomerBankAccount(customerId);
 
-        var pixKey = buildPixKey(request, customer);
+        var pixKey = PixKey.builder().pixKey(pixKeyValue).customerId(customerId).build();
 
-        externalPartyRepository.createPixKey(pixKey, customer, customerBankAccount);
-        pixKeyRepository.save(pixKey);
+        dictClient.register(pixKey, customer, customerBankAccount);
+        stateStore.addPixKey(pixKey);
 
-        log.info("PIX key created successfully for customer: {}", request.getCustomerId());
+        log.info("PIX key created successfully for customer: {}", customerId);
     }
 
     public List<PixKey> getAllPixKeys(String customerId) {
         log.debug("Retrieving all PIX keys for customer: {}", customerId);
-        return pixKeyRepository.findAllByCustomerId(customerId);
+        return stateStore.findPixKeysByCustomerId(customerId);
     }
 
     private CustomerLoginResponse handleExistingCustomer(Customer customer) {
@@ -83,45 +76,49 @@ public class CustomerService {
     private CustomerLoginResponse createNewCustomer(CustomerLoginRequest request) {
         log.info("Creating new customer with taxId: {}", request.getTaxId());
 
-        var customerBankAccount = customerBankAccountService.generateBankAccount();
-        var customer = buildCustomer(request);
+        Customer customer = buildCustomer(request);
+        CustomerBankAccount customerBankAccount = generateBankAccount(customer.getId());
+        stateStore.addCustomer(customer, customerBankAccount);
 
-        Customer savedCustomer = customerRepository.save(customer);
-
-        customerBankAccount.setCustomerId(savedCustomer.getId());
-        customerBankAccountRepository.saveAll(List.of(customerBankAccount));
-
-        log.info("New customer created successfully with ID: {}", savedCustomer.getId());
+        log.info("New customer created successfully with ID: {}", customer.getId());
         return CustomerLoginResponse.builder()
-                .customer(savedCustomer)
+                .customer(customer)
                 .bankAccount(customerBankAccount)
                 .build();
     }
 
     private Customer findCustomerById(String customerId) {
-        return customerRepository.findById(customerId)
+        return stateStore.findCustomerById(customerId)
                 .orElseThrow(() -> new IllegalArgumentException("Customer not found with ID: " + customerId));
     }
 
     private CustomerBankAccount findCustomerBankAccount(String customerId) {
-        return customerBankAccountRepository.findAllByCustomerIds(List.of(customerId))
-                .stream()
-                .findFirst()
+        return stateStore.findAccountByCustomerId(customerId)
                 .orElseThrow(() -> new IllegalArgumentException("Customer has no bank account."));
-    }
-
-    private PixKey buildPixKey(PixKeyCreationRequest request, Customer customer) {
-        return PixKey.builder()
-                .pixKey(request.getPixKey())
-                .customerId(customer.getId())
-                .type(DEFAULT_PIX_KEY_TYPE)
-                .build();
     }
 
     private Customer buildCustomer(CustomerLoginRequest request) {
         return Customer.builder()
+                .id(UUID.randomUUID().toString())
                 .name(request.getName())
                 .taxId(request.getTaxId())
+                .build();
+    }
+
+    private CustomerBankAccount generateBankAccount(String customerId) {
+        BankAccountId accountId = BankAccountId.builder()
+                .accountNumber(generateRandomNumberString(8))
+                .agencyNumber(generateRandomNumberString(4))
+                .bankCode(properties.bankCode())
+                .build();
+        BankAccount account = BankAccount.builder()
+                .id(accountId)
+                .type(BankAccountType.CHECKING)
+                .build();
+        return CustomerBankAccount.builder()
+                .customerId(customerId)
+                .account(account)
+                .balance(properties.initialBalance())
                 .build();
     }
 }

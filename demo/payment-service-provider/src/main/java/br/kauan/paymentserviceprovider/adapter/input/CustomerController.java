@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
+@CrossOrigin(origins = "http://localhost:4200")
 public class CustomerController {
 
     private final CustomerService customerService;
@@ -19,15 +20,13 @@ public class CustomerController {
     }
 
     @PostMapping("/customers")
-    public CustomerLoginResponse loginCustomer(@RequestBody CustomerLoginRequest request) {
-        return customerService.loginCustomer(request);
+    public CustomerLoginResponse findOrCreateCustomer(@RequestBody CustomerLoginRequest request) {
+        return customerService.findOrCreateCustomer(request);
     }
 
     @PostMapping("/customers/{customerId}/pix-keys")
     public void createPixKey(@PathVariable String customerId, @RequestBody PixKeyCreationRequest request) {
-        request.setCustomerId(customerId);
-
-        customerService.createPixKey(request);
+        customerService.createPixKey(customerId, request.pixKey());
     }
 
     @GetMapping("/customers/{customerId}/pix-keys")

@@ -4,11 +4,10 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.PaymentTransa
 import br.kauan.paymentserviceprovider.adapter.output.pacs.mappers.StatusReportMapper;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.FIToFIPaymentStatusReport;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs008.FIToFICustomerCreditTransfer;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import br.kauan.paymentserviceprovider.domain.entity.transfer.PaymentTransaction;
 import br.kauan.paymentserviceprovider.domain.services.cts.IncomingTransactionService;
-import br.kauan.paymentserviceprovider.domain.services.cts.StatusProcessingService;
+import br.kauan.paymentserviceprovider.domain.services.cts.PaymentOutcomeService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,25 +23,22 @@ import static org.mockito.Mockito.when;
 
 class NotificationProcessorTest {
 
-    private static final String BANK_CODE = "12345678";
-
     private PaymentTransactionMapper paymentTransactionMapper;
     private StatusReportMapper statusReportMapper;
-    private StatusProcessingService statusProcessingService;
+    private PaymentOutcomeService paymentOutcomeService;
     private IncomingTransactionService incomingTransactionService;
     private NotificationProcessor processor;
 
     @BeforeEach
     void setUp() {
-        new GlobalVariables().setBankCode(BANK_CODE);
         paymentTransactionMapper = mock(PaymentTransactionMapper.class);
         statusReportMapper = mock(StatusReportMapper.class);
-        statusProcessingService = mock(StatusProcessingService.class);
+        paymentOutcomeService = mock(PaymentOutcomeService.class);
         incomingTransactionService = mock(IncomingTransactionService.class);
         processor = new NotificationProcessor(
                 paymentTransactionMapper,
                 statusReportMapper,
-                statusProcessingService,
+                paymentOutcomeService,
                 incomingTransactionService,
                 new ObjectMapper()
         );
@@ -54,58 +50,46 @@ class NotificationProcessorTest {
         when(paymentTransactionMapper.fromRegulatoryRequest(any(FIToFICustomerCreditTransfer.class)))
                 .thenReturn(List.of(transaction));
 
-        processor.process(BANK_CODE, "{\"CdtTrfTxInf\":[]}");
+        processor.process("{\"CdtTrfTxInf\":[]}");
 
         verify(incomingTransactionService).handleTransferRequests(List.of(transaction));
-        verifyNoInteractions(statusProcessingService);
+        verifyNoInteractions(paymentOutcomeService);
     }
 
     @Test
-    void pacs002NotificationIsMappedAndSentToStatusProcessingService() {
+    void pacs002NotificationIsMappedAndSentToPaymentOutcomeService() {
         StatusReport statusReport = StatusReport.builder().originalPaymentId("E2E-1").build();
         when(statusReportMapper.fromRegulatoryReport(any(FIToFIPaymentStatusReport.class)))
                 .thenReturn(List.of(statusReport));
 
-        processor.process(BANK_CODE, "{\"TxInfAndSts\":[]}");
+        processor.process("{\"TxInfAndSts\":[]}");
 
-        verify(statusProcessingService).handleStatuses(List.of(statusReport));
+        verify(paymentOutcomeService).handleStatuses(List.of(statusReport));
         verifyNoInteractions(incomingTransactionService);
     }
 
     @Test
-    void notificationForAnotherIspbIsIgnored() {
-        processor.process("87654321", "{\"CdtTrfTxInf\":[]}");
-
-        verifyNoInteractions(
-                paymentTransactionMapper,
-                statusReportMapper,
-                statusProcessingService,
-                incomingTransactionService
-        );
-    }
-
-    @Test
     void unknownPayloadPropagatesProcessingFailure() {
-        assertThatThrownBy(() -> processor.process(BANK_CODE, "{\"Other\":[]}"))
+        assertThatThrownBy(() -> processor.process("{\"Other\":[]}"))
                 .isInstanceOf(NotificationProcessingException.class);
 
         verifyNoInteractions(
                 paymentTransactionMapper,
                 statusReportMapper,
-                statusProcessingService,
+                paymentOutcomeService,
                 incomingTransactionService
         );
     }
 
     @Test
     void invalidJsonPropagatesProcessingFailure() {
-        assertThatThrownBy(() -> processor.process(BANK_CODE, "{"))
+        assertThatThrownBy(() -> processor.process("{"))
                 .isInstanceOf(NotificationProcessingException.class);
 
         verifyNoInteractions(
                 paymentTransactionMapper,
                 statusReportMapper,
-                statusProcessingService,
+                paymentOutcomeService,
                 incomingTransactionService
         );
     }

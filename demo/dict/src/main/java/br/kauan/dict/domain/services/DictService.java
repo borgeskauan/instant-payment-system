@@ -1,69 +1,68 @@
 package br.kauan.dict.domain.services;
 
-import br.kauan.dict.domain.dtos.*;
-import br.kauan.dict.port.input.DictUseCase;
-import br.kauan.dict.port.output.DictRepository;
+import br.kauan.dict.domain.dtos.Account;
+import br.kauan.dict.domain.dtos.Owner;
+import br.kauan.dict.domain.dtos.PixKeyCreationRequest;
+import br.kauan.dict.domain.dtos.PixResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
-import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
-public class DictService implements DictUseCase {
+public class DictService {
 
-    private final DictRepository dictRepository;
-    private final DictServiceMapper dictServiceMapper;
+    private final Map<String, PixResponse> entries = new ConcurrentHashMap<>();
 
-    public DictService(DictRepository dictRepository, DictServiceMapper dictServiceMapper) {
-        this.dictRepository = dictRepository;
-        this.dictServiceMapper = dictServiceMapper;
+    public PixResponse resolve(String pixKey) {
+        PixResponse response = entries.get(pixKey);
+        if (response == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PIX key not found");
+        }
+        return response;
     }
 
-    @Override
-    public PixResponse buscarChavePix(String chavePix) {
-        return dictRepository.buscarChavePix(chavePix)
-                .orElseThrow();
+    public PixResponse register(PixKeyCreationRequest request) {
+        validate(request);
+        PixResponse response = new PixResponse(request.key(), request.account(), request.owner());
+        if (entries.putIfAbsent(request.key(), response) != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PIX key already exists");
+        }
+        return response;
     }
 
-    @Override
-    public PixResponse createPixKey(PixKeyCreationRequest request) {
-        var internalRequest = convertToInternalRequest(request);
+    private void validate(PixKeyCreationRequest request) {
+        if (request == null) {
+            throw badRequest("Request is required");
+        }
+        requireText(request.key(), "PIX key");
 
-        validarCreationRequest(internalRequest);
+        Account account = request.account();
+        if (account == null) {
+            throw badRequest("Account is required");
+        }
+        requireText(account.participant(), "Account participant");
+        requireText(account.branch(), "Account branch");
+        requireText(account.number(), "Account number");
+        requireText(account.type(), "Account type");
 
-        return dictRepository.createPixKey(internalRequest);
+        Owner owner = request.owner();
+        if (owner == null) {
+            throw badRequest("Owner is required");
+        }
+        requireText(owner.taxIdNumber(), "Owner tax ID");
+        requireText(owner.name(), "Owner name");
     }
 
-    private void validarCreationRequest(PixKeyCreationInternalRequest request) {
-        if (request.getKey() == null || request.getKey().isEmpty()) {
-            throw new IllegalArgumentException("Chave Pix não pode ser nula ou vazia");
+    private void requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw badRequest(field + " is required");
         }
-
-        if (request.getKeyType() == null) {
-            throw new IllegalArgumentException("Tipo da chave Pix não pode ser nulo ou vazio");
-        }
-
-        if (request.getKeyType().equals(PixKeyType.CPF) && !ValidadorCpfCnpj.isCpfValido(request.getKey())) {
-            throw new IllegalArgumentException("Chave Pix inválida para o tipo CPF: " + request.getKey());
-        }
-
-        if (request.getKeyType().equals(PixKeyType.CNPJ) && !ValidadorCpfCnpj.isCnpjValido(request.getKey())) {
-            throw new IllegalArgumentException("Chave Pix inválida para o tipo CNPJ: " + request.getKey());
-        }
-
-        verificarSeChaveJaExiste(request.getKey());
     }
 
-    private PixKeyCreationInternalRequest convertToInternalRequest(PixKeyCreationRequest request) {
-        var internalRequest = dictServiceMapper.toInternalRequest(request);
-
-        return internalRequest
-                .withCreationDate(Instant.now())
-                .withKeyOwnershipDate(Instant.now());
-    }
-
-    private void verificarSeChaveJaExiste(String key) {
-        if (dictRepository.buscarChavePix(key).isPresent()) {
-            throw new IllegalArgumentException("Chave Pix já existe: " + key);
-        }
+    private ResponseStatusException badRequest(String reason) {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, reason);
     }
 }

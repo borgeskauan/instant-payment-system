@@ -4,13 +4,11 @@ import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.CommonsMapper
 import br.kauan.paymentserviceprovider.adapter.output.pacs.commons.GroupHeader;
 import br.kauan.paymentserviceprovider.adapter.output.pacs.pacs002.*;
 import br.kauan.paymentserviceprovider.domain.entity.status.PaymentStatus;
-import br.kauan.paymentserviceprovider.domain.entity.status.ErrorReason;
 import br.kauan.paymentserviceprovider.domain.entity.status.StatusReport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
@@ -54,61 +52,17 @@ public class StatusReportMapper {
     }
 
     private StatusReport mapTransactionInfoToStatusUpdate(PaymentTransactionInfo info) {
-        PaymentStatus status = codeMapping.mapExternalStatusCodeToPaymentStatus(info.getStatus());
-        List<ErrorReason> errorReasons = mapStatusReasonInformationsToReasons(info.getStatusReasonInformations());
-
         return StatusReport.builder()
                 .originalPaymentId(info.getOriginalPaymentId())
-                .status(status)
-                .errorReasons(errorReasons)
-                .build();
-    }
-
-    private List<ErrorReason> mapStatusReasonInformationsToReasons(List<StatusReasonInformation> reasonInformations) {
-        if (reasonInformations == null) {
-            return List.of();
-        }
-
-        return reasonInformations.stream()
-                .map(this::mapStatusReasonInformationToReason)
-                .toList();
-    }
-
-    private ErrorReason mapStatusReasonInformationToReason(StatusReasonInformation reasonInfo) {
-        return ErrorReason.builder()
-                .descriptions(reasonInfo.getAdditionalInformation())
+                .status(codeMapping.mapExternalStatusCodeToPaymentStatus(info.getStatus()))
                 .build();
     }
 
     private PaymentTransactionInfo mapStatusUpdateToTransactionInfo(StatusReport statusReport) {
-        ExternalPaymentTransactionStatusCode status = codeMapping.mapPaymentStatusToExternalStatusCode(statusReport.getStatus());
-        List<StatusReasonInformation> statusReasonInformationList = mapReasonsToStatusReasonInformation(statusReport.getErrorReasons());
-
         return PaymentTransactionInfo.builder()
                 .originalPaymentId(statusReport.getOriginalPaymentId())
-                .status(status)
-                .statusReasonInformations(statusReasonInformationList)
-                .build();
-    }
-
-    private List<StatusReasonInformation> mapReasonsToStatusReasonInformation(List<ErrorReason> errorReasons) {
-        if (errorReasons == null) {
-            return Collections.emptyList();
-        }
-
-        return errorReasons.stream()
-                .map(this::mapReasonToStatusReasonInformation)
-                .toList();
-    }
-
-    private StatusReasonInformation mapReasonToStatusReasonInformation(ErrorReason errorReason) {
-        var mappedCode = codeMapping.mapReasonCodeToExternalStatusReasonCode(errorReason.getErrorCode());
-
-        return StatusReasonInformation.builder()
-                .reason(StatusReason.builder()
-                        .code(mappedCode)
-                        .build())
-                .additionalInformation(errorReason.getDescriptions())
+                .status(codeMapping.mapPaymentStatusToExternalStatusCode(statusReport.getStatus()))
+                .statusReasonInformations(List.of())
                 .build();
     }
 }

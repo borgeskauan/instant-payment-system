@@ -5,7 +5,6 @@ import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import com.google.protobuf.ByteString;
 import io.grpc.ManagedChannel;
 import io.grpc.inprocess.InProcessChannelBuilder;
@@ -52,7 +51,6 @@ class NotificationGatewayGrpcClientTest {
 
     @Test
     void processesTheWholeBatchBeforeAdvancingTheCursor() throws Exception {
-        new GlobalVariables().setBankCode("12345678");
         CountDownLatch secondPull = new CountDownLatch(1);
         AtomicInteger pulls = new AtomicInteger();
         AtomicReference<String> secondCursor = new AtomicReference<>();
@@ -80,19 +78,18 @@ class NotificationGatewayGrpcClientTest {
 
         assertThat(secondPull.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(secondCursor.get()).isEqualTo("cursor-2");
-        verify(processor).process("12345678", "{\"CdtTrfTxInf\":[]}");
-        verify(processor).process("12345678", "{\"FIToFIPmtStsRpt\":[]}");
+        verify(processor).process("{\"CdtTrfTxInf\":[]}");
+        verify(processor).process("{\"FIToFIPmtStsRpt\":[]}");
     }
 
     @Test
     void retriesWithThePreviousCursorWhenBatchProcessingFails() throws Exception {
-        new GlobalVariables().setBankCode("12345678");
         CountDownLatch retry = new CountDownLatch(1);
         AtomicInteger pulls = new AtomicInteger();
         AtomicReference<String> retryCursor = new AtomicReference<>();
         NotificationProcessor processor = mock(NotificationProcessor.class);
         doThrow(new IllegalStateException("boom")).when(processor)
-                .process("12345678", "{\"CdtTrfTxInf\":[]}");
+                .process("{\"CdtTrfTxInf\":[]}");
 
         startServer(new NotificationGatewayGrpc.NotificationGatewayImplBase() {
             @Override

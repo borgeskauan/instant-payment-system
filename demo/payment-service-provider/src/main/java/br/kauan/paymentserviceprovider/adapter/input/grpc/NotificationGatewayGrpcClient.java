@@ -4,7 +4,6 @@ import br.kauan.notificationgateway.grpc.proto.NotificationGatewayGrpc;
 import br.kauan.notificationgateway.grpc.proto.PullRequest;
 import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.paymentserviceprovider.adapter.input.notification.NotificationProcessor;
-import br.kauan.paymentserviceprovider.config.GlobalVariables;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -91,9 +90,8 @@ public class NotificationGatewayGrpcClient implements SmartLifecycle {
             @Override
             public void onNext(PullResponse response) {
                 try {
-                    String ispb = GlobalVariables.getBankCode();
                     for (var notification : response.getNotificationsList()) {
-                        notificationProcessor.process(ispb, notification.getPayload().toStringUtf8());
+                        notificationProcessor.process(notification.getPayload().toStringUtf8());
                     }
                     cursor = response.getNextCursor();
                     processed = true;

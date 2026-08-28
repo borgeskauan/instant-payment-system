@@ -1,19 +1,6 @@
 name: reference-demo
 
 services:
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: dict
-      POSTGRES_PASSWORD: demo
-    volumes:
-      - dict-data:/var/lib/postgresql/data
-    healthcheck:
-      test: pg_isready -U postgres -d dict || exit 1
-      interval: 3s
-      timeout: 3s
-      retries: 20
-
   dict:
     build:
       context: ./dict
@@ -21,12 +8,7 @@ services:
     ports:
       - "8003:8003"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/dict
-      SPRING_DATASOURCE_PASSWORD: demo
       JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m"
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   certs-init:
     build:
@@ -44,10 +26,12 @@ services:
   funds-init:
     image: curlimages/curl:8.10.1
     entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      DEMO_INITIAL_BALANCE: "${DEMO_INITIAL_BALANCE:-1000}"
     command:
       - |
-        until curl -fsS -X PUT http://spi:8002/internal/funds/11111111 -H 'Content-Type: application/json' -d '{"balance":1000,"resetIfExists":true}'; do sleep 2; done
-        curl -fsS -X PUT http://spi:8002/internal/funds/22222222 -H 'Content-Type: application/json' -d '{"balance":1000,"resetIfExists":true}'
+        until curl -fsS -X PUT http://spi:8002/internal/funds/11111111 -H 'Content-Type: application/json' -d "{\"balance\":$${DEMO_INITIAL_BALANCE},\"resetIfExists\":true}"; do sleep 2; done
+        curl -fsS -X PUT http://spi:8002/internal/funds/22222222 -H 'Content-Type: application/json' -d "{\"balance\":$${DEMO_INITIAL_BALANCE},\"resetIfExists\":true}"
     networks:
       - core
 
@@ -59,6 +43,7 @@ services:
       - "8081:8080"
     environment: &psp-environment
       BANK_CODE: "11111111"
+      PSP_INITIAL_BALANCE: "${DEMO_INITIAL_BALANCE:-1000}"
       EXTERNAL_DICT_URL: http://dict:8003
       EXTERNAL_CENTRAL_TRANSFER_URL: https://kafka-producer:8001
       NOTIFICATION_GATEWAY_HOST: notification-gateway
@@ -118,6 +103,3 @@ networks:
   core:
     external: true
     name: infra_default
-
-volumes:
-  dict-data:
