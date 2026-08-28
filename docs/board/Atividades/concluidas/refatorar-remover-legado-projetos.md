@@ -230,7 +230,7 @@ Registros existentes:
 
 Load-tool e infraestrutura devem repetir integralmente a metodologia obrigatória. Nenhum inventário técnico começa antes do Gate A e nenhuma alteração começa antes do Gate B.
 
-`dict`, `payment-app` e `payment-service-provider` continuam fora desta task até as decisões registradas em [`Avaliar DICT, PSP simulado e frontend para o portfólio`](../Backlog/pos-projeto/avaliar-dict-psp-frontend-portfolio.md).
+`dict`, `payment-app` e `payment-service-provider` continuam fora desta task e serão isolados conforme a decisão registrada em [`Separar a reference demo do core`](../agora/separar-reference-demo.md).
 
 ## Fora de escopo
 
