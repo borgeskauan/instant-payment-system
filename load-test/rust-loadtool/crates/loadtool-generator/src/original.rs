@@ -11,14 +11,12 @@ use crate::http2::{
 };
 use crate::lifecycle::{offset_ns, rfc3339_now};
 use crate::notification_flow::spawn_replay;
-use crate::pacer::{PhaseSchedule, PreparedBucket, spawn_prepared_pacer};
+use crate::pacer::{PREPARATION_BUCKETS, PhaseSchedule, PreparedBucket, spawn_prepared_pacer};
 use crate::payload::pacs008;
 use crate::payment_state::PaymentStates;
 use crate::phase_tracker::PhaseTracker;
 use crate::runtime::{PhaseWork, Runtime};
 use loadtool_contract::event::{Event, MessageKind, Participant};
-
-const PACER_CHANNEL_CAPACITY: usize = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionOutcome<T> {
@@ -235,7 +233,7 @@ pub(crate) async fn run_generation_phase(
     warmup: bool,
 ) -> Result<()> {
     let schedule = PhaseSchedule::new(start, duration, rate, first_sequence)?;
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(PACER_CHANNEL_CAPACITY);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(PREPARATION_BUCKETS);
     let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
     let admission_runtime = Arc::clone(&runtime);
     let runtime_handle = tokio::runtime::Handle::current();

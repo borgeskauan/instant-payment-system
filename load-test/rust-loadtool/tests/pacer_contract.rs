@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use loadtool_generator::clock::RunClock;
 use loadtool_generator::pacer::{
-    PhaseSchedule, PreparedBucket, advance_cursor, spawn_prepared_pacer,
+    PREPARATION_BUCKETS, PhaseSchedule, PreparedBucket, advance_cursor, spawn_prepared_pacer,
 };
 
 #[test]
@@ -99,7 +99,7 @@ fn descriptors_keep_absolute_bucket_boundaries_and_sequence_positions() {
     assert_eq!(first.bucket_index, 0);
     assert_eq!(first.first_sequence, 17);
     assert_eq!(first.request_count, 21);
-    assert_eq!(first.preparation_start, start - Duration::from_millis(20));
+    assert_eq!(first.preparation_start, start - Duration::from_millis(50));
     assert_eq!(first.bucket_start, start);
     assert_eq!(first.bucket_deadline, start + Duration::from_millis(10));
 
@@ -214,7 +214,7 @@ fn real_clock_pacing_preserves_the_ten_millisecond_envelope() {
     let start = Instant::now() + Duration::from_millis(20);
     let schedule =
         PhaseSchedule::new(start, Duration::from_millis(100), 2_100, 0).expect("valid phase");
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(PREPARATION_BUCKETS);
     let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
     let handle =
         spawn_prepared_pacer(schedule, sender, prepared_receiver, |_| {}).expect("pacer thread");
@@ -241,7 +241,7 @@ fn descriptors_arrive_before_the_bucket_for_non_observable_preparation() {
     let start = Instant::now() + Duration::from_millis(50);
     let schedule =
         PhaseSchedule::new(start, Duration::from_millis(50), 2_000, 0).expect("valid phase");
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(PREPARATION_BUCKETS);
     let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
     let handle =
         spawn_prepared_pacer(schedule, sender, prepared_receiver, |_| {}).expect("pacer thread");
@@ -267,7 +267,7 @@ fn rates_below_one_thousand_do_not_dispatch_empty_buckets() {
     let start = Instant::now() + Duration::from_millis(20);
     let schedule =
         PhaseSchedule::new(start, Duration::from_millis(100), 50, 0).expect("valid low-rate phase");
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(PREPARATION_BUCKETS);
     let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
     let handle =
         spawn_prepared_pacer(schedule, sender, prepared_receiver, |_| {}).expect("pacer thread");

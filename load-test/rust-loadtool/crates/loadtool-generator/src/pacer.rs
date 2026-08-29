@@ -7,9 +7,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use tokio::sync::mpsc;
 
-const BUCKET: Duration = Duration::from_millis(10);
+const BUCKET_MILLIS: u64 = 10;
+const BUCKET: Duration = Duration::from_millis(BUCKET_MILLIS);
 const SPIN_TAIL: Duration = Duration::from_micros(50);
-pub const PREPARATION_LEAD: Duration = Duration::from_millis(20);
+pub const PREPARATION_BUCKETS: usize = 5;
+pub const PREPARATION_LEAD: Duration =
+    Duration::from_millis(BUCKET_MILLIS * PREPARATION_BUCKETS as u64);
 
 #[derive(Clone, Debug)]
 pub struct BucketDescriptor {

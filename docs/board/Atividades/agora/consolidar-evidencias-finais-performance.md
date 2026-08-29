@@ -21,6 +21,20 @@ Além disso, a revisão final produziu uma execução com rolling mínimo de `1.
 
 A evidência final será refeita sobre um único commit limpo e por uma campanha atômica de duas runs consecutivas.
 
+## Campanha `b7ea138` — não qualificadora
+
+A primeira run qualificou com rolling mínimo de `2.058 TPS`, p99 de `434,433 ms` e corretude integral. A segunda manteve corretude integral e p99 de `841,254 ms`, mas atingiu rolling mínimo de apenas `1.985 TPS`; por isso, a campanha inteira foi rejeitada.
+
+Profile e execution plan foram byte a byte idênticos nas duas runs. Na segunda execução, `958` originais planejados não chegaram a ser iniciados: `651` pertenciam a `31` buckets completos perdidos pelo pacer e os `307` restantes expiraram antes do commit durante preparação ou admissão. As perdas concentraram-se em poucos segundos, enquanto as requests efetivamente iniciadas mantiveram baixa latência de admissão e respostas HTTP saudáveis. Isso descarta o backlog HTTP/2 oculto corrigido pelo commit e restringe a próxima investigação ao scheduling pré-admissão do gerador.
+
+A hipótese de saturação global da CPU do host não foi confirmada. O JFR registrou `machineTotal` próximo de `26%` durante o pior segundo da run B em um host com oito CPUs; existiram picos de `80–98%` em instantes próximos, mas perdas relevantes também ocorreram com uso agregado entre `25–40%`. Os três JFRs produziram valores consistentes entre si, porém a métrica agrega todas as CPUs em amostras de aproximadamente um segundo, enquanto o pacer depende de uma única thread e opera em buckets de `10 ms`. A telemetria disponível não mede CPU por core nem o processo Rust separadamente, portanto não permite excluir starvation curto ou localizado nem atribuir causalidade à CPU do host.
+
+Uma run diagnóstica curta separou as causas sem alterar o workload. Na fase ativa, não houve perda por wakeup tardio nem por canal cheio; `21` slots foram perdidos porque um bucket não ficou pronto e `34` expiraram na admissão HTTP final. A evidência aponta primeiro para o horizonte atual de preparação de `20 ms`, não para prioridade da thread do pacer.
+
+Ao ampliar somente o horizonte de preparação para `50 ms`, mantendo buckets, taxa e deadlines, a repetição diagnóstica executou os `126.000` originais planejados sem misses na fase ativa. O rolling mínimo subiu de `2.058` para `2.079 TPS`, o p99 ficou em `399,581 ms` e a corretude permaneceu integral. O bootstrap ainda perdeu trabalho durante o aquecimento, mas caiu de `1.785` para `860` slots; isso não integra a janela ativa nem altera a conclusão sobre a causa dos misses qualificadores.
+
+Nenhuma das duas runs desta campanha deve ser promovida como evidência final. Uma nova campanha só pode começar depois que essa causa for tratada e a correção estiver em outro commit limpo.
+
 ## Contrato da campanha qualificadora
 
 ### Fonte autoritativa
