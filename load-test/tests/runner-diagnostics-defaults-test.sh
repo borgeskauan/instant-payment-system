@@ -10,7 +10,7 @@ assert_flags() {
     shift 2
 
     (
-        source "${ROOT_DIR}/scripts/run-diagnostics.sh"
+        source "${ROOT_DIR}/scripts/diagnostics/run-diagnostics.sh"
         parse_args run --run-dir /tmp/diagnostic-test "$@" -- true
         [[ "$ENABLE_JFR" == "$want_jfr" ]]
         [[ "$ENABLE_SYSTEM_DIAGNOSTICS" == "$want_system" ]]
@@ -22,7 +22,7 @@ assert_flags false true --no-jfr
 assert_flags true false --no-system-diagnostics
 assert_flags false false --no-jfr --no-system-diagnostics
 
-usage_output="$({ source "${ROOT_DIR}/scripts/run-diagnostics.sh"; usage; })"
+usage_output="$({ source "${ROOT_DIR}/scripts/diagnostics/run-diagnostics.sh"; usage; })"
 for flag in --no-jfr --no-system-diagnostics; do
     if ! grep -Fq -- "$flag" <<< "$usage_output"; then
         echo "runner usage does not list ${flag}" >&2

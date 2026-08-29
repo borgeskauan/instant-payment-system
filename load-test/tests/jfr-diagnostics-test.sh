@@ -17,7 +17,7 @@ SH
 chmod +x "$tmp_dir/bin/docker"
 
 if ! PATH="$tmp_dir/bin:$PATH" \
-    bash "$ROOT_DIR/scripts/container-jfr.sh" \
+    bash "$ROOT_DIR/scripts/diagnostics/container-jfr.sh" \
         start kafka-producer test /tmp/test.jfr \
         'jdk.TLSHandshake#enabled=true'; then
     echo "container JFR helper rejected an event-setting override" >&2
@@ -40,7 +40,7 @@ chmod +x "$tmp_dir/scripts/container-jfr.sh"
 export SCRIPTS_DIR="$tmp_dir/scripts"
 export JFR_COMMAND_LOG="$tmp_dir/jfr-commands.log"
 
-source "${ROOT_DIR}/scripts/run-diagnostics.sh"
+source "${ROOT_DIR}/scripts/diagnostics/run-diagnostics.sh"
 
 start_jfr_recordings "$tmp_dir/results"
 

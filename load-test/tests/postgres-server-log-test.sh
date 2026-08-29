@@ -28,13 +28,13 @@ since='2026-08-16T19:59:59.000000000Z'
 until='2026-08-16T20:00:02.000000000Z'
 output="$tmp_dir/postgres-server.log"
 
-bash "$ROOT_DIR/scripts/postgres-server-log.sh" capture "$since" "$until" "$output"
+bash "$ROOT_DIR/scripts/diagnostics/postgres-server-log.sh" capture "$since" "$until" "$output"
 
 grep -Fq 'relation "funds_bucket_entity"' "$output"
 grep -Fqx "logs --timestamps --since $since --until $until postgres" "$DOCKER_INVOCATIONS_LOG"
 
 export FAKE_POSTGRES_LOG_FAIL=true
-if bash "$ROOT_DIR/scripts/postgres-server-log.sh" \
+if bash "$ROOT_DIR/scripts/diagnostics/postgres-server-log.sh" \
         capture "$since" "$until" "$tmp_dir/failed.log" >/dev/null 2>&1; then
     echo "PostgreSQL server-log capture hid docker failure" >&2
     exit 1
@@ -45,7 +45,7 @@ if [[ -e "$tmp_dir/failed.log" ]]; then
 fi
 unset FAKE_POSTGRES_LOG_FAIL
 
-if bash "$ROOT_DIR/scripts/postgres-server-log.sh" capture "$since" "$until" >/dev/null 2>&1; then
+if bash "$ROOT_DIR/scripts/diagnostics/postgres-server-log.sh" capture "$since" "$until" >/dev/null 2>&1; then
     echo "PostgreSQL capture accepted a missing output path" >&2
     exit 1
 fi

@@ -82,7 +82,7 @@ chmod +x \
 
 export SCRIPTS_DIR="$tmp_dir/scripts"
 export FAKE_POSTGRES_SERVER_LOG_INVOCATIONS="$tmp_dir/postgres-server-log-invocations.log"
-source "$ROOT_DIR/scripts/run-diagnostics.sh"
+source "$ROOT_DIR/scripts/diagnostics/run-diagnostics.sh"
 
 ENABLE_JFR=false
 ENABLE_SYSTEM_DIAGNOSTICS=true
@@ -156,7 +156,7 @@ test ! -e "$tmp_dir/disabled/logs/postgres-server.log"
 
 mkdir -p "$tmp_dir/command-failure"
 set +e
-    "$ROOT_DIR/scripts/run-diagnostics.sh" run \
+    "$ROOT_DIR/scripts/diagnostics/run-diagnostics.sh" run \
     --run-dir "$tmp_dir/command-failure" \
     --no-jfr --no-system-diagnostics \
     -- bash -c 'exit 17'
@@ -173,7 +173,7 @@ for child_status in 0 17; do
     result="$tmp_dir/precedence-$child_status"
     mkdir -p "$result"
     set +e
-    "$ROOT_DIR/scripts/run-diagnostics.sh" run \
+    "$ROOT_DIR/scripts/diagnostics/run-diagnostics.sh" run \
         --run-dir "$result" --no-jfr \
         -- bash -c "exit $child_status"
     wrapper_status=$?

@@ -35,18 +35,18 @@ export POSTGRES_ACTIVITY_INTERVAL_MS=0
 export POSTGRES_ACTIVITY_MAX_SAMPLES=2
 
 activity_started_at_ns="$(date +%s%N)"
-bash "$ROOT_DIR/scripts/postgres-runtime.sh" \
+bash "$ROOT_DIR/scripts/diagnostics/postgres-runtime.sh" \
     sample-activity "$tmp_dir/postgres-activity.csv"
 activity_elapsed_ns=$(($(date +%s%N) - activity_started_at_ns))
 if ((activity_elapsed_ns >= 200000000)); then
     echo "PostgreSQL activity sampler ignored its millisecond cadence" >&2
     exit 1
 fi
-bash "$ROOT_DIR/scripts/postgres-runtime.sh" \
+bash "$ROOT_DIR/scripts/diagnostics/postgres-runtime.sh" \
     snapshot-io before "$tmp_dir/postgres-io.csv"
-bash "$ROOT_DIR/scripts/postgres-runtime.sh" \
+bash "$ROOT_DIR/scripts/diagnostics/postgres-runtime.sh" \
     snapshot-io after "$tmp_dir/postgres-io.csv"
-bash "$ROOT_DIR/scripts/postgres-statements.sh" \
+bash "$ROOT_DIR/scripts/diagnostics/postgres-statements.sh" \
     snapshot "$tmp_dir/postgres-statements.csv"
 
 expected_activity_header='sampled_at_ns,pid,application_name,state,query_id,query_age_ms,transaction_age_ms,wait_event_type,wait_event,blocking_pids'
@@ -108,7 +108,7 @@ if ! grep -q 'statement_timestamp' "$DOCKER_INVOCATIONS_LOG"; then
     exit 1
 fi
 
-if bash "$ROOT_DIR/scripts/postgres-runtime.sh" snapshot-io middle "$tmp_dir/invalid.csv" >/dev/null 2>&1; then
+if bash "$ROOT_DIR/scripts/diagnostics/postgres-runtime.sh" snapshot-io middle "$tmp_dir/invalid.csv" >/dev/null 2>&1; then
     echo "PostgreSQL I/O snapshot accepted an invalid phase" >&2
     exit 1
 fi

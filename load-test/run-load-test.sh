@@ -7,7 +7,7 @@ readonly RESULTS_DIR="${RESULTS_DIR:-${LOAD_TEST_DIR}/results}"
 readonly LOADTOOL_PROFILES_DIR="${LOADTOOL_PROFILES_DIR:-${LOAD_TEST_DIR}/profiles}"
 readonly PREPARED_ENVIRONMENT_ROOT="${PREPARED_ENVIRONMENT_ROOT:-${LOAD_TEST_DIR}/.prepared-environment}"
 readonly RUST_LOADTOOL_TARGET_DIR="${RUST_LOADTOOL_TARGET_DIR:-/tmp/rust-loadtool-target}"
-readonly DIAGNOSTICS_SCRIPT="${DIAGNOSTICS_SCRIPT:-${LOAD_TEST_DIR}/scripts/run-diagnostics.sh}"
+readonly DIAGNOSTICS_SCRIPT="${DIAGNOSTICS_SCRIPT:-${LOAD_TEST_DIR}/scripts/diagnostics/run-diagnostics.sh}"
 
 PROFILE_NAME="uniform-smoke"
 RUN_TAG=""

@@ -37,7 +37,7 @@ export PATH="$tmp_dir/bin:$PATH"
 export CONTAINER_STATS_INTERVAL_MS=0
 export CONTAINER_STATS_MAX_SAMPLES=2
 
-bash "$ROOT_DIR/scripts/container-stats.sh" \
+bash "$ROOT_DIR/scripts/diagnostics/container-stats.sh" \
     sample "$tmp_dir/container-stats.csv"
 
 expected_header='sampled_at_ns,container,cpu_percent,memory_usage,network_io,block_io'
@@ -57,13 +57,13 @@ for container in postgres kafka kafka-producer spi notification-gateway; do
 done
 
 if CONTAINER_STATS_INTERVAL_MS=100000 CONTAINER_STATS_MAX_SAMPLES=2 \
-    bash "$ROOT_DIR/scripts/container-stats.sh" sample "$tmp_dir/throttled.csv" >/dev/null 2>&1; then
+    bash "$ROOT_DIR/scripts/diagnostics/container-stats.sh" sample "$tmp_dir/throttled.csv" >/dev/null 2>&1; then
     echo "container stats emitted immediate duplicate stream refreshes" >&2
     exit 1
 fi
 
 if CONTAINER_STATS_MAX_SAMPLES=invalid \
-    bash "$ROOT_DIR/scripts/container-stats.sh" sample "$tmp_dir/invalid.csv" >/dev/null 2>&1; then
+    bash "$ROOT_DIR/scripts/diagnostics/container-stats.sh" sample "$tmp_dir/invalid.csv" >/dev/null 2>&1; then
     echo "container stats accepted an invalid sample limit" >&2
     exit 1
 fi
