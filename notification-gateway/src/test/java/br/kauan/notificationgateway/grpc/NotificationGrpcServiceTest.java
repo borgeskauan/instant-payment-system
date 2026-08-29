@@ -108,6 +108,32 @@ class NotificationGrpcServiceTest {
     }
 
     @Test
+    void releasesPullAdmissionBeforeTheClientObservesCompletion() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        when(reader.read("20000001", partition, -1, 15)).thenReturn(new DeliveryPage(
+                List.of(record(partition, 1, "notification")),
+                1,
+                true
+        ));
+        CapturingObserver secondObserver = new CapturingObserver();
+        CapturingObserver firstObserver = new CapturingObserver() {
+            @Override
+            public void onCompleted() {
+                service.pullNotifications(PullRequest.newBuilder().build(), secondObserver);
+            }
+        };
+
+        authenticatedCall(service, PullRequest.newBuilder().build(), firstObserver);
+
+        assertThat(firstObserver.error).isNull();
+        assertThat(secondObserver.error).isNull();
+        assertThat(secondObserver.response).isNotNull();
+    }
+
+    @Test
     void mapsExpiredCursorToFailedPrecondition() throws Exception {
         NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
         DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
@@ -172,7 +198,7 @@ class NotificationGrpcServiceTest {
         );
     }
 
-    private static final class CapturingObserver implements StreamObserver<PullResponse> {
+    private static class CapturingObserver implements StreamObserver<PullResponse> {
         private PullResponse response;
         private Throwable error;
 

@@ -103,6 +103,7 @@ public class NotificationGrpcService extends NotificationGatewayGrpc.Notificatio
             }
 
             responseObserver.onNext(response.build());
+            session.close();
             responseObserver.onCompleted();
         } catch (NotificationCursorExpiredException expiredCursor) {
             fail(responseObserver, Status.FAILED_PRECONDITION, expiredCursor.getMessage());
