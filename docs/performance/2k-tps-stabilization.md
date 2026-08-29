@@ -13,13 +13,13 @@ de outcome ou violação de replay.
 
 | sinal | primeira execução | repetição |
 | --- | ---: | ---: |
-| originais planejados / executados no active | `1.890.000 / 1.890.000` | `1.890.000 / 1.890.000` |
-| TPS médio ativo | `2.100` | `2.100` |
-| mínimo rolling de 1 segundo | `2.079` | `2.079` |
-| latência p50 / p95 | `144,418 / 236,033 ms` | `146,514 / 236,939 ms` |
-| latência p99 / máxima | `268,134 / 928,778 ms` | `259,956 / 606,208 ms` |
-| PACS.008 replayados / aceitos | `100.500 / 100.500` | `100.500 / 100.500` |
-| PACS.002 replayados / aceitos | `80.392 / 80.392` | `80.393 / 80.393` |
+| originais planejados / executados no active | `1.890.000 / 1.889.945` | `1.890.000 / 1.889.979` |
+| TPS médio ativo | `2.099,939` | `2.099,977` |
+| mínimo rolling de 1 segundo | `2.058` | `2.058` |
+| latência p50 / p95 | `152,620 / 262,829 ms` | `145,864 / 243,520 ms` |
+| latência p99 / máxima | `409,163 / 1.046,459 ms` | `329,152 / 914,552 ms` |
+| PACS.008 replayados / aceitos | `100.496 / 100.496` | `100.498 / 100.498` |
+| PACS.002 replayados / aceitos | `80.393 / 80.393` | `80.397 / 80.397` |
 | violações funcionais / replay | `0 / 0` | `0 / 0` |
 
 O threshold interno é p99 abaixo de `1 segundo`. O contrato externo permanece
@@ -58,8 +58,9 @@ Os replays são carga adicional. Eles não reduzem nem substituem os pagamentos
 originais contabilizados no piso. A distribuição mantém `80%` do tráfego nos
 pares quentes de cada cenário.
 
-O perfil e o plano normalizado usados na qualificação estão preservados em
-[`evidence/2026-08-27`](evidence/2026-08-27/manifest.md).
+O perfil, o plano normalizado, os dois relatórios qualificadores e o relatório
+comparativo do gerador Go estão preservados em
+[`evidence/2026-08-29`](evidence/2026-08-29/manifest.md).
 
 ## Fronteira de medição
 
@@ -311,18 +312,23 @@ corretude.
 
 ## Evidência preservada
 
-Os bundles qualificadores permanecem locais e ocupam aproximadamente `1,1 GiB`
-cada:
+Os bundles finais permanecem locais e ocupam aproximadamente `1,1 GiB` cada:
 
 ```text
-load-test/results/rust-qualification-15m-clean/20260827_030742
-load-test/results/rust-qualification-15m-repeat-clean/20260827_033639
+load-test/results/compare-rust-15m-fixed/20260828_220502
+load-test/results/rust-final-evidence-15m-repeat-clean/20260829_010534
 ```
 
 O repositório preserva somente profile, plano normalizado, relatórios e
-checksums dos artefatos grandes. CSVs, JFRs, logs e certificados não devem ser
-adicionados ao Git comum. O manifesto registra a limitação de que a revisão Git
-foi reconstruída pelo histórico local, pois o bundle final não a persistiu.
+checksums. CSVs, JFRs, logs e certificados não devem ser adicionados ao Git
+comum. O manifesto registra a origem do código e as limitações da metadata dos
+bundles.
+
+Uma primeira repetição após o cleanup preservou todos os outcomes e ficou dentro
+do threshold de latência, mas não foi promovida: seu rolling mínimo foi
+`1.995 TPS`. A repetição seguinte partiu novamente de stack e volumes novos e
+qualificou com `2.058 TPS`. Esse resultado mantém explícita a variância do host
+compartilhado sem permitir que média ou picos compensem a queda.
 
 ## Limite exploratório acima da meta
 

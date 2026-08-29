@@ -1,0 +1,127 @@
+{
+  "valid": false,
+  "generation": {
+    "offered_tps": 2100,
+    "required_minimum_tps": 2000,
+    "started": 1883094,
+    "rolling_window_seconds": 1,
+    "average_tps": 2092.327,
+    "minimum_observed_tps": 1784,
+    "maximum_observed_tps": 2121,
+    "sustained_minimum_met": false,
+    "outside_window": 0
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 0.8,
+      "traffic": {
+        "payments": {
+          "started": 1602116,
+          "accepted": 1602116
+        },
+        "pacs002": {
+          "started": 1602116,
+          "accepted": 1602116
+        }
+      },
+      "outcome": {
+        "expected": {
+          "status": "ACSC",
+          "reason_codes": []
+        },
+        "matched": 1602116,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 1506449,
+        "after_threshold": 8,
+        "latency_ms": {
+          "p50": 179.575,
+          "p95": 363.249,
+          "p99": 529.829,
+          "max": 1049.312
+        }
+      },
+      "violations": 0
+    },
+    {
+      "name": "insufficient-funds",
+      "share": 0.2,
+      "traffic": {
+        "payments": {
+          "started": 400550,
+          "accepted": 400550
+        },
+        "pacs002": {
+          "started": 0,
+          "accepted": 0
+        }
+      },
+      "outcome": {
+        "expected": {
+          "status": "RJCT",
+          "reason_codes": [
+            "AM04"
+          ]
+        },
+        "matched": 400550,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 376637,
+        "after_threshold": 0,
+        "latency_ms": {
+          "p50": 90.298,
+          "p95": 207.376,
+          "p99": 357.969,
+          "max": 905.879
+        }
+      },
+      "violations": 0
+    }
+  ],
+  "replays": {
+    "pacs008": {
+      "started": 100109,
+      "accepted": 100109,
+      "violations": 0
+    },
+    "pacs002": {
+      "started": 80099,
+      "accepted": 80099,
+      "violations": 0
+    }
+  },
+  "notification_pull": {
+    "batches": {
+      "count": 1036084,
+      "empty_responses": 39547,
+      "mean": 1.182,
+      "p50": 1,
+      "p95": 2,
+      "max": 9
+    },
+    "violations": 0
+  },
+  "performance": {
+    "threshold_ms": 1000,
+    "within_sla": true,
+    "active_tps": {
+      "payments": 2092.327,
+      "pacs002": 1673.689,
+      "pacs008_replays": 103.421,
+      "pacs002_replays": 82.751,
+      "payer_notifications": 2092.14
+    },
+    "payer_notifications_after_active": 168,
+    "latency_ms": {
+      "p50": 164.784,
+      "p95": 339.797,
+      "p99": 513.53,
+      "max": 1049.312
+    }
+  }
+}

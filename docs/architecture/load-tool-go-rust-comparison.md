@@ -199,7 +199,10 @@ The final evidence is in:
 ```text
 load-test/results/compare-go-15m-fixed/20260828_214501
 load-test/results/compare-rust-15m-fixed/20260828_220502
+load-test/results/rust-final-evidence-15m-repeat-clean/20260829_010534
 ```
+
+The compact profile, execution plan, reports, origins, and checksums are versioned in [`docs/performance/evidence/2026-08-29`](../performance/evidence/2026-08-29/manifest.md). The additional clean Rust confirmation reproduced the controlled Rust run's `2,058 TPS` rolling minimum, with p99 at `329.152 ms` and no correctness or replay violations. An immediately preceding clean attempt reached `1,995 TPS` and was not promoted, preserving the shared-host variance rather than hiding it.
 
 Each `inputs/comparison-manifest.json` records engine, profile, core revision, patch digest, generator revision, binary digest, and start time. `/usr/bin/time -v` output is under `diagnostics/loadtool-process.txt`; workload and outcome values come from `sla-report.json`; common temporal reconstruction uses `events/pacs008-starts.csv`.
 
@@ -215,7 +218,7 @@ load-test/results/compare-rust-15m-repeat/20260828_213542
 
 ## Limitations
 
-* There is one primary long sample per implementation. The large direction of the result is consistent with the earlier Go run and historical Rust qualification runs, but this campaign does not estimate confidence intervals or a precise population effect size.
+* The controlled A/B has one primary long sample per implementation, followed by one clean Rust confirmation. The large direction of the result is consistent with the earlier Go run and historical Rust qualification runs, but this campaign does not estimate confidence intervals or a precise population effect size.
 * The runs were sequential rather than alternated. Fresh stacks remove persisted workload state but cannot eliminate host temperature, CPU frequency, kernel scheduling, or unrelated background variation.
 * The generator shared the host with the measured stack. This is the deployment the project currently needs to support, but a dedicated load-generator host would better isolate SPI capacity from generator overhead.
 * Maximum RSS and CPU time cover the whole command, including post-run report reconstruction. They are valid total-tool costs but not pure hot-path generator measurements.
