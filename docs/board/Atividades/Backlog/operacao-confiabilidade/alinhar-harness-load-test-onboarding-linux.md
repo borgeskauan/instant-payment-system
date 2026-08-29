@@ -1,59 +1,55 @@
-# Alinhar o harness de load test ao onboarding Linux mínimo
+# Simplificar o onboarding Linux do load test
 
-- [ ] Reduzir os requisitos do host a Bash e Docker Compose sem ampliar o escopo do gerador Rust
+- [ ] Permitir que uma pessoa valide o projeto a partir de um clone limpo usando somente Bash e Docker Compose
+
+## Pré-condição
+
+Iniciar esta task somente depois de concluir e congelar as evidências finais produzidas pelo harness atual. O onboarding novo não deve introduzir uma variável enquanto a baseline autoritativa ainda estiver sendo consolidada.
 
 ## Objetivo
 
-Permitir que uma pessoa em uma máquina Linux limpa execute o smoke funcional e as campanhas de performance instalando somente Docker com Compose. A orquestração continua em Shell, o load tool continua responsável apenas por profile, geração e relatório, e diagnósticos continuam externos ao hot path.
+O critério de sucesso é simples:
 
-## Arquitetura alvo
-
-```text
-host Linux
-  Bash + Docker Compose
-        |
-        +-- comando único: prepare, run, smoke e down
-        +-- Docker constrói os serviços Java
-        +-- Docker constrói e exporta o binário Linux estático do load tool
-        +-- container de suporte provisiona fundos e gera certificados
-        +-- diagnósticos permanecem adapters externos
-
-Rust load tool
-  profile + geração + relatório
+```bash
+git clone ...
+cd instant-payment-system
+./load-test/test smoke
 ```
 
-O ambiente preparado seleciona o profile. O comando `run` deriva essa informação do estado preparado e não recebe o profile novamente.
+Esse comando deve preparar uma stack limpa, executar o profile funcional oficial e apresentar claramente o resultado. A task termina quando esse caminho funciona preservando as fronteiras arquiteturais; não existe objetivo de tornar o harness internamente perfeito.
 
-## Trabalho
+## Interface alvo
 
-### Fatia 1 — Lean Linux harness
+```bash
+./load-test/test smoke
+./load-test/test prepare mixed-outcomes-2k-15m
+./load-test/test run qualification-1
+./load-test/test down
+```
 
-- Remover Python do caminho operacional fazendo o Rust emitir os registros tipados de preparação que Shell consome.
-- Substituir os entrypoints públicos separados por um único comando pequeno com subcomandos `prepare`, `run`, `smoke` e `down`.
-- Fazer `run` consumir o único ambiente preparado vigente sem repetir `--profile`.
-- Manter Shell restrito a coordenação de processos e arquivos; não interpretar JSON nem duplicar regras do profile.
+O ambiente preparado seleciona o profile. `run` deriva essa informação do estado preparado e não recebe `--profile` novamente.
 
-### Fatia 2 — Docker-only onboarding
+## Requisitos
 
-- Construir o load tool em imagem versionada e exportar um binário Linux estático para execução direta no host, preservando cache de build e comportamento de performance.
-- Executar geração de certificados PSP e provisionamento por uma imagem de suporte com as ferramentas necessárias, removendo Cargo, `curl` e OpenSSL dos requisitos do host.
-- Usar healthchecks do Compose e `docker compose up --wait` para readiness das aplicações onde isso representar uma propriedade real; manter separado somente o check específico de estabilidade dos consumer groups Kafka.
-- Preservar JFR, métricas PostgreSQL, recursos de containers e logs como adapters externos e desativáveis, sem mover diagnóstico para o Rust.
+- Expor um único entrypoint público para `smoke`, `prepare`, `run` e `down`.
+- Exigir no host somente Linux, Bash e Docker com Compose.
+- Construir o load tool sem exigir Rust/Cargo no host e executá-lo host-native para preservar o caminho medido.
+- Manter Docker, readiness, provisionamento, certificados e diagnósticos fora do código Rust do load tool.
+- Preservar profiles, workload, pacing, networking, recursos, resultados e evidências do harness vigente.
+- Falhar com mensagens legíveis quando Docker, preparação ou execução não puderem ser concluídos.
 
-## Critérios de conclusão
+## Validação
 
-- Uma máquina Linux com Bash e Docker Compose consegue executar `smoke` a partir de um clone limpo.
-- Java, Maven, Rust/Cargo, Python, Node, `curl` e OpenSSL não são dependências do host para executar o core e o load test.
-- O comando público mostra a sequência simples de preparação e execução e falha com mensagens claras quando Docker ou o ambiente preparado não estão disponíveis.
-- O gerador Rust não conhece Docker, stack, provisionamento, certificados ou diagnósticos.
-- Profiles, workload, pacing, resultados e evidências permanecem semanticamente equivalentes ao harness anterior.
-- Testes automatizados cobrem preparação, ambiente divergente/incompleto, execução, falhas dos adapters e shutdown dos diagnósticos.
-- Um smoke limpo e uma comparação controlada confirmam equivalência funcional; qualquer mudança material no caminho medido exige validação de performance proporcional ao risco.
+- Executar o smoke completo a partir de uma preparação limpa.
+- Fazer uma comparação curta e controlada com o harness anterior.
+- Repetir qualificação longa somente se a implementação alterar materialmente pacer, networking, execução do binário, afinidade, recursos ou outra parte do caminho medido.
 
 ## Fora de escopo
 
 - Suporte nativo a Windows; no Windows, o caminho aceitável continua sendo WSL2.
 - Reescrever toda a orquestração em Python ou Rust.
-- Colocar infraestrutura ou diagnósticos dentro do load tool.
+- Eliminar Python, `curl`, OpenSSL ou qualquer ferramenta interna como objetivo independente; elas apenas não podem ser requisitos do host.
+- Redesenhar completamente readiness, adapters, diagnósticos ou estrutura dos scripts.
+- Criar cobertura exaustiva do harness além do necessário para provar o caminho público e suas falhas relevantes.
 - Alterar workloads, SLAs, recursos da stack ou comportamento dos componentes do core.
 - Transformar o Compose local em solução de deployment ou alta disponibilidade.
