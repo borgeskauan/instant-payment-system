@@ -8,15 +8,27 @@ EXTRACT="${ROOT_DIR}/scripts/execution-plan-participants.py"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+mkdir -p "$tmp_dir/bin"
 export FUNDING_CALLS="$tmp_dir/funding-calls.log"
-cat > "$tmp_dir/fake-provision-funds" <<'SH'
+cat > "$tmp_dir/bin/curl" <<'SH'
 #!/bin/bash
 set -euo pipefail
-printf '%s\n' "$*" >> "$FUNDING_CALLS"
-exit "${FAIL_FUNDING:-0}"
+method="" url="" body=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -s) shift ;;
+        -o|-w|-H) shift 2 ;;
+        -X) method="$2"; shift 2 ;;
+        -d) body="$2"; shift 2 ;;
+        *) url="$1"; shift ;;
+    esac
+done
+printf '%s %s %s\n' "$method" "$url" "$body" >> "$FUNDING_CALLS"
+printf '%s' "${CURL_HTTP_STATUS:-204}"
+exit "${CURL_STATUS:-0}"
 SH
-chmod +x "$tmp_dir/fake-provision-funds"
-export PROVISION_FUNDS_SCRIPT="$tmp_dir/fake-provision-funds"
+chmod +x "$tmp_dir/bin/curl"
+export PATH="$tmp_dir/bin:$PATH"
 
 cat > "$tmp_dir/execution-plan.json" <<'JSON'
 {
@@ -39,10 +51,16 @@ diff -u "$tmp_dir/expected-rows" "$tmp_dir/actual-rows"
 
 "$PROVISION" --execution-plan "$tmp_dir/execution-plan.json" >/dev/null
 cat > "$tmp_dir/expected-funding" <<'EOF'
---balance 123.45 --reset-if-exists --ispb 10000001 --ispb 10000002 --ispb 10000003
---balance 0.00 --reset-if-exists --ispb 20000001 --ispb 20000002 --ispb 20000003
---balance 0.00 --preserve-if-exists --ispb 10000004 --ispb 10000005
---balance 0.00 --preserve-if-exists --ispb 20000004 --ispb 20000005
+PUT http://localhost:8002/internal/funds/10000001 {"balance":123.45,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/10000002 {"balance":123.45,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/10000003 {"balance":123.45,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/20000001 {"balance":0.00,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/20000002 {"balance":0.00,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/20000003 {"balance":0.00,"resetIfExists":true}
+PUT http://localhost:8002/internal/funds/10000004 {"balance":0.00,"resetIfExists":false}
+PUT http://localhost:8002/internal/funds/10000005 {"balance":0.00,"resetIfExists":false}
+PUT http://localhost:8002/internal/funds/20000004 {"balance":0.00,"resetIfExists":false}
+PUT http://localhost:8002/internal/funds/20000005 {"balance":0.00,"resetIfExists":false}
 EOF
 diff -u "$tmp_dir/expected-funding" "$FUNDING_CALLS"
 
@@ -53,7 +71,7 @@ if "$PROVISION" --execution-plan "$tmp_dir/malformed.json" >/dev/null 2>&1; then
 fi
 
 set +e
-FAIL_FUNDING=37 "$PROVISION" --execution-plan "$tmp_dir/execution-plan.json" >/dev/null 2>&1
+CURL_STATUS=37 "$PROVISION" --execution-plan "$tmp_dir/execution-plan.json" >/dev/null 2>&1
 status=$?
 set -e
 if [[ "$status" -ne 37 ]]; then

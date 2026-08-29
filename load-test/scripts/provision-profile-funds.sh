@@ -3,9 +3,8 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly PARTICIPANTS_SCRIPT="${PARTICIPANTS_SCRIPT:-${SCRIPT_DIR}/execution-plan-participants.py}"
-readonly PROVISION_FUNDS_SCRIPT="${PROVISION_FUNDS_SCRIPT:-${REPOSITORY_ROOT}/scripts/provision-funds.sh}"
+readonly SPI_BASE_URL="${SPI_BASE_URL:-http://localhost:8002}"
 
 EXECUTION_PLAN=""
 PROVISIONING_RECORDS=()
@@ -32,8 +31,8 @@ validate_inputs() {
         echo "Execution-plan participant reader is not executable: $PARTICIPANTS_SCRIPT" >&2
         return 1
     fi
-    if [[ ! -x "$PROVISION_FUNDS_SCRIPT" ]]; then
-        echo "Fund provisioning adapter is not executable: $PROVISION_FUNDS_SCRIPT" >&2
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "curl is required." >&2
         return 1
     fi
 }
@@ -46,25 +45,35 @@ load_records() {
     mapfile -t PROVISIONING_RECORDS <<< "$normalized"
 }
 
-provision_role() {
-    local pair_number_start="$1"
-    local pair_count="$2"
-    local role_prefix="$3"
-    local balance="$4"
-    local reset_if_exists="$5"
-    local pair_number suffix
-    local -a args=(--balance "$balance")
+provision_ispb() {
+    local ispb="$1" balance="$2" reset_if_exists="$3"
+    local body status curl_status
+    body="$(printf '{"balance":%s,"resetIfExists":%s}' "$balance" "$reset_if_exists")"
 
-    if [[ "$reset_if_exists" == true ]]; then
-        args+=(--reset-if-exists)
+    if status="$(curl -s -o /dev/null -w '%{http_code}' \
+            -X PUT "${SPI_BASE_URL}/internal/funds/${ispb}" \
+            -H 'Content-Type: application/json' \
+            -d "$body")"; then
+        :
     else
-        args+=(--preserve-if-exists)
+        curl_status=$?
+        echo "Failed to call SPI while provisioning ISPB $ispb." >&2
+        return "$curl_status"
     fi
+    if [[ "$status" != 204 ]]; then
+        echo "Failed to provision ISPB $ispb. HTTP status: $status" >&2
+        return 1
+    fi
+}
+
+provision_role() {
+    local pair_number_start="$1" pair_count="$2" role_prefix="$3" balance="$4" reset_if_exists="$5"
+    local pair_number suffix
+
     for ((pair_number = pair_number_start; pair_number < pair_number_start + pair_count; pair_number++)); do
         suffix="$(printf '%06d' "$pair_number")"
-        args+=(--ispb "${role_prefix}${suffix}")
+        provision_ispb "${role_prefix}${suffix}" "$balance" "$reset_if_exists"
     done
-    "$PROVISION_FUNDS_SCRIPT" "${args[@]}"
 }
 
 provision_all() {
