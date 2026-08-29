@@ -84,6 +84,20 @@ O PSP mantém o progresso durável. Cada chamada unary `PullNotifications`
 informa o último cursor processado e recebe até 15 notificações. Cada item
 carrega o payload opaco e seu `communication_id` lógico.
 
+O limite `15` foi fixado depois de uma varredura histórica com máximos
+`1/10/15/20/500`, registrando também os lotes efetivamente retornados. Quinze
+produziu média real de `11,506` notificações e o melhor equilíbrio entre
+trabalho de leitura, progresso do workload e regularidade do gerador naquele
+desenho. Limites maiores reduziram chamadas no read path, mas concentraram
+trabalho em rajadas e degradaram a carga oferecida. Esse experimento ocorreu
+antes de Kafka se tornar o read path durável; ele explica a escolha conservadora
+do limite do protocolo, não estabelece que `15` seja um ótimo universal.
+
+No diagnóstico Rust final, já sobre o caminho Kafka vigente, os `68.849` lotes
+não vazios tiveram média `1,189`, p95 `2` e máximo `3`; nenhum lote atingiu o
+limite. Portanto `15` deve ser lido como teto de segurança e oportunidade de
+batching sob backlog, não como tamanho esperado no steady state saudável.
+
 O cursor é opaco e autenticado por HMAC. Ele contém, internamente:
 
 ```text

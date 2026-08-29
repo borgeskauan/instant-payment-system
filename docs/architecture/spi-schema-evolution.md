@@ -64,6 +64,13 @@ para `BYTEA`, versão para `SMALLINT` e tipos de auditoria para representações
 compactas. O fillfactor da tabela de pagamentos foi caracterizado durante a
 estabilização e permaneceu em 50 para favorecer suas transições de estado.
 
+No A/B da compactação conjunta, o tempo SQL por row caiu `12,89%` no insert de
+pagamentos e `10,19%` no insert de auditoria; o WAL por row caiu respectivamente
+`13,09%` e `6,68%`. A cauda melhorou naquela execução, mas throughput rolling e
+CPU não apresentaram ganho uniforme. A mudança foi mantida pela redução física
+reproduzida e pela representação mais estreita, não como explicação isolada da
+capacidade final.
+
 O baseline final também removeu da tabela de pagamentos os campos completos de
 pagador e recebedor que o fluxo JDBC nunca consultava. O hot path persiste apenas
 identidade, fingerprint, estado, valor e os ISPBs necessários para reserva,
@@ -73,6 +80,14 @@ externo completo.
 O commit `be45b59` removeu índices técnicos de auditoria sem consumidores e a
 primary key de `event_id`; o identificador continua obrigatório e gerado para
 ordenação/evidência, mas não participa da regra de negócio.
+
+Repetições com e sem esses índices separaram novamente o mecanismo do resultado
+sistêmico. Sem os índices técnicos, o insert de auditoria consumiu entre
+`38,25%` e `52,43%` menos tempo por row e aproximadamente `46%` menos WAL por
+row. A latência end-to-end variou mais entre duas execuções do mesmo lado do que
+entre as variantes, portanto não foi atribuída à remoção. Permanecem somente os
+índices parciais que protegem fatos de negócio; um índice de consulta só deve
+voltar se surgir um consumidor real que justifique seu custo no hot path.
 
 ## Auditoria orientada a fatos
 

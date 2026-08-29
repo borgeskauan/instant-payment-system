@@ -29,6 +29,9 @@ sem redefinir o contrato.
 Este documento é a síntese. O histórico completo de hipóteses, A/Bs e
 diagnósticos permanece no
 [`caderno de estabilização`](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md).
+Os resultados intermediários que alteraram decisões foram curados no
+[apêndice de achados experimentais](experimental-findings.md), com evidência,
+decisão e limitações separadas.
 
 ## Workload qualificado
 
@@ -145,6 +148,75 @@ executor medida ao antigo ciclo de outbox/delivery e somente `6,63%` ao conjunto
 de lock, transição e saldo diretamente associado ao PACS.002. Isso mudou o alvo
 de otimização do settlement isolado para o lifecycle de notificações.
 
+## Lições dos experimentos intermediários
+
+Os microbenchmarks serviram para demonstrar mecanismos, não para declarar ganho
+de capacidade. A simplificação do update PACS.002 reduziu seu tempo SQL
+acumulado em `69,69%` e sua pior execução em `98,32%`, mas o A/B end-to-end
+concluiu `11,04%` menos outcomes porque o PostgreSQL permaneceu saturado e o
+limite migrou para etapas anteriores e para o ciclo compartilhado de escrita.
+A regra resultante foi medir novamente o caminho causal completo depois de toda
+otimização local relevante.
+
+O `fillfactor=50` da tabela de pagamentos também apresentou um trade-off real:
+os updates HOT passaram de `22,86%` para `100%`, e o custo e WAL das transições
+caíram materialmente. Em contrapartida, insert e lock/leitura ficaram mais
+caros, heap mais índices cresceram `46,98%` e os outcomes concluídos ficaram
+praticamente iguais (`-0,02%`). O layout foi mantido pela eficiência física das
+transições, não como explicação para a capacidade end-to-end final.
+
+Nem todo ganho de microbenchmark foi promovido. Pré-selecionar IDs antes da
+admissão PACS.008 reduziu o SQL isolado em mais de `65%`, mas no sistema completo
+a consulta adicional absorveu quase todo o benefício: o SQL global subiu
+`5,61%` e o p99 subiu `26,51%`. O caminho vigente preserva `INSERT ... ON
+CONFLICT DO NOTHING` e consulta somente os conflitos. Esse resultado reforçou a
+preferência por reduzir o trabalho dominante, em vez de otimizar uma operação
+isolada com uma nova leitura no hot path.
+
+O tuning dos consumers foi guiado pelos lotes realmente entregues, não apenas
+pelos limites configurados. No PACS.002, elevar `max.poll.records` de `220` para
+`500` não criou lotes de 500: o máximo observado foi `339`, enquanto o batch
+médio subiu de `129,084` para `162,806`. Isso reduziu callbacks em `20,37%` e o
+tempo de processamento dos callbacks em `24,11%`. Já elevar
+`fetch.min.bytes` de `16` para `20 KiB` quase não alterou o batch médio
+(`162,806 → 164,354`), mas elevou o p99 end-to-end de `489,036` para
+`668,482 ms`. A decisão durável é tratar esses parâmetros como limites de
+formação e sempre observar a distribuição real e a cauda resultante.
+
+No PACS.008, a comparação diagnóstica que levou `fetch.min.bytes` de `128` para
+`56 KiB` reforçou a mesma regra. Considerando todos os callbacks registrados no
+JFR, a mediana do lote permaneceu em `165` e a média variou pouco
+(`155,291 → 152,010`), mas p99 e máximo do lote caíram de `281/493` para
+`235/350`. O p99 do callback caiu de `105,511` para `72,191 ms`, e o p99
+end-to-end, de `566,941` para `386,178 ms`. Os dois runs preservaram os outcomes
+e ficaram abaixo do piso rolling (`1.967` e `1.956 TPS`); portanto sustentam
+`56 KiB` como redução conservadora de espera e cauda, não como prova isolada de
+maior capacidade.
+
+A evolução interna do gerador Rust também descartou soluções aparentemente
+óbvias. O protótipo de `1 ms` perdeu `30.877` de `246.000` slots; buckets de
+`10 ms` reduziram a perda para `1.170`, e um coordenador de buckets para `104`.
+Depois disso, aumentar o canal repetiu os mesmos `21` misses, pinning de CPU
+produziu `29`, e elevar o spin para `1 ms` ainda deixou `12` misses ao custo de
+`16,012 s` de spin acumulado. Um diagnóstico separou apenas um atraso no retorno
+do sleep de `26` perdas antes do commit: o problema restante não era acordar a
+thread, mas preparar e admitir o trabalho a tempo.
+
+O planner compartilhado foi a mudança decisiva. Ele executou `246.000/246.000`,
+zerou misses, reduziu p99 do pacer para `0,244 ms` e p99 do início HTTP para
+`0,228 ms`; o user CPU caiu de aproximadamente `211–220 s` nas variantes
+anteriores para `37,570 s`. O cutover completo preservou zero misses e reduziu
+o RSS máximo para cerca de `59,6 MiB`. A lição durável é resolver ownership e
+preparação antes de ajustar timer, fila ou afinidade do host.
+
+Profiling posterior também delimitou onde parar. Heaptrack contou `47,59`
+milhões de alocações, principalmente em formatação do recorder e preparação
+HTTP/2, mas perturbou o próprio run: RSS chegou a `491 MiB` e p99 a
+`718,061 ms`. O perfil de CPU não apresentou um símbolo de aplicação dominante.
+Como o diagnóstico normal já qualificava com baixo RSS e lateness, buffer pool,
+allocator customizado e encoder JSON manual não foram promovidos sem evidência
+de benefício sistêmico.
+
 ## Evolução dos gargalos e decisões
 
 | evidência | decisão mantida | efeito observado |
@@ -251,6 +323,23 @@ O repositório preserva somente profile, plano normalizado, relatórios e
 checksums dos artefatos grandes. CSVs, JFRs, logs e certificados não devem ser
 adicionados ao Git comum. O manifesto registra a limitação de que a revisão Git
 foi reconstruída pelo histórico local, pois o bundle final não a persistiu.
+
+## Limite exploratório acima da meta
+
+Diagnósticos curtos a `4.000 TPS` foram executados somente para localizar o
+próximo limite, não para ampliar a capacidade declarada. Eles preservaram todos
+os outcomes funcionais e iniciaram quase toda a carga planejada, mas o mínimo
+rolling ficou entre `3.920` e `3.960 TPS` e o p99 end-to-end entre `1,36` e
+`2,45 segundos`. Portanto nenhum deles comprovou o piso de `4.000 TPS` nem o
+threshold interno de `1 segundo`.
+
+A primeira fila dominante apareceu no consumer PACS.008. Elevar
+`max.poll.records` de `500` para `1.000` não resolveu o limite: cerca de `10%`
+dos callbacks já excediam `500` registros, o p99 do callback aumentou de
+aproximadamente `153` para `250 ms` e mais trabalho terminou depois da janela
+ativa. O limite homologado permaneceu `500`; concorrência adicional do listener
+e múltiplas instâncias pertencem à homologação futura, não à qualificação da
+stack única.
 
 ## Limitações e trabalhos futuros
 

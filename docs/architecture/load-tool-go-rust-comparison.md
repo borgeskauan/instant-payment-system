@@ -4,7 +4,7 @@
 
 The Rust rewrite achieved the performance purpose that motivated it on the tested host. In the controlled 15-minute A/B, Rust started 1,889,945 of 1,890,000 planned active payments, sustained a minimum rolling one-second throughput of 2,058 TPS, used 34.1% less process CPU time, and reached a 27.2% lower maximum RSS than the last relevant Go implementation. Go completed the workload with correct business outcomes and a 2,092.327 TPS average, but its minimum rolling throughput fell to 1,784 TPS and therefore did not prove the required sustained 2,000 TPS floor.
 
-The rewrite did not make the codebase smaller. Rust has more handwritten production lines, more source files, and a substantially larger dependency graph. Its simplicity improvement is architectural: pacing, generation, persisted contracts, and reporting have explicit ownership, and Cargo prevents reporting from depending on the measured generator. Go remains the smaller and easier implementation for functional tests or lower rates, but it was not sufficient for the qualification workload on this shared host.
+The rewrite did not make the codebase smaller. Rust has more handwritten production lines, more source files, and a substantially larger dependency graph. Its simplicity improvement is architectural: pacing, generation, persisted contracts, and reporting have explicit ownership, and Cargo prevents reporting from depending on the measured generator. Go remains the smaller and easier implementation for functional tests or lower rates, but it did not demonstrate repeatable qualification margin on this shared host.
 
 This is a comparison of two implementations in this repository under one controlled environment, not a general Go-versus-Rust language benchmark.
 
@@ -37,6 +37,32 @@ Both primary runs used profile `mixed-outcomes-2k-15m`, profile SHA-256 `721561a
 The Go report is invalid only because `minimum_observed_tps` is below the required minimum. HTTP acceptance, happy-path `ACSC`, insufficient-funds `RJCT/AM04`, replay acceptance, and the configured latency threshold all passed. The Rust report likewise has no functional violations and satisfies both the rolling throughput floor and the latency threshold.
 
 The latency difference is descriptive. Both generators exercised the same core and Rust imposed less host overhead while offering slightly more work, which is consistent with lower generator interference, but one sequential A/B cannot isolate generator CPU as the sole cause of the SPI latency difference.
+
+## Historical repeatability context
+
+The controlled A/B is the primary comparison, but the retained history adds an important qualification. An earlier Go run, `loadtool-bounded-state-15m/20260824_115328`, did cross the floor once: it averaged 2,097.301 TPS, reached a minimum rolling throughput of 2,003 TPS, kept p99 at 560.538 ms, and completed every expected outcome and replay. That run proves that Go was capable of a passing sample; it does not make the final controlled failure impossible or contradictory.
+
+The issue was repeatability and margin. Other Go 15-minute runs with correct business outcomes produced rolling minima of 1,330, 1,844, 1,934, 1,966, and 1,986 TPS, while a six-minute diagnostic reached 2,009 TPS. Short or isolated passes therefore did not predict sustained 15-minute regularity reliably. By contrast, the two historical Rust qualifications both reached 2,079 TPS, and the controlled Rust run reached 2,058 TPS. The durable conclusion is not that Go could never meet 2,000 TPS; it is that the Rust architecture provided repeatable temporal margin for this shared-host qualification.
+
+These historical runs used evolving core and generator revisions, so they are evidence of repeatability across the project history, not additional samples in the controlled A/B or a basis for a language-wide performance claim.
+
+The retained Go runtime diagnostics help attribute that variability without turning them into another benchmark. In the 15-minute diagnostic, the process reached 3,000 goroutines, 657 GC cycles, 60.7 MiB of live heap, 57.5 seconds of aggregate GC CPU, and a sampled scheduler-latency p99 maximum of 83.9 ms. The mutex profile accumulated 1,173 seconds of wait across goroutines, with substantial cumulative attribution to original admission (`219.7 s`), HTTP posts (`217.9 s`), PACS.002 submission (`200.3 s`), and Pull consumption (`117.8 s`). These are overlapping aggregate wait totals, not elapsed wall time, and profiling accompanied a particularly poor `1,251 TPS` rolling minimum. They nevertheless show that the residual cost was distributed across shared coordination and runtime/network work rather than one removable GC or serialization hotspot.
+
+### What the Rust design iterations established
+
+The retained bundles show that the result did not come from the language switch alone. The first 1 ms prototype started only 215,123 of 246,000 planned originals in its final gated variant and missed 30,877 slots. Moving to absolute 10 ms buckets reduced the misses to 1,170, but still left generator p99 lateness at 5.997 ms. A bucket coordinator reduced misses again to 104.
+
+The next experiments isolated the remaining misses. A larger pacer channel reproduced the same 21 misses as the preceding admission diagnostic. CPU pinning produced 29 misses. Extending the spin tail to 1 ms reduced misses to 12, but consumed 16.012 seconds of accumulated spin time instead of a few milliseconds. A wait diagnostic observed only one late sleep return while 26 requests missed before commit, showing that operating-system wake-up was not the dominant remaining cause.
+
+The decisive change was ownership, not more aggressive timer tuning. With a shared planner preparing work before the pacing boundary, `rust-shared-planner-diagnostic/20260826_175105` executed all 246,000 planned originals, reduced pacer p99 to 0.244 ms and HTTP-start p99 to 0.228 ms, and reduced generator user CPU from roughly 211–220 seconds in the immediately preceding variants to 37.570 seconds. The later complete cutover preserved zero misses and ended at 0.322 ms pacer p99, 0.288 ms HTTP-start p99, 59.6 MiB maximum RSS, 84 maximum original requests in flight, and 291 maximum causal requests in flight.
+
+These are sequential design experiments rather than a controlled language benchmark. Their durable result is narrower: deadline-sensitive admission became reliable only after request planning and HTTP/2 preparation had a single explicit owner before the temporal boundary. Increasing queues, pinning a CPU, or spending more CPU in spin did not solve that ownership problem.
+
+### What profiling did not justify
+
+The final CPU profile had no dominant application symbol: the largest individual samples were allocator and runtime/network functions, with `malloc` at 1.36%, `free` at 1.19%, and HTTP/2 HPACK table lookup at 0.64%. Heaptrack observed 47.59 million allocation calls, including repeated recorder formatting and HTTP/2 request preparation, but the profiler itself raised peak RSS to 491 MiB and the run's p99 outcome latency to 718.061 ms. It was therefore treated as attribution evidence, not a performance run.
+
+The profile did not justify adding a buffer pool, custom allocator, manual JSON encoder, or another hot-path subsystem. The unprofiled diagnostic already met the workload with about 59.6 MiB RSS and low pacer overhead. This is a negative result worth preserving: allocation count alone was not sufficient reason to trade the simpler typed implementation for more memory-management machinery.
 
 ### Why Rust performed better in this comparison
 
@@ -76,7 +102,7 @@ The first two Rust 15-minute attempts were excluded from performance comparison 
 
 Static inspection and the two reproductions identified a Gateway lifecycle race. `NotificationGrpcService` called `responseObserver.onCompleted()` while the PSP session was still registered, and the `try-with-resources` removed the session only after the callback returned. The faster Rust loop could observe completion and issue its next sequential Pull before removal, which the Gateway misclassified as a concurrent Pull. Go contains the same fatal handling for `FAILED_PRECONDITION`, but its slower turnaround did not reach the race in these runs.
 
-The normalization is one lifecycle operation: release the session after `onNext` and before publishing completion. A regression test performs the next sequential Pull directly from the first observer's completion callback. All 41 Notification Gateway tests passed. Because this changed the measured core, both final Go and Rust runs were recreated from empty volumes and rerun against the identical patch. Each final bundle contains `inputs/core.patch` and its manifest records the patch digest. The patch remains uncommitted as requested.
+The normalization is one lifecycle operation: release the session after `onNext` and before publishing completion. A regression test performs the next sequential Pull directly from the first observer's completion callback. All 41 Notification Gateway tests passed. Because this changed the measured core, both final Go and Rust runs were recreated from empty volumes and rerun against the identical patch. Each final bundle contains `inputs/core.patch` and its manifest records the patch digest; the correction was subsequently incorporated into Git together with the comparison documentation.
 
 ## Implementation inventory
 
@@ -141,7 +167,7 @@ For occasional functional evolution, Go would be cheaper to onboard and update. 
 
 ### When Go would still be sufficient
 
-The Go implementation is sufficient for functional smokes, lower-rate diagnostics, and environments where the generator has ample isolated CPU and memory and sustained sub-second regularity is not itself a qualification requirement. It is not sufficient for this repository's current shared-host proof of at least 2,000 original payments per second for 15 continuous minutes, because its completed run failed the rolling floor despite a passing average and correct outcomes.
+The Go implementation is sufficient for functional smokes, lower-rate diagnostics, and environments where the generator has ample isolated CPU and memory and sustained sub-second regularity is not itself a qualification requirement. It even produced one historical passing 15-minute sample. It was not retained for this repository's current shared-host proof because it failed the rolling floor in the controlled final A/B and did not demonstrate repeatable margin across the long-run history, despite passing averages and correct outcomes.
 
 ## Methodology and reproducibility
 
