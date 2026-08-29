@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -17,6 +18,12 @@ use crate::payment_state::PaymentStates;
 use crate::phase_tracker::PhaseTracker;
 use crate::runtime::{PhaseWork, Runtime};
 use loadtool_contract::event::{Event, MessageKind, Participant};
+
+#[derive(Default)]
+struct PhaseMissDiagnostics {
+    http_preparation: AtomicU64,
+    http_admission: AtomicU64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionOutcome<T> {
@@ -236,12 +243,15 @@ pub(crate) async fn run_generation_phase(
     let (sender, mut receiver) = tokio::sync::mpsc::channel(PREPARATION_BUCKETS);
     let (prepared_sender, prepared_receiver) = std::sync::mpsc::channel();
     let admission_runtime = Arc::clone(&runtime);
+    let miss_diagnostics = Arc::new(PhaseMissDiagnostics::default());
+    let admission_miss_diagnostics = Arc::clone(&miss_diagnostics);
     let runtime_handle = tokio::runtime::Handle::current();
     let pacer = spawn_prepared_pacer(schedule, sender, prepared_receiver, move |bucket| {
         admit_prepared_bucket(
             Arc::clone(&admission_runtime),
             bucket.payload,
             &runtime_handle,
+            &admission_miss_diagnostics,
         );
     })?;
     let planner = Arc::clone(&runtime.planner);
@@ -280,10 +290,13 @@ pub(crate) async fn run_generation_phase(
             jobs.push(job);
         }
         let runtime_for_bucket = Arc::clone(&runtime);
+        let diagnostics_for_bucket = Arc::clone(&miss_diagnostics);
         let prepared_for_bucket = prepared_sender.clone();
         let bucket_index = descriptor.bucket_index;
         runtime.tasks.spawn(async move {
-            let prepared = prepare_original_bucket(runtime_for_bucket, jobs, warmup).await;
+            let prepared =
+                prepare_original_bucket(runtime_for_bucket, jobs, warmup, diagnostics_for_bucket)
+                    .await;
             let _ = prepared_for_bucket.send(PreparedBucket::new(bucket_index, prepared));
         });
     }
@@ -291,11 +304,23 @@ pub(crate) async fn run_generation_phase(
     let pacer_result = pacer
         .join()
         .map_err(|_| anyhow!("load-tool pacer thread panicked"))?;
-    if pacer_result.missed_slots > 0 {
+    let http_preparation_misses = miss_diagnostics.http_preparation.load(Ordering::Relaxed);
+    let http_admission_misses = miss_diagnostics.http_admission.load(Ordering::Relaxed);
+    let total_misses = pacer_result
+        .missed_slots
+        .saturating_add(http_preparation_misses)
+        .saturating_add(http_admission_misses);
+    if total_misses > 0 {
         eprintln!(
-            "load-tool diagnostic: phase={} missed_original_slots={}",
+            "load-tool diagnostic: phase={} missed_original_slots={} late_wakeup={} preparation_channel_full={} prepared_bucket_not_ready={} pacer_channel_closed={} http_preparation={} http_admission={}",
             if warmup { "warmup" } else { "active" },
-            pacer_result.missed_slots
+            total_misses,
+            pacer_result.late_wakeup_slots,
+            pacer_result.preparation_channel_full_slots,
+            pacer_result.prepared_bucket_not_ready_slots,
+            pacer_result.channel_closed_slots,
+            http_preparation_misses,
+            http_admission_misses,
         );
     }
     runtime.check_operational()
@@ -305,6 +330,7 @@ async fn prepare_original_bucket(
     runtime: Arc<Runtime>,
     jobs: Vec<PlannedOriginal>,
     warmup: bool,
+    miss_diagnostics: Arc<PhaseMissDiagnostics>,
 ) -> Vec<PreparedOriginalJob> {
     let mut prepared = Vec::with_capacity(jobs.len());
     for job in jobs {
@@ -355,7 +381,11 @@ async fn prepare_original_bucket(
                     Err(error) => runtime.failure.operational(&runtime.cancellation, error),
                 }
             }
-            Ok(AdmissionOutcome::Missed) => {}
+            Ok(AdmissionOutcome::Missed) => {
+                miss_diagnostics
+                    .http_preparation
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Err(error) => runtime.failure.operational(&runtime.cancellation, error),
         }
     }
@@ -366,6 +396,7 @@ fn admit_prepared_bucket(
     runtime: Arc<Runtime>,
     prepared: Vec<PreparedOriginalJob>,
     runtime_handle: &tokio::runtime::Handle,
+    miss_diagnostics: &PhaseMissDiagnostics,
 ) {
     let mut started = Vec::with_capacity(prepared.len());
     for prepared in prepared {
@@ -382,7 +413,11 @@ fn admit_prepared_bucket(
             job.request_timeout,
             job.hard_deadline,
         ) {
-            Ok(AdmissionOutcome::Missed) => {}
+            Ok(AdmissionOutcome::Missed) => {
+                miss_diagnostics
+                    .http_admission
+                    .fetch_add(1, Ordering::Relaxed);
+            }
             Ok(AdmissionOutcome::Admitted(request)) => {
                 obligations.transfer();
                 started.push(StartedOriginalJob {

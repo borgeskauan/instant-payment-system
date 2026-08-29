@@ -35,6 +35,14 @@ Ao ampliar somente o horizonte de preparação para `50 ms`, mantendo buckets, t
 
 Nenhuma das duas runs desta campanha deve ser promovida como evidência final. Uma nova campanha só pode começar depois que essa causa for tratada e a correção estiver em outro commit limpo.
 
+## Campanha `6b13d84` — interrompida na run A
+
+A correção do horizonte de preparação foi commitada e a run A começou com worktree limpa e ambiente recriado. Ela preservou corretude integral, mas não qualificou: executou `1.887.920 / 1.890.000` originais, atingiu rolling mínimo de `1.941 TPS` e p99 de `1.213,256 ms`. O pacer registrou `1.449` slots perdidos na fase ativa. Profile (`721561af...e104a`) e execution plan (`ebef7b92...94508`) preservaram os hashes das campanhas anteriores.
+
+Como a run A violou simultaneamente o piso sustentado e o SLA de latência, a run B não foi executada. Isso preserva o gate atômico: uma segunda amostra não pode recuperar uma campanha cuja primeira execução já falhou.
+
+Essa execução preservou somente o total agregado de misses, insuficiente para distinguir a fronteira responsável pela regressão intermitente. Os contadores causais do gerador passam a ser instrumentação permanente e precisam integrar o próximo commit candidato antes de uma nova campanha.
+
 ## Contrato da campanha qualificadora
 
 ### Fonte autoritativa

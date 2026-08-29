@@ -73,6 +73,33 @@ O gerador usa buckets absolutos de `10 ms`, sem carry-over. Um PACS.008 original
 só é admitido quando payload e capacidade HTTP/2 estão prontos antes do deadline
 do bucket. Trabalho atrasado não é despejado numa janela posterior.
 
+Essa capacidade precisa estar reservada, e não apenas momentaneamente observada
+como disponível. O uso anterior de `SendRequest::ready()` podia validar somente
+o dispatcher e ainda deixar o request admitido numa fila interna sem limite
+explícito. Nesse desenho, o timestamp de início descrevia a intenção do gerador,
+mas não provava que existia um stream HTTP/2 disponível para transportar o
+pagamento.
+
+O cliente atual espera o servidor anunciar um `MAX_CONCURRENT_STREAMS` finito
+(`256` no ingresso homologado), espelha esse limite num semáforo por conexão e
+adquire um permit antes do commit semântico do pagamento. O permit acompanha o
+request preparado até o término da resposta, erro ou timeout. Imediatamente
+antes de `send_request`, o sender também precisa estar pronto; capacidade
+indisponível depois da reserva é tratada como quebra de invariante. Se o permit
+não puder ser obtido até o deadline do bucket, o slot permanece não admitido e
+não produz estado nem timestamp HTTP. Assim, pagamentos contabilizados como
+iniciados não ficam escondidos atrás da fronteira temporal numa fila do cliente.
+
+O gerador mantém contadores causais internos para misses de wakeup, canal de
+preparação cheio, bucket não preparado, canal encerrado, preparação HTTP e
+admissão HTTP. Eles são atualizados apenas quando ocorre uma perda e publicados
+somente no log diagnóstico ao término da fase; não ampliam o contrato público do
+relatório. As lacunas de sequence e os timestamps persistidos mostram quando a
+perda ocorreu, enquanto esses contadores identificam em qual fronteira ela
+aconteceu. Essa instrumentação permanece no runtime porque falhas intermitentes
+sob carga sustentada não podem ser atribuídas com segurança apenas pelo total
+executado.
+
 O throughput é reconstruído depois do experimento a partir dos timestamps de
 início HTTP. O relatório ordena esses instantes e mede o menor número de
 originais em qualquer janela contínua de um segundo integralmente contida no

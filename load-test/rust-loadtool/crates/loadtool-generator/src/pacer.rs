@@ -154,17 +154,43 @@ pub fn advance_cursor(schedule: &PhaseSchedule, cursor: u64, now: Instant) -> Cu
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PacerResult {
     pub missed_slots: u64,
+    pub late_wakeup_slots: u64,
+    pub preparation_channel_full_slots: u64,
+    pub prepared_bucket_not_ready_slots: u64,
+    pub channel_closed_slots: u64,
 }
 
 #[derive(Default)]
 struct PacerState {
     missed_slots: u64,
+    late_wakeup_slots: u64,
+    preparation_channel_full_slots: u64,
+    prepared_bucket_not_ready_slots: u64,
+    channel_closed_slots: u64,
     channel_closed: bool,
 }
 
 impl PacerState {
-    fn miss(&mut self, count: u64) {
+    fn miss_late_wakeup(&mut self, count: u64) {
         self.missed_slots = self.missed_slots.saturating_add(count);
+        self.late_wakeup_slots = self.late_wakeup_slots.saturating_add(count);
+    }
+
+    fn miss_channel_full(&mut self, count: u64) {
+        self.missed_slots = self.missed_slots.saturating_add(count);
+        self.preparation_channel_full_slots =
+            self.preparation_channel_full_slots.saturating_add(count);
+    }
+
+    fn miss_prepared_not_ready(&mut self, count: u64) {
+        self.missed_slots = self.missed_slots.saturating_add(count);
+        self.prepared_bucket_not_ready_slots =
+            self.prepared_bucket_not_ready_slots.saturating_add(count);
+    }
+
+    fn miss_channel_closed(&mut self, count: u64) {
+        self.missed_slots = self.missed_slots.saturating_add(count);
+        self.channel_closed_slots = self.channel_closed_slots.saturating_add(count);
     }
 }
 
@@ -217,26 +243,26 @@ where
         let advance = advance_cursor(&schedule, cursor, Instant::now());
         let Some(bucket) = advance.next_bucket else {
             if next_prepare < schedule.buckets {
-                state.miss(schedule.slots_between(next_prepare, schedule.buckets));
+                state.miss_late_wakeup(schedule.slots_between(next_prepare, schedule.buckets));
             }
             for skipped in cursor..schedule.buckets {
                 if dispatched.remove(&skipped)
                     && let Some(descriptor) = schedule.descriptor(skipped)
                 {
-                    state.miss(descriptor.request_count);
+                    state.miss_late_wakeup(descriptor.request_count);
                 }
             }
             break;
         };
         if bucket > next_prepare {
-            state.miss(schedule.slots_between(next_prepare, bucket));
+            state.miss_late_wakeup(schedule.slots_between(next_prepare, bucket));
             next_prepare = bucket;
         }
         for skipped in cursor..bucket {
             if dispatched.remove(&skipped)
                 && let Some(descriptor) = schedule.descriptor(skipped)
             {
-                state.miss(descriptor.request_count);
+                state.miss_late_wakeup(descriptor.request_count);
             }
         }
         cursor = bucket;
@@ -255,7 +281,7 @@ where
             ) {
                 Some(prepared) => admit(prepared),
                 None => {
-                    state.miss(timing.request_count);
+                    state.miss_prepared_not_ready(timing.request_count);
                 }
             }
         }
@@ -273,6 +299,10 @@ where
 
     PacerResult {
         missed_slots: state.missed_slots,
+        late_wakeup_slots: state.late_wakeup_slots,
+        preparation_channel_full_slots: state.preparation_channel_full_slots,
+        prepared_bucket_not_ready_slots: state.prepared_bucket_not_ready_slots,
+        channel_closed_slots: state.channel_closed_slots,
     }
 }
 
@@ -337,7 +367,7 @@ fn prepare_descriptors_through(
         }
         wait_until(descriptor.preparation_start);
         if Instant::now() >= descriptor.bucket_deadline {
-            state.miss(descriptor.request_count);
+            state.miss_late_wakeup(descriptor.request_count);
             continue;
         }
         match sender.try_send(descriptor) {
@@ -345,11 +375,13 @@ fn prepare_descriptors_through(
                 dispatched.insert(*next_prepare - 1);
             }
             Err(mpsc::error::TrySendError::Full(descriptor)) => {
-                state.miss(descriptor.request_count);
+                state.miss_channel_full(descriptor.request_count);
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 state.channel_closed = true;
-                state.miss(schedule.slots_between(*next_prepare - 1, schedule.buckets));
+                state.miss_channel_closed(
+                    schedule.slots_between(*next_prepare - 1, schedule.buckets),
+                );
             }
         }
     }

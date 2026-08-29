@@ -87,6 +87,8 @@ fn absent_preparation_expires_without_delaying_the_next_bucket() {
     assert!(admissions[0].2 >= second.bucket_start);
     assert!(admissions[0].2 < second.bucket_deadline);
     assert_eq!(metrics.missed_slots, first.request_count);
+    assert_eq!(metrics.prepared_bucket_not_ready_slots, first.request_count);
+    assert_eq!(metrics.late_wakeup_slots, 0);
 }
 
 #[test]
@@ -191,6 +193,7 @@ fn bounded_channel_never_turns_a_full_bucket_into_later_load() {
 
     assert_eq!(queued.bucket_index, 0);
     assert_eq!(metrics.missed_slots, 200);
+    assert!(metrics.preparation_channel_full_slots > 0);
 }
 
 #[test]
@@ -207,6 +210,7 @@ fn expired_phase_separates_preparation_expiry_from_cursor_skip() {
         .expect("pacer did not panic");
 
     assert_eq!(metrics.missed_slots, 200);
+    assert_eq!(metrics.late_wakeup_slots, 200);
 }
 
 #[test]
