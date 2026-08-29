@@ -139,7 +139,7 @@ O trabalho seguiu quatro regras:
 PostgreSQL foi investigado por `pg_stat_statements`, activity sampling,
 I/O/WAL, lock waits, `EXPLAIN ANALYZE` e, numa execução descartável,
 `log_executor_stats`. JFR separou compilação, TLS, threads e espera JDBC nos
-processos Java. Os bundles preservaram requests, outcomes, replays e recursos
+processos Java. Os artefatos das execuções preservaram requests, outcomes, replays e recursos
 para permitir reconstrução posterior.
 
 Uma conclusão recorrente foi que `total_exec_time` de uma query não equivale a
@@ -353,7 +353,7 @@ stack única.
   recovery.
 - Não houve homologação Kubernetes nem multi-instância. Esses trabalhos estão
   separados no backlog.
-- Os bundles brutos ainda precisam de arquivo externo durável antes da limpeza
+- Os diretórios de resultado brutos ainda precisam de arquivo externo durável antes da limpeza
   dos resultados locais.
 
 ## Conclusão

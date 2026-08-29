@@ -26,7 +26,7 @@ Gerar workloads configurados de pagamentos originais em uma taxa temporal fiel, 
 | repetir PACS.008 e PACS.002 de forma determinística e como carga adicional | exercita replays idênticos sem substituir pagamentos originais | manter |
 | observar notificações do pagador sob semântica at-least-once | prova ACSC ou RJCT/AM04 pelo fluxo externo sem consultar o banco do SPI | manter |
 | registrar evidência individual com timestamps e gerar o relatório após a carga | permite reconstruir throughput rolling, latência, outcomes e replays sem agregar no hot path | manter |
-| preservar profile, plano, logs e diagnósticos no bundle do run | torna a execução auditável e comparável | manter |
+| preservar profile, plano, logs e diagnósticos no diretório de resultado | torna a execução auditável e comparável | manter |
 | coletar JFR, estatísticas PostgreSQL e recursos dos containers | permite investigar gargalos sem contaminar o gerador com responsabilidade de diagnóstico | manter como suporte externo e desativável |
 | oferecer profiles de smoke, diagnóstico e qualificação | separa feedback funcional rápido, investigação e prova oficial de 15 minutos | manter |
 
@@ -72,7 +72,7 @@ Entre outras mudanças, o histórico registra a remoção da implementação Go,
 
 * as crates `loadtool-generator`, `loadtool-report` e `loadtool-contract` mantêm a geração separada da interpretação pós-run;
 * pacing nativo, preparação antecipada de buckets, HTTP/2 persistente, Pull, replays, gate de warmup, recorder single-writer e capacidades bounded implementam diretamente o workload aprovado;
-* o bundle tipado impede sobrescrita e mantém evidência suficiente sem formatos históricos;
+* o diretório de execução tipado impede sobrescrita e mantém evidência suficiente sem formatos históricos;
 * scripts shell continuam donos da stack, provisionamento e diagnósticos; mover essas responsabilidades para Rust aumentaria acoplamento;
 * a repetição explícita das conexões nos profiles mantém cada workload autocontido e não será substituída por herança ou configuração global;
 * validação do profile editável e validação independente do plano normalizado protegem fronteiras diferentes e não são duplicação acidental.
@@ -98,7 +98,7 @@ Não foram encontradas filas escondidas, fallback histórico, código Go, respon
 5. Renomear `testdata/report-parity` e seu profile interno para `report-contract`.
 6. Aplicar `cargo fmt` e atualizar somente o trecho vigente do README afetado pela flag.
 
-Não haverá mudança de workload, profile, pacing, protocolo, bundle, relatório, diagnóstico coletado ou semântica de exit code.
+Não haverá mudança de workload, profile, pacing, protocolo, diretório de resultado, relatório, diagnóstico coletado ou semântica de exit code.
 
 ## Validação prevista
 
@@ -125,7 +125,7 @@ Intervenção mínima aprovada. A implementação fica limitada aos resíduos en
 * o cálculo residual do pacer de 1 ms e a API sem consumidor de produção do recorder foram removidos;
 * testes que apenas preservavam a ausência de contratos apagados ou espelhavam constantes privadas foram removidos;
 * a fixture histórica `report-parity` foi renomeada para `report-contract`;
-* nenhuma regra de workload, pacing, replay, outcome, relatório, bundle ou exit code foi alterada.
+* nenhuma regra de workload, pacing, replay, outcome, relatório, diretório de resultado ou exit code foi alterada.
 
 A suíte Rust passou de 86 para 83 testes porque três testes sem comportamento próprio foram removidos: dois espelhavam constantes privadas e um exercitava o cálculo já morto do pacer antigo de 1 ms.
 

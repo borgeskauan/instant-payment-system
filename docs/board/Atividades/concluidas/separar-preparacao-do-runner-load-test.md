@@ -36,7 +36,7 @@ preparador
 
 runner
   → executa o workload no ambiente previamente preparado
-  → coleta diagnósticos e produz o bundle do run
+  → coleta diagnósticos e produz o diretório de resultado
 ```
 
 O preparador deve receber a identificação do perfil ou outra entrada mínima e
@@ -81,7 +81,7 @@ ausente ou incompleta.
 - existe somente um ambiente preparado vigente, porque existe somente uma
   stack local; o runner compara o snapshot com o profile solicitado e rejeita
   uso divergente ou preparação incompleta;
-- `run-load-test.sh` somente resolve esse estado preparado, cria o bundle e
+- `run-load-test.sh` somente resolve esse estado preparado, cria o diretório de resultado e
   executa o Rust load-tool sob o wrapper independente de diagnósticos;
 - a suíte Rust, os 14 testes shell e a sintaxe dos scripts passaram;
 - o smoke limpo `orchestration-qualified-smoke/20260827_000908` executou

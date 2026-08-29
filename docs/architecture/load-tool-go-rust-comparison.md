@@ -50,7 +50,7 @@ The retained Go runtime diagnostics help attribute that variability without turn
 
 ### What the Rust design iterations established
 
-The retained bundles show that the result did not come from the language switch alone. The first 1 ms prototype started only 215,123 of 246,000 planned originals in its final gated variant and missed 30,877 slots. Moving to absolute 10 ms buckets reduced the misses to 1,170, but still left generator p99 lateness at 5.997 ms. A bucket coordinator reduced misses again to 104.
+The retained run artifacts show that the result did not come from the language switch alone. The first 1 ms prototype started only 215,123 of 246,000 planned originals in its final gated variant and missed 30,877 slots. Moving to absolute 10 ms buckets reduced the misses to 1,170, but still left generator p99 lateness at 5.997 ms. A bucket coordinator reduced misses again to 104.
 
 The next experiments isolated the remaining misses. A larger pacer channel reproduced the same 21 misses as the preceding admission diagnostic. CPU pinning produced 29 misses. Extending the spin tail to 1 ms reduced misses to 12, but consumed 16.012 seconds of accumulated spin time instead of a few milliseconds. A wait diagnostic observed only one late sleep return while 26 requests missed before commit, showing that operating-system wake-up was not the dominant remaining cause.
 
@@ -102,7 +102,7 @@ The first two Rust 15-minute attempts were excluded from performance comparison 
 
 Static inspection and the two reproductions identified a Gateway lifecycle race. `NotificationGrpcService` called `responseObserver.onCompleted()` while the PSP session was still registered, and the `try-with-resources` removed the session only after the callback returned. The faster Rust loop could observe completion and issue its next sequential Pull before removal, which the Gateway misclassified as a concurrent Pull. Go contains the same fatal handling for `FAILED_PRECONDITION`, but its slower turnaround did not reach the race in these runs.
 
-The normalization is one lifecycle operation: release the session after `onNext` and before publishing completion. A regression test performs the next sequential Pull directly from the first observer's completion callback. All 41 Notification Gateway tests passed. Because this changed the measured core, both final Go and Rust runs were recreated from empty volumes and rerun against the identical patch. Each final bundle contains `inputs/core.patch` and its manifest records the patch digest; the correction was subsequently incorporated into Git together with the comparison documentation.
+The normalization is one lifecycle operation: release the session after `onNext` and before publishing completion. A regression test performs the next sequential Pull directly from the first observer's completion callback. All 41 Notification Gateway tests passed. Because this changed the measured core, both final Go and Rust runs were recreated from empty volumes and rerun against the identical patch. Each final result directory contains `inputs/core.patch` and its manifest records the patch digest; the correction was subsequently incorporated into Git together with the comparison documentation.
 
 ## Implementation inventory
 
@@ -122,7 +122,7 @@ Counts are physical lines and files, including comments and blanks. Go generated
 
 The Rust production implementation is approximately 16.7% larger than handwritten Go by this coarse measure and is spread across 50% more files. Its binary is 57.7% smaller, but its third-party dependency surface is much larger because async I/O, HTTP/2, TLS, gRPC, serialization, and time handling are supplied by crates that Go largely obtains from its standard library and two direct gRPC/protobuf modules.
 
-Test-count differences do not imply coverage differences. Go accumulated many unit tests around mechanisms later removed, while Rust emphasizes integration contracts around pacing, HTTP/2 admission, bundle boundaries, deterministic workload, lifecycle, and report reconstruction.
+Test-count differences do not imply coverage differences. Go accumulated many unit tests around mechanisms later removed, while Rust emphasizes integration contracts around pacing, HTTP/2 admission, run-directory boundaries, deterministic workload, lifecycle, and report reconstruction.
 
 ### Complexity trade-off
 
@@ -145,7 +145,7 @@ This implementation was reasonable while the workload contract was still being d
 
 ### Rust
 
-Rust makes the ownership boundaries explicit with four Cargo packages: the application composition root, `loadtool-generator`, `loadtool-contract`, and `loadtool-report`. A dependency test enforces that the generator cannot depend on the reporter. The only handoff from generation to interpretation is the persisted run bundle, and report aggregation starts after the generator and recorder have closed.
+Rust makes the ownership boundaries explicit with four Cargo packages: the application composition root, `loadtool-generator`, `loadtool-contract`, and `loadtool-report`. A dependency test enforces that the generator cannot depend on the reporter. The only handoff from generation to interpretation is the persisted run directory, and report aggregation starts after the generator and recorder have closed.
 
 The hot path has a single native pacer using absolute 10 ms buckets and no catch-up. Tokio prepares HTTP/2 requests before their bucket, the pacer admits only prepared requests at the temporal boundary, payment causal state uses a preallocated atomic vector, and recorder and causal capacities are bounded. There is no fixed pool of thousands of idle workers. The largest checked-in production files are `profile.rs` at 644 lines, `model.rs` at 527, `notification_flow.rs` at 508, and `original.rs` at 475.
 
@@ -208,5 +208,5 @@ Additional smokes, an earlier complete Go run, and two excluded Rust failures in
 * Maximum RSS and CPU time cover the whole command, including post-run report reconstruction. They are valid total-tool costs but not pure hot-path generator measurements.
 * JFR and PostgreSQL/container diagnostics impose non-zero overhead. The wrapper and settings were identical in both final runs.
 * The exact payment identifiers and replay members differ between implementations. The profile, aggregate scenario shares, offered rates, replay shares, delays, participant topology, and expected outcomes are identical.
-* The Gateway lifecycle patch is not part of the referenced commit. Its exact binary diff is preserved in both final bundles, and the report must not be used without that patch digest.
+* The Gateway lifecycle patch is not part of the referenced commit. Its exact binary diff is preserved in both final result directories, and the report must not be used without that patch digest.
 * The comparison proves behavior only for this profile, host, core revision, and resource envelope. It does not establish a universal advantage for Rust or guarantee the same deltas on another machine.

@@ -2,7 +2,7 @@
 
 ## Execuções
 
-| execução | início local | bundle bruto | tamanho aproximado |
+| execução | início local | diretório de resultado bruto | tamanho aproximado |
 | --- | --- | --- | ---: |
 | qualificação | `2026-08-27 03:07:42 -03:00` | `load-test/results/rust-qualification-15m-clean/20260827_030742` | `1,1 GiB` |
 | repetição | `2026-08-27 03:36:39 -03:00` | `load-test/results/rust-qualification-15m-repeat-clean/20260827_033639` | `1,1 GiB` |
@@ -10,7 +10,7 @@
 As duas execuções usaram profile e plano de execução byte a byte idênticos. O
 HEAD reconstruído pelo histórico local é `a08fdd5`; os dois commits anteriores
 a ele alteravam somente documentação, e a última mudança no runtime era
-`975f72f`. Essa revisão não foi persistida pelo bundle e deve ser tratada como
+`975f72f`. Essa revisão não foi persistida nos artefatos da execução e deve ser tratada como
 evidência reconstruída, não como metadata autoritativa do artefato.
 
 ## Arquivos compactos preservados
@@ -35,8 +35,8 @@ evidência reconstruída, não como metadata autoritativa do artefato.
 
 ## Limitações de preservação
 
-Os bundles brutos continuam somente no armazenamento local e ainda não possuem
-um arquivo externo durável com checksum do bundle completo. Não remover os dois
+Os diretórios de resultado brutos continuam somente no armazenamento local e ainda não possuem
+um arquivo externo durável com checksum do resultado completo. Não remover os dois
 diretórios antes de concluir essa etapa da task de consolidação. Certificados
 efêmeros, credenciais, CSVs grandes, JFRs e logs não são versionados neste
 diretório.

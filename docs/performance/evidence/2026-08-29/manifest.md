@@ -33,4 +33,4 @@ A confirmação Rust foi iniciada com worktree limpa no commit `35c9bfa2408e9676
 | [`rust-confirmation-sla-report.json`](rust-confirmation-sla-report.json) | `0ec01d21a91ac0e12e880f227cf874a02d72b064bb328aa1595a1d59c746a52a` |
 | [`rust-nonqualifying-attempt-sla-report.json`](rust-nonqualifying-attempt-sla-report.json) | `d15c3f36bcfe49cc6149a63cb059bf0ab7bcfe35363dabbfe03b60e743195f82` |
 
-Os checksums são idênticos aos arquivos de origem nos bundles. CSVs, JFRs, logs, diagnósticos volumosos, certificados e credenciais não são versionados como evidência compacta.
+Os checksums são idênticos aos arquivos de origem nos diretórios de resultado. CSVs, JFRs, logs, diagnósticos volumosos, certificados e credenciais não são versionados como evidência compacta.

@@ -27,7 +27,7 @@ load-test/results/compare-go-15m-fixed/20260828_214501
 load-test/results/compare-rust-15m-fixed/20260828_220502
 ```
 
-Os manifestos registram profile, revisão do core, digest do patch, revisão do gerador, digest do binário e horário de início. Os bundles preservam o patch exato aplicado ao Gateway durante a campanha.
+Os manifestos registram profile, revisão do core, digest do patch, revisão do gerador, digest do binário e horário de início. Os diretórios de resultado preservam o patch exato aplicado ao Gateway durante a campanha.
 
 ## Ocorrência durante a campanha
 

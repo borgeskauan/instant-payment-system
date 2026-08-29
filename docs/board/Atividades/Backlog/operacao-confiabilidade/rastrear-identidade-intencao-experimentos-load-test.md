@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Tornar cada bundle de load test suficiente para identificar automaticamente o código executado e preservar a intenção mínima informada pelo executor, sem criar um sistema de gestão de experimentos.
+Tornar cada diretório de resultado do load test suficiente para identificar automaticamente o código executado e preservar a intenção mínima informada pelo executor, sem criar um sistema de gestão de experimentos.
 
 ## Contrato mínimo
 
@@ -26,11 +26,11 @@ O runner coleta automaticamente:
 * patch e SHA-256 quando houver mudanças não commitadas;
 * SHA-256 do profile e do plano de execução.
 
-Digests de binários e imagens permanecem no manifesto geral do bundle quando disponíveis; não entram no contrato preenchido pelo executor.
+Digests de binários e imagens permanecem no manifesto geral do resultado quando disponíveis; não entram no contrato preenchido pelo executor.
 
 ## Regras
 
-* Persistir intenção e identidade dentro do bundle antes da execução medida.
+* Persistir intenção e identidade no diretório de resultado antes da execução medida.
 * Não inferir hipótese ou mudança pelo nome da tag.
 * Não duplicar workload, resultados ou métricas: profile, execution plan e relatório continuam autoritativos.
 * Não criar `type`, `expectedEffect`, modelo genérico de variáveis ou arquivo de avaliação.
@@ -44,7 +44,7 @@ Digests de binários e imagens permanecem no manifesto geral do bundle quando di
 * Mudanças staged e unstaged são preservadas.
 * Arquivo de intenção inválido falha antes de gerar carga.
 * Baseline funciona sem `controlRun`; candidato preserva a referência informada.
-* Bundle continua interpretável somente com seus artefatos, sem consultar o nome da branch ou a working tree atual.
+* O resultado continua interpretável somente com seus artefatos, sem consultar o nome da branch ou a working tree atual.
 
 ## Fora de escopo
 

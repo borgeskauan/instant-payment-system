@@ -36,7 +36,7 @@ mesmo fluxo e, depois, múltiplas instâncias do SPI.
 - [ ] Garantir correlação inequívoca dos pagamentos e outcomes com a stack que
       os originou.
 - [ ] Executar os workloads simultaneamente a partir de ambientes limpos e
-      preservar os bundles de ambas as execuções.
+      preservar os diretórios de resultado de ambas as execuções.
 - [ ] Validar correção funcional, idempotência e ausência de efeitos financeiros
       ou notificações duplicados sob concorrência.
 - [ ] Medir conexões, locks, waits, query latency, CPU e I/O do PostgreSQL

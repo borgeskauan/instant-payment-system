@@ -29,7 +29,7 @@ explícito, sem manter cópias independentes do mesmo valor.
 * alterar uma propriedade autoritativa muda o valor efetivo do componente;
 * divergências entre configuração declarada e efetiva não passam
   silenciosamente;
-* os bundles de performance identificam os valores runtime relevantes.
+* os resultados de performance identificam os valores runtime relevantes.
 
 ## Resultado
 
@@ -40,7 +40,7 @@ Implementado inicialmente no commit `38e6a30` para o SPI e concluído durante o 
 * Compose mantém conectividade, recursos e overrides deliberados de deployment;
 * o startup registra a configuração efetiva sem credenciais;
 * o preparador captura essa linha em `inputs/spi-runtime-config.log`, que o
-  runner preserva no bundle do experimento.
+  runner preserva nos artefatos do experimento.
 
 No Notification Gateway, `application.yml` passou a ser o único baseline, `NotificationGatewayProperties` concentra e valida as propriedades próprias do componente e `KafkaProperties` fornece a configuração Kafka padrão do Spring. Os fallbacks repetidos em `@Value` e os placeholders redundantes de variáveis de ambiente foram removidos; overrides continuam disponíveis pela convenção canônica do Spring, enquanto o alias compartilhado `KAFKA_BOOTSTRAP_SERVERS` permanece explícito por ser uma decisão de deployment comum à stack.
 

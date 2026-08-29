@@ -286,7 +286,7 @@ roadmap não duplica seu inventário nem sua decisão de fonte autoritativa.
 `application.yml` agora contém o baseline comportamental homologado. Properties
 tipadas substituem fallbacks em `@Value`; Compose mantém apenas concerns de
 deployment. O SPI emite `event=spi_runtime_configuration`, e o preparador copia
-essa configuração efetiva para `inputs/spi-runtime-config.log` em todo bundle.
+essa configuração efetiva para `inputs/spi-runtime-config.log` em todo diretório de resultado.
 
 ### Fase 6 — acabamento estrutural — concluída
 
@@ -339,7 +339,7 @@ Validação concluída em 28/08/2026:
   `RJCT/AM04`, replays PACS.008 65/65, replays PACS.002 51/51 e zero
   violações;
 * latência p99 de 283,702 ms, dentro do threshold de 1 s do smoke;
-* configuração runtime efetiva presente no bundle.
+* configuração runtime efetiva presente nos artefatos da execução.
 
 Por decisão de escopo, não foi executada uma nova run de 15 minutos. O cleanup
 foi validado funcionalmente; estabilização e regressões longas continuam sendo

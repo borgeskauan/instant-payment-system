@@ -2,9 +2,9 @@
 
 ## Propósito
 
-Este apêndice preserva o conhecimento obtido nos experimentos intermediários que alteraram uma decisão de arquitetura, performance ou metodologia. Ele não é um catálogo dos `255` bundles e não promove diagnóstico a benchmark. A prova final de capacidade permanece no [relatório de estabilização em 2.000 TPS](2k-tps-stabilization.md).
+Este apêndice preserva o conhecimento obtido nos experimentos intermediários que alteraram uma decisão de arquitetura, performance ou metodologia. Ele não é um catálogo dos `255` diretórios de resultado e não promove diagnóstico a benchmark. A prova final de capacidade permanece no [relatório de estabilização em 2.000 TPS](2k-tps-stabilization.md).
 
-Os bundles foram tratados como fonte primária. Relatório, profile, plano, timestamps, CSVs, estatísticas PostgreSQL, JFR e perfis do runtime foram usados conforme disponíveis. O [caderno histórico](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md) serviu para localizar comparações e decisões, não para preencher metadata ausente.
+Os artefatos das execuções foram tratados como fonte primária. Relatório, profile, plano, timestamps, CSVs, estatísticas PostgreSQL, JFR e perfis do runtime foram usados conforme disponíveis. O [caderno histórico](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md) serviu para localizar comparações e decisões, não para preencher metadata ausente.
 
 O grau de confiança usado abaixo significa:
 

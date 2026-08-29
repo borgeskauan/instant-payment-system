@@ -6,7 +6,7 @@ Revisar o commit `07739625118b44b4c575dd36a4a6c904884e600d`, que consolidou e ve
 
 ## Revisão
 
-* [ ] Conferir os três bundles selecionados e os números transcritos para a documentação.
+* [ ] Conferir os três diretórios de resultado selecionados e os números transcritos para a documentação.
 * [ ] Confirmar que somente as duas execuções Rust qualificadoras sustentam a afirmação final de capacidade.
 * [ ] Confirmar que a tentativa com rolling mínimo de `1.995 TPS` está descrita com transparência e não foi promovida.
 * [ ] Conferir origem, checksums, profile, execution plan e relatórios compactos do manifesto de `2026-08-29`.

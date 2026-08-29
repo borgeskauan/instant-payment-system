@@ -93,4 +93,4 @@ A comparação Go/Rust permanece um estudo separado e não sustenta a afirmaçã
 * tuning ou alteração do workload durante a campanha;
 * escolher amostras favoráveis de campanhas diferentes;
 * usar o A/B Go/Rust como substituto das duas qualificações finais;
-* depender de bundles locais não versionados para verificar a afirmação final.
+* depender de diretórios de resultado locais não versionados para verificar a afirmação final.
