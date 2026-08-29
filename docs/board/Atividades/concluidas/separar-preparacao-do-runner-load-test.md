@@ -77,7 +77,10 @@ ausente ou incompleta.
 
 - `prepare-performance-environment.sh --profile NAME` agora valida o profile,
   recria a stack e os volumes, aguarda readiness, provisiona fundos, gera os
-  certificados e publica `.prepared-environment/<profile>` atomicamente;
+  certificados e publica `.prepared-environment/current` atomicamente;
+- existe somente um ambiente preparado vigente, porque existe somente uma
+  stack local; o runner compara o snapshot com o profile solicitado e rejeita
+  uso divergente ou preparação incompleta;
 - `run-load-test.sh` somente resolve esse estado preparado, cria o bundle e
   executa o Rust load-tool sob o wrapper independente de diagnósticos;
 - a suíte Rust, os 14 testes shell e a sintaxe dos scripts passaram;

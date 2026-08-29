@@ -124,28 +124,32 @@ down
 up
 readiness
 runtime-config
-funding --execution-plan ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/inputs/execution-plan.json
-cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 10000001
-cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 20000001
-cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 10000002
-cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.uniform-smoke.staging/certs psp 20000002
+funding --execution-plan ${PREPARED_ENVIRONMENT_ROOT}/.staging/inputs/execution-plan.json
+cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.staging/certs psp 10000001
+cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.staging/certs psp 20000001
+cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.staging/certs psp 10000002
+cert --psp-root ${PREPARED_ENVIRONMENT_ROOT}/.staging/certs psp 20000002
 EOF
 diff -u "$tmp_dir/expected-flow" "$FLOW_LOG"
-test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/profile.json"
-test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/execution-plan.json"
-test -f "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/spi-runtime-config.log"
-test -d "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/certs"
-cmp "$tmp_dir/profiles/uniform-smoke.json" "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke/inputs/profile.json"
+test -f "$PREPARED_ENVIRONMENT_ROOT/current/inputs/profile.json"
+test -f "$PREPARED_ENVIRONMENT_ROOT/current/inputs/execution-plan.json"
+test -f "$PREPARED_ENVIRONMENT_ROOT/current/inputs/spi-runtime-config.log"
+test -d "$PREPARED_ENVIRONMENT_ROOT/current/certs"
+cmp "$tmp_dir/profiles/uniform-smoke.json" "$PREPARED_ENVIRONMENT_ROOT/current/inputs/profile.json"
 
 if [[ "$(run_case explicit --profile explicit-smoke)" -ne 0 ]]; then
     cat "$tmp_dir/explicit.err" >&2
     exit 1
 fi
-test -d "$PREPARED_ENVIRONMENT_ROOT/explicit-smoke"
+test -d "$PREPARED_ENVIRONMENT_ROOT/current"
+cmp "$tmp_dir/profiles/explicit-smoke.json" "$PREPARED_ENVIRONMENT_ROOT/current/inputs/profile.json"
+if [[ "$(find "$PREPARED_ENVIRONMENT_ROOT" -mindepth 1 -maxdepth 1 -type d | wc -l)" -ne 1 ]]; then
+    echo "preparer retained more than one prepared environment" >&2
+    exit 1
+fi
 grep -q '^validate explicit-smoke$' "$FLOW_LOG"
 
 for stage in down up readiness runtime-config funding cert; do
-    rm -rf "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke"
     case "$stage" in
         down) variable=DOCKER_DOWN_STATUS ;;
         up) variable=DOCKER_UP_STATUS ;;
@@ -163,8 +167,12 @@ for stage in down up readiness runtime-config funding cert; do
         echo "preparer accepted $stage failure" >&2
         exit 1
     fi
-    if [[ -e "$PREPARED_ENVIRONMENT_ROOT/uniform-smoke" ]]; then
+    if [[ -e "$PREPARED_ENVIRONMENT_ROOT/current" ]]; then
         echo "preparer published a partial environment after $stage failure" >&2
+        exit 1
+    fi
+    if find "$PREPARED_ENVIRONMENT_ROOT" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        echo "preparer retained a stale environment after $stage failure" >&2
         exit 1
     fi
 done

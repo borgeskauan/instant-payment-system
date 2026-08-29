@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly LOAD_TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly RESULTS_DIR="${RESULTS_DIR:-${LOAD_TEST_DIR}/results}"
+readonly LOADTOOL_PROFILES_DIR="${LOADTOOL_PROFILES_DIR:-${LOAD_TEST_DIR}/profiles}"
 readonly PREPARED_ENVIRONMENT_ROOT="${PREPARED_ENVIRONMENT_ROOT:-${LOAD_TEST_DIR}/.prepared-environment}"
 readonly RUST_LOADTOOL_TARGET_DIR="${RUST_LOADTOOL_TARGET_DIR:-/tmp/rust-loadtool-target}"
 readonly DIAGNOSTICS_SCRIPT="${DIAGNOSTICS_SCRIPT:-${LOAD_TEST_DIR}/scripts/run-diagnostics.sh}"
@@ -70,9 +71,14 @@ parse_args() {
 }
 
 resolve_prepared_environment() {
-    PREPARED_DIR="${PREPARED_ENVIRONMENT_ROOT}/${PROFILE_NAME}"
+    local profile_path="${LOADTOOL_PROFILES_DIR}/${PROFILE_NAME}.json"
+    PREPARED_DIR="${PREPARED_ENVIRONMENT_ROOT}/current"
     if [[ ! -d "$PREPARED_DIR" ]]; then
-        echo "Prepared environment for profile '$PROFILE_NAME' does not exist: $PREPARED_DIR" >&2
+        echo "Prepared environment does not exist: $PREPARED_DIR" >&2
+        return 2
+    fi
+    if [[ ! -f "$profile_path" ]]; then
+        echo "Profile '$PROFILE_NAME' not found." >&2
         return 2
     fi
     for input in profile.json execution-plan.json spi-runtime-config.log; do
@@ -83,6 +89,10 @@ resolve_prepared_environment() {
     done
     if [[ ! -d "$PREPARED_DIR/certs" ]]; then
         echo "Prepared environment is missing certs: $PREPARED_DIR" >&2
+        return 2
+    fi
+    if ! cmp -s "$profile_path" "$PREPARED_DIR/inputs/profile.json"; then
+        echo "Prepared environment does not match profile '$PROFILE_NAME'. Run prepare-performance-environment.sh again." >&2
         return 2
     fi
     if [[ ! -x "$DIAGNOSTICS_SCRIPT" ]]; then

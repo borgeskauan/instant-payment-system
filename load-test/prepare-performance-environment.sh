@@ -7,6 +7,8 @@ readonly REPOSITORY_ROOT="$(cd "${LOAD_TEST_DIR}/.." && pwd)"
 readonly COMPOSE_FILE="${REPOSITORY_ROOT}/infra/docker-compose.yml"
 readonly LOADTOOL_PROFILES_DIR="${LOADTOOL_PROFILES_DIR:-${LOAD_TEST_DIR}/profiles}"
 readonly PREPARED_ENVIRONMENT_ROOT="${PREPARED_ENVIRONMENT_ROOT:-${LOAD_TEST_DIR}/.prepared-environment}"
+readonly PREPARED_ENVIRONMENT_DIR="${PREPARED_ENVIRONMENT_ROOT}/current"
+readonly PREPARED_ENVIRONMENT_STAGING_DIR="${PREPARED_ENVIRONMENT_ROOT}/.staging"
 readonly RUST_LOADTOOL_TARGET_DIR="${RUST_LOADTOOL_TARGET_DIR:-/tmp/rust-loadtool-target}"
 readonly STACK_READINESS_SCRIPT="${STACK_READINESS_SCRIPT:-${LOAD_TEST_DIR}/scripts/wait-for-performance-stack.sh}"
 readonly PROVISION_PROFILE_FUNDS_SCRIPT="${PROVISION_PROFILE_FUNDS_SCRIPT:-${LOAD_TEST_DIR}/scripts/provision-profile-funds.sh}"
@@ -16,8 +18,6 @@ readonly LOADTOOL_CA_CERT="${LOADTOOL_CA_CERT:-${REPOSITORY_ROOT}/infra/certs/lo
 
 PROFILE_NAME="uniform-smoke"
 PROFILE_PATH=""
-STAGING_DIR=""
-FINAL_DIR=""
 LOADTOOL_BIN=""
 
 usage() {
@@ -80,8 +80,8 @@ validate_dependencies() {
 cleanup() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ -n "$STAGING_DIR" && -e "$STAGING_DIR" ]]; then
-        rm -rf "$STAGING_DIR"
+    if [[ -e "$PREPARED_ENVIRONMENT_STAGING_DIR" ]]; then
+        rm -rf "$PREPARED_ENVIRONMENT_STAGING_DIR"
     fi
     exit "$status"
 }
@@ -99,13 +99,13 @@ build_and_validate_profile() {
         return 1
     fi
 
-    mkdir -p "${STAGING_DIR}/inputs"
-    cp "$PROFILE_PATH" "${STAGING_DIR}/inputs/profile.json"
+    mkdir -p "${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs"
+    cp "$PROFILE_PATH" "${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs/profile.json"
     log_phase "validating profile $PROFILE_NAME"
     (
         cd "${LOAD_TEST_DIR}/rust-loadtool"
         "$LOADTOOL_BIN" validate-profile --profile "$PROFILE_NAME"
-    ) > "${STAGING_DIR}/inputs/execution-plan.json"
+    ) > "${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs/execution-plan.json"
 }
 
 reset_and_start_stack() {
@@ -130,12 +130,12 @@ capture_spi_runtime_configuration() {
         echo "SPI effective runtime configuration was not found in the startup log." >&2
         return 1
     fi
-    printf '%s\n' "$configuration" > "${STAGING_DIR}/inputs/spi-runtime-config.log"
+    printf '%s\n' "$configuration" > "${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs/spi-runtime-config.log"
 }
 
 generate_certificates() {
-    local plan="${STAGING_DIR}/inputs/execution-plan.json"
-    local normalized record first hot cold count pair suffix
+    local plan="${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs/execution-plan.json"
+    local normalized first hot cold count pair suffix
 
     if [[ ! -f "$LOADTOOL_CA_CERT" ]]; then
         echo "Local mTLS CA not found after stack startup: $LOADTOOL_CA_CERT" >&2
@@ -144,13 +144,13 @@ generate_certificates() {
     if ! normalized="$("$PARTICIPANTS_SCRIPT" "$plan")"; then
         return 1
     fi
-    mkdir -p "${STAGING_DIR}/certs"
+    mkdir -p "${PREPARED_ENVIRONMENT_STAGING_DIR}/certs"
     while IFS=$'\t' read -r first hot cold _; do
         count=$((hot + cold))
         for ((pair = first; pair < first + count; pair++)); do
             suffix="$(printf '%06d' "$pair")"
-            "$LOADTOOL_CERT_SCRIPT" --psp-root "${STAGING_DIR}/certs" psp "10${suffix}" >/dev/null
-            "$LOADTOOL_CERT_SCRIPT" --psp-root "${STAGING_DIR}/certs" psp "20${suffix}" >/dev/null
+            "$LOADTOOL_CERT_SCRIPT" --psp-root "${PREPARED_ENVIRONMENT_STAGING_DIR}/certs" psp "10${suffix}" >/dev/null
+            "$LOADTOOL_CERT_SCRIPT" --psp-root "${PREPARED_ENVIRONMENT_STAGING_DIR}/certs" psp "20${suffix}" >/dev/null
         done
     done <<< "$normalized"
 }
@@ -159,12 +159,9 @@ main() {
     parse_args "$@"
     validate_dependencies
     mkdir -p "$PREPARED_ENVIRONMENT_ROOT"
-    STAGING_DIR="${PREPARED_ENVIRONMENT_ROOT}/.${PROFILE_NAME}.staging"
-    FINAL_DIR="${PREPARED_ENVIRONMENT_ROOT}/${PROFILE_NAME}"
-    rm -rf "$STAGING_DIR"
-    rm -rf "$FINAL_DIR"
     trap cleanup EXIT
     trap 'exit 130' INT TERM
+    rm -rf "$PREPARED_ENVIRONMENT_DIR" "$PREPARED_ENVIRONMENT_STAGING_DIR"
 
     build_and_validate_profile
     reset_and_start_stack
@@ -172,12 +169,11 @@ main() {
     "$STACK_READINESS_SCRIPT"
     capture_spi_runtime_configuration
     log_phase "provisioning profile funds"
-    "$PROVISION_PROFILE_FUNDS_SCRIPT" --execution-plan "${STAGING_DIR}/inputs/execution-plan.json"
+    "$PROVISION_PROFILE_FUNDS_SCRIPT" --execution-plan "${PREPARED_ENVIRONMENT_STAGING_DIR}/inputs/execution-plan.json"
     log_phase "generating PSP certificates"
     generate_certificates
-    mv "$STAGING_DIR" "$FINAL_DIR"
-    STAGING_DIR=""
-    log_phase "prepared environment published: ${FINAL_DIR}"
+    mv "$PREPARED_ENVIRONMENT_STAGING_DIR" "$PREPARED_ENVIRONMENT_DIR"
+    log_phase "prepared environment published: ${PREPARED_ENVIRONMENT_DIR}"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

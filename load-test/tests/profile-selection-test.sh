@@ -7,11 +7,13 @@ RUNNER="$ROOT_DIR/run-load-test.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-mkdir -p "$tmp_dir/bin" "$tmp_dir/prepared/uniform-smoke/inputs" "$tmp_dir/prepared/uniform-smoke/certs"
-printf '{"name":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/profile.json"
-printf '{"profile":"uniform-smoke"}\n' > "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json"
-printf '%s\n' 'event=spi_runtime_configuration payment_request_listener_concurrency=1' > "$tmp_dir/prepared/uniform-smoke/inputs/spi-runtime-config.log"
+mkdir -p "$tmp_dir/bin" "$tmp_dir/profiles" "$tmp_dir/prepared/current/inputs" "$tmp_dir/prepared/current/certs"
+printf '{"name":"uniform-smoke"}\n' > "$tmp_dir/profiles/uniform-smoke.json"
+cp "$tmp_dir/profiles/uniform-smoke.json" "$tmp_dir/prepared/current/inputs/profile.json"
+printf '{"profile":"uniform-smoke"}\n' > "$tmp_dir/prepared/current/inputs/execution-plan.json"
+printf '%s\n' 'event=spi_runtime_configuration payment_request_listener_concurrency=1' > "$tmp_dir/prepared/current/inputs/spi-runtime-config.log"
 export RESULTS_DIR="$tmp_dir/results"
+export LOADTOOL_PROFILES_DIR="$tmp_dir/profiles"
 export PREPARED_ENVIRONMENT_ROOT="$tmp_dir/prepared"
 export RUST_LOADTOOL_TARGET_DIR="$tmp_dir/target"
 export DIAGNOSTICS_SCRIPT="$tmp_dir/diagnostics"
@@ -49,19 +51,27 @@ test ! -e "$RESULTS_DIR/invalid-tag"
 grep -q 'Invalid profile name' "$tmp_dir/invalid.log"
 
 if "$RUNNER" --profile missing missing-tag >"$tmp_dir/missing.log" 2>&1; then
-    echo "runner accepted an absent prepared profile" >&2
+    echo "runner accepted an unknown profile" >&2
     exit 1
 fi
 test ! -e "$RESULTS_DIR/missing-tag"
-grep -q 'Prepared environment' "$tmp_dir/missing.log"
+grep -q "Profile 'missing' not found" "$tmp_dir/missing.log"
+
+printf '{"name":"explicit-smoke"}\n' > "$tmp_dir/profiles/explicit-smoke.json"
+if "$RUNNER" --profile explicit-smoke mismatched-tag >"$tmp_dir/mismatched.log" 2>&1; then
+    echo "runner accepted a profile different from the prepared environment" >&2
+    exit 1
+fi
+test ! -e "$RESULTS_DIR/mismatched-tag"
+grep -q "Prepared environment does not match profile 'explicit-smoke'" "$tmp_dir/mismatched.log"
 
 "$RUNNER" default-tag >/dev/null
 result="$(find "$RESULTS_DIR/default-tag" -mindepth 1 -maxdepth 1 -type d -print -quit)"
-cmp "$tmp_dir/prepared/uniform-smoke/inputs/profile.json" "$result/inputs/profile.json"
-cmp "$tmp_dir/prepared/uniform-smoke/inputs/execution-plan.json" "$result/inputs/execution-plan.json"
-cmp "$tmp_dir/prepared/uniform-smoke/inputs/spi-runtime-config.log" "$result/inputs/spi-runtime-config.log"
+cmp "$tmp_dir/prepared/current/inputs/profile.json" "$result/inputs/profile.json"
+cmp "$tmp_dir/prepared/current/inputs/execution-plan.json" "$result/inputs/execution-plan.json"
+cmp "$tmp_dir/prepared/current/inputs/spi-runtime-config.log" "$result/inputs/spi-runtime-config.log"
 
-python3 - "$LOADTOOL_COMMAND_LOG" "$result" "$tmp_dir/prepared/uniform-smoke/certs" <<'PY'
+python3 - "$LOADTOOL_COMMAND_LOG" "$result" "$tmp_dir/prepared/current/certs" <<'PY'
 import shlex
 import sys
 
