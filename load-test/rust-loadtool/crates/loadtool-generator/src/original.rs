@@ -6,7 +6,8 @@ use anyhow::{Result, anyhow};
 use bytes::Bytes;
 
 use crate::http2::{
-    Http2Client, Http2Reservation, HttpAttempt, PersistentPreparedRequest, PreparedHttp2Request,
+    Http2Client, Http2Reservation, HttpAttempt, HttpStart, PersistentPreparedRequest,
+    PreparedHttp2Request,
 };
 use crate::lifecycle::{offset_ns, rfc3339_now};
 use crate::notification_flow::spawn_replay;
@@ -109,27 +110,35 @@ pub fn admit_original<R>(
 where
     R: PreparedHttp2Request,
 {
-    if Instant::now() >= prepared.bucket_deadline {
-        return Ok(AdmissionOutcome::Missed);
+    let mut commit = || {
+        if states.commit(prepared.sequence) {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "payment sequence {} was already committed",
+                prepared.sequence
+            ))
+        }
+    };
+    let mut before_start = |_| {};
+    let started = prepared.reservation.start(
+        prepared.bucket_deadline,
+        request_timeout,
+        hard_deadline,
+        &mut commit,
+        &mut before_start,
+    )?;
+    match started {
+        HttpStart::Missed => Ok(AdmissionOutcome::Missed),
+        HttpStart::Started {
+            request_started_at,
+            attempt,
+        } => Ok(AdmissionOutcome::Admitted(StartedOriginal {
+            attempt,
+            body: prepared.body,
+            request_started_at,
+        })),
     }
-
-    if !states.commit(prepared.sequence) {
-        return Err(anyhow!(
-            "payment sequence {} was already committed",
-            prepared.sequence
-        ));
-    }
-    let request_started_at = Instant::now();
-    let request_deadline = request_started_at
-        .checked_add(request_timeout)
-        .unwrap_or(hard_deadline)
-        .min(hard_deadline);
-    let attempt = prepared.reservation.start(request_deadline);
-    Ok(AdmissionOutcome::Admitted(StartedOriginal {
-        attempt,
-        body: prepared.body,
-        request_started_at,
-    }))
 }
 
 #[derive(Clone, Debug)]

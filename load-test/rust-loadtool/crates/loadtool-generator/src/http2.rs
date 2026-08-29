@@ -2,20 +2,22 @@ use std::fs::File;
 use std::future::Future;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Once};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, Once};
+use std::task::{Context as TaskContext, Poll, Waker};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::client::conn::http2::SendRequest;
-use hyper::{Method, Request, Uri, Version};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use h2::client::SendRequest;
+use http::{Method, Request, Uri};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, RootCertStore};
 use tokio::net::TcpStream;
-use tokio::time::timeout_at;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::{sleep, timeout, timeout_at};
 use tokio_rustls::TlsConnector;
+
+const HTTP2_SETTINGS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HttpAttempt {
@@ -74,9 +76,20 @@ pub trait Http2Reservation: Send {
         Self: Sized,
     {
         async move {
-            match self.prepare(path, body) {
-                Ok(prepared) => prepared.start(deadline).await,
-                Err(_) => HttpAttempt::failed(),
+            let Ok(prepared) = self.prepare(path, body) else {
+                return HttpAttempt::failed();
+            };
+            let mut admit = || Ok(());
+            let mut before_start = |_| {};
+            match prepared.start(
+                deadline,
+                Duration::MAX,
+                deadline,
+                &mut admit,
+                &mut before_start,
+            ) {
+                Ok(HttpStart::Started { attempt, .. }) => attempt.await,
+                Ok(HttpStart::Missed) | Err(_) => HttpAttempt::failed(),
             }
         }
     }
@@ -95,7 +108,22 @@ pub trait Http2Reservation: Send {
 }
 
 pub trait PreparedHttp2Request: Send {
-    fn start(self, deadline: Instant) -> impl Future<Output = HttpAttempt> + Send;
+    fn start(
+        self,
+        admission_deadline: Instant,
+        request_timeout: Duration,
+        hard_deadline: Instant,
+        admit: &mut dyn FnMut() -> Result<()>,
+        before_start: &mut dyn FnMut(Instant),
+    ) -> Result<HttpStart<impl Future<Output = HttpAttempt> + Send + use<Self>>>;
+}
+
+pub enum HttpStart<F> {
+    Missed,
+    Started {
+        request_started_at: Instant,
+        attempt: F,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -166,24 +194,35 @@ impl Http2Config {
         if tls_stream.get_ref().1.alpn_protocol() != Some(b"h2") {
             bail!("central transfer did not negotiate HTTP/2 through ALPN");
         }
-        let (sender, connection) =
-            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(tls_stream))
-                .await
-                .context("central transfer HTTP/2 handshake")?;
+        let mut builder = h2::client::Builder::new();
+        builder.initial_max_send_streams(0);
+        let (sender, connection) = builder
+            .handshake(tls_stream)
+            .await
+            .context("central transfer HTTP/2 handshake")?;
         tokio::spawn(async move {
             if let Err(error) = connection.await {
                 eprintln!("central transfer HTTP/2 connection closed: {error}");
             }
         });
 
-        Ok(PersistentHttp2Client { authority, sender })
+        let max_concurrent_streams = wait_for_stream_limit(&sender).await?;
+
+        Ok(PersistentHttp2Client {
+            authority,
+            sender: Arc::new(Mutex::new(sender)),
+            capacity: Arc::new(Semaphore::new(max_concurrent_streams)),
+            max_concurrent_streams,
+        })
     }
 }
 
 #[derive(Clone)]
 pub struct PersistentHttp2Client {
     authority: String,
-    sender: SendRequest<Full<Bytes>>,
+    sender: Arc<Mutex<SendRequest<Bytes>>>,
+    capacity: Arc<Semaphore>,
+    max_concurrent_streams: usize,
 }
 
 impl std::fmt::Debug for PersistentHttp2Client {
@@ -191,6 +230,7 @@ impl std::fmt::Debug for PersistentHttp2Client {
         formatter
             .debug_struct("PersistentHttp2Client")
             .field("authority", &self.authority)
+            .field("max_concurrent_streams", &self.max_concurrent_streams)
             .finish_non_exhaustive()
     }
 }
@@ -218,30 +258,29 @@ impl PersistentHttp2Client {
 
 pub struct PersistentReservation {
     authority: String,
-    sender: SendRequest<Full<Bytes>>,
+    sender: Arc<Mutex<SendRequest<Bytes>>>,
+    permit: OwnedSemaphorePermit,
 }
 
 pub struct PersistentPreparedRequest {
-    sender: SendRequest<Full<Bytes>>,
-    request: Request<Full<Bytes>>,
+    sender: Arc<Mutex<SendRequest<Bytes>>>,
+    permit: OwnedSemaphorePermit,
+    request: Request<()>,
+    body: Bytes,
 }
 
 impl Http2Client for PersistentHttp2Client {
     type Reservation = PersistentReservation;
 
     async fn reserve_until(&self, deadline: Instant) -> Result<Option<Self::Reservation>> {
-        let mut sender = self.sender.clone();
-        let result = timeout_at(deadline.into(), async {
-            sender.ready().await.context("HTTP/2 sender is not ready")?;
-            Ok::<_, anyhow::Error>(sender)
-        })
-        .await;
+        let result = timeout_at(deadline.into(), Arc::clone(&self.capacity).acquire_owned()).await;
         match result {
-            Ok(Ok(sender)) => Ok(Some(PersistentReservation {
+            Ok(Ok(permit)) => Ok(Some(PersistentReservation {
                 authority: self.authority.clone(),
-                sender,
+                sender: Arc::clone(&self.sender),
+                permit,
             })),
-            Ok(Err(error)) => Err(error),
+            Ok(Err(_)) => Err(anyhow!("central transfer HTTP/2 capacity is closed")),
             Err(_) => Ok(None),
         }
     }
@@ -263,9 +302,20 @@ impl PersistentReservation {
         body: Bytes,
         deadline: Instant,
     ) -> HttpAttempt {
-        match self.prepare_method(method, path, body) {
-            Ok(prepared) => prepared.start(deadline).await,
-            Err(_) => HttpAttempt::failed(),
+        let Ok(prepared) = self.prepare_method(method, path, body) else {
+            return HttpAttempt::failed();
+        };
+        let mut admit = || Ok(());
+        let mut before_start = |_| {};
+        match prepared.start(
+            deadline,
+            Duration::MAX,
+            deadline,
+            &mut admit,
+            &mut before_start,
+        ) {
+            Ok(HttpStart::Started { attempt, .. }) => attempt.await,
+            Ok(HttpStart::Missed) | Err(_) => HttpAttempt::failed(),
         }
     }
 
@@ -282,37 +332,110 @@ impl PersistentReservation {
             .method(method)
             .uri(uri)
             .header("content-type", "application/octet-stream")
-            .body(Full::new(body))
+            .body(())
             .context("build central transfer request")?;
         Ok(PersistentPreparedRequest {
             sender: self.sender,
+            permit: self.permit,
             request,
+            body,
         })
     }
 }
 
 impl PreparedHttp2Request for PersistentPreparedRequest {
-    fn start(mut self, deadline: Instant) -> impl Future<Output = HttpAttempt> + Send {
-        let response = self.sender.send_request(self.request);
-        drop(self.sender);
-        async move {
-            let Ok(Ok(response)) = timeout_at(deadline.into(), response).await else {
-                return HttpAttempt::failed();
-            };
-            let version = response.version();
-            let status = response.status().as_u16();
-            if !matches!(
-                timeout_at(deadline.into(), response.into_body().collect()).await,
-                Ok(Ok(_))
-            ) {
-                return HttpAttempt::failed();
+    fn start(
+        self,
+        admission_deadline: Instant,
+        request_timeout: Duration,
+        hard_deadline: Instant,
+        admit: &mut dyn FnMut() -> Result<()>,
+        before_start: &mut dyn FnMut(Instant),
+    ) -> Result<HttpStart<impl Future<Output = HttpAttempt> + Send + use<>>> {
+        let Self {
+            sender,
+            permit,
+            request,
+            body,
+        } = self;
+        let mut sender = sender
+            .lock()
+            .map_err(|_| anyhow!("central transfer HTTP/2 sender lock is poisoned"))?;
+        if Instant::now() >= admission_deadline {
+            return Ok(HttpStart::Missed);
+        }
+
+        let mut context = TaskContext::from_waker(Waker::noop());
+        match sender.poll_ready(&mut context) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(error)) => {
+                return Err(anyhow!(error).context("central transfer HTTP/2 sender is not ready"));
             }
-            if version == Version::HTTP_2 {
-                HttpAttempt::http2(status)
-            } else {
-                HttpAttempt::http1(status)
+            Poll::Pending => {
+                bail!("central transfer HTTP/2 stream capacity invariant was violated");
             }
         }
+        if Instant::now() >= admission_deadline {
+            return Ok(HttpStart::Missed);
+        }
+
+        admit()?;
+        let end_of_stream = body.is_empty();
+        let exchange =
+            sender
+                .send_request(request, end_of_stream)
+                .ok()
+                .and_then(|(response, mut stream)| {
+                    if end_of_stream || stream.send_data(body, true).is_ok() {
+                        Some((response, stream))
+                    } else {
+                        None
+                    }
+                });
+        let request_started_at = Instant::now();
+        before_start(request_started_at);
+        drop(sender);
+
+        let request_deadline = request_started_at
+            .checked_add(request_timeout)
+            .unwrap_or(hard_deadline)
+            .min(hard_deadline);
+        let attempt = async move {
+            let _permit = permit;
+            let Some((response, mut request_stream)) = exchange else {
+                return HttpAttempt::failed();
+            };
+            let response = match timeout_at(request_deadline.into(), response).await {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) => return HttpAttempt::failed(),
+                Err(_) => {
+                    request_stream.send_reset(h2::Reason::CANCEL);
+                    return HttpAttempt::failed();
+                }
+            };
+            let status = response.status().as_u16();
+            let mut body = response.into_body();
+            loop {
+                match timeout_at(request_deadline.into(), body.data()).await {
+                    Ok(Some(Ok(chunk))) => {
+                        if body.flow_control().release_capacity(chunk.len()).is_err() {
+                            return HttpAttempt::failed();
+                        }
+                    }
+                    Ok(Some(Err(_))) => return HttpAttempt::failed(),
+                    Err(_) => {
+                        request_stream.send_reset(h2::Reason::CANCEL);
+                        return HttpAttempt::failed();
+                    }
+                    Ok(None) => break,
+                }
+            }
+            HttpAttempt::http2(status)
+        };
+        Ok(HttpStart::Started {
+            request_started_at,
+            attempt,
+        })
     }
 }
 
@@ -344,3 +467,24 @@ fn read_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
         .with_context(|| format!("parse client key {}", path.display()))?
         .ok_or_else(|| anyhow!("client key has no PEM private key: {}", path.display()))
 }
+
+async fn wait_for_stream_limit(sender: &SendRequest<Bytes>) -> Result<usize> {
+    let limit = timeout(HTTP2_SETTINGS_TIMEOUT, async {
+        loop {
+            let limit = sender.current_max_send_streams();
+            if limit != 0 {
+                return limit;
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .context("central transfer did not advertise HTTP/2 stream capacity")?;
+    if limit == usize::MAX {
+        bail!("central transfer must advertise a finite HTTP/2 stream capacity");
+    }
+    Ok(limit)
+}
+
+#[cfg(test)]
+mod tests;

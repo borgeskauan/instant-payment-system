@@ -8,9 +8,8 @@ rust-version = "1.89"
 anyhow = "1.0"
 bytes = "1.10"
 csv = "1.3"
-http-body-util = "0.1"
-hyper = { version = "1.6", features = ["client", "http2"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+h2 = "0.4"
+http = "1.3"
 libc = "0.2"
 loadtool-contract = { path = "../loadtool-contract" }
 prost = "0.13"

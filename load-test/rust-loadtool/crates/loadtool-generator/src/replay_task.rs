@@ -4,8 +4,7 @@ use anyhow::{Result, bail};
 use bytes::Bytes;
 
 use crate::causal::{CausalCapacity, CausalKind, CausalPermit};
-use crate::http2::{Http2Client, Http2Reservation, HttpAttempt, PreparedHttp2Request};
-use crate::lifecycle::http_deadline;
+use crate::http2::{Http2Client, Http2Reservation, HttpAttempt, HttpStart, PreparedHttp2Request};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CausalCompletion {
@@ -47,16 +46,29 @@ pub async fn send_causal_admitted<C, BeforeStart>(
 ) -> Result<CausalCompletion>
 where
     C: Http2Client,
-    BeforeStart: FnOnce(Instant),
+    BeforeStart: FnMut(Instant),
 {
     let Some(reservation) = client.reserve_until(hard_deadline).await? else {
         bail!("causal HTTP reached the experiment deadline before sender readiness");
     };
     let request = reservation.prepare(path, body)?;
-    let request_started_at = Instant::now();
-    before_start(request_started_at);
-    let request_deadline = http_deadline(request_started_at, request_timeout, hard_deadline);
-    let attempt = request.start(request_deadline).await;
+    let mut admit = || Ok(());
+    let mut before_start = before_start;
+    let started = request.start(
+        hard_deadline,
+        request_timeout,
+        hard_deadline,
+        &mut admit,
+        &mut before_start,
+    )?;
+    let HttpStart::Started {
+        request_started_at,
+        attempt,
+    } = started
+    else {
+        bail!("causal HTTP reached the experiment deadline before stream admission");
+    };
+    let attempt = attempt.await;
     let request_done_at = Instant::now();
     if attempt.used_http1() {
         bail!("causal central transfer response did not use HTTP/2");

@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use loadtool_generator::causal::{CausalCapacity, CausalKind};
 use loadtool_generator::http2::{
-    Http2Client, Http2Config, Http2Reservation, HttpAttempt, PreparedHttp2Request,
+    Http2Client, Http2Config, Http2Reservation, HttpAttempt, HttpStart, PreparedHttp2Request,
 };
 use loadtool_generator::original::{AdmissionOutcome, admit_original, prepare_original};
 use loadtool_generator::payment_state::PaymentStates;
@@ -108,14 +108,30 @@ impl Http2Reservation for FakeReservation {
 }
 
 impl PreparedHttp2Request for FakePreparedRequest {
-    fn start(self, _deadline: Instant) -> impl Future<Output = HttpAttempt> + Send {
+    fn start(
+        self,
+        admission_deadline: Instant,
+        _request_timeout: Duration,
+        _hard_deadline: Instant,
+        admit: &mut dyn FnMut() -> Result<()>,
+        before_start: &mut dyn FnMut(Instant),
+    ) -> Result<HttpStart<impl Future<Output = HttpAttempt> + Send + use<>>> {
+        if Instant::now() >= admission_deadline {
+            return Ok(HttpStart::Missed);
+        }
+        admit()?;
         assert!(self.states.is_committed(0), "send happened before commit");
+        let request_started_at = Instant::now();
+        before_start(request_started_at);
         assert!(
             self.obligation_registered.load(Ordering::Acquire),
             "send happened before replay registration"
         );
         self.sends.fetch_add(1, Ordering::Relaxed);
-        std::future::ready(self.attempt)
+        Ok(HttpStart::Started {
+            request_started_at,
+            attempt: std::future::ready(self.attempt),
+        })
     }
 }
 

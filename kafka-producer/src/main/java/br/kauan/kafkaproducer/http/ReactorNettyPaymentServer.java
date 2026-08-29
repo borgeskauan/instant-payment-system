@@ -22,6 +22,7 @@ import java.util.function.Function;
 public class ReactorNettyPaymentServer {
 
     private static final Logger log = LoggerFactory.getLogger(ReactorNettyPaymentServer.class);
+    private static final long MAX_CONCURRENT_STREAMS = 256;
 
     private final int port;
     private final PaymentPublisher publisher;
@@ -48,6 +49,7 @@ public class ReactorNettyPaymentServer {
         return HttpServer.create()
                 .port(port)
                 .protocol(HttpProtocol.H2)
+                .http2Settings(settings -> settings.maxConcurrentStreams(MAX_CONCURRENT_STREAMS))
                 .compress(false)
                 .secure(sslProvider -> sslProvider.sslContext(sslContext))
                 .route(routes -> routes
