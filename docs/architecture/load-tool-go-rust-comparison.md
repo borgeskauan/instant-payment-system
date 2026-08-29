@@ -194,27 +194,11 @@ cargo build --locked --release
 
 The source inventory used `find` restricted to production or test suffixes, `wc -l` for physical lines, `go test -json` and `cargo test --workspace` for executed tests, `go.mod` and `cargo metadata --no-deps` for direct dependencies, unique module/package names in `go.sum` and `Cargo.lock` for the locked surface, and `stat -c %s` for binary bytes. The raw source trees are identified by the revisions in the inventory table, so the counts can be reconstructed without retaining the temporary extraction directory.
 
-The final evidence is in:
-
-```text
-load-test/results/compare-go-15m-fixed/20260828_214501
-load-test/results/compare-rust-15m-fixed/20260828_220502
-load-test/results/rust-final-evidence-15m-repeat-clean/20260829_010534
-```
-
-The compact profile, execution plan, reports, origins, and checksums are versioned in [`docs/performance/evidence/2026-08-29`](../performance/evidence/2026-08-29/manifest.md). The additional clean Rust confirmation reproduced the controlled Rust run's `2,058 TPS` rolling minimum, with p99 at `329.152 ms` and no correctness or replay violations. An immediately preceding clean attempt reached `1,995 TPS` and was not promoted, preserving the shared-host variance rather than hiding it.
+The final profile, execution plan, [Go report](../performance/evidence/2026-08-29/go-comparison-sla-report.json), two qualifying Rust reports, non-qualifying attempt, origins, and checksums are versioned in the [final evidence manifest](../performance/evidence/2026-08-29/manifest.md). The additional clean Rust confirmation reproduced the controlled Rust run's `2,058 TPS` rolling minimum, with p99 at `329.152 ms` and no correctness or replay violations. An immediately preceding clean attempt reached `1,995 TPS` and was not promoted, preserving the shared-host variance rather than hiding it.
 
 Each `inputs/comparison-manifest.json` records engine, profile, core revision, patch digest, generator revision, binary digest, and start time. `/usr/bin/time -v` output is under `diagnostics/loadtool-process.txt`; workload and outcome values come from `sla-report.json`; common temporal reconstruction uses `events/pacs008-starts.csv`.
 
-Supporting but non-primary evidence is retained in the two successful smokes, the first complete Go 15-minute run, and the two excluded Rust failures:
-
-```text
-load-test/results/compare-go-smoke/20260828_204740
-load-test/results/compare-rust-smoke/20260828_205322
-load-test/results/compare-go-15m/20260828_205556
-load-test/results/compare-rust-15m/20260828_211542
-load-test/results/compare-rust-15m-repeat/20260828_213542
-```
+Additional smokes, an earlier complete Go run, and two excluded Rust failures informed the investigation but are not required to verify the final claim. Their durable conclusions are preserved in the [experimental findings](../performance/experimental-findings.md), not as dependencies on local result directories.
 
 ## Limitations
 

@@ -6,15 +6,15 @@ Este diretório preserva os artefatos compactos do A/B entre os geradores Go e R
 
 ## Execuções selecionadas
 
-| finalidade | início local | bundle bruto | resultado |
+| finalidade | início local | relatório versionado | resultado |
 | --- | --- | --- | --- |
-| comparação Go | `2026-08-28 21:45:01 -03:00` | `load-test/results/compare-go-15m-fixed/20260828_214501` | não atingiu o piso rolling: `1.784 TPS`; p99 `513,530 ms`; corretude preservada |
-| primeira qualificação Rust | `2026-08-28 22:05:02 -03:00` | `load-test/results/compare-rust-15m-fixed/20260828_220502` | rolling mínimo `2.058 TPS`; p99 `409,163 ms`; corretude preservada |
-| confirmação Rust | `2026-08-29 01:05:34 -03:00` | `load-test/results/rust-final-evidence-15m-repeat-clean/20260829_010534` | rolling mínimo `2.058 TPS`; p99 `329,152 ms`; corretude preservada |
+| comparação Go | `2026-08-28 21:45:01 -03:00` | [`go-comparison-sla-report.json`](go-comparison-sla-report.json) | não atingiu o piso rolling: `1.784 TPS`; p99 `513,530 ms`; corretude preservada |
+| primeira qualificação Rust | `2026-08-28 22:05:02 -03:00` | [`rust-qualification-sla-report.json`](rust-qualification-sla-report.json) | rolling mínimo `2.058 TPS`; p99 `409,163 ms`; corretude preservada |
+| confirmação Rust | `2026-08-29 01:05:34 -03:00` | [`rust-confirmation-sla-report.json`](rust-confirmation-sla-report.json) | rolling mínimo `2.058 TPS`; p99 `329,152 ms`; corretude preservada |
 
 As duas execuções Rust partiram de stack e volumes novos. Elas não apresentaram outcomes ausentes ou contraditórios nem violações de replay. A confirmação executou `1.889.979` dos `1.890.000` originais planejados; a regra qualificadora é o piso rolling observado, não igualdade entre quantidade planejada e executada.
 
-Uma primeira tentativa de confirmação em `load-test/results/rust-final-evidence-15m-clean/20260829_004527` preservou corretude e p99 de `758,056 ms`, mas não foi promovida porque o rolling mínimo ficou em `1.995 TPS`.
+Uma [primeira tentativa de confirmação](rust-nonqualifying-attempt-sla-report.json) preservou corretude e p99 de `758,056 ms`, mas não foi promovida porque o rolling mínimo ficou em `1.995 TPS`.
 
 ## Origem do código
 
@@ -31,5 +31,6 @@ A confirmação Rust foi iniciada com worktree limpa no commit `35c9bfa2408e9676
 | [`go-comparison-sla-report.json`](go-comparison-sla-report.json) | `af7f62bd3e7c143c9826b42ee2224139635c0482815a3f236d60d011d1314e63` |
 | [`rust-qualification-sla-report.json`](rust-qualification-sla-report.json) | `58a0749aa229664c6194d20183c099cb1549588fe82b9b287f832280bccb6418` |
 | [`rust-confirmation-sla-report.json`](rust-confirmation-sla-report.json) | `0ec01d21a91ac0e12e880f227cf874a02d72b064bb328aa1595a1d59c746a52a` |
+| [`rust-nonqualifying-attempt-sla-report.json`](rust-nonqualifying-attempt-sla-report.json) | `d15c3f36bcfe49cc6149a63cb059bf0ab7bcfe35363dabbfe03b60e743195f82` |
 
 Os checksums são idênticos aos arquivos de origem nos bundles. CSVs, JFRs, logs, diagnósticos volumosos, certificados e credenciais não são versionados como evidência compacta.

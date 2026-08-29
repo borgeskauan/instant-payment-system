@@ -2,191 +2,75 @@
 
 - [ ] Consolidar a documentação canônica depois do freezing técnico
 
-## Por que existe
-
-O projeto acumulou documentação de descoberta, arquitetura, protocolos,
-decisões intermediárias, experimentos de performance, coleções de teste e
-referências externas. Parte descreve o estado vigente, parte registra evolução
-histórica e parte é apenas material temporário. Hoje essas categorias não
-possuem fronteiras suficientemente claras, o que dificulta descobrir qual
-documento é autoritativo.
-
-Esta task organiza o estado final do conhecimento do projeto. Ela não participa
-do desenvolvimento técnico: começa somente depois que funcionalidades,
-arquitetura, configuração e contratos estiverem congelados.
-
-## Pré-condição: freezing técnico
-
-Esta task só pode ser movida para `agora` quando:
-
-* a estabilização de performance estiver concluída;
-* o cleanup transversal dos projetos estiver concluído;
-* as funcionalidades mantidas e removidas estiverem decididas;
-* contratos, configuração e arquitetura do MVP não tiverem mudanças técnicas
-  pendentes dentro do escopo atual;
-* qualquer trabalho técnico restante estiver registrado em tasks futuras.
-
-Depois desse gate, o código congelado é a fonte de verdade para a documentação.
-
-## Fronteira rígida
-
-Durante esta task podem ser alterados somente `README.md`, `docs/**` e outros
-artefatos estritamente documentais já identificados no inventário.
-
-Não alterar:
-
-* código de produção ou teste;
-* migrations ou schemas;
-* arquivos de build;
-* Compose, configuração runtime ou profiles;
-* scripts de execução;
-* contratos HTTP, gRPC ou Kafka;
-* comportamento funcional ou de performance.
-
-Se a revisão documental revelar um defeito, ambiguidade técnica ainda não
-resolvida ou divergência do código, criar uma task técnica e registrar o
-bloqueio. Não corrigir o sistema dentro desta task.
-
 ## Objetivo
 
-Produzir uma documentação final na qual seja simples:
+Transformar a engenharia distribuída entre código, testes, benchmarks e decisões em evidência compreensível e verificável sobre a capacidade profissional demonstrada pelo projeto.
 
-* entender o propósito e os limites do sistema;
-* executar o projeto localmente;
-* compreender o fluxo Pix ponta a ponta;
-* localizar a arquitetura e as decisões vigentes;
-* entender os contratos e escolhas de modelagem relevantes;
-* consultar a metodologia e os resultados de performance;
-* distinguir documentação autoritativa de histórico e material de referência;
-* retomar o projeto sem depender da cronologia das tasks ou dos experimentos.
+> A documentação deve maximizar a redução de incerteza por minuto de atenção do leitor.
 
-## Método
+Explicar o sistema, facilitar execução e melhorar manutenção são meios ou efeitos colaterais. O resultado principal é permitir que um avaliador competente perceba o que foi construído, por que foi construído assim, quais propriedades foram alcançadas, onde estão as evidências e quais são os limites das afirmações.
 
-### 1. Inventariar
+## Público principal
 
-- [ ] Inventariar `README.md` e todo o conteúdo de `docs/**` por finalidade, não
-  apenas por diretório.
-- [ ] Identificar o consumidor esperado de cada documento.
-- [ ] Detectar conteúdo duplicado, contraditório, superado ou sem consumidor.
-- [ ] Identificar links quebrados, referências circulares e documentos sem
-  ponto de entrada.
+Um engenheiro backend competente, com pouco tempo e nenhum contexto prévio sobre o projeto.
 
-Usar a classificação:
+O caminho principal também deve permitir que um leitor menos técnico compreenda o problema e o resultado, mas não deve sacrificar precisão para tratar todos os públicos como equivalentes.
 
-| classe | significado |
+## Métrica de design: time-to-answer
+
+A posição de uma informação deve ser definida por quão cedo o leitor precisa dela, não apenas pela categoria documental em que ela naturalmente caberia.
+
+| tempo acumulado | o leitor deve conseguir responder |
 | --- | --- |
-| canônico | explica o estado vigente e é fonte autoritativa |
-| operacional | ensina a executar, testar ou diagnosticar o estado vigente |
-| decisão | registra ADR ou decisão arquitetural ainda relevante |
-| referência | material externo ou normativo consultado pelo projeto |
-| histórico | preserva evolução, experimento ou investigação superada |
-| temporário | scratch note sem valor durável |
-| duplicado | repete conteúdo coberto por outra fonte autoritativa |
+| `30 segundos` | O que é este projeto? Por que ele existe? |
+| `2 minutos` | O que há de tecnicamente relevante? Quais são os principais resultados? |
+| `5 minutos` | Como o sistema funciona em alto nível? Quais são as principais garantias e limitações? |
+| `10 minutos` | Por que as decisões arquiteturais importantes foram tomadas? Quão confiáveis são as afirmações? |
+| sob demanda | Como corretude, performance e operação funcionam em detalhe? Onde estão as evidências? |
 
-### 2. Definir a arquitetura da informação
+Se uma explicação extensa não ajuda a responder uma pergunta importante no horizonte adequado, ela não pertence ao caminho principal. Deve virar deep dive opcional, permanecer histórica ou não ser mantida.
 
-- [ ] Definir um ponto de entrada único e óbvio no `README.md`.
-- [ ] Definir onde ficam visão geral, execução, arquitetura, domínio,
-  protocolos, performance, decisões, referências e histórico.
-- [ ] Definir uma única fonte autoritativa para cada assunto.
-- [ ] Manter board, evidências históricas e planos claramente separados da
-  documentação do estado vigente.
-- [ ] Tratar `docs/pacs` como referência externa, sem reescrever seu conteúdo
-  indiscriminadamente.
+## Operações documentais fundamentais
 
-A estrutura final deve nascer do inventário. Não mover centenas de arquivos
-apenas para uniformizar diretórios.
+Todo conteúdo canônico deve fazer pelo menos uma destas coisas:
 
-### 3. Decidir o destino de cada documento
+1. **Tornar visível:** revelar engenharia importante que uma leitura superficial do código não mostra.
+2. **Dar significado:** explicar por que uma decisão, propriedade, resultado ou limitação importa.
+3. **Permitir verificação:** apontar para evidência, método e limites da afirmação.
 
-Para cada item ou conjunto coerente, escolher:
+O critério editorial é:
 
-* **manter e consolidar** como documentação canônica;
-* **mover/classificar** como operacional, decisão, referência ou histórico;
-* **fundir** com outra fonte e remover a duplicação;
-* **remover** quando temporário, duplicado ou sem valor documental;
-* **preservar sem traduzir** quando histórico ou interno e ainda útil.
+> Esta informação melhora materialmente a capacidade de alguém avaliar a engenharia do projeto?
 
-A decisão deve considerar simplicidade de navegação, autoridade do conteúdo e
-custo de manutenção. Preservar arquivos por inércia não é requisito.
+## Gate e fronteira
 
-### 4. Consolidar o conteúdo vigente
+Iniciar somente depois da revisão das evidências finais, do merge e do freezing técnico. Funcionalidades, arquitetura, configuração e contratos do MVP devem estar congelados; trabalho técnico restante deve estar registrado no backlog.
 
-- [ ] Criar ou revisar a visão geral dos componentes: SPI, Kafka Producer,
-  Notification Gateway, DICT e ferramentas de teste mantidas.
-- [ ] Explicar como executar o projeto localmente usando os comandos públicos
-  finais.
-- [ ] Explicar o fluxo Pix ponta a ponta em alto nível.
-- [ ] Consolidar arquitetura, decisões importantes, contratos e modelagem de
-  domínio sem repetir a mesma explicação em vários documentos.
-- [ ] Consolidar metodologia do load-test, workload homologado, resultados e
-  limitações de performance.
-- [ ] Marcar explicitamente documentos históricos que descrevem arquiteturas
-  superadas.
+Alterar somente `README.md`, `docs/**` e artefatos estritamente documentais. Não corrigir código, testes, schemas, configuração, scripts ou contratos nesta task. Uma divergência técnica encontrada gera uma task própria.
 
-### 5. Validar
+## Método mínimo
 
-- [ ] Verificar links relativos e navegação a partir do `README.md`.
-- [ ] Confirmar que nenhum documento canônico contradiz o estado técnico
-  congelado.
-- [ ] Confirmar que cada assunto importante possui uma única fonte
-  autoritativa.
-- [ ] Confirmar que histórico e scratch notes não aparecem como instruções
-  vigentes.
-- [ ] Revisar legibilidade para alguém que não acompanhou a evolução do
-  projeto.
+1. **Inventariar por valor:** identificar qual pergunta cada documento responde, para quem, se ainda representa o sistema vigente e se torna engenharia verificável. Marcar duplicação, contradição, conteúdo superado, links quebrados e material sem consumidor.
+2. **Desenhar o caminho principal:** estruturar o `README.md` pelos horizontes de `30 segundos`, `2`, `5` e `10 minutos`. Não transformar o README em livro nem organizar sua narrativa apenas por taxonomia técnica.
+3. **Separar profundidade:** manter uma única fonte autoritativa para cada assunto e direcionar detalhes de arquitetura, domínio, operação, performance, decisões e reference demo para deep dives claros. Board, investigações e história não são instruções vigentes.
+4. **Consolidar evidência:** relacionar afirmações relevantes a código, testes, benchmarks ou artefatos; explicar por que importam e declarar seus limites.
+5. **Reduzir:** fundir duplicações e retirar do caminho principal tudo que aumente tempo de leitura sem reduzir materialmente a incerteza.
+6. **Validar:** testar links, fidelidade ao código congelado, autoridade das fontes e o time-to-answer com um leitor sem contexto.
 
-## Política de idioma
+## Idioma
 
-O inglês é o idioma canônico da documentação ativa do projeto. A documentação
-pública e autoritativa do portfólio deve existir somente em inglês; não serão
-mantidas cópias completas e sincronizadas em português e inglês, pois isso
-criaria duas fontes de verdade e drift documental.
-
-Durante a organização final:
-
-* `README.md`: inglês;
-* arquitetura e system design: inglês;
-* metodologia do load-test e resultados de benchmark: inglês;
-* ADRs e decisões de design importantes: inglês;
-* documentação de protocolo ou domínio que explique escolhas de modelagem:
-  inglês;
-* notas internas, rascunhos, experimentos históricos e investigações
-  temporárias: podem permanecer em português.
-
-Um documento histórico ou interno só precisa ser traduzido quando for promovido
-a documentação importante, vigente ou autoritativa. Não traduzir o arquivo
-inteiro apenas por uniformidade, nem reescrever evidências históricas sem valor
-para quem consulta o estado final do projeto.
-
-Quando um documento vigente em português for promovido à documentação
-canônica, seu conteúdo deve ser consolidado em inglês. A versão portuguesa não
-permanece como cópia paralela a ser mantida: ela pode ser removida ou preservada
-apenas como artefato histórico explicitamente identificado. Links e pontos de
-entrada devem apontar para a versão canônica em inglês.
-
-- [ ] Identificar os documentos públicos ou autoritativos que devem ser
-  traduzidos para inglês.
-- [ ] Traduzir somente depois do freezing técnico, junto da consolidação do
-  conteúdo vigente.
-- [ ] Remover cópias paralelas em português da documentação canônica ou
-  classificá-las explicitamente como históricas, sem promessa de sincronização.
-- [ ] Confirmar que os pontos de entrada e documentos importantes não misturam
-  idiomas sem uma justificativa explícita.
+O inglês é o idioma canônico da documentação pública e autoritativa. Não manter cópias completas em português e inglês. README, arquitetura, decisões relevantes, protocolos, metodologia e resultados devem existir em inglês; board, scratch notes e história interna podem permanecer em português enquanto não forem promovidos ao caminho canônico.
 
 ## Fora de escopo
 
-* qualquer mudança técnica no sistema;
-* criação de features para facilitar a documentação;
+* mudanças técnicas no sistema;
 * novo tuning ou benchmark;
-* tradução integral de board, planos, scratch notes e experimentos históricos;
-* reescrita de referências externas;
-* manutenção permanente de documentação bilíngue.
+* tradução integral do board e do histórico;
+* documentação exaustiva por completude;
+* manutenção de documentação bilíngue.
 
-## Critério de conclusão
+## Teste de aceitação
 
-A task termina quando o `README.md` oferece uma entrada clara, a documentação
-canônica em inglês descreve fielmente o estado congelado, cada assunto
-importante possui uma fonte autoritativa, histórico e referências estão
-claramente classificados, duplicações sem valor foram removidas e nenhuma
-mudança de código foi necessária.
+Entregar o repositório a um engenheiro backend competente sem contexto prévio e verificar se ele responde corretamente às perguntas previstas após `2`, `5` e `10 minutos`, sem ajuda externa.
+
+A task termina quando o caminho principal passa nesse teste, as afirmações importantes são verificáveis, cada assunto vigente possui uma fonte autoritativa, detalhes permanecem acessíveis sob demanda e a documentação reduz incerteza sem impor leitura desnecessária.

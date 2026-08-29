@@ -312,17 +312,11 @@ corretude.
 
 ## Evidência preservada
 
-Os bundles finais permanecem locais e ocupam aproximadamente `1,1 GiB` cada:
-
-```text
-load-test/results/compare-rust-15m-fixed/20260828_220502
-load-test/results/rust-final-evidence-15m-repeat-clean/20260829_010534
-```
-
-O repositório preserva somente profile, plano normalizado, relatórios e
-checksums. CSVs, JFRs, logs e certificados não devem ser adicionados ao Git
-comum. O manifesto registra a origem do código e as limitações da metadata dos
-bundles.
+O repositório preserva em [`evidence/2026-08-29`](evidence/2026-08-29/manifest.md)
+o profile, o plano normalizado, os relatórios selecionados, a tentativa não
+qualificadora usada para caracterizar variância, suas origens e checksums. Essa
+evidência pode ser verificada por quem clona o repositório. CSVs, JFRs, logs e
+certificados volumosos não fazem parte da evidência canônica.
 
 Uma primeira repetição após o cleanup preservou todos os outcomes e ficou dentro
 do threshold de latência, mas não foi promovida: seu rolling mínimo foi
