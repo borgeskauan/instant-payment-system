@@ -17,4 +17,4 @@ Depois da reserva, um PACS.002 aceito credita somente o recebedor. A liquidaçã
 
 Por isso não foram implementados worker de polling, retry de liquidação, claim, lease ou `next_attempt_at`. Esses mecanismos resolveriam um estado que deixou de existir.
 
-O desenho vigente está documentado em [Saldo por participante com reserva implícita no pagamento](../../../../architecture/reservation-based-participant-balance.md).
+O desenho vigente está consolidado em [System design](../../../../design.md).

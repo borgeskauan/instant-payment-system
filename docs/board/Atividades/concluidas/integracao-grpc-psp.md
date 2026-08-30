@@ -12,7 +12,7 @@ Hoje o `payment-service-provider` ainda consome notificações diretamente do t�
 - [x] Implementado consumo Kafka -> gRPC streaming no `notification-gateway`.
 - [x] Criado contrato `notification.proto`.
 - [x] Adequado o teste de carga K6 para consumir notificações via gRPC.
-- [x] Documentado o fluxo em `docs/KAFKA_MESSAGE_FLOW.md`.
+- [x] Fluxo consolidado em `docs/design.md`.
 
 **O que falta**
 
@@ -24,6 +24,6 @@ Hoje o `payment-service-provider` ainda consome notificações diretamente do t�
 
 **Referências**
 
-- `docs/KAFKA_MESSAGE_FLOW.md`
+- `docs/design.md`
 - `notification-gateway/src/main/proto/notification.proto`
 - `payment-service-provider/src/main/java/br/kauan/paymentserviceprovider/adapter/input/kafka/NotificationConsumer.java`

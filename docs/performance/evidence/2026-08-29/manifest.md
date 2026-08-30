@@ -1,34 +1,34 @@
-# Evidência final de performance
+# Final performance evidence
 
-## Afirmação sustentada
+## Supported claim
 
-O runtime do commit `1351ea564d0834a66e1b5d99a5e09a1a384cae1b` sustentou pelo menos `2.000` pagamentos originais por segundo durante toda a janela ativa de `15 minutos`, com p99 end-to-end abaixo do threshold interno de `1 segundo` e corretude funcional integral, em duas execuções consecutivas.
+The runtime at commit 1351ea564d0834a66e1b5d99a5e09a1a384cae1b sustained at least 2,000 original payments per second throughout a 15-minute active window, with end-to-end p99 below the internal one-second threshold and no functional violations, in two consecutive runs.
 
-As duas runs usaram o profile `mixed-outcomes-2k-15m`, o mesmo plano normalizado, worktree limpa e ambientes novos criados pelo preparador oficial. Não houve mudança de código, configuração ou procedimento entre elas.
+Both runs used the mixed-outcomes-2k-15m profile, the same normalized execution plan, a clean worktree, and newly prepared environments. Code, configuration, and procedure did not change between them.
 
-## Campanha qualificadora
+## Qualification campaign
 
-| run | início local | originais planejados / executados | mínimo rolling | p99 | corretude |
+| Run | Local start | Planned / executed originals | Minimum rolling TPS | p99 | Correctness |
 | --- | --- | ---: | ---: | ---: | --- |
-| A | `2026-08-29 19:29:40 -03:00` | `1.890.000 / 1.889.369` | `2.017 TPS` | `855,202 ms` | zero outcomes ausentes ou contraditórios e zero violações de replay |
-| B | `2026-08-29 19:49:50 -03:00` | `1.890.000 / 1.890.000` | `2.079 TPS` | `265,195 ms` | zero outcomes ausentes ou contraditórios e zero violações de replay |
+| A | 2026-08-29 19:29:40 -03:00 | 1,890,000 / 1,889,369 | 2,017 | 855.202 ms | zero missing or contradictory outcomes and zero replay violations |
+| B | 2026-08-29 19:49:50 -03:00 | 1,890,000 / 1,890,000 | 2,079 | 265.195 ms | zero missing or contradictory outcomes and zero replay violations |
 
-O total executado não é usado para compensar uma queda temporal. A aprovação exige que toda janela contínua de um segundo integralmente contida no active alcance o piso de `2.000 TPS`. As duas runs satisfizeram esse critério e o threshold de latência de forma independente.
+Executed totals do not compensate for temporal deficits. Qualification requires every continuous one-second window fully contained in the active phase to reach 2,000 TPS. Both runs satisfied that criterion and the latency threshold independently.
 
-A run A foi preservada deliberadamente apesar da cauda maior. Excluí-la e promover somente a amostra mais favorável reduziria a credibilidade da campanha. Sua aprovação demonstra que o piso e o SLA foram mantidos também na condição menos favorável observada; a run B confirma que o resultado é repetível. Em contrapartida, a campanha não sustenta `265 ms` como latência típica nem permite ignorar a variação: o p99 observado entre as duas execuções foi de `265,195` a `855,202 ms`, e o menor headroom rolling foi de apenas `17 TPS` sobre o piso.
+Run A is deliberately preserved despite its higher tail latency. Selecting only the most favorable sample would weaken the campaign. Run A shows that throughput, latency, and correctness held under the least favorable observed condition; Run B establishes repeatability. The campaign therefore supports a p99 range of 265.195–855.202 ms rather than presenting 265.195 ms as a typical value. The smallest observed rolling headroom was 17 TPS.
 
-## Artefatos qualificadores
+## Qualifying artifacts
 
-* [`profile.json`](profile.json): profile comum às duas runs;
-* [`execution-plan.json`](execution-plan.json): plano normalizado comum;
-* [`qualification-run-a-sla-report.json`](qualification-run-a-sla-report.json): relatório da run A;
-* [`qualification-run-b-sla-report.json`](qualification-run-b-sla-report.json): relatório da run B;
-* [`checksums.sha256`](checksums.sha256): checksums dos artefatos compactos deste diretório.
+- [profile.json](profile.json): profile shared by both runs;
+- [execution-plan.json](execution-plan.json): normalized plan shared by both runs;
+- [qualification-run-a-sla-report.json](qualification-run-a-sla-report.json): Run A report;
+- [qualification-run-b-sla-report.json](qualification-run-b-sla-report.json): Run B report;
+- [checksums.sha256](checksums.sha256): checksums for the compact evidence in this directory.
 
-CSVs, JFRs, logs, certificados e credenciais não integram a evidência canônica. Os relatórios qualificadores e os inputs versionados são suficientes para verificar a afirmação promovida sem depender de `load-test/results/**` local.
+Large CSVs, JFR recordings, logs, certificates, and credentials are not part of the canonical evidence. The versioned inputs and reports are sufficient to verify the promoted claim without access to local load-test/results directories.
 
-## Estudo Go/Rust separado
+## Separate Go/Rust study
 
-[`go-comparison-sla-report.json`](go-comparison-sla-report.json) e [`rust-comparison-sla-report.json`](rust-comparison-sla-report.json) pertencem ao estudo controlado entre os dois geradores. Eles sustentam a [comparação Go/Rust](../../../architecture/load-tool-go-rust-comparison.md), não a qualificação final de capacidade acima.
+[go-comparison-sla-report.json](go-comparison-sla-report.json) and [rust-comparison-sla-report.json](rust-comparison-sla-report.json) belong to the controlled generator comparison, not to the final capacity qualification above.
 
-Essa separação é deliberada: o A/B de implementações responde qual gerador preserva melhor a workload; a campanha A/B do commit `1351ea5` responde se o runtime final qualifica repetidamente.
+This separation is deliberate: the generator study asks which implementation preserves the workload more predictably; the two-run campaign asks whether the final runtime repeatedly satisfies the capacity contract. The interpretation of both is consolidated in [performance.md](../../../performance.md).

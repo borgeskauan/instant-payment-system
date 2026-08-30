@@ -245,9 +245,9 @@ inteiro de commits.
 #### Resultado
 
 As migrations experimentais foram substituídas por um único baseline suportado
-para bancos novos. A evolução arquitetural permanece documentada em
-[`spi-schema-evolution.md`](../../../architecture/spi-schema-evolution.md) e no
-histórico Git, sem obrigar o runtime a reconstruir modelos descartados.
+para bancos novos. O desenho vigente está em [`design.md`](../../../design.md)
+e a evolução permanece no histórico Git, sem obrigar o runtime a reconstruir
+modelos descartados.
 
 ### Fase 4 — manter a API administrativa de fundos — decisão concluída
 
@@ -350,11 +350,11 @@ trabalho de performance separado.
 Estes itens não devem aumentar o escopo das fases acima:
 
 * auditoria de entradas recusadas:
-  [`auditoria-rejeicoes-entrada.md`](../Backlog/operacao-testes/auditoria-rejeicoes-entrada.md);
+  [`auditoria-rejeicoes-entrada.md`](../Backlog/produto-dominio/auditoria-rejeicoes-entrada.md);
 * replay idêntico como no-op:
   [`replay-identico-como-noop-spi.md`](replay-identico-como-noop-spi.md);
 * homologação multi-instância:
-  [`homologar-execucao-multi-instancia.md`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md);
+  [`homologar-execucao-multi-instancia.md`](../Backlog/operacao-confiabilidade/homologar-execucao-multi-instancia.md);
 * tuning adicional de throughput, CPU, memória ou latência;
 * HA de Kafka/PostgreSQL e disaster recovery;
 * mudanças no load-tool que não sejam exigidas para preservar seus workloads.

@@ -316,5 +316,5 @@ O perfil longo exercita simultaneamente throughput contratual de pagamentos orig
 - classificar múltiplos frames por `communication_id`, obrigação lógica ou redelivery operacional;
 - adicionar hot sender/fan-out, hot receiver/fan-in ou hot partition Kafka; hot-pair é suficiente para o MVP, e topologias direcionais só serão adicionadas se a estabilização revelar necessidade concreta;
 - publicar records diretamente em tópicos Kafka, manipular offsets ou provocar redelivery no broker;
-- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/operacao-testes/engenharia-caos-resiliencia-operacional.md);
+- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/operacao-confiabilidade/engenharia-caos-resiliencia-operacional.md);
 - implementar retentativa automática de pagamentos em `ACCEPTED_IN_PROCESS`.

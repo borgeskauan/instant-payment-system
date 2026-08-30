@@ -8,9 +8,8 @@ Preservar uma evidência simples, auditável e reproduzível de que o runtime fi
 
 ## Trabalho já concluído
 
-* [x] Metodologia, workload, decisões e limitações foram consolidados no [relatório de estabilização](../../../performance/2k-tps-stabilization.md).
-* [x] Resultados positivos, negativos e migração de gargalos foram curados nos [achados experimentais](../../../performance/experimental-findings.md).
-* [x] A comparação entre os geradores Go e Rust foi documentada separadamente.
+* [x] Metodologia, workload, resultados, decisões promovidas e limitações foram consolidados em [Performance and evidence](../../../performance.md).
+* [x] A comparação entre os geradores Go e Rust foi incorporada somente na medida necessária para interpretar a evidência final.
 * [x] Profile e execution plan finais foram estabilizados.
 
 ## Por que a task foi reaberta

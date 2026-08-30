@@ -48,4 +48,4 @@ O teste final da imagem encontrou uma ambiguidade de construção introduzida du
 
 Dois ganhos locais de performance foram avaliados e deliberadamente rejeitados: evitar `ByteString.copyFrom` economizaria menos de 0,5% de um core, e manter HMAC em `ThreadLocal` economizaria cerca de 0,09% de um core no workload observado. Nenhum estado ou mecanismo próprio foi adicionado por ganhos absolutos tão pequenos.
 
-A arquitetura de entrega vigente está documentada em [`Entrega durável de notificações pelo Kafka`](../../../../architecture/kafka-durable-notification-delivery.md).
+A arquitetura de entrega vigente está consolidada em [System design](../../../../design.md).

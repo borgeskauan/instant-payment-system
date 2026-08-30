@@ -230,13 +230,13 @@ Registros existentes:
 
 Load-tool e infraestrutura devem repetir integralmente a metodologia obrigatória. Nenhum inventário técnico começa antes do Gate A e nenhuma alteração começa antes do Gate B.
 
-`dict`, `payment-app` e `payment-service-provider` continuam fora desta task e serão isolados conforme a decisão registrada em [`Separar a reference demo do core`](../agora/separar-reference-demo.md).
+`dict`, `payment-app` e `payment-service-provider` continuam fora desta task e foram isolados conforme a decisão registrada em [`Separar a reference demo do core`](separar-reference-demo.md).
 
 ## Fora de escopo
 
 * novas funcionalidades ou novos workloads;
 * tuning amplo ou redesenho motivado por performance;
-* execução multi-instância, acompanhada separadamente em [`Homologar execução multi-instância`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md);
+* execução multi-instância, acompanhada separadamente em [`Homologar execução multi-instância`](../Backlog/operacao-confiabilidade/homologar-execucao-multi-instancia.md);
 * HA de Kafka/PostgreSQL e disaster recovery;
 * reescrever componentes apenas para uniformizar estilo ou tecnologia;
 * documentação canônica final antes do freezing técnico.

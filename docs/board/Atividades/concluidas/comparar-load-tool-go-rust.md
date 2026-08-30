@@ -12,7 +12,7 @@ Registrar por que o load-tool foi refeito em Rust e avaliar, com evidências, o 
 
 ## Resultado
 
-O relatório final está em [`../../../architecture/load-tool-go-rust-comparison.md`](../../../architecture/load-tool-go-rust-comparison.md).
+A conclusão promovida está consolidada em [Performance and evidence](../../../performance.md). O relatório detalhado anterior permanece no histórico Git.
 
 No A/B principal, ambas as implementações executaram o mesmo profile `mixed-outcomes-2k-15m`, contra a mesma revisão e o mesmo patch do Gateway, após recriação completa da stack e dos volumes. Os dois lados preservaram HTTP 2xx, outcomes esperados e ausência de contradições.
 

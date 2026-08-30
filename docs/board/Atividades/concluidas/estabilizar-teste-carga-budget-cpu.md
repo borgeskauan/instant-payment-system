@@ -18,8 +18,8 @@ O resultado deve ser um experimento repetível que qualifique uma única stack
 dentro do workload e do budget definidos.
 
 Esta task preserva o caderno histórico de hipóteses, experimentos e decisões.
-A síntese do estado final, dos resultados repetidos e das limitações está no
-[relatório de estabilização em 2.000 TPS](../../../performance/2k-tps-stabilization.md).
+A síntese do estado final, dos resultados repetidos e das limitações está em
+[Performance and evidence](../../../performance.md).
 
 ## Método
 
@@ -3627,8 +3627,8 @@ somente a key do PSP autenticado é devolvida. O limite continua fixo em 15 e a
 semântica continua at-least-once. Duplicatas físicas preservam o mesmo
 `communication_id` e são tratadas idempotentemente no PSP.
 
-A decisão e suas limitações estão documentadas em
-`docs/architecture/kafka-durable-notification-delivery.md`. O ambiente MVP usa
+A decisão e suas limitações estão consolidadas em
+`docs/design.md`. O ambiente MVP usa
 um broker e replication factor 1: valida o contrato e o processo, mas não HA de
 broker, host ou volume. Indisponibilidade superior a sete dias é disaster
 recovery. Admission control do ingresso financeiro baseado na saúde do
@@ -3836,7 +3836,7 @@ no workload oficial, com ampla margem em relação ao alvo observado de
 está registrada no relatório consolidado. As evidências encerram a necessidade
 de tuning adicional nessa configuração e atendem ao objetivo de performance
 desta task. A homologação concorrente foi separada para a task
-[`Homologar execução multi-instância`](../Backlog/operacao-testes/homologar-execucao-multi-instancia.md).
+[`Homologar execução multi-instância`](../Backlog/operacao-confiabilidade/homologar-execucao-multi-instancia.md).
 
 ### Limite deliberado de concorrência
 

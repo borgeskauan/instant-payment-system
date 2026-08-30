@@ -18,4 +18,4 @@ PACS.002 rejeitado -> libera a reserva para o pagador
 
 A implementação preserva atomicidade entre saldo, estado do pagamento, auditoria e obrigação de notificação, além de idempotência sob replay. O schema e os adapters vigentes não possuem `funds_bucket_entity`, `bucket_id` ou hashing de liquidez.
 
-O desenho completo, as invariantes, limitações e a evolução desde os experimentos iniciais estão em [Saldo por participante com reserva implícita no pagamento](../../../architecture/reservation-based-participant-balance.md) e [Evolução do schema do SPI](../../../architecture/spi-schema-evolution.md).
+O desenho vigente e suas invariantes estão consolidados em [System design](../../../design.md). A evolução experimental permanece no histórico Git.

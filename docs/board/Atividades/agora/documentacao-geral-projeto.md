@@ -124,6 +124,14 @@ Documentos especializados existentes devem justificar seu custo para o leitor. C
 - Não usar linguagem autoavaliativa nem marketing vazio. Expor evidência suficiente para o leitor formar a conclusão.
 - O inglês é o idioma canônico da documentação pública. Board, scratch notes e história não promovida podem permanecer em português.
 
+## Fluxo editorial
+
+1. Produzir e revisar o README em português como rascunho de conteúdo.
+2. Validar ideia, ordem, tom, clareza, cortes e time-to-answer antes de discutir formulações em inglês.
+3. Produzir `design.md` e `performance.md` em português somente depois que a narrativa principal estiver estável.
+4. Reescrever a documentação aprovada em inglês natural, preservando significado sem fazer tradução literal.
+5. Não manter versões públicas completas em dois idiomas. O português é material de trabalho; o inglês será a única versão canônica final.
+
 ## Orçamento de complexidade
 
 > Maximizar a redução de incerteza por minuto de atenção do leitor.

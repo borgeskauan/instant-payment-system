@@ -8,4 +8,4 @@ Esta task descrevia custos internos da implementação Go, incluindo mutexes glo
 
 O gerador ativo foi refeito em Rust com pacing e networking separados, deadlines sem catch-up, estado pré-alocado e reporting fora da fronteira do hot path. A implementação Go foi removida e não existe mais uma base útil sobre a qual executar as otimizações propostas aqui.
 
-A comparação quantitativa entre a última implementação Go e o gerador Rust permanece como trabalho posterior em [`comparar-load-tool-go-rust.md`](../../Backlog/pos-projeto/comparar-load-tool-go-rust.md).
+A comparação quantitativa entre a última implementação Go e o gerador Rust foi concluída em [`comparar-load-tool-go-rust.md`](../comparar-load-tool-go-rust.md).

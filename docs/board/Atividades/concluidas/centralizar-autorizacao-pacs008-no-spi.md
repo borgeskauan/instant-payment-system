@@ -15,7 +15,7 @@ Concluída em 28/08/2026 durante o cleanup dos projetos.
 * o HTTP confirma com `2xx` somente o recebimento técnico e a publicação no Kafka; a autorização de negócio ocorre assincronamente no SPI;
 * a defesa baseada no pagamento persistido permanece para conflitos de identidade concorrentes ou preexistentes.
 
-O Producer continua responsável pela autenticação da fronteira e pela conversão representável do PACS. O SPI é o único dono da autorização de negócio. Auditoria operacional dessas rejeições permanece separada em [`Auditoria de rejeições de entrada`](../Backlog/operacao-testes/auditoria-rejeicoes-entrada.md).
+O Producer continua responsável pela autenticação da fronteira e pela conversão representável do PACS. O SPI é o único dono da autorização de negócio. Auditoria operacional dessas rejeições permanece separada em [`Auditoria de rejeições de entrada`](../Backlog/produto-dominio/auditoria-rejeicoes-entrada.md).
 
 ## Evidências
 
