@@ -1,0 +1,427 @@
+# Estabilização da stack em 2.000 pagamentos por segundo
+
+## Resultado
+
+A stack local foi qualificada duas vezes para sustentar pelo menos `2.000`
+pagamentos originais por segundo durante toda a janela ativa de `15 minutos`.
+O profile oferece `2.100 TPS`; o piso é avaliado em toda janela contínua de um
+segundo, sem usar média ou picos posteriores para compensar uma queda.
+
+As duas execuções partiram de containers e volumes novos, usaram o mesmo commit
+limpo, profile, recursos e instrumentação e terminaram sem outcome ausente ou
+contraditório nem violação de replay.
+
+| sinal | primeira execução | repetição |
+| --- | ---: | ---: |
+| originais planejados / executados no active | `1.890.000 / 1.889.369` | `1.890.000 / 1.890.000` |
+| TPS médio ativo | `2.099,299` | `2.100,000` |
+| mínimo rolling de 1 segundo | `2.017` | `2.079` |
+| latência p50 / p95 | `188,028 / 597,592 ms` | `142,436 / 233,917 ms` |
+| latência p99 / máxima | `855,202 / 1.577,671 ms` | `265,195 / 692,904 ms` |
+| PACS.008 replayados / aceitos | `100.422 / 100.422` | `100.472 / 100.472` |
+| PACS.002 replayados / aceitos | `80.326 / 80.326` | `80.373 / 80.373` |
+| violações funcionais / replay | `0 / 0` | `0 / 0` |
+
+O threshold interno é p99 abaixo de `1 segundo`. O contrato externo permanece
+p99 abaixo de `4,6 segundos`. A qualificação, portanto, preserva margem interna
+sem redefinir o contrato.
+
+Este documento é a síntese. O histórico completo de hipóteses, A/Bs e
+diagnósticos permanece no
+[`caderno de estabilização`](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md).
+Os resultados intermediários que alteraram decisões foram curados no
+[apêndice de achados experimentais](experimental-findings.md), com evidência,
+decisão e limitações separadas.
+
+## Workload qualificado
+
+O profile oficial é `mixed-outcomes-2k-15m`:
+
+```text
+warmup bootstrap :  500 TPS / 60 s / timeout causal de 30 s
+warmup steady    : 1500 TPS / 60 s / timeout causal de 5 s
+gate do warmup   : até 120 s para concluir obrigações observáveis
+active           : 2100 TPS oferecidos / piso rolling de 2000 TPS / 15 min
+drain            : 30 s fixos
+replay PACS.008  : 5% / atraso de 10 s
+replay PACS.002  : 5% / atraso de 10 s
+```
+
+O mix funcional é:
+
+| cenário | participação | resultado esperado |
+| --- | ---: | --- |
+| happy-path | `80%` | HTTP 2xx e PACS.002 `ACSC` ao pagador |
+| insufficient-funds | `20%` | HTTP 2xx e PACS.002 `RJCT/AM04` ao pagador |
+
+Os replays são carga adicional. Eles não reduzem nem substituem os pagamentos
+originais contabilizados no piso. A distribuição mantém `80%` do tráfego nos
+pares quentes de cada cenário.
+
+O perfil, o plano normalizado e os dois relatórios qualificadores estão
+preservados em
+[`evidence/2026-08-29`](evidence/2026-08-29/manifest.md).
+
+## Fronteira de medição
+
+A latência começa quando o PSP simulado inicia o request original e termina
+quando ele observa um outcome final compatível para o pagador. Entregas físicas
+repetidas são permitidas pelo contrato at-least-once; ausência, status
+contraditório ou motivo incompatível continuam sendo falhas de corretude.
+
+O gerador usa buckets absolutos de `10 ms`, sem carry-over. Um PACS.008 original
+só é admitido quando payload e capacidade HTTP/2 estão prontos antes do deadline
+do bucket. Trabalho atrasado não é despejado numa janela posterior.
+
+Essa capacidade precisa estar reservada, e não apenas momentaneamente observada
+como disponível. O uso anterior de `SendRequest::ready()` podia validar somente
+o dispatcher e ainda deixar o request admitido numa fila interna sem limite
+explícito. Nesse desenho, o timestamp de início descrevia a intenção do gerador,
+mas não provava que existia um stream HTTP/2 disponível para transportar o
+pagamento.
+
+O cliente atual espera o servidor anunciar um `MAX_CONCURRENT_STREAMS` finito
+(`256` no ingresso homologado), espelha esse limite num semáforo por conexão e
+adquire um permit antes do commit semântico do pagamento. O permit acompanha o
+request preparado até o término da resposta, erro ou timeout. Imediatamente
+antes de `send_request`, o sender também precisa estar pronto; capacidade
+indisponível depois da reserva é tratada como quebra de invariante. Se o permit
+não puder ser obtido até o deadline do bucket, o slot permanece não admitido e
+não produz estado nem timestamp HTTP. Assim, pagamentos contabilizados como
+iniciados não ficam escondidos atrás da fronteira temporal numa fila do cliente.
+
+O gerador mantém contadores causais internos para misses de wakeup, canal de
+preparação cheio, bucket não preparado, canal encerrado, preparação HTTP e
+admissão HTTP. Eles são atualizados apenas quando ocorre uma perda e publicados
+somente no log diagnóstico ao término da fase; não ampliam o contrato público do
+relatório. As lacunas de sequence e os timestamps persistidos mostram quando a
+perda ocorreu, enquanto esses contadores identificam em qual fronteira ela
+aconteceu. Essa instrumentação permanece no runtime porque falhas intermitentes
+sob carga sustentada não podem ser atribuídas com segurança apenas pelo total
+executado.
+
+O throughput é reconstruído depois do experimento a partir dos timestamps de
+início HTTP. O relatório ordena esses instantes e mede o menor número de
+originais em qualquer janela contínua de um segundo integralmente contida no
+active. Média e quantidade total são diagnósticos, não aprovação.
+
+O gate entre warmup e active afirma somente o que o load-tool observa: o active
+não começa enquanto ainda existe obrigação de warmup criada e rastreada pelo
+próprio gerador. Lag Kafka zero não é usado como prova de quiescência interna.
+
+## Ambiente e recursos
+
+O load generator executa no host e não entra no consumo atribuído à stack. Os
+serviços medidos são PostgreSQL, Kafka, ingresso HTTP (`kafka-producer`), SPI e
+Notification Gateway.
+
+Os limites efetivos do Compose nos runs finais eram:
+
+| componente | limite de CPU | limite de memória |
+| --- | ---: | ---: |
+| PostgreSQL | `1,00` | `512 MiB` |
+| Kafka | `1,00` | `2048 MiB` |
+| ingresso HTTP | `1,00` | `384 MiB` |
+| SPI | `1,00` | `768 MiB` |
+| Notification Gateway | `1,00` | `512 MiB` |
+| total dos limites individuais | `5,00` | `4224 MiB` |
+
+O alvo de `3 vCPUs / 3 GiB` foi avaliado pelo consumo observado durante o
+active, não por um cgroup agregado. Essa distinção é importante: os resultados
+provam o consumo medido, mas não provam comportamento sob um teto físico único
+de três CPUs.
+
+| sinal observado no active | primeira execução | repetição |
+| --- | ---: | ---: |
+| CPU média agregada | `2,094 vCPU` | `1,158 vCPU` |
+| maior amostra agregada de CPU | `3,399 vCPU` | `2,195 vCPU` |
+| memória média agregada | `1824,5 MiB` | `1813,4 MiB` |
+| maior amostra agregada de memória | `1994,6 MiB` | `1955,8 MiB` |
+
+CPU média por componente:
+
+| componente | primeira execução | repetição |
+| --- | ---: | ---: |
+| PostgreSQL | `74,90%` | `40,48%` |
+| ingresso HTTP | `53,18%` | `29,10%` |
+| Notification Gateway | `42,62%` | `24,55%` |
+| Kafka | `21,55%` | `12,22%` |
+| SPI | `17,16%` | `9,50%` |
+
+As amostras vieram de `docker stats`: foram `699` amostras completas em cada run
+durante os respectivos actives. Elas não formam uma garantia contínua entre
+amostras. A execução diagnóstica final do load-tool registrou aproximadamente
+`59,6 MiB` de RSS máximo, fora do budget da stack.
+
+### Interpretação da variância entre as runs
+
+A diferença de latência não veio de mudança de workload. As duas execuções
+usaram os mesmos inputs e processaram praticamente o mesmo número de
+pagamentos, outcomes e replays. Na run A, porém, o JFR observou CPU média da
+máquina de `60,21%`, contra `33,84%` na B; a CPU média da stack foi de
+`2,094 vCPU`, contra `1,158 vCPU`.
+
+Essa pressão apareceu em todo o caminho e principalmente no PostgreSQL. Com
+quantidades semelhantes de chamadas, rows e WAL, o tempo médio do insert de
+pagamentos foi de `15,086 ms` na A e `5,422 ms` na B; auditoria,
+`4,709 / 1,944 ms`; outbox, `2,629 / 0,980 ms`. I/O e locks observados não
+explicam essa diferença. O p99 HTTP por minuto ficou entre aproximadamente
+`35–79 ms` na A e, na maior parte da B, entre `17–19 ms`; a diferença maior foi
+acumulada depois do ingresso, no processamento e na entrega do outcome. Na A,
+a cauda permaneceu elevada ao longo do active e atingiu p99 de `1.201,075 ms` no
+minuto 12, em vez de resultar de um único pico de bootstrap.
+
+A telemetria disponível não separa atividade externa do host, frequência da
+CPU, pressão localizada por core, scheduling e overhead adicional causado pelo
+maior trabalho simultaneamente pendente. Por isso, a campanha registra a
+correlação com pressão computacional, mas não atribui uma causa raiz específica.
+
+Preservar a run A fortalece a afirmação binária de capacidade: mesmo na condição
+menos favorável observada, ela manteve rolling mínimo de `2.017 TPS`, p99 global
+de `855,202 ms` e corretude integral. Isso não transforma a run B em latência
+“típica” nem demonstra headroom amplo. A evidência sustenta o piso de `2.000 TPS`
+e p99 abaixo de `1 segundo` neste host compartilhado; a faixa observada entre as
+duas runs precisa permanecer visível.
+
+## Método de estabilização
+
+O trabalho seguiu quatro regras:
+
+1. preservar workload e recursos durante cada A/B;
+2. mudar uma variável relevante por vez;
+3. medir trabalho útil e custo por pagamento, não apenas CPU ocupada;
+4. executar o profile longo somente depois que o diagnóstico curto justificasse
+   o custo.
+
+PostgreSQL foi investigado por `pg_stat_statements`, activity sampling,
+I/O/WAL, lock waits, `EXPLAIN ANALYZE` e, numa execução descartável,
+`log_executor_stats`. JFR separou compilação, TLS, threads e espera JDBC nos
+processos Java. Os artefatos das execuções preservaram requests, outcomes, replays e recursos
+para permitir reconstrução posterior.
+
+Uma conclusão recorrente foi que `total_exec_time` de uma query não equivale a
+CPU intrínseca. Sob um PostgreSQL saturado, uma operação pode liderar wall-time
+por esperar capacidade. A instrumentação nativa atribuiu `74,38%` da CPU de
+executor medida ao antigo ciclo de outbox/delivery e somente `6,63%` ao conjunto
+de lock, transição e saldo diretamente associado ao PACS.002. Isso mudou o alvo
+de otimização do settlement isolado para o lifecycle de notificações.
+
+## Lições dos experimentos intermediários
+
+Os microbenchmarks serviram para demonstrar mecanismos, não para declarar ganho
+de capacidade. A simplificação do update PACS.002 reduziu seu tempo SQL
+acumulado em `69,69%` e sua pior execução em `98,32%`, mas o A/B end-to-end
+concluiu `11,04%` menos outcomes porque o PostgreSQL permaneceu saturado e o
+limite migrou para etapas anteriores e para o ciclo compartilhado de escrita.
+A regra resultante foi medir novamente o caminho causal completo depois de toda
+otimização local relevante.
+
+O `fillfactor=50` da tabela de pagamentos também apresentou um trade-off real:
+os updates HOT passaram de `22,86%` para `100%`, e o custo e WAL das transições
+caíram materialmente. Em contrapartida, insert e lock/leitura ficaram mais
+caros, heap mais índices cresceram `46,98%` e os outcomes concluídos ficaram
+praticamente iguais (`-0,02%`). O layout foi mantido pela eficiência física das
+transições, não como explicação para a capacidade end-to-end final.
+
+Nem todo ganho de microbenchmark foi promovido. Pré-selecionar IDs antes da
+admissão PACS.008 reduziu o SQL isolado em mais de `65%`, mas no sistema completo
+a consulta adicional absorveu quase todo o benefício: o SQL global subiu
+`5,61%` e o p99 subiu `26,51%`. O caminho vigente preserva `INSERT ... ON
+CONFLICT DO NOTHING` e consulta somente os conflitos. Esse resultado reforçou a
+preferência por reduzir o trabalho dominante, em vez de otimizar uma operação
+isolada com uma nova leitura no hot path.
+
+O tuning dos consumers foi guiado pelos lotes realmente entregues, não apenas
+pelos limites configurados. No PACS.002, elevar `max.poll.records` de `220` para
+`500` não criou lotes de 500: o máximo observado foi `339`, enquanto o batch
+médio subiu de `129,084` para `162,806`. Isso reduziu callbacks em `20,37%` e o
+tempo de processamento dos callbacks em `24,11%`. Já elevar
+`fetch.min.bytes` de `16` para `20 KiB` quase não alterou o batch médio
+(`162,806 → 164,354`), mas elevou o p99 end-to-end de `489,036` para
+`668,482 ms`. A decisão durável é tratar esses parâmetros como limites de
+formação e sempre observar a distribuição real e a cauda resultante.
+
+No PACS.008, a comparação diagnóstica que levou `fetch.min.bytes` de `128` para
+`56 KiB` reforçou a mesma regra. Considerando todos os callbacks registrados no
+JFR, a mediana do lote permaneceu em `165` e a média variou pouco
+(`155,291 → 152,010`), mas p99 e máximo do lote caíram de `281/493` para
+`235/350`. O p99 do callback caiu de `105,511` para `72,191 ms`, e o p99
+end-to-end, de `566,941` para `386,178 ms`. Os dois runs preservaram os outcomes
+e ficaram abaixo do piso rolling (`1.967` e `1.956 TPS`); portanto sustentam
+`56 KiB` como redução conservadora de espera e cauda, não como prova isolada de
+maior capacidade.
+
+A evolução interna do gerador Rust também descartou soluções aparentemente
+óbvias. O protótipo de `1 ms` perdeu `30.877` de `246.000` slots; buckets de
+`10 ms` reduziram a perda para `1.170`, e um coordenador de buckets para `104`.
+Depois disso, aumentar o canal repetiu os mesmos `21` misses, pinning de CPU
+produziu `29`, e elevar o spin para `1 ms` ainda deixou `12` misses ao custo de
+`16,012 s` de spin acumulado. Um diagnóstico separou apenas um atraso no retorno
+do sleep de `26` perdas antes do commit: o problema restante não era acordar a
+thread, mas preparar e admitir o trabalho a tempo.
+
+O planner compartilhado foi a mudança decisiva. Ele executou `246.000/246.000`,
+zerou misses, reduziu p99 do pacer para `0,244 ms` e p99 do início HTTP para
+`0,228 ms`; o user CPU caiu de aproximadamente `211–220 s` nas variantes
+anteriores para `37,570 s`. O cutover completo preservou zero misses e reduziu
+o RSS máximo para cerca de `59,6 MiB`. A lição durável é resolver ownership e
+preparação antes de ajustar timer, fila ou afinidade do host.
+
+Profiling posterior também delimitou onde parar. Heaptrack contou `47,59`
+milhões de alocações, principalmente em formatação do recorder e preparação
+HTTP/2, mas perturbou o próprio run: RSS chegou a `491 MiB` e p99 a
+`718,061 ms`. O perfil de CPU não apresentou um símbolo de aplicação dominante.
+Como o diagnóstico normal já qualificava com baixo RSS e lateness, buffer pool,
+allocator customizado e encoder JSON manual não foram promovidos sem evidência
+de benefício sistêmico.
+
+## Evolução dos gargalos e decisões
+
+| evidência | decisão mantida | efeito observado |
+| --- | --- | --- |
+| baseline com média `2.113,898 TPS`, mínimo `0` e pico `10.563` | substituir média por rolling contínuo e eliminar carry-over | o gerador deixou de mascarar buracos com picos posteriores |
+| `6.019` handshakes TLS no active, ingresso bloqueado e `5.717` timeouts | clientes persistentes, HTTP/2 obrigatório e prewarm autenticado por PSP | handshakes ativos e timeouts caíram a zero; o gargalo migrou ao SPI/PostgreSQL |
+| buckets fragmentavam liquidez e settlement tocava pagador e recebedor | saldo único por participante e reserva no PACS.008 | cada fase financeira passou a alterar somente um participante; replays continuam idempotentes |
+| excesso de transações concorrentes no único core do PostgreSQL | formar batches maiores e ajustar concorrência dos listeners por fluxo | no primeiro A/B PACS.002, rows/chamada subiram `49,118 → 319,714` e SQL caiu `469,732 s → 5,901 s` |
+| CTE de admissão PACS.008 fazia classificação no banco | classificar o batch em Java e consultar conflitos somente quando necessário | p95/p99 HTTP caíram `264,820/698,384 → 16,890/38,731 ms` no diagnóstico correspondente |
+| uma mensagem persistida por item de notificação | agrupar até 15 itens por destinatário | rows de outbox caíram `78,04%`, SQL do insert `90,78%`, WAL `77,75%` e outcomes ausentes chegaram a zero no A/B |
+| reliable push exigia claim, lease, ACK e persistência de progresso | Pull unary com cursor durável no PSP | redelivery passou a ser reapresentação de cursor antigo; ACK individual saiu do hot path |
+| arquitetura híbrida ainda mantinha índice, reconciliação e duas ordens duráveis | Kafka como log durável por sete dias; PostgreSQL conserva apenas a outbox transacional | contra o híbrido longo, p99 caiu `69,43%`, SQL exportado `61,49%` e CPU média do PostgreSQL `22,01 pp` |
+| stack fria falhava antes da fase steady apesar de estabilizar depois | warmup bootstrap e steady separados, seguidos por gate observável | `7.688` timeouts frios foram eliminados sem relaxar o SLA do active |
+| Go acumulou responsabilidades e seu overhead interferia no pacing | load-tool greenfield em Rust, gerador separado fisicamente do report | diagnóstico final: `126.000/126.000` ativos, rolling `2.079`, p99 `253,867 ms` e pacer p99 `0,322 ms` |
+
+As decisões financeiras e de entrega estão detalhadas em:
+
+- [Saldo por participante com reserva implícita](../architecture/reservation-based-participant-balance.md);
+- [Entrega durável de notificações pelo Kafka](../architecture/kafka-durable-notification-delivery.md).
+
+## Arquitetura resultante
+
+```text
+PSP / load-tool Rust
+        │ HTTP/2 + mTLS
+        ▼
+ingresso HTTP
+        │ Kafka: PACS.008 por pagador
+        ▼
+SPI
+  ├─ reserva saldo do pagador
+  ├─ persiste pagamento + auditoria + notification_outbox atomicamente
+  └─ processa PACS.002 em batches
+        │
+        ▼
+Kafka psp-notifications-v1
+  ├─ log durável por 7 dias
+  ├─ 8 partições por recipient_ispb
+  └─ duplicata física permitida com communication_id estável
+        │
+        ▼
+Notification Gateway
+  ├─ buffer recente em memória
+  ├─ fallback histórico direto no Kafka
+  └─ Pull(cursor) com até 15 envelopes
+        │
+        ▼
+PSP persiste lote e somente então avança o cursor
+```
+
+O PostgreSQL é autoridade da transação financeira e da criação atômica da
+obrigação. Kafka é autoridade do histórico operacional de delivery dentro da
+retenção. O PSP é autoridade sobre seu progresso durável de consumo. O Gateway
+não mantém ACK individual nem estado persistido de progresso.
+
+## Alternativas descartadas ou superadas
+
+- O primeiro scheduler compensava atraso com catch-up. Foi removido porque
+  alterava a workload medida.
+- Lag Kafka zero foi descartado como prova de conclusão end-to-end: offsets
+  consumidos não provam outbox, persistência nem delivery concluídos.
+- A arquitetura híbrida `outbound_notification + delivery_index + reconciler`
+  reduziu custos locais, mas preservava duplicação de estado e pressão no banco
+  financeiro. Foi substituída pelo log Kafka durável.
+- O protótipo Rust inicial com buckets de `1 ms` perdeu `30.877` slots e não foi
+  promovido. Buckets absolutos de `10 ms` preservaram a forma temporal com menor
+  sensibilidade ao scheduler do host.
+- Afinidade de CPU e políticas especiais de scheduling não foram mantidas como
+  requisito. Uma máquina separada e prioridade apropriada continuam boas
+  práticas para um benchmark externo, não dependências do MVP local.
+- `log_executor_stats` foi usado somente para atribuição diagnóstica e desligado
+  depois da medição por perturbar a workload.
+- Reutilizar a stack entre runs foi abandonado na qualificação: trabalho antigo
+  podia reaparecer no Pull e contaminar a execução seguinte.
+
+## Reprodução
+
+```bash
+cd load-test
+./prepare-performance-environment.sh --profile mixed-outcomes-2k-15m
+./run-load-test.sh --profile mixed-outcomes-2k-15m <run-tag>
+```
+
+Para repetir uma execução qualificadora, executar novamente o preparador antes
+do runner. O preparador recria volumes, sobe a stack, aguarda readiness,
+provisiona fundos e certificados e não gera tráfego.
+
+O relatório não encerra o processo com erro apenas porque uma meta de
+performance não foi atingida. A aprovação é feita pelos fatos persistidos:
+originais planejados/executados, `minimum_rolling_tps`, latências e violações de
+corretude.
+
+## Evidência preservada
+
+O repositório preserva em [`evidence/2026-08-29`](evidence/2026-08-29/manifest.md)
+o commit exercitado, o profile e o plano normalizado comuns, os relatórios das
+runs A e B e seus checksums. A prova final não depende de diretórios locais de
+resultado. CSVs, JFRs, logs e certificados volumosos não fazem parte da
+evidência canônica.
+
+As duas runs foram consecutivas no commit
+`1351ea564d0834a66e1b5d99a5e09a1a384cae1b`, com um `prepare` completo antes de
+cada uma. A primeira apresentou cauda e consumo de CPU maiores, mas ainda
+satisfez independentemente o piso rolling, a latência e a corretude; a segunda
+repetiu a qualificação com todos os originais planejados executados. Essa
+variância permanece visível em vez de ser escondida pela seleção de amostras de
+campanhas diferentes.
+
+## Limite exploratório acima da meta
+
+Diagnósticos curtos a `4.000 TPS` foram executados somente para localizar o
+próximo limite, não para ampliar a capacidade declarada. Eles preservaram todos
+os outcomes funcionais e iniciaram quase toda a carga planejada, mas o mínimo
+rolling ficou entre `3.920` e `3.960 TPS` e o p99 end-to-end entre `1,36` e
+`2,45 segundos`. Portanto nenhum deles comprovou o piso de `4.000 TPS` nem o
+threshold interno de `1 segundo`.
+
+A primeira fila dominante apareceu no consumer PACS.008. Elevar
+`max.poll.records` de `500` para `1.000` não resolveu o limite: cerca de `10%`
+dos callbacks já excediam `500` registros, o p99 do callback aumentou de
+aproximadamente `153` para `250 ms` e mais trabalho terminou depois da janela
+ativa. O limite homologado permaneceu `500`; concorrência adicional do listener
+e múltiplas instâncias pertencem à homologação futura, não à qualificação da
+stack única.
+
+## Limitações e trabalhos futuros
+
+- Os runs foram locais e o gerador compartilhou o host com a stack, embora seu
+  consumo fique fora do budget medido.
+- O budget de `3 vCPUs / 3 GiB` foi observado por amostragem, não imposto por um
+  limite agregado.
+- O ambiente possui um broker Kafka e replication factor 1; comprova protocolo
+  e performance local, não alta disponibilidade.
+- A retenção Kafka é de sete dias. Indisponibilidade maior pertence a disaster
+  recovery.
+- Não houve homologação Kubernetes nem multi-instância. Esses trabalhos estão
+  separados no backlog.
+
+## Conclusão
+
+O ganho final não veio de uma query isolada. Ele veio da remoção progressiva de
+trabalho acidental: conexões TLS descartáveis, fragmentação de saldo, excesso
+de transações pequenas, mensagens de saída unitárias, ACKs persistidos,
+reconciliação de duas fontes duráveis e overhead do próprio gerador.
+
+Com essas fronteiras simplificadas, duas execuções consecutivas ofereceram
+`2.100 TPS`, mantiveram mínimo rolling de `2.017` e `2.079 TPS`, p99 de
+`855,202` e `265,195 ms` e preservaram todos os outcomes e replays. A stack
+única está qualificada para o objetivo local definido; expansão de
+infraestrutura e homologação multi-instância são trabalhos separados.
