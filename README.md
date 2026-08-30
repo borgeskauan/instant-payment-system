@@ -104,6 +104,8 @@ Os resultados são gravados em `load-test/results/<run-tag>/<timestamp>/`.
 O resultado qualificador, o histórico das decisões e as limitações da medição
 estão consolidados no
 [relatório de estabilização em 2.000 TPS](docs/performance/2k-tps-stabilization.md).
+Os inputs, relatórios A/B e checksums que sustentam a afirmação final estão no
+[manifesto de evidência versionada](docs/performance/evidence/2026-08-29/manifest.md).
 O contrato de medição permanece descrito em
 [Performance SLA](docs/PERFORMANCE_SLA.md).
 

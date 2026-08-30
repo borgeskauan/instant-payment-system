@@ -7,19 +7,19 @@ pagamentos originais por segundo durante toda a janela ativa de `15 minutos`.
 O profile oferece `2.100 TPS`; o piso é avaliado em toda janela contínua de um
 segundo, sem usar média ou picos posteriores para compensar uma queda.
 
-As duas execuções partiram de containers e volumes novos, usaram o mesmo
-código, profile, recursos e instrumentação e terminaram sem perda, contradição
-de outcome ou violação de replay.
+As duas execuções partiram de containers e volumes novos, usaram o mesmo commit
+limpo, profile, recursos e instrumentação e terminaram sem outcome ausente ou
+contraditório nem violação de replay.
 
 | sinal | primeira execução | repetição |
 | --- | ---: | ---: |
-| originais planejados / executados no active | `1.890.000 / 1.889.945` | `1.890.000 / 1.889.979` |
-| TPS médio ativo | `2.099,939` | `2.099,977` |
-| mínimo rolling de 1 segundo | `2.058` | `2.058` |
-| latência p50 / p95 | `152,620 / 262,829 ms` | `145,864 / 243,520 ms` |
-| latência p99 / máxima | `409,163 / 1.046,459 ms` | `329,152 / 914,552 ms` |
-| PACS.008 replayados / aceitos | `100.496 / 100.496` | `100.498 / 100.498` |
-| PACS.002 replayados / aceitos | `80.393 / 80.393` | `80.397 / 80.397` |
+| originais planejados / executados no active | `1.890.000 / 1.889.369` | `1.890.000 / 1.890.000` |
+| TPS médio ativo | `2.099,299` | `2.100,000` |
+| mínimo rolling de 1 segundo | `2.017` | `2.079` |
+| latência p50 / p95 | `188,028 / 597,592 ms` | `142,436 / 233,917 ms` |
+| latência p99 / máxima | `855,202 / 1.577,671 ms` | `265,195 / 692,904 ms` |
+| PACS.008 replayados / aceitos | `100.422 / 100.422` | `100.472 / 100.472` |
+| PACS.002 replayados / aceitos | `80.326 / 80.326` | `80.373 / 80.373` |
 | violações funcionais / replay | `0 / 0` | `0 / 0` |
 
 O threshold interno é p99 abaixo de `1 segundo`. O contrato externo permanece
@@ -58,8 +58,8 @@ Os replays são carga adicional. Eles não reduzem nem substituem os pagamentos
 originais contabilizados no piso. A distribuição mantém `80%` do tráfego nos
 pares quentes de cada cenário.
 
-O perfil, o plano normalizado, os dois relatórios qualificadores e o relatório
-comparativo do gerador Go estão preservados em
+O perfil, o plano normalizado e os dois relatórios qualificadores estão
+preservados em
 [`evidence/2026-08-29`](evidence/2026-08-29/manifest.md).
 
 ## Fronteira de medição
@@ -133,25 +133,55 @@ de três CPUs.
 
 | sinal observado no active | primeira execução | repetição |
 | --- | ---: | ---: |
-| CPU média agregada | `1,178 vCPU` | `1,161 vCPU` |
-| maior amostra agregada de CPU | `2,174 vCPU` | `2,222 vCPU` |
-| memória média agregada | `1940,6 MiB` | `1900,6 MiB` |
-| maior amostra agregada de memória | `2134,0 MiB` | `2013,8 MiB` |
+| CPU média agregada | `2,094 vCPU` | `1,158 vCPU` |
+| maior amostra agregada de CPU | `3,399 vCPU` | `2,195 vCPU` |
+| memória média agregada | `1824,5 MiB` | `1813,4 MiB` |
+| maior amostra agregada de memória | `1994,6 MiB` | `1955,8 MiB` |
 
 CPU média por componente:
 
 | componente | primeira execução | repetição |
 | --- | ---: | ---: |
-| PostgreSQL | `41,09%` | `39,78%` |
-| ingresso HTTP | `30,23%` | `30,20%` |
-| Notification Gateway | `23,95%` | `23,63%` |
-| Kafka | `12,26%` | `12,22%` |
-| SPI | `10,26%` | `10,27%` |
+| PostgreSQL | `74,90%` | `40,48%` |
+| ingresso HTTP | `53,18%` | `29,10%` |
+| Notification Gateway | `42,62%` | `24,55%` |
+| Kafka | `21,55%` | `12,22%` |
+| SPI | `17,16%` | `9,50%` |
 
-As amostras vieram de `docker stats`: foram `703` e `699` amostras completas
+As amostras vieram de `docker stats`: foram `699` amostras completas em cada run
 durante os respectivos actives. Elas não formam uma garantia contínua entre
 amostras. A execução diagnóstica final do load-tool registrou aproximadamente
 `59,6 MiB` de RSS máximo, fora do budget da stack.
+
+### Interpretação da variância entre as runs
+
+A diferença de latência não veio de mudança de workload. As duas execuções
+usaram os mesmos inputs e processaram praticamente o mesmo número de
+pagamentos, outcomes e replays. Na run A, porém, o JFR observou CPU média da
+máquina de `60,21%`, contra `33,84%` na B; a CPU média da stack foi de
+`2,094 vCPU`, contra `1,158 vCPU`.
+
+Essa pressão apareceu em todo o caminho e principalmente no PostgreSQL. Com
+quantidades semelhantes de chamadas, rows e WAL, o tempo médio do insert de
+pagamentos foi de `15,086 ms` na A e `5,422 ms` na B; auditoria,
+`4,709 / 1,944 ms`; outbox, `2,629 / 0,980 ms`. I/O e locks observados não
+explicam essa diferença. O p99 HTTP por minuto ficou entre aproximadamente
+`35–79 ms` na A e, na maior parte da B, entre `17–19 ms`; a diferença maior foi
+acumulada depois do ingresso, no processamento e na entrega do outcome. Na A,
+a cauda permaneceu elevada ao longo do active e atingiu p99 de `1.201,075 ms` no
+minuto 12, em vez de resultar de um único pico de bootstrap.
+
+A telemetria disponível não separa atividade externa do host, frequência da
+CPU, pressão localizada por core, scheduling e overhead adicional causado pelo
+maior trabalho simultaneamente pendente. Por isso, a campanha registra a
+correlação com pressão computacional, mas não atribui uma causa raiz específica.
+
+Preservar a run A fortalece a afirmação binária de capacidade: mesmo na condição
+menos favorável observada, ela manteve rolling mínimo de `2.017 TPS`, p99 global
+de `855,202 ms` e corretude integral. Isso não transforma a run B em latência
+“típica” nem demonstra headroom amplo. A evidência sustenta o piso de `2.000 TPS`
+e p99 abaixo de `1 segundo` neste host compartilhado; a faixa observada entre as
+duas runs precisa permanecer visível.
 
 ## Método de estabilização
 
@@ -340,16 +370,18 @@ corretude.
 ## Evidência preservada
 
 O repositório preserva em [`evidence/2026-08-29`](evidence/2026-08-29/manifest.md)
-o profile, o plano normalizado, os relatórios selecionados, a tentativa não
-qualificadora usada para caracterizar variância, suas origens e checksums. Essa
-evidência pode ser verificada por quem clona o repositório. CSVs, JFRs, logs e
-certificados volumosos não fazem parte da evidência canônica.
+o commit exercitado, o profile e o plano normalizado comuns, os relatórios das
+runs A e B e seus checksums. A prova final não depende de diretórios locais de
+resultado. CSVs, JFRs, logs e certificados volumosos não fazem parte da
+evidência canônica.
 
-Uma primeira repetição após o cleanup preservou todos os outcomes e ficou dentro
-do threshold de latência, mas não foi promovida: seu rolling mínimo foi
-`1.995 TPS`. A repetição seguinte partiu novamente de stack e volumes novos e
-qualificou com `2.058 TPS`. Esse resultado mantém explícita a variância do host
-compartilhado sem permitir que média ou picos compensem a queda.
+As duas runs foram consecutivas no commit
+`1351ea564d0834a66e1b5d99a5e09a1a384cae1b`, com um `prepare` completo antes de
+cada uma. A primeira apresentou cauda e consumo de CPU maiores, mas ainda
+satisfez independentemente o piso rolling, a latência e a corretude; a segunda
+repetiu a qualificação com todos os originais planejados executados. Essa
+variância permanece visível em vez de ser escondida pela seleção de amostras de
+campanhas diferentes.
 
 ## Limite exploratório acima da meta
 
@@ -380,8 +412,6 @@ stack única.
   recovery.
 - Não houve homologação Kubernetes nem multi-instância. Esses trabalhos estão
   separados no backlog.
-- Os diretórios de resultado brutos ainda precisam de arquivo externo durável antes da limpeza
-  dos resultados locais.
 
 ## Conclusão
 
@@ -390,8 +420,8 @@ trabalho acidental: conexões TLS descartáveis, fragmentação de saldo, excess
 de transações pequenas, mensagens de saída unitárias, ACKs persistidos,
 reconciliação de duas fontes duráveis e overhead do próprio gerador.
 
-Com essas fronteiras simplificadas, duas execuções independentes sustentaram
-`2.100 TPS` oferecidos, nunca ficaram abaixo de `2.079 TPS` em rolling windows,
-mantiveram p99 abaixo de `269 ms` e preservaram todos os outcomes e replays. A
-stack única está qualificada para o objetivo local definido; expansão de
+Com essas fronteiras simplificadas, duas execuções consecutivas ofereceram
+`2.100 TPS`, mantiveram mínimo rolling de `2.017` e `2.079 TPS`, p99 de
+`855,202` e `265,195 ms` e preservaram todos os outcomes e replays. A stack
+única está qualificada para o objetivo local definido; expansão de
 infraestrutura e homologação multi-instância são trabalhos separados.

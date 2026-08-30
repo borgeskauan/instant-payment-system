@@ -1,9 +1,9 @@
 {
   "generation": {
     "planned_originals": 1890000,
-    "executed_originals": 1889979,
+    "executed_originals": 1889369,
     "required_minimum_tps": 2000,
-    "minimum_rolling_tps": 2058
+    "minimum_rolling_tps": 2017
   },
   "scenarios": [
     {
@@ -11,12 +11,12 @@
       "share": 0.8,
       "traffic": {
         "payments": {
-          "started": 1607983,
-          "accepted": 1607983
+          "started": 1606825,
+          "accepted": 1606825
         },
         "pacs002": {
-          "started": 1607983,
-          "accepted": 1607983
+          "started": 1606825,
+          "accepted": 1606825
         }
       },
       "outcome": {
@@ -24,18 +24,18 @@
           "status": "ACSC",
           "reason_codes": []
         },
-        "matched": 1607983,
+        "matched": 1606825,
         "missing": 0,
         "contradictory": 0
       },
       "performance": {
-        "within_threshold": 1511983,
-        "after_threshold": 0,
+        "within_threshold": 1504196,
+        "after_threshold": 7302,
         "latency_ms": {
-          "p50": 162.133,
-          "p95": 247.01,
-          "p99": 346.346,
-          "max": 914.552
+          "p50": 203.1,
+          "p95": 624.249,
+          "p99": 878.945,
+          "max": 1577.671
         }
       },
       "violations": 0
@@ -45,8 +45,8 @@
       "share": 0.2,
       "traffic": {
         "payments": {
-          "started": 401996,
-          "accepted": 401996
+          "started": 401711,
+          "accepted": 401711
         },
         "pacs002": {
           "started": 0,
@@ -60,18 +60,18 @@
             "AM04"
           ]
         },
-        "matched": 401996,
+        "matched": 401711,
         "missing": 0,
         "contradictory": 0
       },
       "performance": {
-        "within_threshold": 377996,
-        "after_threshold": 0,
+        "within_threshold": 377254,
+        "after_threshold": 617,
         "latency_ms": {
-          "p50": 79.693,
-          "p95": 129.057,
-          "p99": 199.527,
-          "max": 710.066
+          "p50": 106.926,
+          "p95": 457.157,
+          "p99": 698.287,
+          "max": 1302.988
         }
       },
       "violations": 0
@@ -79,13 +79,13 @@
   ],
   "replays": {
     "pacs008": {
-      "started": 100498,
-      "accepted": 100498,
+      "started": 100422,
+      "accepted": 100422,
       "violations": 0
     },
     "pacs002": {
-      "started": 80397,
-      "accepted": 80397,
+      "started": 80326,
+      "accepted": 80326,
       "violations": 0
     }
   },
@@ -93,17 +93,17 @@
     "threshold_ms": 1000,
     "within_sla": true,
     "active_tps": {
-      "payments": 2099.977,
-      "pacs008_replays": 103.831,
-      "pacs002_replays": 83.057,
-      "payer_notifications": 2099.65
+      "payments": 2099.299,
+      "pacs008_replays": 103.796,
+      "pacs002_replays": 83.027,
+      "payer_notifications": 2098.898
     },
-    "payer_notifications_after_active": 294,
+    "payer_notifications_after_active": 361,
     "latency_ms": {
-      "p50": 145.864,
-      "p95": 243.52,
-      "p99": 329.152,
-      "max": 914.552
+      "p50": 188.028,
+      "p95": 597.592,
+      "p99": 855.202,
+      "max": 1577.671
     }
   }
 }

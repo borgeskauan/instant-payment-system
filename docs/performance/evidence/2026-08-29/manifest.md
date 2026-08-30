@@ -1,36 +1,34 @@
 # Evidência final de performance
 
-## Escopo
+## Afirmação sustentada
 
-Este diretório preserva os artefatos compactos do A/B entre os geradores Go e Rust e das duas execuções Rust que sustentam a qualificação final de `2.000 TPS`. Os três runs usaram o profile `mixed-outcomes-2k-15m` e profile e plano de execução byte a byte idênticos.
+O runtime do commit `1351ea564d0834a66e1b5d99a5e09a1a384cae1b` sustentou pelo menos `2.000` pagamentos originais por segundo durante toda a janela ativa de `15 minutos`, com p99 end-to-end abaixo do threshold interno de `1 segundo` e corretude funcional integral, em duas execuções consecutivas.
 
-## Execuções selecionadas
+As duas runs usaram o profile `mixed-outcomes-2k-15m`, o mesmo plano normalizado, worktree limpa e ambientes novos criados pelo preparador oficial. Não houve mudança de código, configuração ou procedimento entre elas.
 
-| finalidade | início local | relatório versionado | resultado |
-| --- | --- | --- | --- |
-| comparação Go | `2026-08-28 21:45:01 -03:00` | [`go-comparison-sla-report.json`](go-comparison-sla-report.json) | não atingiu o piso rolling: `1.784 TPS`; p99 `513,530 ms`; corretude preservada |
-| primeira qualificação Rust | `2026-08-28 22:05:02 -03:00` | [`rust-qualification-sla-report.json`](rust-qualification-sla-report.json) | rolling mínimo `2.058 TPS`; p99 `409,163 ms`; corretude preservada |
-| confirmação Rust | `2026-08-29 01:05:34 -03:00` | [`rust-confirmation-sla-report.json`](rust-confirmation-sla-report.json) | rolling mínimo `2.058 TPS`; p99 `329,152 ms`; corretude preservada |
+## Campanha qualificadora
 
-As duas execuções Rust partiram de stack e volumes novos. Elas não apresentaram outcomes ausentes ou contraditórios nem violações de replay. A confirmação executou `1.889.979` dos `1.890.000` originais planejados; a regra qualificadora é o piso rolling observado, não igualdade entre quantidade planejada e executada.
+| run | início local | originais planejados / executados | mínimo rolling | p99 | corretude |
+| --- | --- | ---: | ---: | ---: | --- |
+| A | `2026-08-29 19:29:40 -03:00` | `1.890.000 / 1.889.369` | `2.017 TPS` | `855,202 ms` | zero outcomes ausentes ou contraditórios e zero violações de replay |
+| B | `2026-08-29 19:49:50 -03:00` | `1.890.000 / 1.890.000` | `2.079 TPS` | `265,195 ms` | zero outcomes ausentes ou contraditórios e zero violações de replay |
 
-Uma [primeira tentativa de confirmação](rust-nonqualifying-attempt-sla-report.json) preservou corretude e p99 de `758,056 ms`, mas não foi promovida porque o rolling mínimo ficou em `1.995 TPS`.
+O total executado não é usado para compensar uma queda temporal. A aprovação exige que toda janela contínua de um segundo integralmente contida no active alcance o piso de `2.000 TPS`. As duas runs satisfizeram esse critério e o threshold de latência de forma independente.
 
-## Origem do código
+A run A foi preservada deliberadamente apesar da cauda maior. Excluí-la e promover somente a amostra mais favorável reduziria a credibilidade da campanha. Sua aprovação demonstra que o piso e o SLA foram mantidos também na condição menos favorável observada; a run B confirma que o resultado é repetível. Em contrapartida, a campanha não sustenta `265 ms` como latência típica nem permite ignorar a variação: o p99 observado entre as duas execuções foi de `265,195` a `855,202 ms`, e o menor headroom rolling foi de apenas `17 TPS` sobre o piso.
 
-Os manifests do A/B registram a revisão base `c68d74de28d65b5a223d2af42156d356431c6d87` e o patch do lifecycle do Gateway com SHA-256 `fb94bea3736c532569ed130bc29de4993e71a2f1e4a6f139d1c222ede0eb75cc`. O gerador Go veio da revisão `1d80cedf00e5905b24c515cd7d5dc12d2207cc22`; o Rust, da revisão base do core. O patch usado nos dois runs do A/B foi posteriormente incorporado ao repositório.
+## Artefatos qualificadores
 
-A confirmação Rust foi iniciada com worktree limpa no commit `35c9bfa2408e9676b460fb8cc5ff5ff65cfc4f7d`. Entre o A/B e a confirmação, o runtime do core/load-tool não mudou além da incorporação do mesmo patch já presente nos binários do A/B; as demais mudanças foram de demo e documentação.
+* [`profile.json`](profile.json): profile comum às duas runs;
+* [`execution-plan.json`](execution-plan.json): plano normalizado comum;
+* [`qualification-run-a-sla-report.json`](qualification-run-a-sla-report.json): relatório da run A;
+* [`qualification-run-b-sla-report.json`](qualification-run-b-sla-report.json): relatório da run B;
+* [`checksums.sha256`](checksums.sha256): checksums dos artefatos compactos deste diretório.
 
-## Arquivos preservados
+CSVs, JFRs, logs, certificados e credenciais não integram a evidência canônica. Os relatórios qualificadores e os inputs versionados são suficientes para verificar a afirmação promovida sem depender de `load-test/results/**` local.
 
-| arquivo | SHA-256 |
-| --- | --- |
-| [`profile.json`](profile.json) | `721561af3f241a25de2d5124d9625eb06543f5ad8aa7f31072a72dbe877e104a` |
-| [`execution-plan.json`](execution-plan.json) | `ebef7b929c37f50f41ed5cdba027f483824038ac8bb40991e0267167bdf94508` |
-| [`go-comparison-sla-report.json`](go-comparison-sla-report.json) | `af7f62bd3e7c143c9826b42ee2224139635c0482815a3f236d60d011d1314e63` |
-| [`rust-qualification-sla-report.json`](rust-qualification-sla-report.json) | `58a0749aa229664c6194d20183c099cb1549588fe82b9b287f832280bccb6418` |
-| [`rust-confirmation-sla-report.json`](rust-confirmation-sla-report.json) | `0ec01d21a91ac0e12e880f227cf874a02d72b064bb328aa1595a1d59c746a52a` |
-| [`rust-nonqualifying-attempt-sla-report.json`](rust-nonqualifying-attempt-sla-report.json) | `d15c3f36bcfe49cc6149a63cb059bf0ab7bcfe35363dabbfe03b60e743195f82` |
+## Estudo Go/Rust separado
 
-Os checksums são idênticos aos arquivos de origem nos diretórios de resultado. CSVs, JFRs, logs, diagnósticos volumosos, certificados e credenciais não são versionados como evidência compacta.
+[`go-comparison-sla-report.json`](go-comparison-sla-report.json) e [`rust-comparison-sla-report.json`](rust-comparison-sla-report.json) pertencem ao estudo controlado entre os dois geradores. Eles sustentam a [comparação Go/Rust](../../../architecture/load-tool-go-rust-comparison.md), não a qualificação final de capacidade acima.
+
+Essa separação é deliberada: o A/B de implementações responde qual gerador preserva melhor a workload; a campanha A/B do commit `1351ea5` responde se o runtime final qualifica repetidamente.

@@ -1,6 +1,6 @@
 # Consolidar evidências finais de performance
 
-- [ ] Qualificar o runtime final em duas execuções consecutivas e verificáveis
+- [x] Qualificar o runtime final em duas execuções consecutivas e verificáveis
 
 ## Objetivo
 
@@ -42,6 +42,16 @@ A correção do horizonte de preparação foi commitada e a run A começou com w
 Como a run A violou simultaneamente o piso sustentado e o SLA de latência, a run B não foi executada. Isso preserva o gate atômico: uma segunda amostra não pode recuperar uma campanha cuja primeira execução já falhou.
 
 Essa execução preservou somente o total agregado de misses, insuficiente para distinguir a fronteira responsável pela regressão intermitente. Os contadores causais do gerador passam a ser instrumentação permanente e precisam integrar o próximo commit candidato antes de uma nova campanha.
+
+## Campanha `1351ea5` — qualificadora
+
+A campanha foi executada integralmente sobre o commit limpo `1351ea564d0834a66e1b5d99a5e09a1a384cae1b`. Cada run começou com recriação de containers e volumes pelo preparador oficial, sem mudança de código, configuração ou procedimento entre elas. Profile (`721561af...e104a`) e execution plan (`ebef7b92...94508`) foram byte a byte idênticos.
+
+A run A executou `1.889.369 / 1.890.000` originais, atingiu rolling mínimo de `2.017 TPS` e p99 de `855,202 ms`, com corretude integral. Seus `631` misses ativos foram classificados como `63` por wakeup tardio, `357` por bucket não preparado e `211` na admissão HTTP; não houve canal cheio, canal encerrado nem expiração durante preparação HTTP.
+
+A run B executou `1.890.000 / 1.890.000` originais, atingiu rolling mínimo de `2.079 TPS` e p99 de `265,195 ms`, com corretude integral e zero misses em todas as fronteiras instrumentadas. As duas runs mantiveram HTTP 2xx, outcomes esperados e ausência de contradições ou violações de replay.
+
+Como ambas satisfizeram o piso sustentado, o SLA de latência e a corretude funcional no mesmo commit e em ambientes novos consecutivos, a campanha está aprovada para produzir a evidência final versionada.
 
 ## Contrato da campanha qualificadora
 
@@ -101,14 +111,14 @@ A comparação Go/Rust permanece um estudo separado e não sustenta a afirmaçã
 
 ## Ordem de execução
 
-1. [ ] Escolher e registrar o commit limpo da campanha.
-2. [ ] Executar `prepare → run A → validação`.
-3. [ ] Se A qualificar, executar imediatamente `prepare → run B → validação`.
-4. [ ] Confirmar que as duas runs são consecutivas, equivalentes e aprovadas.
-5. [ ] Versionar os artefatos compactos e checksums.
-6. [ ] Atualizar o manifesto, o relatório de estabilização e os pontos de entrada canônicos.
-7. [ ] Submeter o commit documental à revisão explícita do usuário.
-8. [ ] Mover a task para `concluidas` somente depois da aprovação.
+1. [x] Escolher e registrar o commit limpo da campanha.
+2. [x] Executar `prepare → run A → validação`.
+3. [x] Se A qualificar, executar imediatamente `prepare → run B → validação`.
+4. [x] Confirmar que as duas runs são consecutivas, equivalentes e aprovadas.
+5. [x] Versionar os artefatos compactos e checksums.
+6. [x] Atualizar o manifesto, o relatório de estabilização e os pontos de entrada canônicos.
+7. [x] Submeter o conjunto documental à revisão explícita do usuário.
+8. [x] Mover a task para `concluidas` somente depois da aprovação.
 
 ## Fora de escopo
 
