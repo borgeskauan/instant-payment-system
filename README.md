@@ -10,13 +10,13 @@ O que me chamou atenção é que ele não faz isso uma vez. Faz **milhões de ve
 
 Ele movimenta dinheiro entre instituições diferentes o tempo todo, e ninguém reclama dele. Você faz um Pix e ele simplesmente funciona.
 
-Foi aí que comecei a me perguntar: **como eles conseguem fazer isso?**
+Foi aí que comecei a me perguntar: **como eles conseguem fazer isso?**
 
 Como um sistema consegue fazer isso milhões de vezes por dia e continuar simplesmente funcionando?
 
 Foi dessa curiosidade que nasceu este projeto.
 
-Antes de começar a construir, fui procurar como o Pix havia sido desenvolvido e testado. Encontrei um podcast[ sobre sua arquitetura](https://open.spotify.com/episode/0r7a7HORZspD35Dn7y4WTY), conversas com engenheiros do Banco Central, requisitos públicos e os primeiros relatórios de desempenho do sistema.
+Antes de começar a construir, fui procurar como o Pix havia sido desenvolvido e testado. Encontrei um [podcast sobre sua arquitetura](https://open.spotify.com/episode/0r7a7HORZspD35Dn7y4WTY), conversas com engenheiros do Banco Central, requisitos públicos e os primeiros relatórios de desempenho do sistema.
 
 ## O desafio
 
@@ -40,15 +40,15 @@ E havia outra restrição que me interessava: eu queria chegar lá com uma arqui
 
 Na versão final, rodei o mesmo teste duas vezes, usando a mesma revisão limpa do sistema e a mesma carga.
 
-A meta era a mesma do Pix em seu início: sustentar pelo menos **2.000 pagamentos por segundo**, com **99% deles terminando em menos de 1 segundo**.
+A meta que defini a partir dessas referências era sustentar pelo menos **2.000 pagamentos por segundo**, com **99% deles terminando em menos de 1 segundo**.
 
 O sistema bateu a meta nas duas execuções:
 
-| Resultado                             |       Execução A |       Execução B |
-| ------------------------------------- | -----------------: | -----------------: |
-| Menor taxa observada                  | 2.017 pagamentos/s | 2.079 pagamentos/s |
+| Resultado                            |         Execução A |         Execução B |
+| ------------------------------------ | -----------------: | -----------------: |
+| Menor taxa observada                 | 2.017 pagamentos/s | 2.079 pagamentos/s |
 | 99% dos pagamentos terminaram em até |             855 ms |             265 ms |
-| Pagamentos incorretos ou perdidos     |                  0 |                  0 |
+| Pagamentos incorretos ou perdidos    |                  0 |                  0 |
 
 A execução A foi claramente a menos favorável: chegou mais perto dos dois limites, mas ainda passou.
 
@@ -98,11 +98,11 @@ Esse é o mapa geral. O [design do sistema](docs/design.md) explica como cada um
 
 ## Como eu medi
 
-Construir o sistema era só metade do problema. Se eu queria dizer que ele sustentava 2.000 pagamentos por segundo, precisava ter certeza de que estava medindo pagamentos de verdade, e não apenas requisições chegando na entrada.
+Construir o sistema era só metade do problema. Se eu queria afirmar que ele sustentava 2.000 pagamentos por segundo, precisava ter certeza de que estava medindo pagamentos de verdade, e não apenas requisições chegando na entrada.
 
-Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando o resultado percorre o sistema e volta à instituição de quem enviou.
+Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando a confirmação percorre o sistema e volta à instituição de quem enviou.
 
-A ferramenta de carga fica fora do core: ela envia os pagamentos, observa os resultados que retornam e verifica se eles correspondem ao que deveria ter acontecido.
+A ferramenta de carga fica fora do core: ela envia os pagamentos, observa as confirmações que retornam e verifica se elas correspondem ao que deveria ter acontecido.
 
 A mesma execução precisa passar nos dois lados: ser rápida e continuar correta. Bater a meta de pagamentos por segundo não vale se pagamentos forem perdidos ou produzirem resultados incorretos.
 
@@ -136,7 +136,7 @@ load-test/results/<run-tag>/<timestamp>/
 
 ## Aprofundar
 
-* **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega dos resultados.
+* **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega das confirmações.
 * **[Performance](docs/performance.md)** — carga, metodologia, ambiente, resultados e limites do benchmark.
 * **[Evidência das qualificações](docs/performance/evidence/2026-08-29/manifest.md)** — artefatos das execuções que sustentam o resultado apresentado neste README.
 * **[Demonstração de referência](demo/README.md)** — um fluxo visual com instituições simuladas para explorar o sistema manualmente.
