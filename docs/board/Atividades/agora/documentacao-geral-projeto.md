@@ -22,6 +22,30 @@ Regra de escrita:
 
 Exemplo: primeiro explicar que o mesmo pagamento não pode mover dinheiro duas vezes; depois nomear essa propriedade como idempotência.
 
+## Contrato de voz
+
+A documentação tem autor. A voz é a de um engenheiro experiente mostrando a outro engenheiro um sistema que construiu: por que o problema despertou sua curiosidade, como raciocinou, o que conseguiu fazer e onde estão os limites, sem tentar impressionar à força.
+
+Cinco qualidades devem permanecer estáveis em todo o caminho canônico:
+
+> Curiosa, direta, concreta, confiante e rigorosa.
+
+- **Pessoal:** primeira pessoa é permitida quando torna motivação e raciocínio mais naturais. Não escrever como uma organização impessoal nem esconder o autor atrás de “este projeto visa”.
+- **Direta:** preferir frases curtas e linguagem humana. Evitar tom acadêmico, corporativo, burocrático ou excessivamente solene.
+- **Concreta:** apresentar primeiro o comportamento observável — “o mesmo pagamento não pode mover dinheiro duas vezes” — e somente depois introduzir a abstração necessária, como idempotência.
+- **Confiante:** narrar fatos simples sem cercar cada frase de ressalvas. Reservar qualificadores para claims técnicas cuja interpretação realmente depende de workload, ambiente, método ou limite.
+- **Rigorosa:** quando houver claim verificável, usar números, contrato, evidência e fronteira precisos. A confiança narrativa nunca autoriza ampliar o que os artefatos provam.
+
+Assumir competência de engenharia; nunca assumir conhecimento prévio deste projeto. Não explicar genericamente Kafka, PostgreSQL ou transações, mas explicar por que cada um se tornou necessário nesta solução.
+
+Mostrar o raciocínio em pequenas sequências de problema → tensão → decisão. Expressões como “isso parece simples, mas...”, “há um problema” ou “a solução óbvia seria X, porém...” são úteis quando ajudam o leitor a acompanhar a decisão, não como maneirismo.
+
+Evitar marketing, autoavaliação e superlativos. Expor objetivo, restrições, resultado e evidência; deixar que o leitor conclua a qualidade da engenharia.
+
+Regra de ouro:
+
+> Escrever como se explicasse o projeto a um ótimo engenheiro tomando um café, com evidência suficiente para que ele não precise acreditar apenas na palavra do autor.
+
 ## Referência de domínio e tese central
 
 O Pix real é referência do problema, não da solução. A documentação não deve sugerir que o projeto reproduz a arquitetura interna do SPI de produção do Banco Central.

@@ -1,123 +1,142 @@
 # Instant Payment System
 
-O Pix é o sistema brasileiro de pagamentos instantâneos. Para quem usa, a experiência parece simples: escolher quem vai receber, informar um valor e enviar. O dinheiro deve se mover uma única vez, chegar à pessoa certa, e o usuário deve saber rapidamente se o pagamento foi concluído ou rejeitado.
+O Pix é o sistema brasileiro de pagamentos instantâneos. Ele permite transferir dinheiro de uma conta para outra em poucos segundos, 24 horas por dia, todos os dias do ano e de graça.
 
-Por trás dessa experiência existe um problema de engenharia muito maior: preservar esse comportamento enquanto milhares de pagamentos chegam a cada segundo, mensagens se repetem, operações concorrem e componentes podem falhar.
+Hoje isso parece normal. Antes do Pix, não era.
 
-Foi esse problema que motivou este projeto.
+Transferir dinheiro entre bancos significava usar TED ou DOC, lidar com horários, dias úteis, tarifas e, dependendo da transferência, esperar até o dinheiro chegar. O Pix praticamente apagou essa experiência: você abre o celular, envia o dinheiro e pronto.
 
-Ele não tenta reproduzir a infraestrutura de produção do Banco Central. É uma implementação própria, menor e deliberadamente limitada, construída para explorar uma pergunta:
+O que me chamou atenção é que ele não faz isso uma vez. Faz **milhões de vezes**.
 
-> Quanto tráfego de pagamentos um sistema consegue sustentar sem abrir mão das propriedades que fazem cada pagamento funcionar corretamente?
+Ele movimenta dinheiro entre instituições diferentes o tempo todo, e ninguém reclama dele. Você faz um Pix e ele simplesmente funciona.
 
-## O que foi construído
+Foi aí que comecei a me perguntar: **como eles conseguem fazer isso?**
 
-O núcleo principal implementa o caminho completo entre o envio de um pagamento e a observação de seu resultado: ingresso autenticado, processamento financeiro, decisão do recebedor, liquidação ou rejeição, auditoria e entrega durável das notificações aos participantes.
+Como um sistema consegue fazer isso milhões de vezes por dia e continuar simplesmente funcionando?
 
-Uma ferramenta de carga independente gera pagamentos, acompanha os resultados recebidos pelos PSPs simulados e verifica se o sistema preservou tanto a carga temporal quanto os resultados esperados.
+Foi dessa curiosidade que nasceu este projeto.
 
-O repositório também contém uma demonstração de referência com dois PSPs, um diretório de chaves e uma interface web. Ela torna o fluxo visível para uma pessoa, mas não participa das garantias de performance, durabilidade ou disponibilidade do núcleo.
+Antes de começar a construir, fui procurar como o Pix havia sido desenvolvido e testado. Encontrei um podcast[ sobre sua arquitetura](https://open.spotify.com/episode/0r7a7HORZspD35Dn7y4WTY), conversas com engenheiros do Banco Central, requisitos públicos e os primeiros relatórios de desempenho do sistema.
 
-## O que o sistema demonstrou
+## O desafio
 
-O núcleo final foi qualificado duas vezes com a mesma revisão limpa e a mesma carga. Cada execução ofereceu 2.100 pagamentos originais por segundo durante 15 minutos. Para qualificar, toda janela contínua de um segundo precisava conter pelo menos 2.000 pagamentos originais iniciados.
+O Pix real é um sistema enorme, construído para atender um país inteiro e sustentado por uma infraestrutura que obviamente está muito além do que eu conseguiria reproduzir sozinho.
 
-| Resultado | Run A | Run B |
-| --- | ---: | ---: |
-| Menor taxa em uma janela contínua | 2.017 TPS | 2.079 TPS |
-| Latência end-to-end p99 | 855 ms | 265 ms |
-| Pagamentos originais executados | 1.889.369 | 1.890.000 |
-| Violações funcionais ou de replay | 0 | 0 |
+Então eu precisava escolher uma parte do problema.
 
-As duas execuções satisfizeram o piso temporal e o limite interno de p99 abaixo de um segundo de forma independente. A execução mais lenta foi preservada em vez de descartada: ela demonstra que o sistema continuou dentro do contrato na condição menos favorável observada e deixa a variância do experimento visível.
+Em vez de tentar copiar o Pix, construí uma versão muito menor do fluxo de pagamento: alguém envia dinheiro, o recebedor aceita ou rejeita, o valor chega ao destino ou continua com quem tentou pagar, e o resultado volta aos participantes.
 
-## Por que esse resultado não é apenas um número
+Os [requisitos publicados pelo Banco Central](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) me deram uma referência concreta: **2.000 pagamentos por segundo**, com 99% deles processados em até **4,6 segundos**.
 
-O benchmark não mede somente quantas requisições o ingresso aceitou. Cada pagamento continua atravessando o trabalho que dá significado ao resultado:
+Depois, os [resultados publicados pelo próprio Banco Central](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) mostraram outra coisa interessante: na prática, o tempo necessário para processar 99% dos pagamentos ficava próximo ou abaixo de **1 segundo** durante grande parte do período observado.
 
-- **O mesmo pagamento não pode mover dinheiro duas vezes.** Uma repetição idêntica não produz outro efeito; reutilizar a mesma identidade com conteúdo diferente é um conflito.
-- **Dinheiro comprometido não pode continuar disponível.** Ao admitir um pagamento, o sistema reserva o valor antes que o recebedor decida o resultado.
-- **O resultado precisa concordar com o dinheiro.** Estado do pagamento, alteração de saldo, fato de auditoria e obrigação de publicar o resultado pertencem à mesma transação.
-- **Uma falha não pode apagar silenciosamente um resultado confirmado.** O banco protege a criação da notificação, Kafka mantém o histórico de entrega e o PSP controla até onde processou.
-- **A ferramenta de carga não pode esconder atraso.** Trabalho que perdeu sua janela temporal não é acumulado e despejado depois; picos posteriores não compensam um período abaixo do piso.
+Esses números viraram a referência do projeto:
 
-Portanto, corretude e performance não são duas afirmações separadas. A corretude define qual trabalho precisa realmente acontecer; a arquitetura preserva essas propriedades; o benchmark mede quanto desse trabalho o sistema sustenta.
+> **Sustentar pelo menos 2.000 pagamentos por segundo, com 99% deles terminando em menos de 1 segundo, sem começar a quebrar o básico.**
 
-## Como um pagamento funciona
+E havia outra restrição que me interessava: eu queria chegar lá com uma arquitetura pequena, que pudesse rodar localmente, e não simplesmente resolver o problema jogando mais hardware em cima.
 
-Primeiro, o modelo mental:
+## O resultado
 
-~~~mermaid
+Na versão final, rodei o mesmo teste duas vezes, usando a mesma revisão limpa do sistema e a mesma carga.
+
+A meta era a mesma do Pix em seu início: sustentar pelo menos **2.000 pagamentos por segundo**, com **99% deles terminando em menos de 1 segundo**.
+
+O sistema bateu a meta nas duas execuções:
+
+| Resultado                             |       Execução A |       Execução B |
+| ------------------------------------- | -----------------: | -----------------: |
+| Menor taxa observada                  | 2.017 pagamentos/s | 2.079 pagamentos/s |
+| 99% dos pagamentos terminaram em até |             855 ms |             265 ms |
+| Pagamentos incorretos ou perdidos     |                  0 |                  0 |
+
+A execução A foi claramente a menos favorável: chegou mais perto dos dois limites, mas ainda passou.
+
+Mantive as duas na evidência final. Mostrar apenas a melhor execução produziria um resultado mais bonito; manter a pior mostra que o sistema continuou dentro da meta mesmo na condição menos favorável observada.
+
+## O que precisa acontecer em cada pagamento
+
+Os números acima só fazem sentido porque cada pagamento continua tendo que percorrer o fluxo normalmente.
+
+No caso mais simples, alguém envia dinheiro para outra pessoa. O recebedor aceita ou rejeita o pagamento. Se aceitar, o dinheiro chega até ele. Se rejeitar, continua com quem tentou pagar. E quem enviou precisa saber como aquilo terminou.
+
+Até aí, parece simples.
+
+O problema começa quando as coisas não acontecem perfeitamente:
+
+* **A confirmação pode demorar e a pessoa tentar enviar de novo.** Ela não pode ser debitada duas vezes por causa disso, nem o recebedor receber o valor duas vezes.
+* **Dois pagamentos podem sair da mesma conta ao mesmo tempo.** Os dois não podem gastar o mesmo dinheiro.
+* **Alguma parte do sistema pode falhar no meio do pagamento.** O dinheiro não pode simplesmente ficar perdido entre uma conta e outra.
+* **O pagamento pode já ter terminado, mas a confirmação pode não chegar na hora para quem pagou ou para quem recebeu.** Ela pode chegar depois, mas não pode simplesmente se perder.
+
+É esse tipo de problema que começa a determinar como o sistema precisa ser construído.
+
+No projeto, o trabalho fica dividido assim:
+
+```mermaid
 flowchart LR
-    Payer[Pagador] -->|envia o pagamento| Core[Sistema de pagamentos]
-    Core -->|reserva o valor| Decision[Decisão do recebedor]
-    Decision -->|aceito| Settle[Credita o recebedor]
-    Decision -->|rejeitado| Release[Devolve a disponibilidade ao pagador]
-    Settle --> Outcome[Resultado durável]
-    Release --> Outcome
-~~~
+    Participants[Instituições participantes] --> Ingress[Payment Ingress]
+    Ingress --> Kafka[(Kafka)]
+    Kafka --> Processor[Payment Processor]
+    Processor --> DB[(PostgreSQL)]
+    Processor --> Notifications[(Kafka)]
+    Notifications --> Gateway[Notification Gateway]
+    Gateway --> Participants
+```
 
-No núcleo, essas responsabilidades são distribuídas assim:
+O **Payment Ingress** recebe e autentica os pagamentos que chegam ao sistema.
 
-~~~mermaid
-flowchart LR
-    PSP[PSP] -->|HTTP/2 + mTLS| Ingress[Payment Ingress]
-    Ingress -->|mensagens PACS| Payments[(Kafka)]
-    Payments --> SPI[Payment Processor - SPI]
-    SPI -->|pagamento + saldos + auditoria + outbox| DB[(PostgreSQL)]
-    SPI -->|log durável de notificações| Notifications[(Kafka)]
-    Notifications --> Gateway[PSP Notification Gateway]
-    Gateway -->|Pull + cursor| PSP
-~~~
+O **Payment Processor** é o centro do fluxo. Ele acompanha cada pagamento, decide o que acontece com o dinheiro e impede que o mesmo pagamento altere os saldos duas vezes.
 
-- **Payment Ingress** (kafka-producer) autentica o PSP e coloca pagamentos e status no Kafka.
-- **Payment Processor** (spi) é a autoridade sobre estado, saldos, auditoria, idempotência e criação das obrigações de notificação.
-- **PSP Notification Gateway** (notification-gateway) entrega resultados com semântica at-least-once por meio de Pull e cursor autenticado.
-- **Load Test Harness** (load-test) gera a carga sem depender do SPI, observa os resultados finais e reconstrói a taxa depois da execução.
+O **PostgreSQL** guarda os pagamentos e os saldos e permite que mudanças que pertencem à mesma operação sejam confirmadas juntas.
 
-O [rascunho do design do sistema](docs/design.md) detalha como essas escolhas preservam as propriedades introduzidas acima.
+O **Kafka** conecta as partes assíncronas do sistema e mantém o trabalho disponível enquanto ele avança entre os componentes.
 
-## Por que confiar no benchmark
+O **Notification Gateway** informa às instituições se o pagamento foi concluído ou rejeitado, inclusive quando essa informação precisa chegar depois de uma falha.
 
-A carga qualificadora contém 80% de pagamentos concluídos e 20% de rejeições determinísticas por saldo insuficiente. Ela concentra 80% do tráfego em pares quentes e acrescenta 5% de repetição tanto para pagamentos quanto para mensagens de status.
+Esse é o mapa geral. O [design do sistema](docs/design.md) explica como cada um desses problemas é tratado e por que essas decisões foram tomadas.
 
-HTTP 2xx indica somente que o ingresso aceitou a requisição. O resultado funcional é observado depois, pela notificação recebida pelo pagador: ACSC para um pagamento concluído ou RJCT com motivo AM04 para saldo insuficiente. Ausência, status contraditório ou motivo incompatível são violações.
+## Como eu medi
 
-O gerador Rust admite um pagamento apenas quando o payload e a capacidade real de um stream HTTP/2 estão prontos antes do limite temporal. Ele registra o início efetivo da requisição e calcula, depois do experimento, o menor número de originais presente em qualquer janela contínua de um segundo. Assim, atraso seguido de compensação não pode se passar por carga sustentada.
+Construir o sistema era só metade do problema. Se eu queria dizer que ele sustentava 2.000 pagamentos por segundo, precisava ter certeza de que estava medindo pagamentos de verdade, e não apenas requisições chegando na entrada.
 
-O perfil, o plano normalizado, os relatórios das duas execuções e seus checksums estão versionados. O [rascunho de performance e evidência](docs/performance.md) explicita carga, ambiente, fronteira de medição, resultados e limitações.
+Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando o resultado percorre o sistema e volta à instituição de quem enviou.
 
-## Onde as afirmações terminam
+A ferramenta de carga fica fora do core: ela envia os pagamentos, observa os resultados que retornam e verifica se eles correspondem ao que deveria ter acontecido.
 
-A evidência vale para uma instância de cada componente do núcleo no ambiente local e sob os recursos documentados. Ela não demonstra capacidade nacional do Pix, equivalência com a arquitetura interna do Banco Central, alta disponibilidade de produção, operação em múltiplas regiões, Kubernetes ou escala horizontal.
+A mesma execução precisa passar nos dois lados: ser rápida e continuar correta. Bater a meta de pagamentos por segundo não vale se pagamentos forem perdidos ou produzirem resultados incorretos.
 
-Kafka foi exercitado com um broker e fator de replicação 1. A retenção de notificações por sete dias é uma fronteira operacional, não um mecanismo de recuperação de desastre. O gerador e a stack compartilharam o mesmo host, embora o consumo do gerador não faça parte do orçamento atribuído aos serviços.
+Os detalhes de geração da carga, cálculo de throughput e latência e preservação das evidências ficam na [metodologia de performance](docs/performance.md).
 
 ## Executar
 
-O host precisa de Linux, Docker e Docker Compose. Para preparar uma stack limpa e executar a carga funcional:
+O host precisa de Linux, Docker e Docker Compose.
 
-~~~bash
+Para subir uma stack limpa e executar o smoke funcional:
+
+```bash
 cd load-test
 ./prepare-performance-environment.sh --profile mixed-outcomes-smoke
 ./run-load-test.sh --profile mixed-outcomes-smoke smoke
-~~~
+```
 
-O preparador recria os volumes do PostgreSQL e Kafka, constrói os serviços, gera certificados locais, aguarda a prontidão e provisiona os participantes. Ele não gera tráfego de benchmark.
+Para executar o perfil usado na qualificação de performance:
 
-Para reproduzir o perfil qualificador, faça uma preparação nova antes de cada execução:
-
-~~~bash
+```bash
 cd load-test
 ./prepare-performance-environment.sh --profile mixed-outcomes-2k-15m
 ./run-load-test.sh --profile mixed-outcomes-2k-15m qualification
-~~~
+```
 
-Os resultados são escritos em load-test/results/&lt;run-tag&gt;/&lt;timestamp&gt;/. Uma nova execução é uma reprodução independente; a afirmação promovida já possui [evidência compacta versionada](docs/performance/evidence/2026-08-29/manifest.md).
+Os resultados ficam em:
+
+```text
+load-test/results/<run-tag>/<timestamp>/
+```
 
 ## Aprofundar
 
-- [Design do sistema e corretude](docs/design.md)
-- [Metodologia, resultados e evidência](docs/performance.md)
-- [Evidência versionada das execuções qualificadoras](docs/performance/evidence/2026-08-29/manifest.md)
-- [Demonstração de referência](demo/README.md)
+* **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega dos resultados.
+* **[Performance](docs/performance.md)** — carga, metodologia, ambiente, resultados e limites do benchmark.
+* **[Evidência das qualificações](docs/performance/evidence/2026-08-29/manifest.md)** — artefatos das execuções que sustentam o resultado apresentado neste README.
+* **[Demonstração de referência](demo/README.md)** — um fluxo visual com instituições simuladas para explorar o sistema manualmente.
