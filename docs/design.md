@@ -1,205 +1,276 @@
-# System design
+# System Design
 
-The system is designed around a small set of observable promises: a payment must not move money twice, reserved money must not remain available for another payment, the final status must agree with the financial result, and a committed outcome must survive failures in the delivery path.
+O README apresenta o fluxo pelo ponto de vista de quem faz um pagamento. Aqui a pergunta é outra:
 
-The architecture exists to preserve those properties. Component boundaries and technologies are consequences of that goal.
+> **O que o sistema precisa fazer para esse fluxo continuar correto quando aparecem duplicidade, concorrência e falhas?**
 
-## Scope and boundaries
+No desenho atual, quase tudo gira em torno de duas fronteiras:
 
-The benchmarked core contains:
+1. **concluir corretamente o pagamento e a movimentação do dinheiro;**
+2. **garantir que a confirmação desse pagamento ainda consiga chegar às instituições depois.**
 
-- **Payment Ingress** (kafka-producer): authenticated HTTP/2 entry point for payment requests and receiver status reports;
-- **Payment Processor** (spi): authority over payment state, participant balances, audit facts, idempotency, and outbound notification creation;
-- **PostgreSQL**: transactional authority for financial state and creation of notification obligations;
-- **Kafka**: ordered input transport and the retained notification-delivery log;
-- **PSP Notification Gateway** (notification-gateway): authenticated pull protocol over the notification log;
-- **Load Test Harness** (load-test): independent workload generation and external outcome observation.
+O PostgreSQL protege a primeira. Kafka e o Notification Gateway cuidam da segunda.
 
-The reference PSPs, key directory, and Angular application under demo/ make the flow visible to a person. They are not part of the qualified core.
+## O modelo do pagamento
 
-## Payment lifecycle
+O sistema trabalha com um fluxo pequeno de estados:
 
-### 1. Admission reserves the payer's money
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING_ACCEPTANCE: pagamento admitido
+    [*] --> REJECTED: saldo insuficiente
 
-A PSP submits a payment request through mTLS HTTP/2. The certificate identifies the authenticated participant; that identity accompanies the internal Kafka record. The SPI remains the authority for the important authorization rule: the authenticated participant must be the payer represented by the payment.
+    WAITING_ACCEPTANCE --> SETTLED: recebedor aceita
+    WAITING_ACCEPTANCE --> REJECTED: recebedor rejeita
 
-For a genuinely new payment, the SPI evaluates the payer's available balance:
+    SETTLED --> [*]
+    REJECTED --> [*]
+```
 
-~~~text
-enough funds
-    → subtract amount from payer's available balance
-    → WAITING_ACCEPTANCE
-    → notify the receiving PSP that a decision is required
+Quando uma instituição envia um novo pagamento, ela usa uma mensagem `pacs.008`. A identidade da instituição vem do certificado mTLS usado no ingresso, e somente a instituição da conta pagadora pode iniciar aquele pagamento.
 
-insufficient funds
-    → keep balances unchanged
-    → REJECTED / INSUFFICIENT_FUNDS
-    → notify the payer with RJCT / AM04
-~~~
+Se houver saldo disponível, o pagamento entra em `WAITING_ACCEPTANCE`. Nesse momento o valor já deixa de estar disponível para outros pagamentos.
 
-There is no separate reservation table or reserved-balance column. The durable invariant is:
+O recebedor então recebe a solicitação e responde com uma `pacs.002`. Somente a instituição recebedora daquele pagamento pode decidir seu resultado.
 
-~~~text
-payment is WAITING_ACCEPTANCE
-⇔
-its amount has already left the payer's available balance
-~~~
+Se aceitar, o pagamento vai para `SETTLED` e o recebedor é creditado.
 
-This makes available balance mean exactly “money that can fund a new outgoing payment.” It also prevents an in-flight amount from being spent a second time.
+Se rejeitar, o pagamento vai para `REJECTED` e o valor volta a ficar disponível para o pagador.
 
-Payments from the same payer are evaluated in source order. A payment that does not fit is rejected, but it does not block a smaller later payment from using the remaining balance. Physical balance mutations are aggregated per participant while outcomes remain individual.
+Se não houver saldo já no início, o pagamento é rejeitado imediatamente e nunca entra em `WAITING_ACCEPTANCE`.
 
-### 2. The receiver decides the outcome
+Essa ordem é deliberada: o dinheiro é comprometido antes de pedir a decisão do recebedor.
 
-The receiving PSP returns a status report:
+## O dinheiro tem uma única autoridade
 
-~~~text
-accepted
-    → credit the receiver
-    → SETTLED
-    → notify payer and receiver
+Cada instituição possui um único saldo disponível no PostgreSQL.
 
-rejected
-    → return the reserved amount to the payer
-    → REJECTED
-    → notify the payer with the external reason
-~~~
+```text
+institution
+└── available balance
+```
 
-The payer is not debited again during settlement. Its money was already removed from availability at admission. Each phase therefore mutates one participant balance: reservation and release touch the payer; settlement credit touches the receiver.
+Não existe uma segunda tabela de reservas. A própria combinação entre o estado do pagamento e o saldo representa a reserva:
 
-This avoids a two-account settlement lock while preserving the financial result. PostgreSQL serializes operations that concurrently target the same participant row.
+```text
+payment = WAITING_ACCEPTANCE
+        ↓
+o valor daquele pagamento já saiu do saldo disponível do pagador
+```
 
-## One transaction defines one business fact
+Isso cria três regras financeiras simples:
 
-Every effective transition commits the following changes together:
+| Situação           | Efeito                                       |
+| ------------------ | -------------------------------------------- |
+| pagamento admitido | retira o valor da disponibilidade do pagador |
+| recebedor aceita   | credita o recebedor                          |
+| recebedor rejeita  | devolve o valor à disponibilidade do pagador |
 
-~~~text
-payment state
-+ balance mutation
-+ business audit fact
-+ outbound notification obligation
-~~~
+O pagador não é debitado novamente quando o recebedor aceita: isso já aconteceu quando o pagamento entrou.
 
-If any part fails, all of it rolls back. The database cannot legitimately contain a settled payment without its receiver credit, a waiting payment without reserved funds, or a committed outcome whose notification obligation was never created.
+Essa escolha evita que dois pagamentos usem o mesmo dinheiro enquanto aguardam uma resposta e mantém a liquidação final pequena: aceitar significa apenas creditar o recebedor; rejeitar significa apenas devolver a reserva.
 
-The audit records business facts rather than technical processing attempts:
+O banco também impede que um saldo fique negativo.
 
-| Fact | Financial meaning |
-| --- | --- |
-| PAYMENT_RESERVED | payer availability decreased and the payment is waiting |
-| PAYMENT_SETTLED | receiver balance increased and the payment is final |
-| PAYMENT_REJECTED at admission | no reservation occurred |
-| PAYMENT_REJECTED after a receiver decision | the payer's reservation was released |
+## Quando o mesmo pagamento aparece novamente
 
-A replay that performs no new transition produces no new audit fact and no new logical notification.
+Uma segunda tentativa não pode significar uma segunda transferência.
 
-The database schema reinforces the model with non-negative participant balances, state/reason shape constraints, and at most one admission fact and one terminal fact per payment.
+Cada pagamento possui uma identidade lógica (`paymentId` / `EndToEndId`) e uma representação normalizada de seu conteúdo.
 
-## Repeated and conflicting messages
+Quando uma nova requisição chega, o sistema distingue três situações:
 
-At-least-once transport means the same physical message may appear more than once. The system therefore reasons about logical identity rather than delivery count.
+### É um pagamento novo
 
-For payment requests:
+Ele pode entrar normalmente no fluxo e produzir seus efeitos financeiros.
 
-- a new payment identity can reserve funds and create effects;
-- an identical replay is a no-op;
-- reuse of the identity with different payment content is a conflict and is rejected;
-- only the transaction that establishes the payment as new may contribute to the balance delta.
+### É exatamente o mesmo pagamento
 
-For status reports:
+A repetição vira um **no-op**.
 
-- only a payment still in WAITING_ACCEPTANCE can acquire the transition;
-- an accepted replay cannot credit the receiver again;
-- a rejected replay cannot release the payer's funds again;
-- contradictory reuse is rejected rather than interpreted as another outcome.
+Nenhum saldo muda novamente. Nenhum novo fato de auditoria é criado. Nenhuma segunda obrigação de notificação nasce apenas porque a mensagem apareceu de novo.
 
-The guarded database transition is important even in a single application instance because Kafka listener threads can execute concurrently. Calculating money from records merely received from Kafka would be unsafe; deltas are calculated only from rows whose transition the current transaction actually acquired.
+Isso vale também quando duas cópias chegam concorrentemente: somente uma delas consegue estabelecer o pagamento como novo.
 
-Invalid or conflicting records go to the corresponding input DLQ without invalidating unrelated records in the same batch. Expected business rejection, such as insufficient funds, remains a normal outcome and never becomes a DLQ record. Unknown internal processing failures are retried before DLQ; infrastructure unavailability such as a database outage remains retryable and is not converted into invalid business data.
+### A identidade é a mesma, mas o conteúdo mudou
 
-## A committed outcome must remain deliverable
+Isso não é tratado como uma repetição válida.
 
-The financial transaction inserts the final serialized payload into notification_outbox. PostgreSQL therefore protects both the business fact and the existence of its outbound obligation.
+O sistema classifica a mensagem como conflito e a envia para a DLQ, sem alterar o pagamento já existente.
 
-After commit, a bounded in-memory queue hands the stored bytes to a single publisher. The publisher sends the complete batch to Kafka with producer idempotence and acks=all. It deletes outbox rows only after every record in the batch is confirmed. Partial or inconclusive publication repeats the whole batch, which can create physical duplicates but cannot silently lose an obligation.
+A mesma ideia vale para a resposta do recebedor. Repetir a mesma decisão depois que a transição já aconteceu não credita nem devolve dinheiro novamente. Uma decisão incompatível com o estado existente é tratada como conflito.
 
-On restart, the SPI drains surviving outbox rows before enabling payment consumers. There is no periodic outbox scan in the healthy path:
+A garantia é lógica, não física: Kafka ou a entrega ao participante podem repetir mensagens. O que não pode se repetir é o efeito financeiro correspondente.
 
-~~~text
-row exists  = Kafka publication is not confirmed
-row absent  = Kafka accepted the notification
-~~~
+## Quando dois pagamentos usam a mesma conta
 
-Absence does not mean the PSP has processed it.
+Duplicidade não é o único problema. Dois pagamentos diferentes podem tentar gastar o mesmo saldo ao mesmo tempo.
 
-## Kafka is the retained delivery log
+Por isso, o PostgreSQL também funciona como mecanismo de serialização financeira.
 
-The psp-notifications-v1 topic holds complete notification payloads for seven days. It has eight partitions and uses recipient ISPB as its key, keeping a PSP on one partition for this topic generation.
+Antes de decidir quais pagamentos cabem no saldo de uma instituição, a transação bloqueia sua linha de saldo. Enquanto aquele saldo está sendo decidido, outra transação que precise alterá-lo espera.
 
-The Notification Gateway follows the partitions and stores a bounded contiguous recent window in memory. A healthy pull is served from that window. After restart, eviction, or a gap, the Gateway reads directly from Kafka at the requested offset instead of maintaining another delivery database.
+Dentro de um mesmo lote, os pagamentos de uma conta são avaliados em ordem determinística.
 
-The PSP presents an opaque HMAC-authenticated cursor. Internally it binds:
+Por exemplo:
 
-~~~text
-PSP identity
-+ topic generation
-+ partition
-+ last examined offset
-~~~
+```text
+saldo disponível = 100
 
-The Gateway returns at most 15 matching notifications and the next cursor. The PSP advances its durable cursor only after durably processing the entire response. If it fails first, it presents the old cursor and receives the data again.
+pagamento de 80 → entra
+pagamento de 50 → rejeita por saldo insuficiente
+pagamento de 10 → entra
+```
 
-This deliberately provides at-least-once delivery:
+O fato de o pagamento de 50 não caber não impede o de 10 de usar o saldo restante.
 
-- duplicates are allowed and carry a stable communication ID;
-- loss within the retained log is not allowed;
-- an altered cursor or a cursor from another PSP is rejected;
-- a cursor older than Kafka retention fails explicitly and requires operational recovery.
+Os débitos são calculados por pagamento, mas o banco pode aplicar a alteração física de forma agregada por instituição.
 
-There is no individual ACK write, delivery lease, IN_FLIGHT lifecycle, retry scheduler, delivery index, or Gateway-owned progress checkpoint.
+O mesmo princípio aparece no resultado: aceites creditam os recebedores e rejeições devolvem reservas aos pagadores enquanto as linhas necessárias permanecem protegidas.
 
-## Why these choices?
+Essa contenção é intencional. Se duas operações realmente disputam o mesmo dinheiro, alguma ordem precisa existir entre elas.
 
-### Reservation instead of liquidity buckets
+## O pagamento não pode ficar pela metade
 
-The earlier bucket model fragmented one participant's money across synthetic rows. A participant could have enough total balance and still fail because one selected bucket was empty; settlement also had to lock payer and receiver buckets together. A single available balance with reservation at admission removed artificial liquidity fragmentation and reduced each financial phase to one participant mutation.
+Alterar o dinheiro é apenas uma parte do que significa concluir uma transição.
 
-### Transactional outbox before Kafka
+Quando um pagamento muda, quatro coisas pertencem ao mesmo fato de negócio:
 
-Publishing directly after a financial commit leaves a crash window in which the payment exists but its outcome does not. Publishing before commit can expose an outcome for a transaction that later rolls back. Persisting the final payload in the financial transaction closes both gaps.
+```text
+estado do pagamento
+movimentação financeira
+auditoria
+obrigação de enviar a confirmação
+```
 
-### Kafka log and pull cursor instead of push with ACK state
+Essas mudanças compartilham a mesma transação PostgreSQL.
 
-The previous reliable-push lifecycle required persisted ACKs, leases, retries, delivery status, and a second copy of notification data. It amplified PostgreSQL writes and split delivery authority across systems. The current model makes PostgreSQL authoritative for creating the obligation, Kafka authoritative for the retained delivery history, and the PSP authoritative for its completed progress.
+Por exemplo, ao aceitar um pagamento:
 
-### Open transport duplicates instead of exactly-once claims
+```text
+WAITING_ACCEPTANCE → SETTLED
++
+crédito do recebedor
++
+PAYMENT_SETTLED na auditoria
++
+confirmações que precisam ser publicadas
+```
 
-Exactly-once delivery is not promised. The system instead makes financial transitions and PSP consumption idempotent. This is a smaller and more explicit contract: physical delivery can repeat while the logical effect occurs once.
+Ou tudo confirma, ou tudo é revertido.
 
-## Failure behavior
+Isso evita situações como:
 
-| Failure | Preserved behavior |
-| --- | --- |
-| PostgreSQL transaction fails | payment, money, audit, and outbox all roll back |
-| SPI fails after commit but before publishing | startup recovery republishes the surviving outbox row |
-| Kafka confirmation is partial or inconclusive | the complete outbox batch is repeated |
-| SPI deletes the outbox after an uncertain outcome | it does not; deletion requires all confirmations |
-| Gateway restarts | the PSP cursor resumes reading from Kafka |
-| PSP fails before saving its cursor | the same logical notifications may be returned again |
-| cursor is invalid or belongs to another PSP | the request is rejected |
-| cursor falls outside seven-day retention | delivery fails explicitly and requires recovery outside the normal protocol |
+* o pagamento aparecer como concluído sem o dinheiro ter chegado;
+* o dinheiro mudar sem o estado correspondente;
+* o pagamento concluir sem existir uma obrigação durável de informar os participantes;
+* uma auditoria registrar um fato que não chegou a acontecer.
 
-## Evidence in the repository
+O mesmo vale para a entrada e para a rejeição.
 
-The design is enforced by executable tests rather than documentation alone:
+A auditoria registra apenas fatos efetivamente aplicados. Uma repetição que não muda nada também não cria um novo evento de negócio.
 
-- [payment admission, reservation, replay, and conflicts](../spi/src/test/java/br/kauan/spi/adapter/output/paymenttransaction/JdbcPaymentTransactionRepositoryIntegrationTest.java);
-- [atomic payment, audit, balance, and outbox outcomes](../spi/src/test/java/br/kauan/spi/domain/services/TransactionalOutboxIntegrationTest.java);
-- [rollback when audit or outbox persistence fails](../spi/src/test/java/br/kauan/spi/domain/services/TransactionalOutboxRollbackIntegrationTest.java);
-- [concurrent participant balance correctness](../spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java);
-- [cursor authentication and isolation](../notification-gateway/src/test/java/br/kauan/notificationgateway/grpc/DeliveryCursorCodecTest.java);
-- [historical Kafka reads after a cache miss](../notification-gateway/src/test/java/br/kauan/notificationgateway/kafka/HistoricalKafkaReaderTest.java).
+## Concluir o pagamento não significa entregar a confirmação
 
-## Deliberate limits
+Existe uma fronteira importante depois do commit financeiro.
 
-The qualified deployment uses one instance of each core application and one Kafka broker with replication factor 1. It validates transactional and protocol behavior but not broker, host, or volume high availability. Multi-instance contention, rebalancing across replicas, multi-region recovery, retention beyond seven days, and transport-aware payment admission are future work rather than implicit guarantees.
+O PostgreSQL consegue garantir que a **obrigação de enviar a confirmação** nasceu junto com o pagamento, mas não consegue tornar uma publicação Kafka parte da mesma transação.
+
+O sistema resolve isso com uma transactional outbox:
+
+```text
+transação PostgreSQL
+├── pagamento
+├── saldos
+├── auditoria
+└── notification_outbox
+            │
+            │ depois do commit
+            ▼
+          Kafka
+```
+
+A outbox guarda o payload que precisa ser publicado.
+
+Depois do commit, o SPI envia esse payload ao Kafka. A linha só é removida da outbox depois que o broker confirma todas as mensagens correspondentes.
+
+Se o processo cair antes de publicar, a linha continua no banco e é recuperada no próximo startup.
+
+Se a publicação for inconclusiva, o lote pode ser enviado novamente.
+
+Essa escolha favorece uma propriedade específica:
+
+> **uma confirmação pode aparecer mais de uma vez; ela não pode ser simplesmente esquecida depois que o pagamento confirmou.**
+
+## Kafka é o histórico de entrega
+
+Depois que a publicação é confirmada, o Kafka passa a ser a fonte durável para a entrega da confirmação.
+
+O desenho evita manter um segundo banco com o estado de cada entrega.
+
+As responsabilidades ficam separadas:
+
+| Responsabilidade                          | Autoridade               |
+| ----------------------------------------- | ------------------------ |
+| estado do pagamento e saldos              | PostgreSQL               |
+| criação atômica da obrigação de notificar | PostgreSQL / outbox      |
+| histórico disponível para entrega         | Kafka                    |
+| progresso de consumo                      | instituição participante |
+| protocolo de leitura                      | Notification Gateway     |
+
+O tópico de notificações mantém sete dias de histórico.
+
+As instituições consultam o Notification Gateway usando um cursor que representa até onde já processaram. O cursor é autenticado e vinculado à instituição que o recebeu.
+
+A instituição só avança esse cursor depois de processar duravelmente o lote recebido.
+
+Se ela cair antes disso, reutiliza o cursor anterior e pode receber as mesmas mensagens novamente.
+
+Por isso, a entrega é **at-least-once**.
+
+O sistema não promete exatamente uma entrega física de cada mensagem. Em vez disso, cada confirmação possui uma identidade estável (`communicationId`), permitindo que uma repetição seja reconhecida sem aplicar novamente seu efeito lógico.
+
+O Gateway mantém uma janela recente em memória para acelerar o caminho normal, mas essa memória não é a autoridade. Depois de uma reinicialização ou quando o cursor aponta para algo mais antigo, ele volta ao Kafka.
+
+## Por que essas autoridades são separadas
+
+Uma decisão importante do desenho atual é não pedir para uma única tecnologia resolver todos os problemas.
+
+```text
+PostgreSQL
+→ quem possui o dinheiro?
+→ em que estado está o pagamento?
+→ qual obrigação nasceu junto com essa mudança?
+
+Kafka
+→ quais confirmações ainda podem ser recuperadas?
+
+Instituição participante
+→ até onde eu já processei?
+
+Notification Gateway
+→ como eu acesso esse histórico?
+```
+
+Isso mantém as responsabilidades explícitas.
+
+O PostgreSQL não precisa acompanhar leases, ACKs e tentativas individuais de entrega.
+
+O Kafka não decide nada sobre dinheiro.
+
+O Gateway não precisa reconstruir um banco próprio de notificações.
+
+E memória continua sendo apenas uma otimização.
+
+## O que o desenho não tenta resolver
+
+Alguns limites são deliberados.
+
+* O core qualificado usa uma única instância de cada serviço.
+* O Kafka local usa um broker e replication factor 1; o protocolo de recuperação é exercitado, mas alta disponibilidade do broker não é.
+* As confirmações ficam disponíveis no fluxo operacional por sete dias. Recuperações além dessa janela pertencem a disaster recovery.
+* Um pagamento em `WAITING_ACCEPTANCE` não possui timeout automático; um recebedor que nunca responde pode manter dinheiro reservado.
+* O desenho não qualifica escala horizontal, multi-região ou Kubernetes.
+* Insuficiência de saldo rejeita o pagamento imediatamente; não existe fila de liquidez.
+
+Esses limites mantêm o problema pequeno o suficiente para o objetivo do projeto sem remover as propriedades que a implementação decidiu preservar.
