@@ -1,182 +1,176 @@
 # Performance e evidência
 
-O README apresenta o resultado principal do projeto: o sistema atingiu a meta de performance em duas execuções consecutivas, sem perder a corretude do fluxo de pagamentos.
+O README resume o principal resultado do projeto: o sistema atingiu a meta de performance em duas execuções consecutivas, sem comprometer a corretude dos pagamentos.
 
-Este documento responde a uma pergunta mais específica:
+Este documento mostra a evidência por trás desse resultado: o que foi testado, como os números foram medidos e quais são os limites dessa conclusão.
 
-> O que exatamente foi testado, como os números foram medidos e até onde essa evidência permite concluir?
+Nas duas qualificações, o sistema manteve pelo menos 2.000 pagamentos por segundo. O maior p99 observado foi de 855 ms, e não houve pagamentos incorretos ou perdidos.
 
-## Critérios de qualificação
+## 1. Critérios de qualificação
 
-Uma execução só qualificava se atendesse aos três critérios ao mesmo tempo:
+Para qualificar, uma execução precisava atender aos três critérios:
 
-| Critério   | Requisito                                                   |
-| ---------- | ----------------------------------------------------------- |
-| Throughput | pelo menos 2.000 pagamentos originais por segundo          |
-| Latência   | percentil 99 (p99) end-to-end abaixo de 1 segundo          |
-| Corretude  | nenhum pagamento incorreto ou perdido                      |
+| Critério   | Requisito                                         |
+| ---------- | ------------------------------------------------- |
+| Throughput | pelo menos 2.000 pagamentos originais por segundo |
+| Latência   | p99 end-to-end abaixo de 1 segundo                |
+| Corretude  | nenhum pagamento incorreto ou perdido             |
 
-A fase ativa dura 15 minutos. Durante ela, o gerador oferece 2.100 pagamentos originais por segundo, deixando uma margem pequena acima do requisito.
+A fase ativa dura 15 minutos, com uma carga de 2.100 pagamentos originais por segundo.
 
-O critério de throughput não considera apenas a média da execução. Toda janela contínua de um segundo completamente contida na fase ativa precisa permanecer em pelo menos 2.000 pagamentos iniciados.
+O throughput não é medido apenas pela média. Toda janela contínua de um segundo dentro da fase ativa precisa ter pelo menos 2.000 pagamentos iniciados.
 
-Um pagamento original é uma nova transferência criada pela carga de teste. Repetições são tráfego adicional e não contam para atingir esse piso.
+Um pagamento original é uma nova transferência criada pela carga de teste. Repetições geram tráfego adicional, mas não entram nessa conta.
 
-A origem dos limites de 2.000 pagamentos por segundo e p99 abaixo de 1 segundo, assim como sua relação com as referências públicas do Pix usadas durante o projeto, é discutida no [README](../README.md). Aqui, esses valores são tratados como o contrato do experimento.
+A origem dos limites de 2.000 pagamentos por segundo e p99 abaixo de 1 segundo, incluindo sua relação com as referências públicas do Pix usadas no projeto, está descrita no [README](../README.md). Para este experimento, esses são os critérios adotados.
 
-## Resultado das qualificações
+## 2. Resultados
 
 As duas execuções finais usaram:
 
 * o mesmo commit: `1351ea564d0834a66e1b5d99a5e09a1a384cae1b`;
 * o mesmo perfil;
 * o mesmo plano de execução normalizado;
-* a mesma instrumentação;
-* uma worktree limpa;
-* uma preparação nova do ambiente antes de cada execução.
+* a mesma instrumentação.
 
-Código, configuração e procedimento não mudaram entre elas.
+A worktree estava limpa e o ambiente foi preparado novamente antes de cada execução. Não houve mudança de código, configuração ou procedimento entre uma e outra.
 
-| Resultado                                      | Execução A            | Execução B            |
-| ---------------------------------------------- | --------------------: | --------------------: |
-| Pagamentos planejados / executados             | 1.890.000 / 1.889.369 | 1.890.000 / 1.890.000 |
-| Média durante a fase ativa                     |           2.099,299/s |           2.100,000/s |
-| Menor janela contínua de 1 segundo             |               2.017/s |               2.079/s |
-| p50 end-to-end                                 |                188 ms |                142 ms |
-| p95 end-to-end                                 |                598 ms |                234 ms |
-| p99 end-to-end                                 |                855 ms |                265 ms |
-| Maior latência observada                       |              1.578 ms |                693 ms |
-| Repetições de pagamento enviadas / aceitas     |   100.422 / 100.422   |   100.472 / 100.472   |
-| Repetições de status enviadas / aceitas        |    80.326 / 80.326    |    80.373 / 80.373    |
-| Violações funcionais / de repetição            |                 0 / 0 |                 0 / 0 |
+| Resultado                                  |            Execução A |            Execução B |
+| ------------------------------------------ | --------------------: | --------------------: |
+| Pagamentos planejados / executados         | 1.890.000 / 1.889.369 | 1.890.000 / 1.890.000 |
+| Média durante a fase ativa                 |           2.099,299/s |           2.100,000/s |
+| Menor janela contínua de 1 segundo         |               2.017/s |               2.079/s |
+| p50 end-to-end                             |                188 ms |                142 ms |
+| p95 end-to-end                             |                598 ms |                234 ms |
+| p99 end-to-end                             |                855 ms |                265 ms |
+| Maior latência observada                   |              1.578 ms |                693 ms |
+| Repetições de pagamento enviadas / aceitas |     100.422 / 100.422 |     100.472 / 100.472 |
+| Repetições de status enviadas / aceitas    |       80.326 / 80.326 |       80.373 / 80.373 |
+| Violações funcionais / de repetição        |                 0 / 0 |                 0 / 0 |
 
 As duas execuções qualificaram de forma independente.
 
-A execução A foi a condição menos favorável observada: sua menor janela ficou em 2.017 pagamentos por segundo, apenas 17 acima do requisito, e o p99 chegou a 855 ms. A execução B teve margem maior, com 2.079 pagamentos por segundo na menor janela e p99 de 265 ms.
+A execução A ficou mais perto dos limites: a pior janela teve 2.017 pagamentos por segundo, apenas 17 acima do requisito, e o p99 chegou a 855 ms.
 
-Por isso, o resultado não deve ser resumido apenas como “2.100 pagamentos por segundo em média”, nem o p99 de 265 ms deve ser tratado isoladamente como representativo.
+Na execução B, houve mais margem: 2.079 pagamentos por segundo na pior janela e p99 de 265 ms.
 
-O que as duas qualificações sustentam é:
+Essa diferença é importante. Dizer apenas que o sistema fez “2.100 pagamentos por segundo em média” esconderia o pior momento da execução A. Pelo mesmo motivo, usar apenas os 265 ms da execução B daria uma visão otimista demais da latência observada.
 
-> Nas duas execuções consecutivas, o sistema permaneceu acima de 2.000 pagamentos por segundo, com p99 entre 265 e 855 ms e sem violações funcionais ou de repetição.
+O resultado das duas execuções, em conjunto, é:
 
-## Carga de teste
+> O sistema manteve pelo menos 2.000 pagamentos por segundo, com p99 abaixo de 1 segundo e sem violações funcionais ou de repetição nas duas qualificações consecutivas.
 
-A execução não começa diretamente na carga máxima.
+## 3. O que foi testado
 
-Antes da fase medida, o sistema passa por um aquecimento progressivo:
+### Fases da execução
 
-| Fase                                  | Carga                | Duração   |
-| ------------------------------------- | -------------------- | --------- |
-| Aquecimento inicial                   | 500 pagamentos/s     | 60 s      |
-| Aquecimento estável                   | 1.500 pagamentos/s   | 60 s      |
-| Espera pela conclusão do aquecimento  | —                    | até 120 s |
-| Fase ativa                            | 2.100 pagamentos/s   | 15 min    |
-| Encerramento                          | —                    | 30 s      |
+A carga sobe gradualmente antes da fase medida:
 
-O aquecimento reduz a influência da inicialização de conexões, caches e do comportamento de uma JVM fria sobre a fase principal do experimento.
+| Fase                                 |              Carga |   Duração |
+| ------------------------------------ | -----------------: | --------: |
+| Aquecimento inicial                  |   500 pagamentos/s |      60 s |
+| Aquecimento estável                  | 1.500 pagamentos/s |      60 s |
+| Espera pela conclusão do aquecimento |                  — | até 120 s |
+| Fase ativa                           | 2.100 pagamentos/s |    15 min |
+| Encerramento                         |                  — |      30 s |
 
-A carga também não contém apenas pagamentos bem-sucedidos:
+O aquecimento reduz o impacto da abertura de conexões, do preenchimento de caches e de uma JVM ainda fria sobre a fase principal do teste.
 
-| Cenário              | Participação | Resultado esperado             |
-| -------------------- | -----------: | ------------------------------ |
-| Pagamento concluído  |          80% | dinheiro chega ao recebedor    |
-| Saldo insuficiente   |          20% | pagamento é rejeitado          |
+### Cenários e contenção
 
-Dentro de cada cenário, 80% do tráfego é concentrado em um conjunto menor de pares de participantes. Isso cria contenção intencional em vez de distribuir todos os pagamentos uniformemente.
+A carga mistura dois resultados:
 
-Além dos pagamentos originais, o teste acrescenta:
+| Cenário             | Participação | Resultado esperado          |
+| ------------------- | -----------: | --------------------------- |
+| Pagamento concluído |          80% | dinheiro chega ao recebedor |
+| Saldo insuficiente  |          20% | pagamento é rejeitado       |
+
+Em cada cenário, 80% do tráfego se concentra em um conjunto menor de pares de participantes. Isso cria contenção de propósito, em vez de espalhar os pagamentos de maneira uniforme.
+
+### Repetições
+
+Além dos pagamentos originais, o teste adiciona:
 
 * 5% de repetição dos pedidos de pagamento;
 * 5% de repetição das respostas do recebedor.
 
-Essas repetições são enviadas dez segundos depois da mensagem original. O objetivo é verificar se uma mensagem já processada pode aparecer novamente sem produzir o mesmo efeito financeiro outra vez.
+Essas repetições são enviadas dez segundos depois da mensagem original e exercitam dois casos diferentes:
 
-Há duas formas de repetição no experimento e elas têm significados diferentes:
+* **mensagem de entrada repetida:** não pode aplicar o efeito financeiro novamente;
+* **confirmação reentregue:** pode aparecer mais de uma vez, desde que continue compatível com as anteriores.
 
-* repetição de uma mensagem de entrada: é introduzida deliberadamente para testar idempotência e não pode reaplicar o efeito financeiro;
-* reentrega de uma confirmação: pode acontecer depois de falhas e é permitida, desde que as confirmações sejam compatíveis entre si.
+Os 2.100 pagamentos originais por segundo, portanto, não representam todo o tráfego. Respostas, repetições e confirmações acontecem além dessa carga.
 
-Portanto, os 2.100 pagamentos originais por segundo não representam toda a atividade do sistema. Respostas, repetições e confirmações acontecem adicionalmente a essa carga.
+## 4. Como medimos
 
-## O que conta como um pagamento concluído
+### Latência e corretude
 
-Uma resposta HTTP `2xx` não conta como pagamento concluído.
+Uma resposta HTTP `2xx` não significa que o pagamento terminou. Ela indica apenas que a entrada do sistema aceitou a mensagem.
 
-Ela significa apenas que a entrada do sistema aceitou a mensagem.
+Para medir a latência end-to-end, o relógio começa quando a instituição simulada inicia o pedido HTTP original e para quando a confirmação final compatível volta ao remetente.
 
-Para o benchmark, a latência começa quando a instituição simulada inicia o pedido HTTP original e termina somente quando a confirmação final compatível retorna para quem enviou.
+É esse intervalo que usamos para calcular os percentis do relatório.
 
-Essa é a latência end-to-end usada para calcular os percentis apresentados no relatório.
+A ferramenta de carga sabe de antemão qual resultado cada cenário deveria produzir e confere as confirmações recebidas.
 
-A ferramenta de carga conhece previamente o resultado esperado de cada cenário. Quando uma confirmação retorna, ela verifica se o resultado corresponde ao que deveria ter acontecido.
+Receber mais de uma confirmação compatível não é um erro. A execução falha na corretude se:
 
-Receber mais de uma confirmação compatível não é, por si só, uma violação. O que não é permitido é:
+* uma confirmação esperada não chegar;
+* o mesmo pagamento receber estados contraditórios;
+* o resultado for incompatível com o cenário;
+* uma mensagem repetida aplicar novamente o efeito financeiro.
 
-* deixar de receber uma confirmação esperada;
-* receber estados contraditórios para o mesmo pagamento;
-* receber uma rejeição incompatível com o cenário;
-* aplicar novamente o efeito financeiro de uma mensagem repetida.
+Performance e corretude são verificadas juntas. Uma execução rápida, mas funcionalmente incorreta, não qualifica.
 
-Performance e corretude são verificadas na mesma execução.
+### Throughput
 
-Uma execução rápida que produz pagamentos incorretos não qualifica.
+A média sozinha pode esconder quedas de throughput.
 
-## Como o throughput é medido
+Se o sistema inicia 1.500 pagamentos em um segundo e 2.500 no seguinte, a média ainda é de 2.000 pagamentos por segundo. Para este teste, isso não conta como throughput sustentado.
 
-Uma média pode esconder períodos de carga insuficiente.
+O gerador trabalha em malha aberta (*open loop*). Cada pagamento tem um instante definido para começar. Se esse instante for perdido, o pagamento não é empurrado para uma janela posterior para compensar a média.
 
-Se o sistema deveria iniciar 2.000 pagamentos durante um segundo, mas inicia apenas 1.500, uma rajada de 2.500 no segundo seguinte ainda produziria uma média de 2.000 pagamentos por segundo.
+O cadenciamento usa intervalos absolutos de 10 ms. Um pagamento só entra na contagem quando sua requisição realmente começa.
 
-Para este experimento, isso não conta como throughput sustentado.
+Depois da execução, os instantes de início são ordenados e o relatório percorre todas as janelas contínuas de um segundo dentro da fase ativa. A janela com menos pagamentos é reportada como a **menor janela contínua de 1 segundo**.
 
-O gerador trabalha em malha aberta (open loop). Cada pagamento possui um momento absoluto em que deve começar. Se esse momento for perdido, o trabalho não é transferido para uma janela posterior apenas para recuperar a média.
+Assim, uma rajada posterior não consegue compensar uma queda anterior.
 
-O cadenciamento é dividido em intervalos absolutos de 10 ms.
+Também mostramos separadamente quantos pagamentos foram planejados e quantos realmente começaram.
 
-Um pagamento só é considerado iniciado quando a requisição realmente começa. O gerador registra esse instante para cada pagamento original.
+Na execução A, 631 pagamentos perderam sua janela e não foram iniciados. Eles não foram reagendados. Ainda assim, a pior janela teve 2.017 pagamentos, acima do requisito de 2.000.
 
-Depois da execução, os instantes registrados são ordenados e o relatório calcula quantos pagamentos aparecem em cada janela contínua de um segundo completamente contida na fase ativa.
+### Gerador de carga
 
-O menor desses valores é a menor janela contínua de 1 segundo apresentada no relatório.
+O benchmark também depende da capacidade do próprio gerador de produzir a carga declarada.
 
-Assim, uma rajada posterior não consegue esconder uma queda anterior.
+Ele fica fora do núcleo lógico do sistema, embora rode no mesmo host durante o experimento. Seu trabalho é iniciar os pagamentos nos momentos programados, acompanhar as confirmações e registrar os dados usados no relatório.
 
-A diferença entre pagamentos planejados e executados também permanece explícita.
+Cadenciamento, I/O de rede e geração do relatório são separados. O cálculo das janelas de throughput também acontece depois da execução, fora do caminho crítico da geração de carga.
 
-Na execução A, 631 pagamentos perderam sua janela temporal e não foram iniciados. Eles não foram deslocados para frente nem ocultados pelo cálculo da média.
+Há uma limitação aqui: gerador e sistema compartilham o mesmo host e podem interferir um no outro.
 
-Mesmo assim, a menor janela contínua daquela execução ainda continha 2.017 pagamentos, portanto a execução qualificou.
+Ainda assim, separar essas responsabilidades deixa atrasos do gerador visíveis e evita que trabalho acumulado seja usado em uma rajada posterior para recuperar artificialmente a média.
 
-## Como validamos o gerador de carga
+## 5. Ambiente e recursos
 
-O benchmark só é válido se a própria ferramenta de carga conseguir produzir a carga que afirma estar produzindo.
+As duas qualificações rodaram localmente, com o gerador de carga e todos os serviços no mesmo host.
 
-Por isso, o gerador é externo ao núcleo lógico do sistema, embora compartilhe o mesmo host durante o experimento. Sua responsabilidade é iniciar os pagamentos nos momentos planejados, acompanhar as confirmações e preservar os dados necessários para o relatório.
+CPU, memória e armazenamento não eram critérios para passar ou falhar no teste. Os números desta seção servem para caracterizar o ambiente em que o resultado foi obtido e o consumo observado durante a carga.
 
-Cadenciamento, I/O de rede e geração do relatório são separados para reduzir a interferência da própria ferramenta sobre a carga.
+### Ambiente
 
-A análise das janelas contínuas também acontece depois da execução, fora do caminho crítico de geração.
+| Especificação       | Valor                                                    |
+| ------------------- | -------------------------------------------------------- |
+| CPU                 | Intel Core i7-11390H, 4 núcleos / 8 threads, até 5,0 GHz |
+| Memória             | 16 GB instalados, aproximadamente 15,4 GiB utilizáveis   |
+| Armazenamento       | SSD NVMe ADATA IM2P33F3A, 512 GB                         |
+| Sistema operacional | Debian GNU/Linux 13 (Trixie)                             |
+| Kernel              | Linux 6.12.86+deb13-amd64                                |
+| Docker              | 29.4.3                                                   |
+| Docker Compose      | 5.1.3                                                    |
 
-Isso não elimina toda interferência possível, já que gerador e sistema compartilham o mesmo host. A separação, porém, torna a capacidade do gerador observável e evita que filas internas transformem uma carga atrasada em um resultado aparentemente válido.
-
-## Ambiente de execução
-
-As qualificações foram executadas localmente, com o gerador de carga e todo o conjunto de serviços compartilhando o mesmo host.
-
-### Host
-
-| Especificação       | Valor                                                        |
-| ------------------- | ------------------------------------------------------------ |
-| CPU                 | Intel Core i7-11390H, 4 núcleos / 8 threads, até 5,0 GHz     |
-| Memória             | 16 GB instalados, aproximadamente 15,4 GiB utilizáveis       |
-| Armazenamento       | SSD NVMe ADATA IM2P33F3A, 512 GB                             |
-| Sistema operacional | Debian GNU/Linux 13 (Trixie)                                  |
-| Kernel              | Linux 6.12.86+deb13-amd64                                     |
-| Docker              | 29.4.3                                                       |
-| Docker Compose      | 5.1.3                                                        |
-
-O núcleo qualificado usa uma instância de cada componente:
+A configuração testada usa uma instância de cada componente:
 
 * PostgreSQL;
 * Kafka;
@@ -184,28 +178,20 @@ O núcleo qualificado usa uma instância de cada componente:
 * Payment Processor;
 * Notification Gateway.
 
-Não foi definido um limite formal de CPU, memória ou armazenamento como condição de qualificação.
-
-A intenção era manter a solução em uma ordem de grandeza razoável para execução local, sem depender de uma quantidade desproporcional de hardware, e observar quanto recurso ela realmente consumia sob carga.
-
-Os recursos, portanto, caracterizam o experimento; não determinam sua aprovação ou reprovação.
-
-## Recursos observados
-
 ### CPU e memória
 
-| Consumo observado durante a fase ativa | Execução A  | Execução B  |
-| --------------------------------------- | ----------: | ----------: |
-| CPU média agregada                      | 2,094 vCPU  | 1,158 vCPU  |
-| Maior amostra completa de CPU           | 3,399 vCPU  | 2,195 vCPU  |
-| Memória média agregada                  | 1.824,5 MiB | 1.813,4 MiB |
-| Maior amostra de memória                | 1.994,6 MiB | 1.955,8 MiB |
+| Consumo durante a fase ativa  |  Execução A |  Execução B |
+| ----------------------------- | ----------: | ----------: |
+| CPU média agregada            |  2,094 vCPU |  1,158 vCPU |
+| Maior amostra completa de CPU |  3,399 vCPU |  2,195 vCPU |
+| Memória média agregada        | 1.824,5 MiB | 1.813,4 MiB |
+| Maior amostra de memória      | 1.994,6 MiB | 1.955,8 MiB |
 
-A memória permaneceu próxima de 1,8 GiB em média nas duas execuções e abaixo de aproximadamente 2 GiB nas maiores amostras observadas.
+A memória ficou perto de 1,8 GiB em média nas duas execuções e abaixo de aproximadamente 2 GiB nas maiores amostras.
 
-O consumo de CPU variou muito mais entre as duas execuções, acompanhando a maior pressão computacional observada na execução A.
+A CPU variou mais. A execução A consumiu mais CPU e também foi a que apresentou menor margem de throughput e latências maiores.
 
-Os máximos da tabela representam as maiores amostras coletadas. Eles não estabelecem um máximo contínuo entre os intervalos de observação.
+Os valores máximos da tabela são as maiores amostras coletadas. Não representam um máximo contínuo entre uma coleta e outra.
 
 ### Armazenamento
 
@@ -217,42 +203,36 @@ Uma execução de 15 minutos produziu aproximadamente:
 | Kafka      |      ~1,99 GB |
 | Total      |      ~4,62 GB |
 
-Esse volume inclui o estado persistido pelo fluxo de pagamentos e os dados mantidos pelo Kafka durante a execução.
+Esse volume inclui o estado persistido pelo fluxo de pagamentos e os dados mantidos pelo Kafka durante o teste.
 
-O armazenamento é apresentado como característica volumétrica da carga de teste, não como requisito de qualificação.
+## 6. Por que as execuções foram diferentes?
 
-## Como interpretar as duas execuções
+A execução A foi claramente mais lenta que a B, mesmo sem mudança de código, configuração ou carga.
 
-A execução A foi materialmente mais lenta do que a execução B sem mudança de código, configuração ou carga.
+Ela também consumiu mais CPU e apresentou tempos médios maiores em operações equivalentes no PostgreSQL:
 
-Além do p99 mais alto e da margem menor de throughput, ela apresentou maior consumo de CPU. A média agregada do conjunto de serviços foi de 2,094 vCPU na execução A contra 1,158 vCPU na execução B.
+> Tempo médio de execução por chamada observado pelo PostgreSQL. Esses números não são a latência end-to-end do pagamento.
 
-Os dados de diagnóstico também mostraram tempos maiores para classes equivalentes de operações no PostgreSQL.
+| Operação no PostgreSQL                | Execução A | Execução B |
+| ------------------------------------- | ---------: | ---------: |
+| Insert de pagamentos                  |  15,086 ms |   5,422 ms |
+| Insert de auditoria                   |   4,709 ms |   1,944 ms |
+| Insert de outbox                      |   2,629 ms |   0,980 ms |
+| Lock/leitura da resposta do recebedor |   5,775 ms |   2,253 ms |
 
-> Tempo médio de execução por chamada, observado pelo PostgreSQL. Não representa a latência end-to-end do pagamento.
+Os números apontam para uma execução A sob maior pressão, mas não são suficientes para dizer por que isso aconteceu.
 
-| Operação no PostgreSQL                    | Execução A | Execução B |
-| ----------------------------------------- | ---------: | ---------: |
-| Insert de pagamentos                      |  15,086 ms |   5,422 ms |
-| Insert de auditoria                       |   4,709 ms |   1,944 ms |
-| Insert de outbox                          |   2,629 ms |   0,980 ms |
-| Lock/leitura da resposta do recebedor     |   5,775 ms |   2,253 ms |
+Isso não muda a qualificação: a execução A passou nos três critérios, e a execução B repetiu o resultado com margem maior.
 
-Os tempos médios por chamada foram maiores na execução A para operações equivalentes. Isso é consistente com a maior pressão observada nessa execução, mas não permite atribuir a diferença entre A e B a uma causa específica.
+Manter as duas como evidência é importante justamente por isso. Mostrar apenas a melhor execução esconderia uma variação que realmente aconteceu durante os testes.
 
-Mesmo nessa condição, a execução A qualificou em throughput, latência e corretude.
+## 7. Evidência e reprodução
 
-A execução B qualificou com margem maior: iniciou todos os 1.890.000 pagamentos planejados, manteve 2.079 pagamentos por segundo na menor janela, apresentou p99 de 265 ms e teve zero violações.
+### Artefatos preservados
 
-Ela demonstra que a qualificação pôde ser repetida nas mesmas condições documentadas, mas não transforma os 265 ms no único resultado representativo.
+Os artefatos usados para sustentar o resultado estão versionados em:
 
-Preservar a execução A é importante justamente por isso. Mostrar apenas a execução mais favorável esconderia uma variação que realmente ocorreu durante a qualificação.
-
-## Evidência preservada
-
-A evidência compacta das duas qualificações fica em:
-
-```text
+```text id="2or10w"
 docs/performance/evidence/2026-08-29/
 ├── profile.json
 ├── execution-plan.json
@@ -262,41 +242,37 @@ docs/performance/evidence/2026-08-29/
 └── manifest.md
 ```
 
-O `profile.json` registra a carga de teste usada.
+Cada arquivo tem uma função:
 
-O `execution-plan.json` contém os parâmetros normalizados efetivamente executados.
+* `profile.json` registra a carga usada;
+* `execution-plan.json` registra os parâmetros efetivamente executados;
+* os dois relatórios registram geração, cenários, latência, repetições e violações de cada execução;
+* `checksums.sha256` permite conferir se os artefatos continuam iguais aos que foram versionados como evidência final.
 
-Os dois relatórios registram geração, cenários, latência, repetições e violações das respectivas execuções.
+Logs completos, CSVs intermediários, gravações de profiling, certificados e credenciais ficaram de fora desse conjunto. Eles foram úteis durante a investigação e estabilização, mas não são necessários para verificar o resultado final.
 
-O arquivo `checksums.sha256` permite verificar que os artefatos permanecem iguais aos promovidos como evidência final.
+### Como reproduzir
 
-Arquivos grandes de diagnóstico — como logs completos, CSVs intermediários, gravações de profiling, certificados e credenciais — não fazem parte da evidência canônica.
+O experimento pode ser executado novamente a partir de um ambiente limpo:
 
-Eles foram úteis durante investigação e estabilização, mas não são necessários para verificar a conclusão promovida.
-
-## Reproduzir o experimento
-
-A qualificação pode ser executada novamente a partir de um ambiente limpo:
-
-```bash
+```bash id="qzpcl0"
 cd load-test
+
 ./prepare-performance-environment.sh --profile mixed-outcomes-2k-15m
 ./run-load-test.sh --profile mixed-outcomes-2k-15m <run-tag>
 ```
 
-A preparação recria o estado local necessário para uma nova execução, constrói o conjunto de serviços quando necessário, gera certificados, espera os serviços ficarem disponíveis e provisiona os participantes.
+A preparação recria o estado local necessário, constrói os serviços quando preciso, gera certificados, espera os serviços ficarem disponíveis e provisiona os participantes.
 
 Ela não gera tráfego de pagamento.
 
-Uma nova execução produz uma nova observação. Ela não substitui nem modifica a evidência das duas qualificações já versionadas.
+Uma nova execução gera uma nova observação. Ela não altera nem substitui as duas execuções já preservadas.
 
-Da mesma forma, a conclusão de que uma nova execução qualificou depende dos resultados produzidos: throughput, latência e corretude ainda precisam ser comparados aos critérios definidos no início deste documento.
+Para qualificar, precisa passar novamente pelos mesmos três critérios: throughput, latência e corretude.
 
-## Limites da evidência
+## 8. Limites do resultado
 
-A conclusão vale para o experimento que foi efetivamente executado.
-
-Ela não demonstra:
+O resultado vale para o experimento descrito aqui. Ele não demonstra:
 
 * capacidade equivalente à do Pix real;
 * comportamento de uma implantação de produção;
@@ -307,12 +283,12 @@ Ela não demonstra:
 * qualificação em Kubernetes;
 * estabilidade por uma hora, 24 horas ou períodos maiores.
 
-Kafka foi exercitado com um único broker e fator de replicação 1.
+O Kafka rodou com um único broker e fator de replicação 1.
 
-O gerador e o sistema também compartilharam o mesmo host, portanto não havia isolamento físico entre a produção da carga e o sistema medido.
+O gerador e o sistema compartilharam o mesmo host, sem isolamento físico entre quem produz a carga e quem está sendo medido.
 
-Os 15 minutos qualificam exatamente uma janela de 15 minutos de comportamento sustentado. Eles não constituem uma afirmação sobre estabilidade indefinida.
+E os 15 minutos significam exatamente isso: o sistema sustentou o resultado durante uma janela de 15 minutos. O teste não permite extrapolar esse comportamento para períodos maiores.
 
-Dentro desses limites, as duas execuções sustentam a conclusão promovida pelo projeto:
+Com essas limitações em mente, o resultado sustentado pelas duas execuções é:
 
 > O núcleo manteve pelo menos 2.000 pagamentos por segundo, com p99 abaixo de 1 segundo e sem pagamentos incorretos ou perdidos nas duas qualificações consecutivas.
