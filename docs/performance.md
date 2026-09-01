@@ -1,20 +1,20 @@
 # Performance e evidência
 
-O README resume o resultado principal do projeto: em duas execuções consecutivas, o sistema atingiu a meta de performance sem comprometer a corretude dos pagamentos.
+O README resume o resultado principal do projeto: em duas execuções consecutivas, o sistema atingiu a meta de performance e devolveu todos os outcomes esperados sem contradição.
 
 Este documento registra o experimento que sustenta esse resultado: carga aplicada, critérios de qualificação, forma de medição, ambiente e limitações.
 
-Nas duas execuções, o sistema manteve pelo menos 2.000 pagamentos por segundo. O maior p99 observado foi de 855 ms, sem pagamentos incorretos ou perdidos.
+Nas duas execuções, o sistema manteve pelo menos 2.000 pagamentos por segundo. O maior p99 observado foi de 855 ms, sem outcome esperado ausente ou contraditório.
 
 ## 1. Critérios de qualificação
 
 Uma execução só qualifica se atender aos três critérios:
 
-| Critério   | Requisito                                         |
-| ---------- | ------------------------------------------------- |
-| Throughput | pelo menos 2.000 pagamentos originais por segundo |
-| Latência   | p99 end-to-end abaixo de 1 segundo                |
-| Corretude  | nenhum pagamento incorreto ou perdido             |
+| Critério             | Requisito                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| Throughput           | pelo menos 2.000 pagamentos originais por segundo                                                       |
+| Latência             | p99 end-to-end abaixo de 1 segundo                                                                      |
+| Corretude observável | nenhum outcome esperado ausente ou contraditório e nenhuma falha ao executar as repetições selecionadas |
 
 A fase ativa dura 15 minutos e usa uma carga de 2.100 pagamentos originais por segundo.
 
@@ -46,7 +46,8 @@ A worktree estava limpa e o ambiente foi preparado novamente antes de cada execu
 | Maior latência observada                   |              1.578 ms |                693 ms |
 | Repetições de pagamento enviadas / aceitas |     100.422 / 100.422 |     100.472 / 100.472 |
 | Repetições de status enviadas / aceitas    |       80.326 / 80.326 |       80.373 / 80.373 |
-| Violações funcionais / de repetição        |                 0 / 0 |                 0 / 0 |
+| Outcomes ausentes / contraditórios         |                 0 / 0 |                 0 / 0 |
+| Falhas na execução das repetições          |                     0 |                     0 |
 
 As duas execuções qualificaram de forma independente.
 
@@ -56,7 +57,7 @@ A execução B teve mais margem, com 2.079 pagamentos por segundo na pior janela
 
 Por isso, o resultado não é resumido apenas pela média de 2.100 pagamentos por segundo nem pela melhor latência observada. Os critérios consideram a pior janela de throughput e o comportamento das duas execuções.
 
-> O sistema manteve pelo menos 2.000 pagamentos por segundo, com p99 abaixo de 1 segundo e sem violações funcionais ou de repetição nas duas qualificações consecutivas.
+> O sistema manteve pelo menos 2.000 pagamentos por segundo, com p99 abaixo de 1 segundo, todos os outcomes esperados presentes e compatíveis e todas as repetições selecionadas executadas com sucesso nas duas qualificações consecutivas.
 
 ## 3. O que foi testado
 
@@ -92,10 +93,12 @@ Além dos pagamentos originais, o teste envia:
 * 5% de repetição dos pedidos de pagamento;
 * 5% de repetição das respostas do recebedor.
 
-As repetições são enviadas dez segundos depois da mensagem original e exercitam dois comportamentos:
+As repetições são enviadas dez segundos depois da mensagem original e exercitam a idempotência das duas entradas do fluxo:
 
-* **mensagem de entrada repetida:** não pode aplicar novamente o efeito financeiro;
-* **confirmação reentregue:** pode aparecer mais de uma vez, desde que permaneça compatível com as anteriores.
+* **`pacs.008` repetida:** não pode reservar o valor novamente;
+* **`pacs.002` repetida:** não pode creditar o recebedor nem devolver a reserva novamente.
+
+Separadamente, a entrega de confirmações ao pagador é at-least-once. Uma confirmação final compatível pode chegar mais de uma vez; estados incompatíveis para o mesmo pagamento continuam sendo erro.
 
 Os 2.100 pagamentos originais por segundo não representam todo o tráfego produzido durante o teste. Respostas, repetições e confirmações acontecem além dessa carga.
 
@@ -111,14 +114,16 @@ Os percentis do relatório são calculados sobre esse intervalo.
 
 A ferramenta de carga conhece previamente o resultado esperado de cada cenário e valida as confirmações recebidas.
 
-Receber mais de uma confirmação compatível não é considerado erro. A execução falha na corretude se:
+Receber mais de uma confirmação compatível não é considerado erro. A execução falha na corretude observável se:
 
 * uma confirmação esperada não chegar;
 * o mesmo pagamento receber estados contraditórios;
 * o resultado for incompatível com o cenário;
-* uma mensagem repetida aplicar novamente o efeito financeiro.
+* uma repetição selecionada não for executada ou não for aceita pelo ingresso.
 
-Uma execução precisa atender simultaneamente aos critérios de performance e corretude.
+O relatório não relê os saldos finais do PostgreSQL. Portanto, ele exercita a idempotência sob carga, mas não prova sozinho que uma repetição deixou de aplicar um segundo efeito financeiro. Essa invariante é verificada diretamente pelos [testes concorrentes do SPI](../spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java), que conferem no banco que requisições idênticas reservam, creditam ou devolvem o valor exatamente uma vez. Os [testes da outbox transacional](../spi/src/test/java/br/kauan/spi/domain/services/TransactionalOutboxRollbackIntegrationTest.java) verificam separadamente que uma falha de persistência reverte estado, saldo, auditoria e obrigação de notificar juntos.
+
+Uma execução precisa atender simultaneamente aos critérios de performance e corretude observável. A conclusão mais ampla sobre corretude financeira combina essa observação end-to-end com os testes transacionais e concorrentes do core.
 
 ### Throughput
 
@@ -243,7 +248,7 @@ Cada arquivo registra uma parte do experimento:
 
 * `profile.json`: perfil de carga;
 * `execution-plan.json`: parâmetros efetivamente executados;
-* `qualification-run-a-sla-report.json` e `qualification-run-b-sla-report.json`: geração de carga, cenários, latência, repetições e violações de cada execução;
+* `qualification-run-a-sla-report.json` e `qualification-run-b-sla-report.json`: geração de carga, cenários, latência, outcomes e execução das repetições em cada run;
 * `checksums.sha256`: integridade dos artefatos preservados.
 
 Logs completos, CSVs intermediários, gravações de profiling, certificados e credenciais não fazem parte desse conjunto. Eles foram usados durante investigação e estabilização, mas não são necessários para verificar o resultado final.
@@ -279,7 +284,8 @@ O resultado vale para o experimento descrito neste documento. Ele não demonstra
 * operação multi-região;
 * comportamento com um cluster Kafka altamente disponível;
 * qualificação em Kubernetes;
-* estabilidade por uma hora, 24 horas ou períodos maiores.
+* estabilidade por uma hora, 24 horas ou períodos maiores;
+* uma auditoria independente dos saldos finais de todos os pagamentos da run.
 
 O Kafka foi executado com um único broker e fator de replicação 1.
 
@@ -287,4 +293,4 @@ O gerador e o sistema compartilharam o mesmo host, sem isolamento físico entre 
 
 A fase medida durou 15 minutos. O resultado não deve ser extrapolado para períodos maiores sem novos testes.
 
-Dentro desse escopo, as duas execuções demonstraram pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhuma violação funcional ou perda de pagamento.
+Dentro desse escopo, as duas execuções demonstraram pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo, nenhum outcome esperado ausente ou contraditório e nenhuma falha na execução das repetições selecionadas.

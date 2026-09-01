@@ -2,15 +2,25 @@
 
 ## Propósito
 
-Este apêndice preserva o conhecimento obtido nos experimentos intermediários que alteraram uma decisão de arquitetura, performance ou metodologia. Ele não é um catálogo dos `255` diretórios de resultado e não promove diagnóstico a benchmark. A prova final de capacidade permanece no [relatório de estabilização em 2.000 TPS](2k-tps-stabilization.md).
+Este apêndice preserva o conhecimento obtido nos experimentos intermediários que alteraram uma decisão de arquitetura, performance ou metodologia. Ele não é um catálogo dos `255` diretórios de resultado e não promove diagnóstico a benchmark. A prova final de capacidade permanece em [performance e evidência](../../performance.md); o [relatório de estabilização](2k-tps-stabilization.md) resume a campanha histórica.
 
-Os artefatos das execuções foram tratados como fonte primária. Relatório, profile, plano, timestamps, CSVs, estatísticas PostgreSQL, JFR e perfis do runtime foram usados conforme disponíveis. O [caderno histórico](../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md) serviu para localizar comparações e decisões, não para preencher metadata ausente.
+Os artefatos das execuções foram tratados como fonte primária. Relatório, profile, plano, timestamps, CSVs, estatísticas PostgreSQL, JFR e perfis do runtime foram usados conforme disponíveis. O [caderno histórico](../../board/Atividades/concluidas/estabilizar-teste-carga-budget-cpu.md) serviu para localizar comparações e decisões, não para preencher metadata ausente.
 
 O grau de confiança usado abaixo significa:
 
 - **alto:** mecanismo diretamente medido e reproduzido, ou resultado final repetido em condições equivalentes;
 - **médio:** A/B limpo ou sequência coerente, mas sem contrabalançar ordem, host ou todas as variáveis ambientais;
 - **diagnóstico:** atribui custo ou elimina uma hipótese, porém a instrumentação ou a forma da execução impede inferir capacidade.
+
+## Mapa dos achados
+
+| Pergunta | Seções |
+| --- | --- |
+| como tornar a workload e a medição válidas? | 1, 2, 10 e 13 |
+| como o gargalo migrou pelo sistema? | 3, 4, 5, 6 e 9 |
+| por que ganho local não basta? | 7 e 8 |
+| por que o gerador foi redesenhado? | 11 e 12 |
+| onde termina a capacidade demonstrada? | 14 |
 
 ## 1. Média não representa carga sustentada
 
@@ -48,8 +58,8 @@ O grau de confiança usado abaixo significa:
 | --- | ---: | ---: | --- |
 | primeiro diagnóstico | `99,86%` | `76,82%` | o front door impedia que a carga alcançasse o core |
 | fim estável do A/B de pooling | `39,89%` | `101,54%` | a capacidade liberada expôs o banco |
-| primeira qualificação final | `30,23%` | `41,09%` | remoções estruturais devolveram margem aos dois componentes |
-| repetição final | `30,20%` | `39,78%` | a distribuição permaneceu estável |
+| primeira qualificação anterior | `30,23%` | `41,09%` | remoções estruturais devolveram margem aos dois componentes |
+| repetição daquela campanha | `30,20%` | `39,78%` | a distribuição permaneceu estável |
 
 No baseline de ingresso, PostgreSQL não mostrou deadlock, blocker, arquivo temporário ou leitura física relevante; a pressão observada estava em CPU e WAL. No estado final, Gateway, Kafka e SPI usaram respectivamente cerca de `24%`, `12%` e `10%` de um core. Isso demonstra que o tuning não apenas deslocou saturação indefinidamente: o estado qualificado terminou com folga distribuída.
 
@@ -165,15 +175,15 @@ Com o planner compartilhado preparando o request antes da fronteira, todos os `2
 
 **Confiança:** alta para o overhead observado; o perfil perturbado não quantifica o custo normal de cada alocação.
 
-## 14. A qualificação final tem margem; 4k ainda não
+## 14. O alvo de 2k qualificou; 4k ainda não
 
-**Evidência a 2k:** duas execuções limpas iniciaram `1.890.000/1.890.000` originais, mantiveram mínimo rolling `2.079 TPS`, p99 de `268,134/259,956 ms`, zero outcome ausente ou contraditório e cerca de `1,18/1,16 vCPU` médios na stack.
+**Evidência a 2k:** as duas qualificações promovidas mantiveram mínimos rolling de `2.017` e `2.079 TPS`, p99 de `855,202` e `265,195 ms` e zero outcome ausente ou contraditório. A execução A omitiu 631 dos 1.890.000 slots planejados; a B executou todos. As duas satisfizeram o piso temporal independentemente.
 
 **Evidência a 4k:** diagnósticos curtos iniciaram quase toda a carga e preservaram outcomes, mas o mínimo rolling ficou entre `3.920` e `3.960 TPS` e p99 entre `1,36` e `2,45 s`. Elevar `max.poll.records` PACS.008 de `500` para `1.000` não eliminou a fila; p99 do callback cresceu aproximadamente `153 → 250 ms` e mais trabalho terminou depois do active.
 
 **Decisão:** declarar somente a capacidade repetida de `2.000 TPS`. `4.000 TPS` localiza a próxima fronteira no consumer PACS.008, mas não autoriza aumentar concorrência, instâncias ou recursos dentro desta task.
 
-**Confiança:** alta para 2k na stack única; alta para a não qualificação de 4k; inexistente para escala multi-instância, que não foi exercitada.
+**Confiança:** alta para 2k na stack única em duas execuções equivalentes; alta para a não qualificação de 4k nos diagnósticos observados; inexistente para escala multi-instância, que não foi exercitada.
 
 ## Limitações transversais
 
@@ -183,7 +193,7 @@ Com o planner compartilhado preparando o request antes da fronteira, todos os `2
 - `docker stats` e activity sampling são amostras; não garantem ausência de picos entre observações.
 - Um broker, uma instância por serviço e um consumer por fluxo qualificam o MVP local, não HA ou concorrência multi-instância.
 - O archive restaurou quase toda a evidência citada. `baseline-buckets/20260814_023552` continua ausente e não foi substituído por outro run de nome semelhante.
-- Tags e timestamps não identificaram com segurança código e intenção em todos os runs; a correção foi separada para a task futura [Rastrear identidade e intenção dos experimentos de carga](../board/Atividades/Backlog/operacao-confiabilidade/rastrear-identidade-intencao-experimentos-load-test.md).
+- Tags e timestamps não identificaram com segurança código e intenção em todos os runs; a correção foi separada para a task futura [Rastrear identidade e intenção dos experimentos de carga](../../board/Atividades/Backlog/operacao-confiabilidade/rastrear-identidade-intencao-experimentos-load-test.md).
 
 ## Regra de interpretação
 

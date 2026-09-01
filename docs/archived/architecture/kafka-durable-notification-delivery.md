@@ -1,40 +1,49 @@
-# Entrega durável de notificações pelo Kafka
+# Kafka como log durável de notificações
+
+## Status
+
+Decisão vigente no MVP. O [design canônico](../../design.md) descreve o fluxo atual; este registro explica por que PostgreSQL deixou de acompanhar cada entrega e quais custos foram aceitos ao promover Kafka a log operacional durável.
+
+## Problema
+
+A transação financeira e a publicação de sua confirmação não podem participar da mesma transação distribuída. O sistema precisa garantir simultaneamente que:
+
+1. uma confirmação só exista quando a mudança financeira fizer commit;
+2. uma queda entre PostgreSQL e Kafka não apague essa obrigação;
+3. uma instituição possa retomar a entrega sem exigir exactly-once físico.
+
+O primeiro desenho resolvia isso com reliable push: outbox, cópia larga em `notification_delivery`, claim, lease, ACK persistido e redelivery ativo. Era correto, mas duplicava payload e fazia o mesmo PostgreSQL responsável por dinheiro também acompanhar o lifecycle de cada entrega.
+
+## Evolução medida
+
+| Etapa | O que removeu | O que permaneceu |
+| --- | --- | --- |
+| persistência e ACK em lote | commits e chamadas pequenas | delivery, claim, lease e ACK |
+| índice mínimo de delivery | segunda cópia larga do payload | reconciliação e posição persistida no Gateway |
+| Pull com cursor | ACK individual, lease e redelivery ativo | backlog durável ainda dividido entre banco e memória |
+| Kafka durável | índice, reconciler e histórico de delivery no PostgreSQL | outbox mínima para fechar a transação financeira |
+
+Alguns resultados tornaram a mudança estrutural mais importante que novos ajustes locais:
+
+- o índice mínimo reduziu o SQL do caminho de delivery em `67,06%` e o WAL em `48,75%`, mas não retirou o PostgreSQL da saturação;
+- dez varreduras saudáveis do reconciler chegaram a `519,7 s` de SQL sem encontrar lacunas;
+- remover `PENDING/PUBLISHED` eliminou `27,703 s` de SQL e cerca de `152 MB` de WAL do update de publicação;
+- na comparação com o híbrido ordenado, Kafka durável reduziu o SQL exportado em `61,49%`, o WAL em `21,86%` e a CPU média do PostgreSQL em `22,006` pontos percentuais.
+
+Esses números pertencem à campanha sequencial de estabilização, não a um único A/B contrabalançado. Eles demonstram a remoção de trabalho PostgreSQL; a capacidade final é sustentada separadamente pelas qualificações promovidas.
 
 ## Decisão
 
-O Kafka é o log durável da fronteira `SPI → PSP`. O PostgreSQL continua
-protegendo atomicamente o fato financeiro e a criação da notificação, mas não
-mantém um segundo histórico de delivery nem o progresso do PSP.
+As autoridades ficam separadas:
 
 ```text
-transação financeira do SPI
-  ├─ pagamento / saldo / auditoria
-  └─ INSERT notification_outbox
-             │
-             │ depois do commit
-             ▼
-       fila limitada em memória
-             │
-             ▼
- Kafka psp-notifications-v1 (7 dias)
-             │
-       ┌─────┴─────────────┐
-       ▼                   ▼
- tailer do Gateway    leitura histórica
-       │                   │
-       └────── Pull ───────┘
-                  │
-                  ▼
-                 PSP
+PostgreSQL = criação atômica da obrigação
+Kafka      = histórico durável de entrega por 7 dias
+PSP        = progresso durável de consumo
+Gateway    = protocolo, filtro e aceleração em memória
 ```
 
-Essa escolha remove do PostgreSQL o `delivery_index`, a reconciliação periódica
-e o lifecycle de ACK/lease. Ela aceita explicitamente o custo operacional de
-tratar o Kafka como armazenamento durável durante a janela contratada.
-
-## Escrita no SPI
-
-`notification_outbox` contém somente:
+Na transação financeira, a outbox guarda somente:
 
 ```text
 communication_id
@@ -43,141 +52,43 @@ payload
 created_at
 ```
 
-O payload é construído uma vez e inserido na mesma transação do efeito
-financeiro. Após o commit, o lote correspondente entra em uma fila limitada,
-consumida por um único publisher.
+Depois do commit, um publisher único envia o lote ao tópico `psp-notifications-v1` com producer idempotente e `acks=all`. A outbox só é removida quando todas as mensagens do lote são confirmadas.
 
-O publisher:
+Confirmação parcial, resultado inconclusivo ou falha ao apagar a outbox repetem o lote inteiro. Isso permite duplicata física e impede perda silenciosa da obrigação lógica.
 
-1. publica o lote inteiro com `acks=all` e idempotência do producer;
-2. aguarda a confirmação de todas as mensagens;
-3. remove o lote da outbox somente depois dessas confirmações.
+## Log, Pull e cursor
 
-Falha parcial, confirmação inconclusiva ou falha ao apagar a outbox repete o
-lote inteiro. Isso pode criar mensagens físicas duplicadas e não pode causar
-perda da obrigação lógica.
+O tópico usa oito partições, chave `recipient_ispb`, retenção de sete dias e `cleanup.policy=delete`. A topologia é versionada pelo sufixo `v1`: mudar a quantidade de partições exige novo tópico e migração explícita, pois offsets antigos não podem ser reinterpretados como uma sequência equivalente.
 
-Ao iniciar, o SPI drena toda a outbox antes de iniciar seus consumidores Kafka
-de pagamentos. Não existe polling periódico da outbox durante a operação: o
-caminho normal é o evento `AFTER_COMMIT`, e o startup recovery cobre o trabalho
-que sobreviveu a uma queda do processo.
+O PSP consulta `PullNotifications` com seu último cursor processado e recebe até 15 notificações. O cursor é opaco, autenticado por HMAC e vinculado ao PSP, à geração do tópico, à partição e ao último offset examinado.
 
-## Log de notificações
+O PSP só persiste o cursor novo depois de processar duravelmente o lote completo. Se cair antes disso, reapresenta o cursor anterior e pode receber mensagens novamente. A entrega é at-least-once.
 
-O tópico é `psp-notifications-v1`:
+`communication_id` é a identidade lógica da confirmação; partição e offset são apenas posição de transporte.
 
-- exatamente 8 partições;
-- chave `recipient_ispb`, portanto todas as notificações de um PSP permanecem
-  na mesma partição enquanto essa topologia não mudar;
-- `cleanup.policy=delete`;
-- retenção de 7 dias;
-- payload completo e header `notification.communication-id`;
-- volume Kafka persistente no ambiente local.
+O Gateway acompanha as partições e mantém uma janela contígua em memória. Quando o buffer cobre o cursor, Pull não consulta armazenamento externo. Em restart, eviction ou lacuna, o Gateway faz `assign + seek` no Kafka e responde diretamente a partir do log. A memória acelera; não decide corretude.
 
-O sufixo `v1` identifica a geração da topologia. Alterar a quantidade de
-partições exige uma nova geração de tópico e uma migração explícita dos
-cursores, em vez de reinterpretar offsets antigos.
-
-## Pull e cursor
-
-O PSP mantém o progresso durável. Cada chamada unary `PullNotifications`
-informa o último cursor processado e recebe até 15 notificações. Cada item
-carrega o payload opaco e seu `communication_id` lógico.
-
-O limite `15` foi fixado depois de uma varredura histórica com máximos
-`1/10/15/20/500`, registrando também os lotes efetivamente retornados. Quinze
-produziu média real de `11,506` notificações e o melhor equilíbrio entre
-trabalho de leitura, progresso do workload e regularidade do gerador naquele
-desenho. Limites maiores reduziram chamadas no read path, mas concentraram
-trabalho em rajadas e degradaram a carga oferecida. Esse experimento ocorreu
-antes de Kafka se tornar o read path durável; ele explica a escolha conservadora
-do limite do protocolo, não estabelece que `15` seja um ótimo universal.
-
-No diagnóstico Rust final, já sobre o caminho Kafka vigente, os `68.849` lotes
-não vazios tiveram média `1,189`, p95 `2` e máximo `3`; nenhum lote atingiu o
-limite. Portanto `15` deve ser lido como teto de segurança e oportunidade de
-batching sob backlog, não como tamanho esperado no steady state saudável.
-
-O cursor é opaco e autenticado por HMAC. Ele contém, internamente:
-
-```text
-PSP + geração do tópico + partição + último offset examinado
-```
-
-O PSP só persiste o novo cursor depois de processar duravelmente o lote
-completo. Se cair antes disso, reapresenta o cursor antigo e pode receber as
-mesmas mensagens novamente. A entrega é, portanto, at-least-once.
-
-Offsets de mensagens de outros PSPs na mesma partição também são examinados e
-podem avançar o cursor. Isso é seguro porque a chave mantém cada PSP em uma
-única partição, e o Gateway filtra o destinatário antes de responder.
-
-Um cursor anterior ao começo retido do log retorna `CURSOR_EXPIRED`. Um cursor
-de outro PSP, partição, geração ou com assinatura inválida é rejeitado.
-
-## Caminho rápido e histórico
-
-Um consumer do Gateway acompanha as oito partições e guarda uma janela
-contígua e limitada por partição em memória. O buffer contém todos os records
-da partição, não apenas os de um PSP, para provar quais offsets foram
-examinados.
-
-Quando o buffer cobre o cursor, o Pull não consulta armazenamento externo. Em
-restart, eviction ou lacuna, o Gateway faz `assign + seek` diretamente no
-Kafka, filtra o PSP e responde àquele Pull. Não há reidratação ou cache recovery
-separado; novos records consumidos pelo tailer voltam a tornar o caminho de
-memória suficiente naturalmente.
-
-Quando o cursor está no tail conhecido, o Gateway faz long polling. A chegada
-de um novo record para o PSP acorda a chamada. Há no máximo um Pull em andamento
-por PSP.
-
-## Propriedades e falhas
+## Falhas e recuperação
 
 | Situação | Resultado |
 | --- | --- |
 | rollback financeiro | a outbox também é revertida |
-| commit e queda antes do evento em memória | startup recovery publica a row |
-| ACK parcial ou inconclusivo do Kafka | o lote inteiro é repetido |
-| Kafka confirmou e o delete falhou | o lote inteiro é repetido |
-| Gateway reiniciou | o Pull lê o Kafka a partir do cursor |
-| PSP caiu antes de persistir o cursor | recebe novamente o lote |
-| mensagem física duplicada | mesmo `communication_id`; PSP trata idempotentemente |
-| cursor saiu da retenção | falha explícita; recuperação operacional |
+| commit e queda antes de enfileirar/publicar | a row permanece na outbox |
+| confirmação Kafka parcial ou inconclusiva | o lote inteiro pode ser repetido |
+| Kafka confirmou e o delete falhou | o lote inteiro pode ser repetido |
+| Gateway reiniciou | o Pull lê Kafka a partir do cursor |
+| PSP caiu antes de persistir o cursor | o lote pode ser entregue novamente |
+| cursor saiu da retenção | falha explícita e recuperação operacional |
 
-O `communication_id` é a identidade lógica. Partição e offset são posição de
-transporte, não identidade de negócio.
+Hoje, o SPI descobre rows antigas da outbox no startup. Durante o runtime, o fast path usa o evento pós-commit e o worker retenta o lote que já possui em memória. Uma obrigação que não alcançar essa fila pode depender de restart para ser redescoberta. A correção está isolada na task [Reconciliar a outbox de notificações em runtime](../../board/Atividades/Backlog/operacao-confiabilidade/reconciliar-outbox-notificacoes-runtime.md).
 
-## Limitações conscientes do MVP
+## Consequências e limites
 
-- O ambiente local usa um broker/controller e replication factor 1. Ele valida
-  o protocolo e o processo, mas não alta disponibilidade de broker, host ou
-  volume.
-- A topologia de 8 partições é fixa nesta geração.
-- A recuperação normal cobre até 7 dias de indisponibilidade do PSP. Períodos
-  maiores pertencem a disaster recovery, fora do protocolo operacional.
-- O ingresso financeiro ainda não aplica admission control baseado na saúde do
-  transporte. Uma indisponibilidade prolongada pode bloquear a fila do SPI ou
-  impedir que ele cumpra novas obrigações; essa proteção é trabalho futuro.
-- Não há compactação, archive tier, múltiplos Pulls por PSP ou cursor shards.
-- Duplicatas físicas são esperadas; exatamente-once não é prometido.
+- O ambiente qualificado usa um broker e replication factor 1; valida o protocolo, não alta disponibilidade do Kafka.
+- A recuperação operacional cobre sete dias. Períodos maiores pertencem a disaster recovery.
+- A topologia de oito partições é fixa nesta geração.
+- Duplicatas físicas são parte do contrato; exatamente-once não é prometido.
+- O ingresso financeiro ainda não aplica admission control baseado na saúde do transporte.
+- Não há archive tier, compactação, múltiplos Pulls simultâneos por PSP ou cursor shard.
 
-## Motivo da escolha
-
-O desenho anterior tentava combinar PostgreSQL como fonte durável,
-`delivery_index`, memória e Kafka como fast path. Isso preservava a correção,
-mas duplicava estado, exigia reconciliação e pressionava o mesmo PostgreSQL que
-processa o domínio financeiro.
-
-Kafka como log durável reduz essa pressão e deixa uma autoridade clara:
-
-```text
-PostgreSQL = atomicidade da criação da obrigação
-Kafka      = histórico durável de delivery por 7 dias
-PSP        = progresso durável de consumo
-Gateway    = protocolo, filtro e aceleração em memória
-```
-
-Para produção distribuída, a próxima etapa é dimensionar brokers, replication
-factor, `min.insync.replicas`, storage, monitoramento de retenção e disaster
-recovery. Isso não altera o contrato de Pull definido aqui.
+O ganho central foi reduzir autoridades sobrepostas: PostgreSQL continua protegendo o fato financeiro e sua obrigação de saída; Kafka passa a responder pela recuperação da confirmação depois da publicação.

@@ -5,9 +5,9 @@ O README descreve o fluxo do ponto de vista de quem faz um pagamento. Aqui o foc
 As duas garantias principais são:
 
 1. o estado do pagamento e a movimentação financeira precisam ser atualizados de forma consistente;
-2. depois que uma confirmação é criada, ela precisa continuar recuperável até ser entregue às instituições.
+2. depois que uma confirmação é criada, ela precisa continuar recuperável durante a janela operacional de entrega.
 
-O PostgreSQL é a autoridade sobre pagamentos e saldos. A outbox faz a ponte entre essa transação e o Kafka, evitando uma janela em que o pagamento seja concluído mas sua confirmação seja perdida. Depois da publicação, o Kafka mantém o histórico disponível para recuperação, e cada instituição controla o próprio progresso de consumo.
+O PostgreSQL é a autoridade sobre pagamentos e saldos. A outbox faz a ponte entre essa transação e o Kafka, evitando uma janela em que o pagamento seja concluído mas sua confirmação seja perdida. Depois da publicação, o Kafka mantém o histórico disponível durante a janela operacional de sete dias, e cada instituição controla o próprio progresso de consumo.
 
 | Responsabilidade                          | Autoridade               |
 | ----------------------------------------- | ------------------------ |
@@ -224,7 +224,7 @@ O Gateway também mantém uma janela recente em memória para acelerar o caminho
 | a instituição falha antes de avançar o cursor           | o cursor anterior pode ser reutilizado e as mensagens podem ser entregues novamente      |
 | o Gateway reinicia                                      | o histórico necessário continua disponível no Kafka                                      |
 
-Nos pontos em que não é possível tornar duas operações atomicamente únicas, o sistema aceita repetição e torna o processamento idempotente. Uma falha pode gerar uma nova tentativa, mas não um segundo efeito financeiro nem a perda de uma confirmação já persistida.
+Nos pontos em que não é possível tornar duas operações atomicamente únicas, o sistema aceita repetição e torna o processamento idempotente. Uma falha pode gerar uma nova tentativa, mas não um segundo efeito financeiro nem a perda silenciosa de uma confirmação dentro da janela operacional documentada.
 
 ## 4. Separação de responsabilidades
 
@@ -262,6 +262,12 @@ Com essa divisão, o PostgreSQL não precisa acompanhar entregas individuais, e 
 
 Também não há estado mantido apenas em memória que seja necessário para reconstruir a situação correta do sistema.
 
+### Como chegamos a este desenho
+
+O sistema não começou com essas fronteiras. Saldo, entrega de notificações, schema e geração de carga passaram por alternativas que foram medidas, simplificadas ou descartadas ao longo do projeto.
+
+A [evolução da engenharia](engineering-evolution.md) explica quais problemas levaram às decisões atuais e aponta para os experimentos e documentos históricos que as sustentam.
+
 ## 5. Limites e trade-offs
 
 O sistema qualificado atualmente possui alguns limites de ambiente e algumas escolhas explícitas de protocolo.
@@ -279,4 +285,4 @@ O sistema qualificado atualmente possui alguns limites de ambiente e algumas esc
 * pagamentos em `WAITING_ACCEPTANCE` não possuem timeout automático; se o recebedor não responder, o valor pode permanecer reservado;
 * saldo insuficiente rejeita o pagamento imediatamente; não existe fila de liquidez.
 
-Dentro desses limites, as propriedades garantidas pelo sistema são **corretude financeira, idempotência, atomicidade e entrega recuperável**.
+Dentro desses limites, as propriedades garantidas pelo sistema são **corretude financeira, idempotência, atomicidade e entrega recuperável durante a janela operacional**.

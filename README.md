@@ -1,6 +1,6 @@
 # Instant Payment System
 
-O Pix é o sistema brasileiro de pagamentos instantâneos. Ele permite transferir dinheiro de uma conta para outra em poucos segundos, 24 horas por dia, todos os dias do ano e de graça.
+O Pix é o sistema brasileiro de pagamentos instantâneos. Ele permite transferir dinheiro de uma conta para outra em poucos segundos, 24 horas por dia, todos os dias do ano e, para pessoas físicas, normalmente sem tarifa.
 
 Hoje isso parece normal. Antes do Pix, não era.
 
@@ -26,9 +26,9 @@ Então eu precisava escolher uma parte do problema.
 
 Em vez de tentar copiar o Pix, construí uma versão muito menor do fluxo de pagamento: alguém envia dinheiro, o recebedor aceita ou rejeita, o valor chega ao destino ou continua com quem tentou pagar, e o resultado volta aos participantes.
 
-Os [requisitos publicados pelo Banco Central](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) me deram uma referência concreta: **2.000 pagamentos por segundo**, com 99% deles processados em até **4,6 segundos**.
+Os materiais publicados pelo Banco Central me deram referências concretas. Uma [apresentação sobre arquitetura e resiliência](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) usava **2.000 transações por segundo** como parâmetro. O [relatório anual do SPI de 2021](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) registrava o acordo de nível de serviço: 99% dos pagamentos processados dentro do SPI em menos de **4,6 segundos**.
 
-Depois, os [resultados publicados pelo próprio Banco Central](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) mostraram outra coisa interessante: na prática, o tempo necessário para processar 99% dos pagamentos ficava próximo ou abaixo de **1 segundo** durante grande parte do período observado.
+O mesmo relatório mostrava outra coisa interessante: na prática, o tempo necessário para processar 99% dos pagamentos ficava próximo ou abaixo de **1 segundo** durante grande parte do período observado.
 
 Esses números viraram a referência do projeto:
 
@@ -48,7 +48,7 @@ O sistema bateu a meta nas duas execuções:
 | ------------------------------------ | -----------------: | -----------------: |
 | Menor taxa observada                 | 2.017 pagamentos/s | 2.079 pagamentos/s |
 | 99% dos pagamentos terminaram em até |             855 ms |             265 ms |
-| Pagamentos incorretos ou perdidos    |                  0 |                  0 |
+| Outcomes ausentes ou contraditórios |                  0 |                  0 |
 
 A execução A foi claramente a menos favorável: chegou mais perto dos dois limites, mas ainda passou.
 
@@ -104,7 +104,9 @@ Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingres
 
 A ferramenta de carga fica fora do core: ela envia os pagamentos, observa as confirmações que retornam e verifica se elas correspondem ao que deveria ter acontecido.
 
-A mesma execução precisa passar nos dois lados: ser rápida e continuar correta. Bater a meta de pagamentos por segundo não vale se pagamentos forem perdidos ou produzirem resultados incorretos.
+A mesma execução precisa passar nos dois lados: ser rápida e devolver todos os outcomes esperados sem contradição. Bater a meta de pagamentos por segundo não vale se o resultado observável do fluxo estiver incorreto.
+
+O benchmark exercita duplicidade e concorrência sob carga. A garantia financeira mais forte — uma mensagem repetida não pode mover dinheiro novamente — é verificada diretamente pelos [testes concorrentes do Payment Processor](spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java), que conferem reserva, crédito e devolução nos saldos persistidos.
 
 Os detalhes de geração da carga, cálculo de throughput e latência e preservação das evidências ficam na [metodologia de performance](docs/performance.md).
 
@@ -137,6 +139,7 @@ load-test/results/<run-tag>/<timestamp>/
 ## Aprofundar
 
 * **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega das confirmações.
+* **[Evolução da engenharia](docs/engineering-evolution.md)** — quais medições mudaram o desenho, quais alternativas foram descartadas e por que o sistema terminou assim.
 * **[Performance](docs/performance.md)** — carga, metodologia, ambiente, resultados e limites do benchmark.
 * **[Evidência das qualificações](docs/performance/evidence/2026-08-29/manifest.md)** — artefatos das execuções que sustentam o resultado apresentado neste README.
 * **[Demonstração de referência](demo/README.md)** — um fluxo visual com instituições simuladas para explorar o sistema manualmente.

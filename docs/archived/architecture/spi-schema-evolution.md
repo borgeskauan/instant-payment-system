@@ -1,139 +1,99 @@
 # Evolução arquitetural do schema do SPI
 
-## Compatibilidade do MVP
+## Status
 
-O baseline atual é a primeira versão de schema suportada. O MVP assume um banco
-PostgreSQL novo e não oferece upgrade executável para instalações criadas pelas
-migrations experimentais V1–V18.
+Registro histórico. O baseline atual é a primeira versão de banco suportada pelo MVP. Instalações criadas pelas migrations experimentais não possuem caminho de upgrade; ambientes de demonstração e benchmark começam com PostgreSQL novo.
 
-O histórico SQL continua disponível no Git até o commit anterior à consolidação.
-Este documento preserva as decisões e evidências relevantes sem obrigar o
-runtime a reconstruir arquiteturas descartadas a cada banco novo.
+O objetivo deste documento é preservar por que o schema final possui sua forma atual sem obrigar o runtime a reconstruir arquiteturas descartadas.
 
-## Estado inicial
+## De onde o schema partiu
 
-O primeiro schema espelhava uma modelagem orientada a entidades:
+O primeiro modelo espelhava entidades e mecanismos que ainda estavam sendo descobertos:
 
-* pagamentos com valores decimais e status textuais amplos;
-* contas de liquidação e buckets de saldo separados;
-* outbox com lifecycle de publicação, tentativas e timestamps mutáveis;
-* auditoria que reproduzia alterações técnicas de status e settlement.
+- pagamentos com valores decimais e vocabulários textuais amplos;
+- contas de settlement e buckets de saldo separados;
+- outbox com `PENDING/PUBLISHED`, tentativas e timestamps mutáveis;
+- auditoria que registrava mudanças técnicas de status;
+- tabelas e índices voltados a claim, lease, ACK e redelivery de notificações.
 
-Esse desenho permitiu validar rapidamente o fluxo funcional, mas criou
-fragmentação artificial de liquidez, mais writes e índices no PostgreSQL e
-vocabulários persistidos mais amplos que o domínio final.
+Esse desenho permitiu validar o fluxo funcional cedo, mas carregava no banco decisões que depois deixaram de representar o domínio ou a arquitetura de entrega.
+
+## Decisões que alteraram o modelo
+
+| Área | Modelo experimental | Baseline atual | Motivo |
+| --- | --- | --- | --- |
+| dinheiro | decimal e múltiplas estruturas de liquidez | centavos inteiros e uma disponibilidade por participante | evitar arredondamento e liquidez artificial |
+| reserva | buckets e coordenação no settlement | `WAITING_ACCEPTANCE` + débito da disponibilidade | tornar a reserva parte da transação do pagamento |
+| status | strings amplas e motivo misturado ao estado | enums pequenos e motivo separado | reduzir ambiguidade e representação física |
+| auditoria | transições técnicas detalhadas | fatos financeiros consolidados | registrar o que aconteceu no negócio |
+| outbox | lifecycle de publicação mutável | notificação imutável mínima | manter apenas a ponte transacional para Kafka |
+| delivery | estado persistido de cada entrega | Kafka + cursor do PSP | retirar tracking operacional do PostgreSQL |
 
 ## Saldo e reserva
 
-As migrations V2–V4 introduziram buckets e normalizaram dinheiro para centavos.
-Os testes de carga mostraram que buckets adicionavam coordenação sem representar
-uma necessidade do negócio. O commit `00a50bf` substituiu-os por uma única row
-`participant_balance_entity` por ISPB.
-
-A reserva passou a ser representada atomicamente por:
+O commit `00a50bf` substituiu buckets por `participant_balance_entity`, uma row por ISPB. A reserva passou a ser:
 
 ```text
-decremento do saldo do pagador + WAITING_ACCEPTANCE
+decremento da disponibilidade do pagador
++
+payment.status = WAITING_ACCEPTANCE
 ```
 
-Settlement credita somente o recebedor; rejeição externa libera somente o
-pagador. A ordem determinística de locks e os updates agregados permanecem no
-adaptador JDBC. A decisão completa está em
-[`reservation-based-participant-balance.md`](reservation-based-participant-balance.md).
+Aceite credita somente o recebedor; rejeição externa devolve somente a reserva do pagador. A [decisão de saldo e reserva](reservation-based-participant-balance.md) registra as invariantes e a concorrência.
 
-## Notificações
+## Outbox e entrega
 
-A outbox inicial possuía estados `PENDING/PUBLISHED`, retry e índices de claim.
-Experimentos de performance mostraram write amplification relevante no ciclo de
-publicação. Os commits `42f0a2e`, `a63a39f` e `e8bc4f1` conduziram o desenho para
-uma outbox transacional mínima:
+Os estados de publicação e os índices de claim foram removidos em etapas. A outbox final contém uma confirmação imutável criada na mesma transação financeira:
 
 ```text
-communication_id, recipient_ispb, payload, created_at
+communication_id
+recipient_ispb
+payload
+created_at
 ```
 
-Ela existe apenas para fechar atomicamente transação financeira e obrigação de
-saída. Kafka é o log durável de delivery e o publisher remove da outbox somente
-o lote integral confirmado. O desenho e suas limitações de HA estão em
-[`kafka-durable-notification-delivery.md`](kafka-durable-notification-delivery.md).
+Depois da confirmação no Kafka, a row pode ser apagada. Histórico de entrega e progresso não ficam no schema do SPI. A [decisão de Kafka durável](kafka-durable-notification-delivery.md) explica essa fronteira.
 
-## Persistência compacta
+## Representação física
 
-O commit `af2aff1` converteu status e motivos para enums PostgreSQL, fingerprint
-para `BYTEA`, versão para `SMALLINT` e tipos de auditoria para representações
-compactas. O fillfactor da tabela de pagamentos foi caracterizado durante a
-estabilização e permaneceu em 50 para favorecer suas transições de estado.
+O commit `af2aff1` compactou representações que já estavam semanticamente estabilizadas:
 
-No A/B da compactação conjunta, o tempo SQL por row caiu `12,89%` no insert de
-pagamentos e `10,19%` no insert de auditoria; o WAL por row caiu respectivamente
-`13,09%` e `6,68%`. A cauda melhorou naquela execução, mas throughput rolling e
-CPU não apresentaram ganho uniforme. A mudança foi mantida pela redução física
-reproduzida e pela representação mais estreita, não como explicação isolada da
-capacidade final.
+- status e motivos tornaram-se enums PostgreSQL;
+- fingerprint tornou-se `BYTEA`;
+- versão tornou-se `SMALLINT`;
+- dinheiro permaneceu em `BIGINT` de centavos;
+- payload da outbox permaneceu pré-serializado e imutável.
 
-O baseline final também removeu da tabela de pagamentos os campos completos de
-pagador e recebedor que o fluxo JDBC nunca consultava. O hot path persiste apenas
-identidade, fingerprint, estado, valor e os ISPBs necessários para reserva,
-liquidação e rejeição; a notificação transacional continua carregando o payload
-externo completo.
+No microbenchmark conjunto, tempo SQL por row caiu `12,89%` no insert de pagamentos e `10,19%` no insert de auditoria; WAL por row caiu `13,09%` e `6,68%`, respectivamente. O resultado end-to-end não foi uniforme, então a compactação permaneceu por reduzir custo físico mensurável, não como explicação isolada da qualificação.
 
-O commit `be45b59` removeu índices técnicos de auditoria sem consumidores e a
-primary key de `event_id`; o identificador continua obrigatório e gerado para
-ordenação/evidência, mas não participa da regra de negócio.
-
-Repetições com e sem esses índices separaram novamente o mecanismo do resultado
-sistêmico. Sem os índices técnicos, o insert de auditoria consumiu entre
-`38,25%` e `52,43%` menos tempo por row e aproximadamente `46%` menos WAL por
-row. A latência end-to-end variou mais entre duas execuções do mesmo lado do que
-entre as variantes, portanto não foi atribuída à remoção. Permanecem somente os
-índices parciais que protegem fatos de negócio; um índice de consulta só deve
-voltar se surgir um consumidor real que justifique seu custo no hot path.
+O fillfactor da tabela de pagamentos ficou em 50. Isso levou updates HOT de `22,86%` para `100%`, ao custo de aproximadamente `46,98%` a mais em heap e índices e inserts mais caros. A decisão favorece as transições frequentes da row e aceita o custo de espaço; não representa um ótimo universal.
 
 ## Auditoria orientada a fatos
 
-O modelo inicial emitia `PAYMENT_CREATED`, `PAYMENT_STATUS_CHANGED` e
-`SETTLEMENT_APPLIED`. Ele duplicava detalhes técnicos e dividia uma única
-transação de negócio em múltiplas interpretações.
+A auditoria deixou de reproduzir cada alteração técnica e passou a registrar os fatos que permitem explicar a movimentação financeira:
 
-O commit `ed05bb2` consolidou os fatos imutáveis:
+| Fato | Efeito registrado |
+| --- | --- |
+| `PAYMENT_RESERVED` | débito da disponibilidade do pagador |
+| `PAYMENT_SETTLED` | crédito do recebedor |
+| `PAYMENT_REJECTED` | ausência de efeito na insuficiência inicial ou devolução de reserva existente |
 
-* `PAYMENT_RESERVED`;
-* `PAYMENT_SETTLED`;
-* `PAYMENT_REJECTED`.
+Índices técnicos sem consumidor foram removidos. No microbenchmark, isso reduziu o insert de auditoria entre `38,25%` e `52,43%` por row e cerca de `46%` de WAL por row. A escolha também reduz ambiguidade: auditoria descreve fatos aplicados, não tentativas ou replays sem efeito.
 
-Índices parciais garantem uma admissão e um outcome terminal por pagamento.
-Shape constraints preservam estado, deltas financeiros e origem do motivo na
-mesma row. A definição vigente está em
-[`auditoria-transacoes-spi.md`](../board/Atividades/concluidas/auditoria-transacoes-spi.md).
+## Por que consolidar em um baseline
 
-O schema de auditoria anterior existia somente para converter bancos
-experimentais. Ele não é recriado no baseline, pois não existe histórico a
-preservar em um banco novo.
+Manter todas as migrations experimentais como caminho executável teria três custos:
 
-## Vocabulário final de estados e motivos
+1. obrigaria um banco novo a reconstruir estruturas imediatamente descartadas;
+2. sugeriria compatibilidade de upgrade nunca qualificada;
+3. manteria código e testes dedicados a estados que o produto final não suporta.
 
-O commit `8336cab` separou três conceitos antes misturados:
+O baseline novo reduz essa complexidade permanente. A evolução continua verificável pelo Git, por este registro e pelos documentos de decisão relacionados.
 
-* `payment_state`: estado operacional interno;
-* outcome recebido no PACS.002;
-* status externo produzido na notificação.
+## Consequências
 
-O schema persiste apenas `WAITING_ACCEPTANCE`, `SETTLED` e `REJECTED`. A causa
-interna `INSUFFICIENT_FUNDS` é distinta dos reason codes externos de uma
-rejeição do PSP recebedor. Constraints impedem combinações de origens
-contraditórias.
-
-## Invariantes do baseline
-
-O baseline preserva diretamente:
-
-* identidade idempotente por `payment_id` e fingerprint;
-* saldo não negativo por participante;
-* reserva, estado, auditoria e outbox na mesma transação;
-* um fato de admissão e um outcome terminal por pagamento;
-* separação entre causa interna e reason codes externos;
-* outbox mínima e imutável até a confirmação integral do publish;
-* fillfactor homologado da tabela de pagamentos.
-
-As antigas migrations permanecem como evidência histórica no Git; o baseline é
-o contrato executável e legível do estado final do MVP.
+- O MVP exige banco novo; não oferece migração de dados legados.
+- Alterar enums PostgreSQL exige migration explícita.
+- Fillfactor 50 troca espaço por updates HOT e deve ser reavaliado se o padrão de escrita mudar.
+- O schema não contém estado suficiente para reconstruir cada arquitetura histórica — deliberadamente.
+- A autoridade vigente continua sendo o código e o baseline atual, não os nomes ou exemplos preservados no arquivo.

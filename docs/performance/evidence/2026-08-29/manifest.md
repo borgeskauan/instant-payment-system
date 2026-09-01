@@ -2,7 +2,7 @@
 
 ## Supported claim
 
-The runtime at commit 1351ea564d0834a66e1b5d99a5e09a1a384cae1b sustained at least 2,000 original payments per second throughout a 15-minute active window, with end-to-end p99 below the internal one-second threshold and no functional violations, in two consecutive runs.
+The runtime at commit 1351ea564d0834a66e1b5d99a5e09a1a384cae1b sustained at least 2,000 original payments per second throughout a 15-minute active window, with end-to-end p99 below the internal one-second threshold, no missing or contradictory outcomes, and no replay-execution violations, in two consecutive runs.
 
 Both runs used the mixed-outcomes-2k-15m profile, the same normalized execution plan, a clean worktree, and newly prepared environments. Code, configuration, and procedure did not change between them.
 

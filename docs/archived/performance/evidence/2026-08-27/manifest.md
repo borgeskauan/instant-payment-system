@@ -1,5 +1,7 @@
 # Evidência compacta da qualificação de 2k TPS
 
+> **Status histórico:** este par foi substituído pelas duas qualificações consecutivas de 29 de agosto. A afirmação vigente e seus artefatos estão em [performance e evidência](../../../../performance.md). Este diretório permanece somente para preservar uma etapa anterior da campanha.
+
 ## Execuções
 
 | execução | início local | diretório de resultado bruto | tamanho aproximado |
@@ -35,8 +37,4 @@ evidência reconstruída, não como metadata autoritativa do artefato.
 
 ## Limitações de preservação
 
-Os diretórios de resultado brutos continuam somente no armazenamento local e ainda não possuem
-um arquivo externo durável com checksum do resultado completo. Não remover os dois
-diretórios antes de concluir essa etapa da task de consolidação. Certificados
-efêmeros, credenciais, CSVs grandes, JFRs e logs não são versionados neste
-diretório.
+Os diretórios de resultado brutos não fazem parte desta evidência versionada e podem já não existir. Certificados efêmeros, credenciais, CSVs grandes, JFRs e logs também não são preservados neste diretório. Os checksums acima registram a identidade que esses artefatos possuíam durante a consolidação histórica, mas não tornam este par a evidência final do projeto.
