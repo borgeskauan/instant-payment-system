@@ -141,5 +141,4 @@ load-test/results/<run-tag>/<timestamp>/
 * **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega das confirmações.
 * **[Evolução da engenharia](docs/engineering-evolution.md)** — quais medições mudaram o desenho, quais alternativas foram descartadas e por que o sistema terminou assim.
 * **[Performance](docs/performance.md)** — carga, metodologia, ambiente, resultados e limites do benchmark.
-* **[Evidência das qualificações](docs/performance/evidence/2026-08-29/manifest.md)** — artefatos das execuções que sustentam o resultado apresentado neste README.
 * **[Demonstração de referência](demo/README.md)** — um fluxo visual com instituições simuladas para explorar o sistema manualmente.

@@ -240,8 +240,7 @@ docs/performance/evidence/2026-08-29/
 ├── execution-plan.json
 ├── qualification-run-a-sla-report.json
 ├── qualification-run-b-sla-report.json
-├── checksums.sha256
-└── manifest.md
+└── checksums.sha256
 ```
 
 Cada arquivo registra uma parte do experimento:
@@ -250,6 +249,8 @@ Cada arquivo registra uma parte do experimento:
 * `execution-plan.json`: parâmetros efetivamente executados;
 * `qualification-run-a-sla-report.json` e `qualification-run-b-sla-report.json`: geração de carga, cenários, latência, outcomes e execução das repetições em cada run;
 * `checksums.sha256`: integridade dos artefatos preservados.
+
+Os arquivos `go-comparison-sla-report.json` e `rust-comparison-sla-report.json`, mantidos no mesmo diretório, pertencem ao estudo comparativo dos geradores de carga e não às duas qualificações finais.
 
 Logs completos, CSVs intermediários, gravações de profiling, certificados e credenciais não fazem parte desse conjunto. Eles foram usados durante investigação e estabilização, mas não são necessários para verificar o resultado final.
 

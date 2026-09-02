@@ -102,7 +102,7 @@ Those samples used evolving core and generator revisions. They support the inter
 
 ## Evidence and limits
 
-The versioned [Go report](../../performance/evidence/2026-08-29/go-comparison-sla-report.json), [Rust report](../../performance/evidence/2026-08-29/rust-comparison-sla-report.json), common profile, execution plan and checksums are indexed by the [evidence manifest](../../performance/evidence/2026-08-29/manifest.md).
+The versioned [Go report](../../performance/evidence/2026-08-29/go-comparison-sla-report.json), [Rust report](../../performance/evidence/2026-08-29/rust-comparison-sla-report.json), common profile, execution plan and checksums are described in the canonical [performance documentation](../../performance.md).
 
 Important limits:
 

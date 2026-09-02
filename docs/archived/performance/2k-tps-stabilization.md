@@ -20,7 +20,7 @@ Duas execuções consecutivas no commit `1351ea5` qualificaram independentemente
 
 O profile oferecia 2.100 pagamentos originais por segundo durante 15 minutos e exigia piso rolling de 2.000 TPS. Média e quantidade total não compensavam uma janela abaixo do requisito. Replays de `pacs.008` e `pacs.002` adicionavam 5% de carga cada, sem substituir originais.
 
-Os relatórios, profile, plano normalizado e checksums estão no [manifesto final](../../performance/evidence/2026-08-29/manifest.md).
+Os relatórios, profile, plano normalizado e checksums são descritos na documentação canônica de [performance](../../performance.md).
 
 ## Método
 
