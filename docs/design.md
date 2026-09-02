@@ -1,25 +1,13 @@
 # System Design
 
-O README descreve o fluxo do ponto de vista de quem faz um pagamento. Aqui o foco é o comportamento interno do sistema quando entram em cena duplicidade, concorrência e falhas.
+O README apresenta o pagamento pelo ponto de vista do usuário. Internamente, o sistema precisa preservar duas garantias:
 
-As duas garantias principais são:
+1. estado e movimentação financeira concluem juntos;
+2. a confirmação permanece recuperável depois do commit.
 
-1. o estado do pagamento e a movimentação financeira precisam ser atualizados de forma consistente;
-2. depois que uma confirmação é criada, ela precisa continuar recuperável durante a janela operacional de entrega.
+PostgreSQL protege a primeira fronteira. A outbox, Kafka e o Notification Gateway protegem a segunda.
 
-O PostgreSQL é a autoridade sobre pagamentos e saldos. A outbox faz a ponte entre essa transação e o Kafka, evitando uma janela em que o pagamento seja concluído mas sua confirmação seja perdida. Depois da publicação, o Kafka mantém o histórico disponível durante a janela operacional de sete dias, e cada instituição controla o próprio progresso de consumo.
-
-| Responsabilidade                          | Autoridade               |
-| ----------------------------------------- | ------------------------ |
-| Estado do pagamento e saldos              | PostgreSQL               |
-| Obrigação de publicar uma confirmação     | PostgreSQL / outbox      |
-| Confirmações disponíveis para recuperação | Kafka                    |
-| Progresso já processado                   | Instituição participante |
-| Acesso ao histórico                       | Notification Gateway     |
-
-## 1. Fluxo de um pagamento
-
-O pagamento possui poucos estados:
+## 1. Fluxo do pagamento
 
 ```mermaid
 stateDiagram-v2
@@ -31,172 +19,92 @@ stateDiagram-v2
     REJECTED --> [*]
 ```
 
-Uma instituição inicia um pagamento enviando uma `pacs.008`.
+O pagador inicia uma transferência com uma `pacs.008`. Sua identidade vem do certificado mTLS, e apenas a instituição da conta pagadora pode iniciar o pagamento.
 
-A identidade da instituição é obtida do certificado mTLS usado no ingresso. Apenas a instituição da conta pagadora pode iniciar o pagamento.
+Se houver saldo, o valor sai imediatamente da disponibilidade do pagador e o pagamento entra em `WAITING_ACCEPTANCE`. Comprometer o dinheiro antes da resposta impede que outro pagamento use a mesma disponibilidade.
 
-Se houver saldo suficiente, o pagamento entra em `WAITING_ACCEPTANCE`. O valor já é retirado do saldo disponível nesse momento, antes da decisão do recebedor.
-
-O recebedor recebe a solicitação e responde com uma `pacs.002`. Apenas a instituição recebedora pode decidir o resultado do pagamento.
-
-Se aceitar, o pagamento passa para `SETTLED` e o recebedor é creditado.
-
-Se rejeitar, o pagamento passa para `REJECTED` e o valor reservado volta ao saldo disponível do pagador.
-
-Quando não há saldo suficiente na entrada, o pagamento é rejeitado imediatamente e não chega a `WAITING_ACCEPTANCE`.
+O recebedor responde com uma `pacs.002`. Se aceitar, o pagamento passa para `SETTLED` e ele é creditado. Se rejeitar, o pagamento passa para `REJECTED` e a reserva volta ao pagador. Saldo insuficiente produz `REJECTED` já na admissão.
 
 ## 2. Corretude financeira
 
-O efeito financeiro de cada transição é pequeno e explícito:
+Cada transição possui um efeito financeiro explícito:
 
-| Situação           | Efeito                                       |
-| ------------------ | -------------------------------------------- |
-| pagamento admitido | retira o valor da disponibilidade do pagador |
-| recebedor aceita   | credita o recebedor                          |
-| recebedor rejeita  | devolve o valor à disponibilidade do pagador |
+| Fato | Efeito |
+| --- | --- |
+| pagamento admitido | reduz a disponibilidade do pagador |
+| recebedor aceita | credita o recebedor |
+| recebedor rejeita | devolve a reserva ao pagador |
 
-Cada instituição possui uma única disponibilidade no PostgreSQL. `WAITING_ACCEPTANCE` significa que o valor já saiu da disponibilidade do pagador; por isso, o aceite credita somente o recebedor e a rejeição devolve a reserva.
+Cada instituição possui uma única row de saldo. Operações que disputam o mesmo dinheiro são serializadas pelo PostgreSQL; dentro de um lote, o SPI avalia os pagamentos em ordem, agrega seus deltas e aplica uma mutação por participante.
 
-Pagamentos que disputam a mesma disponibilidade são serializados pelo lock da row do participante. Dentro de um lote, pagamentos do mesmo pagador são avaliados em ordem determinística e seus deltas são agregados.
+Uma identidade repetida com o mesmo conteúdo é um `no-op`. A mesma identidade com conteúdo diferente é conflito. Sob concorrência, somente pagamentos realmente criados reservam saldo, e somente transições efetivamente adquiridas a partir de `WAITING_ACCEPTANCE` movimentam dinheiro.
 
-Uma repetição equivalente é um `no-op`; reutilizar a mesma identidade com outro conteúdo é conflito. Sob concorrência, somente pagamentos efetivamente criados podem reservar saldo, e somente transições efetivamente adquiridas a partir de `WAITING_ACCEPTANCE` podem creditar ou devolver dinheiro.
-
-Cada efeito aplicado compartilha uma transação PostgreSQL com os demais registros do mesmo fato:
+Estado, saldo, auditoria e obrigação de notificar compartilham a mesma transação:
 
 ```text
 estado do pagamento
-+
-movimentação financeira
-+
-auditoria
-+
-obrigação de enviar a confirmação
++ efeito financeiro
++ fato de auditoria
++ notification_outbox
 ```
 
-Ou tudo é persistido, ou nada é. A auditoria registra apenas fatos efetivamente aplicados; tentativas, conflitos e repetições sem efeito não criam um novo evento de negócio.
+Ou tudo é persistido, ou nada é. O contrato completo de identidade, reserva, concorrência, auditoria e rollback está em [Corretude do pagamento](topics/payment-correctness.md).
 
-O contrato detalhado de identidade, reserva, concorrência, transições, auditoria e rollback está em [Corretude do pagamento](topics/payment-correctness.md).
+## 3. Entrega recuperável
 
-## 3. Entrega recuperável das confirmações
-
-A transação PostgreSQL cobre o estado financeiro e a criação da obrigação de notificar. A publicação no Kafka acontece depois dela e, portanto, precisa lidar com falhas nessa fronteira.
-
-### Transactional outbox
-
-A publicação no Kafka não participa da mesma transação que altera pagamentos e saldos.
-
-Por isso, a confirmação a ser enviada é primeiro gravada em uma transactional outbox:
+PostgreSQL e Kafka não compartilham uma transação. A confirmação nasce, portanto, em uma transactional outbox criada junto com o fato financeiro:
 
 ```text
-transação PostgreSQL
-
-├── pagamento
-├── saldos
-├── auditoria
-└── notification_outbox
-          │
-          │ depois do commit
-          ▼
-        Kafka
+pagamento + saldo + auditoria + outbox
+                    │
+                    │ depois do commit
+                    ▼
+                  Kafka
+                    ▼
+          Notification Gateway
+                    ▼ Pull(cursor)
+                   PSP
 ```
 
-A linha da outbox é criada junto com a alteração financeira.
+O SPI remove a row da outbox somente depois que o broker confirma o lote. Uma publicação inconclusiva pode repetir mensagens; perder silenciosamente uma confirmação não é aceito. Rows remanescentes são recuperadas no startup.
 
-Depois do commit, o SPI publica a confirmação no Kafka. A linha só é removida da outbox quando o broker confirma as mensagens correspondentes.
+Kafka mantém sete dias de histórico operacional. Cada instituição consulta o Gateway com um cursor autenticado e só deve avançá-lo depois de processar o lote duravelmente. Reapresentar um cursor antigo pode repetir mensagens, portanto a entrega é **at-least-once**.
 
-Se o processo cair antes da publicação, a confirmação continua registrada no PostgreSQL e pode ser retomada após a reinicialização.
+O Gateway atende o caminho recente a partir de uma janela em memória e lê o Kafka diretamente quando o cursor não está coberto. Memória é aceleração, nunca autoridade.
 
-Quando o resultado de uma publicação fica incerto, o lote pode ser enviado novamente. Isso pode produzir uma publicação duplicada, mas evita perder uma confirmação já criada.
+Detalhes de publicação, particionamento, cursor, long polling e recuperação estão em [Entrega recuperável de notificações](topics/notification-delivery.md).
 
-### Kafka e entrega at-least-once
+## 4. Falhas possuem destinos diferentes
 
-Depois que a publicação é confirmada, o Kafka mantém o histórico das confirmações disponíveis para entrega.
+| Classe | Reação |
+| --- | --- |
+| rejeição financeira | conclui o pagamento como resultado de negócio |
+| entrada inválida ou sem autoridade | isola o record na DLQ |
+| PostgreSQL temporariamente indisponível | preserva o batch e tenta novamente |
+| defeito interno persistente | retry curto e depois batch para DLQ |
+| fronteira de publicação inconclusiva | preserva ou repete a confirmação |
 
-Não existe um segundo banco para acompanhar individualmente o estado de entrega de cada mensagem. As instituições acessam o histórico pelo Notification Gateway e usam um cursor para indicar até onde já processaram.
+Essa separação evita tratar uma rejeição como pane, descartar trabalho durante indisponibilidade ou bloquear indefinidamente uma partição com uma mensagem determinística inválida. A política completa está em [Tratamento de falhas](topics/failure-handling.md).
 
-Esse cursor é autenticado e vinculado à instituição que o recebeu.
+## 5. Autoridades e limites
 
-A instituição só avança o cursor depois de processar o lote de forma durável.
+| Responsabilidade | Autoridade |
+| --- | --- |
+| pagamentos, saldos e auditoria | PostgreSQL |
+| criação atômica da confirmação | PostgreSQL / outbox |
+| histórico operacional publicado | Kafka |
+| progresso já processado | instituição participante |
+| acesso ao histórico | Notification Gateway |
 
-Se houver uma falha antes desse avanço, ela pode reutilizar o cursor anterior e receber parte das mensagens novamente.
+Essa divisão impede que Kafka decida estado financeiro, que o Gateway invente progresso do participante ou que PostgreSQL acompanhe cada entrega individual.
 
-A entrega é, portanto, **at-least-once**. O sistema não garante que uma confirmação será entregue fisicamente uma única vez.
+O desenho qualificado assume alguns limites:
 
-Cada confirmação possui um identificador estável (`communicationId`), que permite reconhecer uma repetição sem reaplicar seu efeito lógico.
+* uma instância de cada serviço e um broker Kafka com fator de replicação 1;
+* nenhuma qualificação de escala horizontal, multi-região ou Kubernetes;
+* retenção operacional de notificações por sete dias;
+* nenhum timeout automático para pagamentos em `WAITING_ACCEPTANCE`;
+* rejeição imediata por saldo insuficiente, sem fila de liquidez;
+* uma row da outbox que perde o fast path pós-commit só é redescoberta no próximo startup.
 
-O tópico de notificações mantém sete dias de histórico.
-
-O Gateway também mantém uma janela recente em memória para acelerar o caminho normal. Essa memória funciona apenas como otimização. Depois de uma reinicialização, ou quando o cursor aponta para uma posição mais antiga, o histórico volta a ser lido do Kafka.
-
-### O que acontece quando há falhas
-
-| Falha                                                   | Comportamento                                                                            |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| a transação PostgreSQL não conclui                      | pagamento, dinheiro, auditoria e obrigação de notificar não são persistidos parcialmente |
-| o commit acontece, mas o processo cai antes de publicar | a confirmação continua registrada na outbox                                              |
-| o resultado da publicação fica incerto                  | o lote pode ser publicado novamente                                                      |
-| a instituição falha antes de avançar o cursor           | o cursor anterior pode ser reutilizado e as mensagens podem ser entregues novamente      |
-| o Gateway reinicia                                      | o histórico necessário continua disponível no Kafka                                      |
-
-Nos pontos em que não é possível tornar duas operações atomicamente únicas, o sistema aceita repetição e torna o processamento idempotente. Uma falha pode gerar uma nova tentativa, mas não um segundo efeito financeiro nem a perda silenciosa de uma confirmação dentro da janela operacional documentada.
-
-## 4. Separação de responsabilidades
-
-Cada componente mantém o tipo de estado para o qual foi escolhido:
-
-```text
-PostgreSQL
-
-→ quem possui o dinheiro?
-→ em que estado está o pagamento?
-→ qual obrigação nasceu junto com essa mudança?
-
-Kafka
-
-→ quais confirmações ainda podem ser recuperadas?
-
-Instituição participante
-
-→ até onde eu já processei?
-
-Notification Gateway
-
-→ como eu acesso esse histórico?
-```
-
-O PostgreSQL mantém o estado financeiro porque pagamento, saldo, auditoria e criação da obrigação de notificar precisam participar da mesma transação.
-
-Depois da publicação, o Kafka passa a manter o histórico durável usado para recuperação das confirmações.
-
-Cada instituição é responsável por saber até onde processou esse histórico de forma durável.
-
-O Notification Gateway fornece o protocolo de acesso ao histórico, mas não mantém a posição de processamento como estado autoritativo.
-
-Com essa divisão, o PostgreSQL não precisa acompanhar entregas individuais, e o Kafka não participa da definição de saldo ou estado financeiro.
-
-Também não há estado mantido apenas em memória que seja necessário para reconstruir a situação correta do sistema.
-
-### Como chegamos a este desenho
-
-O sistema não começou com essas fronteiras. Saldo, entrega de notificações, schema e geração de carga passaram por alternativas que foram medidas, simplificadas ou descartadas ao longo do projeto.
-
-A [evolução da engenharia](engineering-evolution.md) explica quais problemas levaram às decisões atuais e aponta para os experimentos e documentos históricos que as sustentam.
-
-## 5. Limites e trade-offs
-
-O sistema qualificado atualmente possui alguns limites de ambiente e algumas escolhas explícitas de protocolo.
-
-### Limites do ambiente
-
-* o núcleo qualificado usa uma única instância de cada serviço;
-* o Kafka local usa um único broker e fator de replicação 1;
-* o protocolo de recuperação é exercitado, mas não a alta disponibilidade do broker;
-* escala horizontal, operação multi-região e Kubernetes não fazem parte da qualificação atual.
-
-### Trade-offs do protocolo
-
-* as confirmações ficam disponíveis no fluxo operacional por sete dias; recuperações além dessa janela dependem dos mecanismos de recuperação de desastre;
-* pagamentos em `WAITING_ACCEPTANCE` não possuem timeout automático; se o recebedor não responder, o valor pode permanecer reservado;
-* saldo insuficiente rejeita o pagamento imediatamente; não existe fila de liquidez.
-
-Dentro desses limites, as propriedades garantidas pelo sistema são **corretude financeira, idempotência, atomicidade e entrega recuperável durante a janela operacional**.
+A [evolução da engenharia](engineering-evolution.md) explica como experimentação, corretude e performance conduziram a essas fronteiras.

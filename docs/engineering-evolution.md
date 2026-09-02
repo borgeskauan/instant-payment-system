@@ -73,6 +73,8 @@ Em junho de 2026, o problema deixou de ser apenas alcançar uma taxa alta e pass
 
 O harness passou a correlacionar recursos dos containers, Kafka lag, latência ponta a ponta, estatísticas do PostgreSQL e JFR. Essa instrumentação mudou a forma de trabalhar: uma alteração precisava responder a uma hipótese localizada, e o resultado local precisava voltar ao fluxo completo.
 
+A campanha também mostrou que profiling é uma intervenção. `log_executor_stats` gerou 41 MB de logs; `heaptrack` elevou o RSS do gerador de aproximadamente 59,6 para 491 MiB e o p99 de cerca de 254 para 718 ms. Instrumentação intrusiva passou a servir para atribuir custo, nunca para qualificar capacidade.
+
 O K6 havia sido útil para descobrir os primeiros limites, mas seu modelo fechado seguia o ritmo das respostas. Ele foi substituído por um gerador Go com taxa explícita, participantes hot e cold, drain e acompanhamento dos outcomes.
 
 Ao mesmo tempo, o sistema medido ficou mais próximo do problema final:
@@ -180,6 +182,10 @@ O desenho final incorporou simplificações locais:
 
 Algumas queries ficaram muito mais rápidas sem melhorar o fluxo completo. Outras pareciam melhores isoladamente e pioraram o sistema ao adicionar trabalho em outro ponto.
 
+Os lotes também precisaram ser medidos, não inferidos da configuração. Por exemplo, `max.poll.records=500` no fluxo `pacs.002` produziu média de aproximadamente 163 records e máximo de 339. Parâmetros como `max.poll.records`, `fetch.min.bytes` e o limite do Pull são tetos ou condições de formação; não prometem a cardinalidade que chegará à aplicação. O tuning passou a observar a distribuição real e a cauda dos callbacks.
+
+O layout físico apresentou outro trade-off. `fillfactor=50` levou os updates HOT de 22,86% para 100%, mas aumentou heap mais índices em 46,98% e não alterou materialmente os outcomes. Representações compactas e a remoção de índices sem consumidores reduziram SQL e WAL de forma reproduzível. Essas escolhas foram mantidas pelo mecanismo físico que melhoravam, não por uma diferença isolada na cauda end-to-end.
+
 Por isso, a regra de tuning terminou assim:
 
 ```text
@@ -189,6 +195,8 @@ medir a workload real
 → validar o mecanismo local
 → repetir o fluxo end-to-end
 ```
+
+Um diagnóstico exploratório a 4.000 TPS delimitou onde essa campanha terminava. O mínimo rolling ficou entre 3.920 e 3.960 TPS e o p99 entre 1,36 e 2,45 segundos. Aumentar `max.poll.records` do `pacs.008` de 500 para 1.000 não fechou a diferença e elevou a cauda do callback. O sistema permaneceu correto, mas não qualificou; o experimento localizou a próxima fronteira no consumer `pacs.008` sem transformar 4.000 TPS em claim do projeto.
 
 ## De reliable push a um log durável consultável
 
@@ -250,6 +258,17 @@ A versão Rust foi tratada como greenfield. A mudança importante não foi apena
 Tentativas locais como aumentar canais, prolongar spin ou fixar CPU não resolveram a responsabilidade compartilhada. O redesenho resolveu o ownership da admissão sem colocar mais trabalho dentro do pacer.
 
 O Rust permaneceu porque tornou a fronteira temporal previsível, não porque uma linguagem foi declarada universalmente superior à outra.
+
+Um A/B controlado no mesmo core e perfil tornou essa decisão observável:
+
+| Medida | Go | Rust |
+| --- | ---: | ---: |
+| originais omitidos de 1.890.000 | 6.906 | 55 |
+| menor janela contínua de 1 segundo | 1.784 TPS | 2.058 TPS |
+| CPU do processo | 875,82 s | 576,86 s |
+| outcomes ausentes ou contraditórios | 0 | 0 |
+
+O Go continuou funcionalmente correto, mas não sustentou o piso temporal naquela execução. O Rust introduziu mais conceitos locais — Tokio, atomics e um workspace com fronteiras explícitas — em troca de menos estado compartilhado e maior previsibilidade. É uma comparação entre estas duas arquiteturas sob esta workload, não uma conclusão geral sobre as linguagens.
 
 ## Consolidar somente depois da experimentação
 

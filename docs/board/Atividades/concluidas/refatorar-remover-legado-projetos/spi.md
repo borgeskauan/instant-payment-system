@@ -33,7 +33,7 @@ Nenhuma ambiguidade de negócio aberta foi identificada. O estado terminal `REJE
 
 ## Trabalho anterior
 
-O histórico e as evidências estão em [`Simplificação arquitetural do SPI`](../../concluidas/simplificar-arquitetura-spi.md). A classificação detalhada dos failure paths Kafka está em [`SPI Kafka failure and DLQ cleanup`](../../../../archived/internal/superpowers/specs/2026-08-28-spi-kafka-failure-dlq-design.md).
+O histórico e as evidências estão em [`Simplificação arquitetural do SPI`](../../concluidas/simplificar-arquitetura-spi.md). A classificação detalhada dos failure paths Kafka está em [`Tratamento de falhas`](../../../../topics/failure-handling.md).
 
 ## Baseline técnica
 
