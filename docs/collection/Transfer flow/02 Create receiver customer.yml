@@ -1,5 +1,5 @@
 info:
-  name: 02 Create receiver customer
+  name: 02 Create Bob at Bank B
   type: http
   seq: 1
 

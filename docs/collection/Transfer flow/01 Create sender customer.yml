@@ -1,5 +1,5 @@
 info:
-  name: 01 Create sender customer
+  name: 01 Create Alice at Bank A
   type: http
   seq: 1
 

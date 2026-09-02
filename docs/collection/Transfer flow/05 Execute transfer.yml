@@ -1,5 +1,5 @@
 info:
-  name: 05 Execute transfer
+  name: 05 Send 25.50 from Alice to Bob
   type: http
   seq: 1
 

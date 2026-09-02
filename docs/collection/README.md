@@ -1,26 +1,29 @@
-# Bruno Transfer Flow
+# Try the payment flow with Bruno
 
-Start or reset the complete environment as described in the [reference demo README](../../demo/README.md), then select the `local` environment in Bruno. It provides:
+This collection tells the same story as the browser demo, one HTTP request at a time: Alice opens an account at Bank A, Bob opens an account at Bank B, and Alice sends Bob a PIX payment of 25.50.
 
-```text
-senderPspUrl=http://localhost:8081
-receiverPspUrl=http://localhost:8082
+## Before you begin
+
+Start from a clean demo environment:
+
+```bash
+./demo/demo reset
 ```
 
-The collection registers and uses its own receiver key:
+This command deletes the local data from previous runs. See the [reference demo guide](../../demo/README.md) for more details.
 
-```text
-receiverPixKey=bruno-bob@example.com
-```
+Open `docs/collection` in Bruno and select the `local` environment. You do not need to copy IDs or change variables; the collection carries the information from one request to the next.
 
-Requests `01` and `02` set `senderCustomerId` and `receiverCustomerId` automatically. Request `03` registers `receiverPixKey`; request `04` resolves it; request `05` submits the transfer using the same key.
+## Run the journey
 
-Start from a clean demo environment before running the folder so the key registration is reproducible.
+Open the `Alice pays Bob` folder and run its requests in order:
 
-Run requests in order:
+1. `01 Create Alice at Bank A`
+2. `02 Create Bob at Bank B`
+3. `03 Register Bob's PIX key`
+4. `04 Check the recipient`
+5. `05 Send 25.50 from Alice to Bob`
 
-1. `01 Create sender customer`
-2. `02 Create receiver customer`
-3. `03 Create receiver PIX key`
-4. `04 Preview transfer`
-5. `05 Execute transfer`
+The fourth request shows the person associated with Bob's key before any money is sent. The final request then creates the payment using that same key.
+
+The collection uses `bruno-bob@example.com` rather than the key from the browser walkthrough, so the two examples remain independent.

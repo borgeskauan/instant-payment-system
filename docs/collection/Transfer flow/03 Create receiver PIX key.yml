@@ -1,5 +1,5 @@
 info:
-  name: 03 Create receiver PIX key
+  name: 03 Register Bob's PIX key
   type: http
   seq: 1
 
