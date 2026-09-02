@@ -1,214 +1,215 @@
-# Como o desenho evoluiu
+# Como a evidência mudou o desenho
 
-O [design atual](design.md) explica como o sistema funciona. Este documento responde a uma pergunta diferente:
+O [design atual](design.md) explica como o sistema funciona. Este documento responde a outra pergunta:
 
-> Quais problemas fizeram o sistema terminar com esse desenho, e não com uma das alternativas que existiram durante o projeto?
+> Quais problemas fizeram o sistema terminar com esse desenho, em vez das alternativas que apareceram durante o projeto?
 
-Esta não é uma cronologia de todos os experimentos. Ela preserva apenas mudanças que alteraram uma responsabilidade, uma fronteira arquitetural ou a forma de representar o problema.
+Esta não é uma lista de todos os experimentos. Ela preserva apenas investigações que mudaram uma responsabilidade, uma fronteira arquitetural ou a maneira de representar o problema.
 
-Resultados intermediários não aparecem aqui porque foram produzidos sob workloads e contratos diferentes. A capacidade final, sua metodologia e suas limitações pertencem ao [relatório de performance](performance.md).
+Resultados antigos também não são comparados como se pertencessem ao mesmo benchmark. Workload, critérios e implementação mudaram ao longo do caminho. A capacidade final e seus limites estão em [Performance e evidência](performance.md).
 
 ## A evolução em uma página
 
-| Período | Pressão encontrada | Mudança durável |
+| Período | Problema que ficou visível | Mudança que permaneceu |
 | --- | --- | --- |
-| ago–set/2025 | fechar o primeiro fluxo ponta a ponta | pagamento, decisão do recebedor e movimentação entre PSPs |
-| out/2025 | o ingresso síncrono e o polling limitavam o desenho | ingresso assíncrono com Kafka |
-| jan–mar/2026 | o teste e a entrega não representavam o fluxo assíncrono | Kafka no processamento e Notification Gateway com gRPC |
-| jun/2026 | o hot path não era observável nem controlável | instrumentação, gerador Go, PostgreSQL e batching |
-| jul–12 ago/2026 | velocidade sem falhas e repetições resolvia um problema fácil demais | idempotência, DLQ, mTLS, outbox, auditoria e replays |
-| 14–24 ago/2026 | a workload final expôs custos acidentais no ingresso, banco e delivery | HTTP/2 persistente, saldo por participante, Pull e Kafka durável |
-| 25–29 ago/2026 | o próprio gerador introduzia variância temporal | gerador Rust com pacing e admissão explícitos |
+| ago–set/2025 | fechar o primeiro pagamento ponta a ponta | pagamento, decisão do recebedor e movimentação entre PSPs |
+| out/2025 | conexão HTTP e processamento financeiro possuíam ritmos diferentes | ingresso assíncrono por Kafka |
+| jan–mar/2026 | polling e entrega dentro do SPI misturavam responsabilidades | Notification Gateway e gRPC |
+| jun/2026 | era possível medir velocidade, mas não explicar o custo | instrumentação, PostgreSQL, batching e gerador Go |
+| jul–12 ago/2026 | um benchmark sem falhas e repetições exercitava um problema fácil demais | idempotência, DLQ, mTLS, outbox, auditoria e replays |
+| 14–24 ago/2026 | a carga final expôs custos no ingresso, no banco e na entrega | HTTP/2 persistente, saldo por participante, Pull e Kafka durável |
+| 25–29 ago/2026 | o próprio gerador introduzia variação temporal | gerador Rust com pacing e admissão explícitos |
 
-## Primeiro, fechar o fluxo de negócio
+## O primeiro fluxo revelou três trabalhos diferentes
 
-O repositório começou em 26 de agosto de 2025. Nas primeiras semanas, o objetivo era fazer um pagamento atravessar o sistema inteiro: receber o pedido, permitir que o PSP recebedor tomasse uma decisão e refletir o resultado nas contas.
+O projeto começou em agosto de 2025 com um objetivo direto: fazer um pagamento atravessar o sistema inteiro, permitir que o recebedor decidisse e refletir o resultado nas contas.
 
-O primeiro desenho mantinha mais responsabilidades dentro do SPI. Entrada HTTP, processamento financeiro e entrega de notificações estavam próximos, e o recebimento do resultado dependia de consultas HTTP.
+A primeira versão colocou entrada HTTP, processamento financeiro e entrega de notificações próximos ao SPI. Ela provou o fluxo, mas também mostrou que eram trabalhos com ritmos diferentes:
 
-Esse modelo foi suficiente para provar o fluxo funcional. Também tornou visível o primeiro problema arquitetural: aceitar uma conexão, processar o pagamento e esperar o consumidor buscar sua notificação eram trabalhos com ritmos e responsabilidades diferentes.
+* receber uma conexão;
+* decidir o que acontece com o dinheiro;
+* esperar que o participante busque o resultado.
 
-## Separar ingresso de processamento
-
-Os primeiros testes de carga começaram em outubro de 2025. Eles exercitaram long polling, diferentes servidores HTTP, configurações de threads e implementações reativas.
-
-A decisão que sobreviveu não foi uma configuração específica de Tomcat, Undertow ou Netty. Foi separar a aceitação HTTP do processamento central:
+Os primeiros testes exploraram servidores HTTP, threads, long polling e implementações reativas. A decisão durável não foi escolher uma configuração específica. Foi separar a aceitação da mensagem do processamento do pagamento:
 
 ```text
 PSP
  ↓ HTTP
-Kafka Producer
+Payment Ingress
  ↓ Kafka
-SPI
+Payment Processor
 ```
 
-O ingresso passou a validar a estrutura que conseguia reconhecer de forma barata e publicar o trabalho no Kafka. O SPI permaneceu como autoridade sobre identidade, regras do pagamento e efeitos financeiros.
+O ingresso passou a fazer apenas validações baratas e publicar no Kafka. O processador permaneceu como autoridade sobre identidade, regras e dinheiro.
 
-Essa fronteira permitiu que conexões HTTP e processamento financeiro evoluíssem independentemente. Também tornou explícita uma propriedade importante: resposta de ingresso significa que a mensagem foi aceita, não que o pagamento terminou.
+Essa fronteira também deixou claro o significado da resposta HTTP: a mensagem foi aceita para processamento; o pagamento ainda não terminou.
 
-## Retirar a entrega de notificações do SPI
+## A entrega deixou de pertencer ao processador financeiro
 
-Quando Kafka passou a integrar o fluxo principal, o polling HTTP antigo deixou de representar a arquitetura. Em março de 2026 surgiu o Notification Gateway:
+Quando Kafka entrou no caminho principal, o polling HTTP antigo deixou de representar o sistema. O Notification Gateway nasceu para assumir o protocolo de entrega:
 
 ```text
-SPI
+Payment Processor
  ↓ Kafka
 Notification Gateway
  ↓ gRPC
 PSP
 ```
 
-O SPI deixou de manter conexões ou sessões dos participantes. Sua responsabilidade terminava na produção da notificação; o Gateway passou a cuidar do protocolo usado para entregá-la.
+O processador passou a terminar sua responsabilidade ao criar a notificação. O Gateway passou a cuidar de como o participante a recebe.
 
-Isso separou duas autoridades que continuariam distintas até o desenho final:
+O load test acompanhou essa mudança: o tempo do pagamento deixou de terminar na entrada HTTP e passou a terminar somente quando a confirmação retornava ao pagador.
 
-- o SPI decide o resultado financeiro e cria a obrigação de notificá-lo;
-- o Gateway expõe esse resultado ao participante.
+## Medir velocidade deixou de ser suficiente
 
-O load test também passou a observar a confirmação retornando por essa fronteira. Uma resposta HTTP do ingresso nunca mais seria tratada como conclusão do pagamento.
+Em junho de 2026, alcançar uma taxa alta já não bastava. Era preciso explicar onde o sistema gastava tempo e CPU.
 
-## Tornar o hot path observável
+O harness passou a relacionar:
 
-Em junho de 2026, o problema deixou de ser apenas alcançar uma taxa alta e passou a ser explicar onde o fluxo gastava CPU e tempo.
+* uso de CPU e memória dos containers;
+* lag do Kafka;
+* latência ponta a ponta;
+* estatísticas do PostgreSQL;
+* perfis JFR das aplicações Java.
 
-O harness passou a correlacionar recursos dos containers, Kafka lag, latência ponta a ponta, estatísticas do PostgreSQL e JFR. Essa instrumentação mudou a forma de trabalhar: uma alteração precisava responder a uma hipótese localizada, e o resultado local precisava voltar ao fluxo completo.
+Isso mudou o método de trabalho. Cada otimização precisava partir de uma hipótese localizada, melhorar o mecanismo esperado e depois sobreviver novamente ao teste completo.
 
-A campanha também mostrou que profiling é uma intervenção. `log_executor_stats` gerou 41 MB de logs; `heaptrack` elevou o RSS do gerador de aproximadamente 59,6 para 491 MiB e o p99 de cerca de 254 para 718 ms. Instrumentação intrusiva passou a servir para atribuir custo, nunca para qualificar capacidade.
+A própria instrumentação também precisou ser tratada como intervenção. `log_executor_stats` produziu 41 MB de logs. `heaptrack` elevou o RSS do gerador de aproximadamente 59,6 para 491 MiB e seu p99 de cerca de 254 para 718 ms. Ferramentas intrusivas continuaram úteis para diagnóstico, mas deixaram de participar das execuções qualificadoras.
 
-O K6 havia sido útil para descobrir os primeiros limites, mas seu modelo fechado seguia o ritmo das respostas. Ele foi substituído por um gerador Go com taxa explícita, participantes hot e cold, drain e acompanhamento dos outcomes.
+K6 havia encontrado os primeiros limites, porém seu modelo fechado seguia a velocidade das respostas. Um gerador em Go trouxe taxa explícita, participantes com diferentes concentrações de tráfego, drain e acompanhamento dos resultados.
 
 Ao mesmo tempo, o sistema medido ficou mais próximo do problema final:
 
-- H2 deu lugar ao PostgreSQL;
-- listeners Kafka passaram a receber lotes;
-- pagamentos e settlement ganharam persistência em batch;
-- valores monetários passaram a usar uma representação compacta;
-- o parsing PACS foi deslocado para a borda;
-- o SPI passou a consumir uma mensagem interna menor;
-- batching deixou de existir como abstração do domínio e passou a aproveitar o agrupamento do Kafka.
+* PostgreSQL substituiu H2;
+* listeners Kafka passaram a receber lotes;
+* persistência e settlement passaram a trabalhar em batch;
+* valores monetários ganharam uma representação compacta;
+* o parsing PACS foi movido para a borda;
+* o processador passou a consumir uma mensagem interna menor.
 
-Essa fase criou a primeira arquitetura desenhada deliberadamente para reduzir trabalho por pagamento, não apenas para aceitar mais conexões.
+Essa foi a primeira arquitetura pensada para reduzir trabalho por pagamento, não apenas para aceitar mais conexões.
 
-## Dos buckets à reserva agregada por participante
+## Os buckets reduziram contenção, mas distorceram o dinheiro
 
-Os buckets foram uma otimização legítima de concorrência. O saldo de um participante era distribuído entre 16 rows escolhidas pelo identificador do pagamento; assim, batches concorrentes do mesmo participante frequentemente disputavam locks diferentes no PostgreSQL.
+Uma versão do saldo dividia a disponibilidade de cada participante entre 16 registros. O identificador do pagamento escolhia um deles. Assim, batches concorrentes do mesmo participante frequentemente bloqueavam registros diferentes.
 
-O custo era duplo. A fragmentação criava liquidez artificial — o participante podia ter dinheiro suficiente na soma das rows e ainda rejeitar um pagamento porque o bucket escolhido não possuía saldo — e o settlement precisava calcular, bloquear e atualizar buckets de pagadores e recebedores.
+O mecanismo reduzia contenção, mas criava um problema de negócio: um participante podia ter dinheiro suficiente na soma dos buckets e ainda rejeitar um pagamento porque o bucket escolhido estava vazio. O settlement também precisava calcular, bloquear e atualizar buckets dos dois lados.
 
-Em agosto apareceu um modelo que não precisava escolher entre representar melhor o dinheiro e reduzir trabalho de coordenação. Os buckets foram substituídos por uma única disponibilidade por participante, e a reserva passou a acontecer na admissão:
+O desenho seguinte voltou a representar o saldo como uma única disponibilidade por participante e antecipou a reserva:
 
 ```text
 pagamento admitido
 → valor sai da disponibilidade do pagador
 
 recebedor aceita
-→ valor é creditado ao recebedor
+→ valor chega ao recebedor
 
 recebedor rejeita
 → reserva volta ao pagador
 ```
 
-O ganho de concorrência veio da unidade de trabalho. Para cada batch, o SPI bloqueia uma vez os participantes envolvidos, avalia em memória e em ordem os pagamentos de cada pagador, agrega o delta e faz a mutação física por participante. No aceite, o settlement credita apenas o recebedor; na rejeição, devolve apenas a reserva do pagador.
+À primeira vista, voltar para um registro parece aumentar contenção. O ganho veio de mudar a unidade de trabalho: cada batch bloqueia os participantes uma vez, avalia seus pagamentos em memória, agrega os deltas e aplica uma mutação por participante.
 
-Isso remove coordenação **dentro** do batch sem remover a serialização **entre** batches. Pagamentos que já pertencem à mesma transação não ganham paralelismo disputando buckets entre si: hash, agrupamento, locks e updates adicionais são apenas trabalho de coordenação antes de um único commit. Já duas transações concorrentes que usam o saldo do mesmo participante ainda precisam esperar uma pela outra para impedir gasto duplo. Participantes diferentes continuam independentes.
+Isso remove disputa **dentro** do mesmo batch sem retirar a serialização necessária **entre** transações. Pagamentos que já pertencem ao mesmo commit não ganham nada competindo por 16 buckets; duas transações realmente concorrentes que usam o mesmo dinheiro ainda precisam esperar uma pela outra.
 
-Portanto, a row única não é universalmente menos contenciosa que 16 buckets. Ela funcionou porque foi combinada com classificação intrabatch em memória e mutações agregadas: a contenção acidental caiu, enquanto permaneceu somente a contenção que representa disputa real pelo mesmo dinheiro.
+O resultado preservou apenas a contenção que representa uma disputa financeira real.
 
-Essa mudança consolidou uma regra usada nas decisões posteriores:
+> Paralelismo útil separa trabalho independente. Ele não precisa fragmentar o estado de negócio nem fazer operações da mesma transação competirem entre si.
 
-> Paralelismo útil separa trabalho independente; ele não precisa fragmentar o estado de negócio nem fazer operações da mesma transação competirem entre si.
+## A corretude aumentou o custo — e o valor — do benchmark
 
-## Tornar performance dependente de corretude
+Entre julho e agosto, o sistema ganhou propriedades que tornaram o workload mais difícil:
 
-Entre julho e o início de agosto, o sistema ganhou propriedades que tornaram a workload mais difícil:
+* mensagens inválidas receberam um caminho explícito para DLQ;
+* pedidos e respostas repetidos tornaram-se idempotentes mesmo sob concorrência;
+* a identidade da instituição passou a vir da conexão mTLS;
+* a conclusão financeira passou a criar sua notificação na mesma transação;
+* fatos de auditoria passaram a compartilhar a transação de negócio;
+* saldo insuficiente virou um resultado esperado;
+* replays passaram a fazer parte da carga normal.
 
-- mensagens inválidas passaram a ter um caminho explícito para DLQ;
-- PACS.008 e PACS.002 repetidos passaram a ser idempotentes mesmo sob concorrência;
-- a identidade do PSP passou a vir da conexão mTLS;
-- a conclusão financeira passou a criar sua notificação na mesma transação por meio de uma outbox;
-- fatos de auditoria passaram a compartilhar a transação de negócio;
-- saldo insuficiente passou a ser um outcome esperado;
-- replays passaram a fazer parte do workload normal.
+Esses mecanismos não eram acessórios. Eles definiram o trabalho mínimo necessário para chamar um pagamento de correto.
 
-Essas mudanças não foram acessórios do benchmark. Elas definiram qual trabalho precisava acontecer para um pagamento contar como correto.
+A pergunta do benchmark deixou de ser “quantas requisições o sistema aceita?” e passou a ser:
 
-O objetivo deixou de ser “quantas requests o sistema aceita?” e passou a ser:
+> Quantos pagamentos completos ele sustenta sem mover dinheiro duas vezes, contradizer o resultado ou perder a obrigação de notificar?
 
-> Quantos pagamentos completos ele sustenta sem mover dinheiro duas vezes, contradizer o outcome ou perder a obrigação de notificar?
+## O gerador deixou de esconder atrasos
 
-## Tornar a carga temporalmente honesta
+O primeiro baseline da campanha final revelou que uma média próxima do alvo podia esconder trabalho atrasado e recuperado em rajadas posteriores.
 
-A campanha final de estabilização começou em 14 de agosto de 2026. Seu primeiro baseline mostrou que a média podia permanecer próxima do alvo mesmo quando o gerador atrasava e recuperava trabalho em rajadas posteriores.
+O contrato foi corrigido antes de continuar o tuning:
 
-O contrato foi redesenhado antes de continuar o tuning:
+* cada pagamento recebe uma fronteira temporal absoluta;
+* trabalho atrasado não é carregado para a janela seguinte;
+* throughput é verificado em toda janela contínua de um segundo;
+* replays adicionam carga, mas não substituem pagamentos originais;
+* a latência termina somente quando o resultado retorna;
+* performance e corretude são avaliadas juntas.
 
-- cada pagamento original recebe uma fronteira temporal absoluta;
-- trabalho atrasado não é carregado para uma janela posterior;
-- throughput é verificado em toda janela contínua de um segundo;
-- replays são carga adicional, não substitutos dos pagamentos originais;
-- a latência termina somente quando o outcome retorna;
-- performance e corretude são avaliadas na mesma execução.
+O gerador passou a registrar o que realmente começou no momento planejado, em vez de apenas contar quanto trabalho conseguiu terminar mais tarde.
 
-Isso mudou a função do load tool. Ele deixou de ser apenas um produtor de tráfego e passou a ser também a autoridade sobre o trabalho que realmente começou dentro da janela planejada.
+## Conexões passaram a fazer parte da infraestrutura
 
-## Manter conexões como infraestrutura do participante
+Depois dessa correção, o primeiro limite apareceu antes do processamento financeiro. O PSP simulado criava conexões TLS repetidamente e consumia o ingresso antes de a carga chegar ao restante do sistema.
 
-Com a workload temporalmente observável, o primeiro limite apareceu antes do processamento financeiro. O PSP simulado criava conexões TLS repetidamente e consumia a capacidade do ingresso antes que a carga alcançasse o core.
+Reutilizar conexões com HTTP/1.1 confirmou o mecanismo. O desenho final formalizou a solução:
 
-Um pool HTTP/1.1 confirmou que reutilizar conexões mudava o mecanismo dominante. O desenho final tornou essa propriedade explícita:
+* HTTP/2 obrigatório;
+* conexões persistentes por participante;
+* aquecimento autenticado;
+* capacidade de stream reservada antes de admitir o pagamento.
 
-- HTTP/2 obrigatório;
-- conexões persistentes por participante;
-- prewarm autenticado;
-- capacidade de stream reservada antes de admitir o pagamento.
+Uma vaga na fila interna do cliente HTTP não prova que existe capacidade real na conexão. Por isso, a admissão precisa reservar um stream HTTP/2 antes do deadline. Antes dessa fronteira, o pagamento ainda pode ser registrado como não iniciado; depois dela, a requisição precisa seguir até sua conclusão técnica.
 
-A disponibilidade de stream não pode funcionar como uma fila escondida depois do deadline. Antes do commit temporal, o pagamento ainda pode ser descartado como não iniciado; depois dele, a requisição precisa seguir até sua conclusão técnica.
+Esse modelo também representa melhor uma instituição real, cuja infraestrutura permanece conectada em vez de abrir uma conexão para cada pagamento.
 
-Essa fronteira alinha o gerador ao comportamento esperado de um PSP: a infraestrutura permanece conectada por longos períodos, em vez de abrir uma conexão para cada pagamento.
+## PostgreSQL melhorou quando o trabalho ao redor dele diminuiu
 
-## Otimizar PostgreSQL sem otimizar somente uma query
+Com o ingresso liberado, PostgreSQL tornou-se o recurso mais pressionado. A investigação passou por concorrência dos consumers, classificação dos lotes, updates de resposta, outbox, auditoria, índices, layout físico e tamanho real dos batches Kafka.
 
-Depois que o ingresso deixou de impedir a carga, PostgreSQL apareceu como o recurso mais pressionado. O trabalho passou por classificação intrabatch, concorrência dos listeners, updates PACS.002, inserts da outbox, índices, layout físico, auditoria e tamanho efetivo dos batches Kafka.
+O desenho final manteve um conjunto de simplificações:
 
-O desenho final incorporou simplificações locais:
+* um fluxo serial por consumer na stack qualificada;
+* classificação e autorização do lote em Java antes das escritas;
+* updates e inserts em batch;
+* arrays + `unnest` nos inserts volumosos;
+* nenhum `RETURNING` quando a resposta já existe em memória;
+* estados, motivos e valores representados de forma compacta;
+* somente índices que servem a consultas ou fatos de negócio reais.
 
-- um fluxo serial por consumer na stack qualificada;
-- classificação e autorização do lote em Java antes das escritas;
-- updates e inserts em batch;
-- arrays + `unnest` em inserts volumosos;
-- ausência de `RETURNING` quando o resultado já existe em memória;
-- representação compacta de estados, motivos e valores;
-- somente índices ligados a consultas ou fatos de negócio reais.
+Nem toda query mais rápida melhorou o sistema. Algumas apenas deslocaram custo para outra etapa. Por isso, microbenchmarks passaram a validar o mecanismo local, mas a decisão final continuou pertencendo ao fluxo end-to-end.
 
-Algumas queries ficaram muito mais rápidas sem melhorar o fluxo completo. Outras pareciam melhores isoladamente e pioraram o sistema ao adicionar trabalho em outro ponto.
+Também foi necessário medir o batch que chegava à aplicação. No fluxo de respostas, `max.poll.records=500` produziu média de aproximadamente 163 registros e máximo de 339. Limites como `max.poll.records`, `fetch.min.bytes` e tamanho máximo do Pull influenciam a formação; nenhum deles garante sozinho a cardinalidade observada.
 
-Os lotes também precisaram ser medidos, não inferidos da configuração. Por exemplo, `max.poll.records=500` no fluxo `pacs.002` produziu média de aproximadamente 163 records e máximo de 339. Parâmetros como `max.poll.records`, `fetch.min.bytes` e o limite do Pull são tetos ou condições de formação; não prometem a cardinalidade que chegará à aplicação. O tuning passou a observar a distribuição real e a cauda dos callbacks.
+O layout físico mostrou outro trade-off. `fillfactor=50` elevou updates HOT de 22,86% para 100%, mas aumentou heap mais índices em 46,98% e não trouxe mais resultados concluídos. Representações compactas e a remoção de índices sem consumidores reduziram SQL e WAL de forma reproduzível, por isso permaneceram.
 
-O layout físico apresentou outro trade-off. `fillfactor=50` levou os updates HOT de 22,86% para 100%, mas aumentou heap mais índices em 46,98% e não alterou materialmente os outcomes. Representações compactas e a remoção de índices sem consumidores reduziram SQL e WAL de forma reproduzível. Essas escolhas foram mantidas pelo mecanismo físico que melhoravam, não por uma diferença isolada na cauda end-to-end.
-
-Por isso, a regra de tuning terminou assim:
+O método que restou foi:
 
 ```text
-medir a workload real
+medir o workload real
 → remover o primeiro custo acidental dominante
 → observar para onde o limite migrou
 → validar o mecanismo local
 → repetir o fluxo end-to-end
 ```
 
-Um diagnóstico exploratório a 4.000 TPS delimitou onde essa campanha terminava. O mínimo rolling ficou entre 3.920 e 3.960 TPS e o p99 entre 1,36 e 2,45 segundos. Aumentar `max.poll.records` do `pacs.008` de 500 para 1.000 não fechou a diferença e elevou a cauda do callback. O sistema permaneceu correto, mas não qualificou; o experimento localizou a próxima fronteira no consumer `pacs.008` sem transformar 4.000 TPS em claim do projeto.
+Um diagnóstico exploratório a 4.000 TPS marcou o limite dessa campanha. O menor rolling ficou entre 3.920 e 3.960 TPS, e o p99 entre 1,36 e 2,45 segundos. Aumentar `max.poll.records` do fluxo de entrada de 500 para 1.000 não fechou a diferença e piorou a cauda do callback.
 
-## De reliable push a um log durável consultável
+O sistema permaneceu correto, mas não qualificou a 4.000 TPS. O experimento localizou a próxima fronteira no consumer de pagamentos sem transformar essa taxa em afirmação do projeto.
 
-A entrega de notificações passou por mais etapas do que o design atual deixa aparente.
+## A entrega confiável ficou mais simples em quatro etapas
 
-### Entrega inicial
+A arquitetura final de notificações não apareceu pronta. Cada etapa resolveu um problema e revelou outro:
 
-O SPI mantinha notificações em memória e os participantes as buscavam por HTTP. Era simples, mas ligava lifecycle de conexão, armazenamento temporário e processamento financeiro.
+| Etapa | O que resolveu | Custo que permaneceu |
+| --- | --- | --- |
+| memória no processador + polling HTTP | primeiro fluxo funcional | conexão, armazenamento temporário e dinheiro no mesmo componente |
+| Gateway com push confiável | retirou sessões do processador | ACK, lease, retry e uma segunda cópia persistida |
+| Pull com cursor | removeu ACK individual e redelivery ativo | índice e reconciliação no PostgreSQL |
+| Kafka como log durável | removeu a segunda fonte de verdade | retenção limitada e dependência operacional do broker |
 
-### Gateway com push
-
-Kafka e gRPC retiraram conexões do SPI. Depois, ACK, retry e persistência tornaram o push confiável. O custo foi um lifecycle completo no PostgreSQL do Gateway:
+No Push confiável, cada notificação atravessava um lifecycle próprio:
 
 ```text
 delivery
@@ -219,75 +220,61 @@ delivery
 → retry ou conclusão
 ```
 
-O banco financeiro já guardava a outbox; o Gateway passou a guardar outra cópia da notificação e o estado individual de cada entrega.
+O Pull inverteu a autoridade. O PSP passou a pedir tudo depois de seu último cursor durável e a avançar somente depois de processar o lote. Reentregar deixou de exigir um scheduler: basta o participante reapresentar um cursor antigo.
 
-### Pull com cursor
+A primeira versão ainda materializava um índice no PostgreSQL e precisava reconciliá-lo com o histórico. O desenho final retirou esse estado intermediário:
 
-O protocolo foi invertido. O PSP passou a pedir notificações depois de seu último cursor durável e só avançá-lo depois de processar o lote.
+* PostgreSQL cria a obrigação na transação financeira;
+* o publisher só remove a outbox depois da confirmação do Kafka;
+* Kafka preserva a janela operacional;
+* o PSP possui seu progresso durável;
+* o Gateway oferece Pull e usa memória apenas para acelerar o caso recente.
 
-Isso removeu ACK individual, lease e redelivery ativo. Repetir a entrega passou a significar simplesmente reapresentar um cursor antigo.
+PostgreSQL deixou de acompanhar cada entrega, e o Gateway deixou de manter uma segunda fonte de verdade.
 
-### Kafka como log durável
+## O gerador Rust deu um único dono ao tempo
 
-Uma primeira versão do Pull ainda materializava um índice no PostgreSQL e precisava reconciliá-lo. Mesmo sem falha, o custo das varreduras crescia junto com o histórico.
+O gerador Go cresceu enquanto o próprio contrato do teste ainda estava sendo descoberto. Pacing, rede, replays, resultados e relatório passaram a compartilhar estado e pools fixos. Em execuções longas, pausas do gerador podiam ferir o requisito temporal mesmo quando a média parecia correta.
 
-O desenho final atribuiu a cada tecnologia apenas uma autoridade:
+A versão Rust foi desenhada novamente a partir do objetivo final:
 
-- PostgreSQL cria a obrigação de notificar na transação financeira;
-- o publisher remove a linha da outbox somente depois da confirmação do broker;
-- Kafka preserva a janela operacional de notificações;
-- o PSP mantém seu progresso durável;
-- o Gateway oferece Pull e usa memória apenas como acelerador.
+* uma thread nativa é dona do pacing;
+* buckets possuem deadlines absolutos;
+* o trabalho é preparado antes da fronteira temporal;
+* a capacidade HTTP/2 é explícita;
+* filas limitadas não escondem catch-up;
+* geração e relatório possuem fronteiras físicas;
+* o relatório roda depois do caminho medido.
 
-Assim, o PostgreSQL deixou de acompanhar cada entrega e o Gateway deixou de manter uma segunda fonte de verdade.
+Tentativas como aumentar filas, prolongar spin ou fixar CPU não resolveram a responsabilidade compartilhada. A mudança de arquitetura resolveu quem decide se um pagamento começou a tempo sem sobrecarregar o pacer.
 
-## Do Go ao Rust: um owner para a fronteira temporal
-
-O gerador Go cresceu enquanto o contrato do experimento ainda estava sendo descoberto. Pacing, networking, replay, outcomes e relatório compartilhavam estado e pools fixos. Em execuções longas, pequenas pausas do próprio gerador podiam violar a propriedade temporal mesmo quando a média permanecia adequada.
-
-A versão Rust foi tratada como greenfield. A mudança importante não foi apenas a linguagem:
-
-- uma thread nativa possui o pacing;
-- buckets usam deadlines absolutos;
-- o trabalho é preparado antes da fronteira temporal;
-- a admissão HTTP/2 possui capacidade explícita;
-- filas são limitadas e não escondem catch-up;
-- geração e relatório possuem fronteiras físicas;
-- o relatório é produzido depois do caminho medido.
-
-Tentativas locais como aumentar canais, prolongar spin ou fixar CPU não resolveram a responsabilidade compartilhada. O redesenho resolveu o ownership da admissão sem colocar mais trabalho dentro do pacer.
-
-O Rust permaneceu porque tornou a fronteira temporal previsível, não porque uma linguagem foi declarada universalmente superior à outra.
-
-Um A/B controlado no mesmo core e perfil tornou essa decisão observável:
+Um A/B controlado no mesmo core e perfil tornou a diferença observável:
 
 | Medida | Go | Rust |
 | --- | ---: | ---: |
-| originais omitidos de 1.890.000 | 6.906 | 55 |
+| pagamentos omitidos de 1.890.000 | 6.906 | 55 |
 | menor janela contínua de 1 segundo | 1.784 TPS | 2.058 TPS |
 | CPU do processo | 875,82 s | 576,86 s |
-| outcomes ausentes ou contraditórios | 0 | 0 |
+| resultados ausentes ou contraditórios | 0 | 0 |
 
-O Go continuou funcionalmente correto, mas não sustentou o piso temporal naquela execução. O Rust introduziu mais conceitos locais — Tokio, atomics e um workspace com fronteiras explícitas — em troca de menos estado compartilhado e maior previsibilidade. É uma comparação entre estas duas arquiteturas sob esta workload, não uma conclusão geral sobre as linguagens.
+O Go continuou correto, mas não sustentou o piso temporal naquela execução. O Rust introduziu Tokio, atomics e mais fronteiras internas, porém reduziu estado compartilhado e tornou a admissão previsível.
 
-## Consolidar somente depois da experimentação
+Essa é uma comparação entre duas implementações deste gerador sob este workload, não uma conclusão geral sobre as linguagens.
 
-O schema executável atual não reproduz todas as arquiteturas pelas quais o projeto passou. Depois que saldo, auditoria, estados e delivery estabilizaram, as migrations experimentais foram substituídas por um baseline novo e compacto.
+## O sistema terminou menor do que algumas versões intermediárias
 
-Isso reduz o custo permanente do runtime sem apagar por que buckets, estados amplos, índices técnicos e lifecycle mutável da outbox deixaram de existir.
+Depois que saldo, auditoria, estados e entrega estabilizaram, as migrations experimentais deram lugar a um baseline novo. O histórico permanece na evolução documentada e no Git; o runtime não precisa carregar estruturas abandonadas.
 
-## O desenho que restou
+Várias decisões finais removeram mecanismos:
 
-A evolução não foi uma sequência de tecnologias progressivamente mais sofisticadas. Em vários pontos, o sistema terminou mais simples:
-
-- Kafka separou ingresso de processamento;
-- o Gateway retirou conexões do SPI;
-- um saldo por participante substituiu buckets artificiais;
-- Pull eliminou ACK, lease e redelivery ativo;
-- Kafka durável eliminou o índice e o reconciler do Gateway;
-- batching saiu do domínio e passou para as fronteiras de transporte e persistência;
-- o gerador ganhou um owner explícito para o pacing.
+* Kafka separou entrada de processamento;
+* o Gateway retirou conexões do processador financeiro;
+* um saldo por participante substituiu buckets artificiais;
+* Pull eliminou ACK, lease e redelivery ativo;
+* Kafka durável eliminou índice e reconciler do Gateway;
+* batching saiu do domínio e ficou nas fronteiras de transporte e persistência;
+* o gerador ganhou um único dono para o pacing.
 
 O padrão comum foi remover autoridades sobrepostas e filas invisíveis enquanto as garantias de negócio ficavam mais fortes.
 
-O resultado final é qualificado em [performance e evidência](performance.md).
+O resultado desse caminho está qualificado em [Performance e evidência](performance.md).

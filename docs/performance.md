@@ -1,90 +1,89 @@
 # Performance e evidência
 
-O sistema foi qualificado em duas execuções consecutivas de 15 minutos. Nas duas, manteve pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhum outcome esperado ausente ou contraditório.
+A pergunta do benchmark era direta:
 
-Este documento registra o contrato, os resultados, o ambiente e os limites dessa afirmação.
+> O sistema consegue sustentar pelo menos 2.000 pagamentos por segundo, terminar 99% deles em menos de um segundo e ainda devolver todos os resultados corretos?
 
-## 1. Critérios de qualificação
+Em duas execuções consecutivas de 15 minutos, a resposta foi sim.
 
-Uma execução só qualifica se atender aos três critérios:
+Este documento mostra o que foi executado, os resultados observados, o computador usado e até onde essa conclusão pode ser levada. O funcionamento detalhado do gerador está em [Como o load test funciona](topics/load-testing.md).
+
+## O que precisava ser verdade
+
+Não bastava atingir uma média alta. Cada execução precisava cumprir os três critérios ao mesmo tempo:
 
 | Critério | Requisito |
 | --- | --- |
-| throughput | pelo menos 2.000 pagamentos originais em toda janela contínua de 1 segundo |
+| throughput | pelo menos 2.000 pagamentos novos em toda janela contínua de 1 segundo |
 | latência | p99 end-to-end abaixo de 1 segundo |
-| corretude observável | nenhum outcome esperado ausente ou contraditório e nenhuma falha nos replays selecionados |
+| resultados | nenhuma confirmação esperada ausente ou contraditória e nenhuma falha nas repetições selecionadas |
 
-A fase ativa oferece 2.100 pagamentos originais por segundo durante 15 minutos. Replays, respostas do recebedor e confirmações são trabalho adicional e não contam para o piso de throughput.
+Durante a fase medida, o gerador tenta iniciar 2.100 pagamentos novos por segundo. Respostas do recebedor, confirmações e mensagens repetidas aumentam o trabalho do sistema, mas não contam para atingir a meta.
 
-A origem dos limites e sua relação com referências públicas do Pix está no [README](../README.md).
+A origem dessas metas e sua relação com referências públicas do Pix está no [README](../README.md).
 
-## 2. Resultados
+## O que aconteceu
 
-As duas execuções usaram o commit `1351ea564d0834a66e1b5d99a5e09a1a384cae1b`, o mesmo perfil, plano normalizado e instrumentação. A worktree estava limpa, e o ambiente foi recriado antes de cada uma.
+As duas execuções usaram o commit `1351ea564d0834a66e1b5d99a5e09a1a384cae1b`, a mesma configuração e o mesmo plano de carga. O repositório não possuía alterações locais, e todo o ambiente foi recriado antes de cada execução.
 
 | Resultado | Execução A | Execução B |
 | --- | ---: | ---: |
-| pagamentos planejados / executados | 1.890.000 / 1.889.369 | 1.890.000 / 1.890.000 |
-| média na fase ativa | 2.099,299/s | 2.100,000/s |
+| pagamentos planejados / iniciados | 1.890.000 / 1.889.369 | 1.890.000 / 1.890.000 |
+| média durante a fase medida | 2.099,299/s | 2.100,000/s |
 | menor janela contínua de 1 segundo | 2.017/s | 2.079/s |
 | p50 end-to-end | 188 ms | 142 ms |
 | p95 end-to-end | 598 ms | 234 ms |
 | p99 end-to-end | 855 ms | 265 ms |
 | maior latência observada | 1.578 ms | 693 ms |
-| replays `pacs.008` enviados / aceitos | 100.422 / 100.422 | 100.472 / 100.472 |
-| replays `pacs.002` enviados / aceitos | 80.326 / 80.326 | 80.373 / 80.373 |
-| outcomes ausentes / contraditórios | 0 / 0 | 0 / 0 |
-| falhas nos replays | 0 | 0 |
+| repetições de pagamento enviadas / aceitas | 100.422 / 100.422 | 100.472 / 100.472 |
+| respostas repetidas enviadas / aceitas | 80.326 / 80.326 | 80.373 / 80.373 |
+| confirmações ausentes / contraditórias | 0 / 0 | 0 / 0 |
+| falhas nas repetições | 0 | 0 |
 
-As duas execuções qualificaram independentemente. A execução A foi a condição menos favorável: ficou 17 pagamentos acima do piso na pior janela e chegou a 855 ms de p99. A B teve margem maior.
+Cada execução cumpriu os três critérios por conta própria.
 
-Por isso, nem a média de 2.100 pagamentos por segundo nem o p99 de 265 ms representam sozinhos o resultado. A afirmação sustentada é:
+A execução A foi a menos favorável: sua pior janela ficou apenas 17 pagamentos acima do piso, e o p99 chegou a 855 ms. A execução B terminou com margem maior.
 
-> Nas duas qualificações consecutivas, o sistema permaneceu acima de 2.000 pagamentos por segundo, com p99 entre 265 e 855 ms e sem violações observáveis.
+Por isso, mostrar somente a média de 2.100 pagamentos por segundo ou o melhor p99 deixaria uma impressão incompleta. O que as duas execuções sustentam é:
 
-## 3. Workload
+> O sistema permaneceu acima de 2.000 pagamentos por segundo nas duas execuções. Em uma delas, 99% dos pagamentos terminaram em até 855 ms; na outra, em até 265 ms. Nenhuma confirmação esperada ficou ausente ou apresentou contradição.
 
-Antes da fase medida, a carga cresce progressivamente:
+## Como era a carga
+
+Antes dos 15 minutos principais, a carga cresce em duas etapas. Esse aquecimento reduz a influência da criação inicial de conexões, caches e JVMs:
 
 | Fase | Carga | Duração |
 | --- | ---: | ---: |
 | aquecimento inicial | 500 pagamentos/s | 60 s |
 | aquecimento estável | 1.500 pagamentos/s | 60 s |
-| conclusão do trabalho observável do warmup | — | até 120 s |
-| fase ativa | 2.100 pagamentos/s | 15 min |
-| drain | — | 30 s |
+| espera pela conclusão do aquecimento | — | até 120 s |
+| fase medida | 2.100 pagamentos/s | 15 min |
+| encerramento | — | 30 s |
 
-A fase ativa combina:
+Nem todo pagamento deveria ser aceito:
 
-| Cenário | Participação | Outcome esperado |
+| Cenário | Participação | Resultado esperado |
 | --- | ---: | --- |
-| pagamento concluído | 80% | `ACSC`; dinheiro chega ao recebedor |
-| saldo insuficiente | 20% | `RJCT / AM04`; nenhum débito é aplicado |
+| pagamento concluído | 80% | dinheiro chega ao recebedor |
+| saldo insuficiente | 20% | pagamento é rejeitado sem débito |
 
-Em cada cenário, 80% do tráfego é concentrado em poucos pares de participantes para criar contenção. Além dos originais, 5% das `pacs.008` e 5% das `pacs.002` elegíveis são repetidas dez segundos depois para exercitar idempotência.
+Em cada cenário, 80% do tráfego se concentra em poucos pares de instituições. O teste, portanto, cria disputas intencionais pelo mesmo saldo em vez de distribuir tudo uniformemente.
 
-## 4. Medição
+Além dos pagamentos novos, o teste envia novamente 5% dos pedidos e 5% das respostas elegíveis dez segundos depois. Isso verifica se a mesma mensagem pode reaparecer sem mover o dinheiro outra vez.
 
-HTTP `2xx` confirma somente que o ingresso aceitou a mensagem. O pagamento termina para o benchmark quando o outcome final compatível volta ao pagador pelo Notification Gateway.
+## Quando um pagamento conta
 
-| Medida | Definição |
-| --- | --- |
-| original executado | requisição `pacs.008` realmente iniciada durante a fase ativa |
-| throughput sustentado | menor contagem entre todas as janelas contínuas de 1 segundo da fase ativa |
-| latência end-to-end | início do HTTP original até a primeira confirmação final compatível no pagador |
-| violação observável | outcome ausente, contraditório ou incompatível; resposta causal ou replay selecionado não aceito |
+Uma resposta HTTP bem-sucedida significa apenas que a entrada recebeu a mensagem. Para o benchmark, o pagamento só termina quando a confirmação final correta volta ao pagador.
 
-O gerador é open loop: pagamentos atrasados não são reagendados para recuperar a média. Na execução A, 631 slots foram perdidos e permaneceram ausentes do total executado; ainda assim, a pior janela ficou acima do piso.
+O throughput também não é calculado apenas pela média. O relatório examina todas as janelas contínuas de um segundo e preserva a menor contagem encontrada. Uma rajada posterior não consegue esconder um período abaixo da meta.
 
-Duplicatas finais compatíveis são permitidas pela entrega at-least-once. Uma confirmação incompatível continua sendo violação mesmo se uma correta também tiver chegado.
+Na execução A, 631 pagamentos perderam sua janela e não foram iniciados. Eles permaneceram fora do total; mesmo assim, a pior janela ainda continha 2.017 pagamentos.
 
-O relatório não relê todos os saldos finais. A idempotência financeira e o rollback conjunto de estado, saldo, auditoria e outbox são verificados pelos testes transacionais descritos em [Corretude do pagamento](topics/payment-correctness.md).
+O gerador verifica as confirmações que recebe e as repetições que executa. Ele não relê todos os saldos finais do PostgreSQL. As garantias financeiras mais profundas são verificadas pelos testes descritos em [Corretude do pagamento](topics/payment-correctness.md).
 
-O contrato do gerador — pacing, admissão HTTP/2, warmup, deadlines, replays, coleta e reporting — está em [Metodologia do load test](topics/load-testing.md).
+## Onde o teste rodou
 
-## 5. Ambiente e recursos
-
-Gerador e sistema compartilharam o mesmo host:
+O gerador e todos os serviços compartilharam o mesmo computador:
 
 | Especificação | Valor |
 | --- | --- |
@@ -94,9 +93,9 @@ Gerador e sistema compartilharam o mesmo host:
 | sistema | Debian 13, kernel `6.12.86+deb13-amd64` |
 | Docker / Compose | 29.4.3 / 5.1.3 |
 
-A stack usou uma instância de PostgreSQL, Kafka, Payment Ingress, Payment Processor e Notification Gateway.
+O teste usou uma instância de PostgreSQL, Kafka, Payment Ingress, Payment Processor e Notification Gateway.
 
-| Consumo na fase ativa | Execução A | Execução B |
+| Recursos durante a fase medida | Execução A | Execução B |
 | --- | ---: | ---: |
 | CPU média agregada | 2,094 vCPU | 1,158 vCPU |
 | maior amostra completa de CPU | 3,399 vCPU | 2,195 vCPU |
@@ -105,26 +104,17 @@ A stack usou uma instância de PostgreSQL, Kafka, Payment Ingress, Payment Proce
 
 Uma execução de 15 minutos ocupou aproximadamente 2,63 GB no PostgreSQL e 1,99 GB no Kafka, totalizando 4,62 GB.
 
-Recursos caracterizam o experimento; não eram critérios independentes de aprovação.
+Esses números descrevem o ambiente observado. Eles não eram critérios separados de aprovação.
 
-## 6. Variação entre as execuções
+## Por que as duas execuções importam
 
-A execução A consumiu mais CPU e teve operações PostgreSQL mais lentas, embora código, configuração e workload fossem os mesmos.
+A execução A consumiu mais CPU e foi mais lenta, embora código, configuração e carga fossem os mesmos. As operações no PostgreSQL também demoraram mais, mas os dados disponíveis não apontaram uma causa única.
 
-> Tempos médios por chamada observados pelo PostgreSQL; não representam a latência end-to-end.
+Mostrar apenas a execução B produziria números mais atraentes, mas esconderia uma variação real. Manter as duas mostra que o resultado se repetiu e que até a condição menos favorável permaneceu dentro da meta.
 
-| Operação | Execução A | Execução B |
-| --- | ---: | ---: |
-| insert de pagamentos | 15,086 ms | 5,422 ms |
-| insert de auditoria | 4,709 ms | 1,944 ms |
-| insert de outbox | 2,629 ms | 0,980 ms |
-| lock/leitura da resposta do recebedor | 5,775 ms | 2,253 ms |
+## Onde está a evidência
 
-A telemetria não isolou uma causa única para essa diferença. Preservar as duas execuções evita apresentar apenas a condição mais favorável; ambas continuaram dentro dos critérios.
-
-## 7. Evidência e reprodução
-
-Os artefatos compactos das qualificações estão versionados em:
+Os arquivos usados para preservar as duas execuções estão em:
 
 ```text
 docs/performance/evidence/2026-08-29/
@@ -135,9 +125,11 @@ docs/performance/evidence/2026-08-29/
 └── checksums.sha256
 ```
 
-Perfil e plano registram a carga efetiva; os relatórios preservam geração, latência, outcomes e replays; os checksums protegem sua integridade. Os relatórios de comparação Go/Rust no mesmo diretório pertencem a outro estudo, não às qualificações finais.
+O perfil e o plano registram a carga executada. Os relatórios preservam geração, latência, confirmações e repetições. Os checksums permitem verificar que esses arquivos continuam iguais aos escolhidos como evidência final.
 
-Para executar uma nova observação:
+Os relatórios de comparação entre os geradores Go e Rust, presentes no mesmo diretório, pertencem a outro estudo e não fazem parte das qualificações finais.
+
+Para executar o mesmo perfil novamente:
 
 ```bash
 cd load-test
@@ -145,17 +137,17 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-15m <run-tag>
 ```
 
-A preparação recria stack e volumes, aguarda os serviços, provisiona participantes e gera os certificados. Uma nova execução não substitui a evidência preservada e precisa satisfazer novamente todos os critérios.
+A preparação recria o ambiente local. Uma nova execução não herda a conclusão das anteriores: precisa cumprir novamente todos os critérios.
 
-## 8. Limites
+## Onde a conclusão termina
 
-O resultado não demonstra:
+Essas duas execuções não demonstram:
 
 * capacidade equivalente à do Pix real ou a uma implantação de produção;
 * alta disponibilidade, múltiplas instâncias, multi-região ou Kubernetes;
 * comportamento com um cluster Kafka replicado — o teste usou um broker e fator 1;
-* isolamento entre gerador e sistema, que compartilharam o host;
+* isolamento entre gerador e sistema, pois ambos compartilharam o host;
 * estabilidade por uma hora, 24 horas ou períodos maiores;
 * auditoria independente dos saldos finais de todos os pagamentos.
 
-Dentro desse escopo, duas execuções consecutivas sustentam a afirmação promovida pelo projeto: pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhum outcome esperado ausente ou contraditório.
+Dentro desses limites, as duas execuções sustentam a conclusão do projeto: pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhuma confirmação esperada ausente ou contraditória.
