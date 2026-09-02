@@ -7,13 +7,15 @@ senderPspUrl=http://localhost:8081
 receiverPspUrl=http://localhost:8082
 ```
 
-Set the receiver key if you do not want to use the default:
+The collection registers and uses its own receiver key:
 
 ```text
-receiverPixKey=bob@example.com
+receiverPixKey=bruno-bob@example.com
 ```
 
-Requests `01`, `02`, and `04` set `senderCustomerId`, `receiverCustomerId`, and `previewReceiverJson` automatically.
+Requests `01` and `02` set `senderCustomerId` and `receiverCustomerId` automatically. Request `03` registers `receiverPixKey`; request `04` resolves it; request `05` submits the transfer using the same key.
+
+Start from a clean demo environment before running the folder so the key registration is reproducible.
 
 Run requests in order:
 

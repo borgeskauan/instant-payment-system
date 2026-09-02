@@ -17,11 +17,6 @@ http:
       }
   auth: inherit
 
-runtime:
-  scripts:
-    - type: after-response
-      code: bru.setVar("previewReceiverJson", JSON.stringify(res.body.receiver));
-
 settings:
   encodeUrl: false
   timeout: 0

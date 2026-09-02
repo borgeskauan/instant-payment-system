@@ -1,46 +1,67 @@
 # Reference demo
 
-This directory contains a small interactive demonstration of the instant-payment system. It is not part of the benchmarked core and carries no performance, durability, availability, or production-readiness guarantees.
+This demo turns the payment flow into something you can see and interact with. Alice has an account at Bank A, Bob has an account at Bank B, and the application lets you send a PIX payment between them through the project's core services.
 
-The demo contains a minimal DICT, two simulated PSPs and an Angular application. Its only commitment is a reproducible happy path: create two customers, register a PIX key, resolve the receiver, submit a payment through the core and observe the resulting balance changes at both PSPs.
+It is a guided example, not part of the benchmarked system. Its purpose is simply to make the payment journey concrete.
 
-## Start
+## Try it
 
-Start the core first from the repository root:
+From the repository root, start the core and the demo:
 
 ```bash
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f infra/docker-compose.yml up -d --build
+./demo/demo start
 ```
 
-Then start the reference demo:
+If you have already used the core locally, start with [`./demo/demo reset`](#start-over) instead so both sides begin with matching state.
 
-```bash
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f demo/docker-compose.yml up -d --build
+Then open <http://localhost:4200> and follow the path shown on screen:
+
+1. Choose Alice.
+2. Send money to Bob using `bob@example.com`.
+3. Wait for the payment to be confirmed.
+4. Open Bob's account and see the money arrive.
+
+Alice and Bob are created automatically with an initial balance. Bob's PIX key is also ready to use. Alice starts without a key, but you can register one if you want to send money back from Bob.
+
+![Reference demo customer selection screen](screenshots/payment-app.png)
+
+## Explore the API
+
+The [Bruno collection](../docs/collection/README.md) walks through the same flow as explicit HTTP requests. It creates a separate PIX key for its own run, so it does not interfere with the guided browser path.
+
+The two banks are also available directly at:
+
+```text
+Bank A: http://localhost:8081
+Bank B: http://localhost:8082
 ```
 
-Open <http://localhost:4200>. PSP A is available at `http://localhost:8081`; PSP B is available at `http://localhost:8082`. The environment prepares Alice at PSP A and Bob at PSP B. Both can send and receive payments. Only Bob's `bob@example.com` key is pre-provisioned so the first payment works immediately; Alice starts without a key and the user may register one through the interface before sending money back from Bob. Choose either customer from the opening screen. The application briefly waits for the final outcome and keeps the latest payment statuses on both account screens. The [Bruno collection](../docs/collection/README.md) provides the same flow as explicit API calls.
+## Check the complete flow
 
-The automated smoke exercises the complete business path and verifies the final balance changes and `SETTLED` payment histories observed by both PSPs:
+The automated smoke test sends a payment through the same public interfaces and verifies that both banks observe the final status and balance changes:
 
 ```bash
-./demo/smoke.sh
+./demo/demo smoke
 ```
 
-## Interface
+## Start over
 
-![Reference demo account screen](screenshots/payment-app.png)
+The demo keeps Alice, Bob and their payments only in memory, while the core keeps its payment and notification history. Restarting only one side can therefore leave them out of sync.
 
-## Reset
-
-DICT and PSP state are intentionally ephemeral, while the notification cursor refers to the durable core notification log. A clean demonstration therefore starts with both stacks empty; restarting only the demo against an existing core history is not supported.
+To recreate both sides from a clean state, run:
 
 ```bash
-docker compose -f demo/docker-compose.yml down --remove-orphans
-docker compose -f infra/docker-compose.yml down -v --remove-orphans
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f infra/docker-compose.yml up -d --build
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f demo/docker-compose.yml up -d --build
+./demo/demo reset
+```
+
+This command deletes the local PostgreSQL and Kafka volumes before starting everything again.
+
+To stop only the demo and leave the core running:
+
+```bash
+./demo/demo stop
 ```
 
 ## Scope
 
-The demo deliberately does not provide production-grade PSP persistence, HA, performance tuning, comprehensive error handling, broad test coverage, or a complete DICT. The Rust load tool remains the authoritative instrument for core correctness and performance validation.
+The demo is intentionally small. It does not claim production-grade persistence, availability, performance or operational resilience. Those properties belong to the benchmarked core; this application exists only to make its happy path easy to experience.

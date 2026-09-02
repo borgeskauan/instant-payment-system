@@ -14,7 +14,7 @@ http:
     data: |-
       {
         "senderCustomerId": "{{senderCustomerId}}",
-        "receiver": {{previewReceiverJson}},
+        "receiverPixKey": "{{receiverPixKey}}",
         "amount": 25.50,
         "description": "Bruno transfer flow test"
       }
