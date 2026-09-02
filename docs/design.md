@@ -47,22 +47,7 @@ Quando não há saldo suficiente na entrada, o pagamento é rejeitado imediatame
 
 ## 2. Corretude financeira
 
-### Saldo e reserva
-
-Cada instituição possui um único saldo disponível no PostgreSQL.
-
-Não há uma tabela separada de reservas. A reserva é representada pela combinação entre o estado do pagamento e o saldo disponível:
-
-```text
-payment = WAITING_ACCEPTANCE
-
-        ↓
-
-o valor daquele pagamento já saiu
-do saldo disponível do pagador
-```
-
-Na prática:
+O efeito financeiro de cada transição é pequeno e explícito:
 
 | Situação           | Efeito                                       |
 | ------------------ | -------------------------------------------- |
@@ -70,61 +55,13 @@ Na prática:
 | recebedor aceita   | credita o recebedor                          |
 | recebedor rejeita  | devolve o valor à disponibilidade do pagador |
 
-Quando o pagamento é aceito, o pagador não é debitado novamente. O valor já deixou o saldo disponível quando o pagamento entrou em `WAITING_ACCEPTANCE`.
+Cada instituição possui uma única disponibilidade no PostgreSQL. `WAITING_ACCEPTANCE` significa que o valor já saiu da disponibilidade do pagador; por isso, o aceite credita somente o recebedor e a rejeição devolve a reserva.
 
-Isso evita que pagamentos concorrentes usem um valor que já está comprometido. Na conclusão, aceitar significa creditar o recebedor; rejeitar significa devolver a reserva.
+Pagamentos que disputam a mesma disponibilidade são serializados pelo lock da row do participante. Dentro de um lote, pagamentos do mesmo pagador são avaliados em ordem determinística e seus deltas são agregados.
 
-O banco também impede que um saldo fique negativo.
+Uma repetição equivalente é um `no-op`; reutilizar a mesma identidade com outro conteúdo é conflito. Sob concorrência, somente pagamentos efetivamente criados podem reservar saldo, e somente transições efetivamente adquiridas a partir de `WAITING_ACCEPTANCE` podem creditar ou devolver dinheiro.
 
-### Idempotência
-
-Receber a mesma mensagem duas vezes não pode resultar em duas transferências.
-
-Cada pagamento possui uma identidade lógica (`paymentId` / `EndToEndId`) e uma representação normalizada de seu conteúdo.
-
-Na entrada, existem três possibilidades:
-
-| Caso                                  | Comportamento                                           |
-| ------------------------------------- | ------------------------------------------------------- |
-| identidade nova                       | o pagamento segue normalmente                           |
-| mesma identidade e mesmo conteúdo     | a repetição não produz novo efeito                      |
-| mesma identidade e conteúdo diferente | a mensagem é tratada como conflito e enviada para a DLQ |
-
-Uma repetição válida não altera saldo novamente, não gera outro fato de auditoria e não cria uma nova obrigação de notificação.
-
-A mesma regra cobre concorrência entre duas cópias da mesma requisição: apenas uma delas consegue registrar o pagamento como novo.
-
-Isso também vale para a resposta do recebedor. Repetir a mesma decisão depois que a transição já foi aplicada não gera outro crédito ou estorno. Se a nova decisão for incompatível com o estado atual, ela é tratada como conflito.
-
-Mensagens podem, portanto, aparecer mais de uma vez. O efeito financeiro associado a elas não.
-
-### Concorrência
-
-Além de mensagens duplicadas, pagamentos diferentes podem tentar consumir o mesmo saldo ao mesmo tempo.
-
-A serialização financeira acontece no PostgreSQL.
-
-Antes de avaliar quais pagamentos cabem no saldo de uma instituição, a transação bloqueia a linha correspondente. Enquanto essa transação está decidindo e alterando o saldo, outras operações que dependem da mesma linha aguardam.
-
-Dentro de um lote, os pagamentos de uma mesma conta são avaliados em uma ordem determinística.
-
-Por exemplo:
-
-```text
-saldo disponível = 100
-
-pagamento de 80 → entra
-pagamento de 50 → rejeita por saldo insuficiente
-pagamento de 10 → entra
-```
-
-A rejeição do pagamento de 50 não impede que o pagamento de 10 use o saldo restante.
-
-Na conclusão dos pagamentos, o mesmo mecanismo protege as linhas envolvidas enquanto aceites creditam recebedores e rejeições devolvem valores reservados.
-
-### Atomicidade
-
-Bloquear o saldo resolve a concorrência, mas uma transição de pagamento ainda envolve várias alterações que representam o mesmo fato de negócio:
+Cada efeito aplicado compartilha uma transação PostgreSQL com os demais registros do mesmo fato:
 
 ```text
 estado do pagamento
@@ -136,32 +73,9 @@ auditoria
 obrigação de enviar a confirmação
 ```
 
-Todas essas alterações acontecem na mesma transação PostgreSQL.
+Ou tudo é persistido, ou nada é. A auditoria registra apenas fatos efetivamente aplicados; tentativas, conflitos e repetições sem efeito não criam um novo evento de negócio.
 
-Ao aceitar um pagamento, por exemplo, a transação persiste:
-
-```text
-WAITING_ACCEPTANCE → SETTLED
-+
-crédito do recebedor
-+
-PAYMENT_SETTLED na auditoria
-+
-confirmações que precisam ser publicadas
-```
-
-Ou tudo é persistido, ou nada é.
-
-Assim, não existe um estado intermediário persistente em que:
-
-* o pagamento aparece como concluído sem o crédito correspondente;
-* o dinheiro muda sem a atualização do estado;
-* o pagamento conclui sem uma obrigação durável de notificação;
-* a auditoria registra algo que não foi aplicado.
-
-A mesma regra vale para a admissão e para a rejeição de pagamentos.
-
-A auditoria registra apenas mudanças efetivamente aplicadas. Uma repetição idempotente, que não altera o estado do negócio, também não gera um novo evento de auditoria.
+O contrato detalhado de identidade, reserva, concorrência, transições, auditoria e rollback está em [Corretude do pagamento](topics/payment-correctness.md).
 
 ## 3. Entrega recuperável das confirmações
 
