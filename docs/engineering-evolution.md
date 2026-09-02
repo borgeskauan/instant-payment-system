@@ -6,7 +6,7 @@ O [design atual](design.md) explica como o sistema funciona. Este documento resp
 
 Esta não é uma cronologia de todos os experimentos. Ela preserva apenas mudanças que alteraram uma responsabilidade, uma fronteira arquitetural ou a forma de representar o problema.
 
-Resultados intermediários não aparecem aqui porque foram produzidos sob workloads e contratos diferentes. A capacidade final, sua metodologia e suas limitações pertencem ao [relatório de performance](performance.md). Os diagnósticos que sustentaram decisões específicas permanecem nos [achados experimentais](archived/performance/experimental-findings.md).
+Resultados intermediários não aparecem aqui porque foram produzidos sob workloads e contratos diferentes. A capacidade final, sua metodologia e suas limitações pertencem ao [relatório de performance](performance.md).
 
 ## A evolução em uma página
 
@@ -110,7 +110,7 @@ O ganho de concorrência veio da unidade de trabalho. Para cada batch, o SPI blo
 
 Isso remove coordenação **dentro** do batch sem remover a serialização **entre** batches. Pagamentos que já pertencem à mesma transação não ganham paralelismo disputando buckets entre si: hash, agrupamento, locks e updates adicionais são apenas trabalho de coordenação antes de um único commit. Já duas transações concorrentes que usam o saldo do mesmo participante ainda precisam esperar uma pela outra para impedir gasto duplo. Participantes diferentes continuam independentes.
 
-Portanto, a row única não é universalmente menos contenciosa que 16 buckets. Ela funcionou porque foi combinada com classificação intrabatch em memória e mutações agregadas: a contenção acidental caiu, enquanto permaneceu somente a contenção que representa disputa real pelo mesmo dinheiro. A [decisão de saldo e reserva](archived/architecture/reservation-based-participant-balance.md) preserva os detalhes concorrentes e transacionais.
+Portanto, a row única não é universalmente menos contenciosa que 16 buckets. Ela funcionou porque foi combinada com classificação intrabatch em memória e mutações agregadas: a contenção acidental caiu, enquanto permaneceu somente a contenção que representa disputa real pelo mesmo dinheiro.
 
 Essa mudança consolidou uma regra usada nas decisões posteriores:
 
@@ -231,7 +231,7 @@ O desenho final atribuiu a cada tecnologia apenas uma autoridade:
 - o PSP mantém seu progresso durável;
 - o Gateway oferece Pull e usa memória apenas como acelerador.
 
-Assim, o PostgreSQL deixou de acompanhar cada entrega e o Gateway deixou de manter uma segunda fonte de verdade. A [decisão de entrega durável](archived/architecture/kafka-durable-notification-delivery.md) explica o protocolo de falha e a retenção aceita.
+Assim, o PostgreSQL deixou de acompanhar cada entrega e o Gateway deixou de manter uma segunda fonte de verdade.
 
 ## Do Go ao Rust: um owner para a fronteira temporal
 
@@ -249,13 +249,13 @@ A versão Rust foi tratada como greenfield. A mudança importante não foi apena
 
 Tentativas locais como aumentar canais, prolongar spin ou fixar CPU não resolveram a responsabilidade compartilhada. O redesenho resolveu o ownership da admissão sem colocar mais trabalho dentro do pacer.
 
-O [A/B entre Go e Rust](archived/architecture/load-tool-go-rust-comparison.md) preserva a comparação e seu custo de manutenção. O Rust permaneceu porque tornou a fronteira temporal previsível, não porque uma linguagem foi declarada universalmente superior à outra.
+O Rust permaneceu porque tornou a fronteira temporal previsível, não porque uma linguagem foi declarada universalmente superior à outra.
 
 ## Consolidar somente depois da experimentação
 
 O schema executável atual não reproduz todas as arquiteturas pelas quais o projeto passou. Depois que saldo, auditoria, estados e delivery estabilizaram, as migrations experimentais foram substituídas por um baseline novo e compacto.
 
-Isso reduz o custo permanente do runtime sem apagar por que buckets, estados amplos, índices técnicos e lifecycle mutável da outbox deixaram de existir. A [história do schema](archived/architecture/spi-schema-evolution.md) preserva essa transição.
+Isso reduz o custo permanente do runtime sem apagar por que buckets, estados amplos, índices técnicos e lifecycle mutável da outbox deixaram de existir.
 
 ## O desenho que restou
 
@@ -271,4 +271,4 @@ A evolução não foi uma sequência de tecnologias progressivamente mais sofist
 
 O padrão comum foi remover autoridades sobrepostas e filas invisíveis enquanto as garantias de negócio ficavam mais fortes.
 
-O resultado final é qualificado em [performance e evidência](performance.md). Para investigar como cada decisão foi medida sem transformar esta narrativa em um diário, use a [campanha de estabilização](archived/performance/2k-tps-stabilization.md), os [achados experimentais](archived/performance/experimental-findings.md) e o [índice do arquivo](archived/README.md).
+O resultado final é qualificado em [performance e evidência](performance.md).
