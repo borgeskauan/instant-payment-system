@@ -122,6 +122,23 @@ até 15 notificações
 nextCursor
 ```
 
+### O primeiro Pull
+
+Não existe um cursor criado durante o onboarding. Na primeira chamada, a instituição envia o campo vazio:
+
+```text
+Pull(cursor vazio)
+        ↓
+começa no primeiro offset ainda retido
+da partição daquela instituição
+```
+
+O Gateway não começa em “agora”. Ele examina o histórico disponível desde o ponto mais antigo que o Kafka ainda preserva e devolve as notificações destinadas à instituição. Portanto, uma instituição que inicia o consumo recebe também seu backlog dentro da janela de retenção.
+
+Se nenhum registro estiver disponível, a chamada segue o long polling normal e pode terminar com um lote e um cursor ainda vazios. O primeiro cursor assinado é emitido quando o Gateway efetivamente examina algum registro da partição, mesmo que esse avanço inclua mensagens destinadas a outras instituições.
+
+Essa regra não recupera mensagens anteriores à retenção do tópico. O primeiro Pull começa no início do histórico **ainda disponível**, não no início absoluto da vida da instituição.
+
 Dentro de uma partição, Kafka identifica cada mensagem por uma posição numérica chamada **offset**. O cursor é um token opaco assinado pelo Gateway que vincula:
 
 ```text

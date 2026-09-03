@@ -1,6 +1,6 @@
 # Como o sistema funciona
 
-O README mostra o projeto pelo ponto de vista de quem faz um pagamento. Aqui vamos olhar por dentro: quem decide o que acontece com o dinheiro, como o resultado sobrevive a uma falha e por que o trabalho foi dividido entre componentes diferentes.
+Este documento mostra o sistema por dentro: quem decide o que acontece com o dinheiro, como o resultado sobrevive a uma falha e por que o trabalho foi dividido entre componentes diferentes.
 
 O objetivo é entender o desenho como um todo. Locks, SQL, formatos de mensagem e outros detalhes de implementação ficam nos documentos de aprofundamento.
 

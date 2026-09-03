@@ -24,7 +24,9 @@ O Pix real é um sistema enorme, construído para atender um país inteiro e sus
 
 Então eu precisava escolher uma parte do problema.
 
-Em vez de tentar copiar o Pix, construí uma versão muito menor do fluxo de pagamento: alguém envia dinheiro, o recebedor aceita ou rejeita, o valor chega ao destino ou continua com quem tentou pagar, e o resultado volta aos participantes.
+Em vez de tentar copiar o Pix, construí uma versão muito menor de seu núcleo interinstitucional: uma instituição envia uma ordem de pagamento, a instituição recebedora aceita ou rejeita, o sistema liquida ou devolve o valor reservado e as confirmações necessárias voltam às participantes.
+
+O core não implementa as contas e os saldos dos clientes dentro de cada banco. Ele modela a liquidez que cada instituição participante mantém no sistema e o fluxo entre a instituição pagadora e a instituição recebedora. O aceite ou a rejeição pertence à instituição recebedora, não à pessoa que receberia um Pix.
 
 Os materiais publicados pelo Banco Central me deram referências concretas. Uma [apresentação sobre arquitetura e resiliência](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) usava **2.000 transações por segundo** como parâmetro. O [relatório anual do SPI de 2021](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) registrava o acordo de nível de serviço: 99% dos pagamentos processados dentro do SPI em menos de **4,6 segundos**.
 
@@ -58,16 +60,16 @@ Mantive as duas na evidência final. Mostrar apenas a melhor execução produzir
 
 Os números acima só fazem sentido porque cada pagamento continua tendo que percorrer o fluxo normalmente.
 
-No caso mais simples, alguém envia dinheiro para outra pessoa. O recebedor aceita ou rejeita o pagamento. Se aceitar, o dinheiro chega até ele. Se rejeitar, continua com quem tentou pagar. E quem enviou precisa saber como aquilo terminou.
+Para quem usa o Pix, a experiência continua sendo enviar dinheiro para outra pessoa. Dentro deste projeto, porém, o fluxo começa na instituição pagadora e termina na instituição recebedora. Se a recebedora aceitar, a liquidez reservada é transferida para ela. Se rejeitar, o valor volta à disponibilidade da instituição pagadora. A pagadora precisa receber o resultado; na liquidação, a recebedora também recebe sua confirmação.
 
 Até aí, parece simples.
 
 O problema começa quando as coisas não acontecem perfeitamente:
 
-* **A confirmação pode demorar e a pessoa tentar enviar de novo.** Ela não pode ser debitada duas vezes por causa disso, nem o recebedor receber o valor duas vezes.
-* **Dois pagamentos podem sair da mesma conta ao mesmo tempo.** Os dois não podem gastar o mesmo dinheiro.
-* **Alguma parte do sistema pode falhar no meio do pagamento.** O dinheiro não pode simplesmente ficar perdido entre uma conta e outra.
-* **O pagamento pode já ter terminado, mas a confirmação pode não chegar na hora para quem pagou ou para quem recebeu.** Ela pode chegar depois, mas não pode simplesmente se perder.
+* **A instituição pagadora pode enviar novamente a mesma ordem.** Isso não pode reservar o valor duas vezes nem fazer a instituição recebedora ser creditada novamente.
+* **Dois pagamentos podem disputar a liquidez da mesma instituição.** Os dois não podem gastar o mesmo saldo disponível.
+* **Alguma parte do sistema pode falhar no meio do pagamento.** O valor não pode simplesmente ficar perdido entre as instituições.
+* **O pagamento pode já ter terminado, mas a confirmação ainda não ter chegado às participantes.** Ela pode chegar depois, mas não pode simplesmente desaparecer.
 
 É esse tipo de problema que começa a determinar como o sistema precisa ser construído.
 
@@ -86,9 +88,9 @@ flowchart LR
 
 O **Payment Ingress** recebe e autentica os pagamentos que chegam ao sistema.
 
-O **Payment Processor** é o centro do fluxo. Ele acompanha cada pagamento, decide o que acontece com o dinheiro e impede que o mesmo pagamento altere os saldos duas vezes.
+O **Payment Processor** é o centro do fluxo. Ele acompanha cada pagamento, decide o que acontece com o dinheiro e impede que o mesmo pagamento altere os saldos de liquidez duas vezes.
 
-O **PostgreSQL** guarda os pagamentos e os saldos e permite que mudanças que pertencem à mesma operação sejam confirmadas juntas.
+O **PostgreSQL** guarda os pagamentos e os saldos de liquidez e permite que mudanças que pertencem à mesma operação sejam confirmadas juntas.
 
 O **Kafka** conecta as partes assíncronas do sistema e mantém o trabalho disponível enquanto ele avança entre os componentes.
 
@@ -100,13 +102,13 @@ Esse é o mapa geral. O [design do sistema](docs/design.md) explica como cada um
 
 Construir o sistema era só metade do problema. Se eu queria afirmar que ele sustentava 2.000 pagamentos por segundo, precisava ter certeza de que estava medindo pagamentos de verdade, e não apenas requisições chegando na entrada.
 
-Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando a confirmação percorre o sistema e volta à instituição de quem enviou.
+Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando a confirmação percorre o sistema e volta à instituição pagadora.
 
 A ferramenta de carga fica fora do core: ela envia os pagamentos, observa as confirmações que retornam e verifica se elas correspondem ao que deveria ter acontecido.
 
 A mesma execução precisa passar nos dois lados: ser rápida e devolver todos os outcomes esperados sem contradição. Bater a meta de pagamentos por segundo não vale se o resultado observável do fluxo estiver incorreto.
 
-O benchmark exercita duplicidade e concorrência sob carga. A garantia financeira mais forte — uma mensagem repetida não pode mover dinheiro novamente — é verificada diretamente pelos [testes concorrentes do Payment Processor](spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java), que conferem reserva, crédito e devolução nos saldos persistidos.
+O benchmark exercita duplicidade e concorrência sob carga. A garantia financeira mais forte — uma mensagem repetida não pode mover dinheiro novamente — é verificada diretamente pelos [testes concorrentes do Payment Processor](spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java), que conferem reserva, crédito e devolução nos saldos de liquidez dos participantes.
 
 Os detalhes de geração da carga, cálculo de throughput e latência e preservação das evidências ficam na [metodologia de performance](docs/performance.md).
 

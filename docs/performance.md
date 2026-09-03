@@ -40,6 +40,26 @@ As duas execuções usaram o commit `1351ea564d0834a66e1b5d99a5e09a1a384cae1b`, 
 | confirmações ausentes / contraditórias | 0 / 0 | 0 / 0 |
 | falhas nas repetições | 0 | 0 |
 
+Os percentis acima combinam os dois cenários. Como uma rejeição por saldo insuficiente termina sem esperar a decisão do recebedor, os relatórios também preservam a latência de cada caminho separadamente:
+
+### Execução A
+
+| Latência | Todos os pagamentos | Pagamento concluído | Saldo insuficiente |
+| --- | ---: | ---: | ---: |
+| p50 | 188 ms | 203 ms | 107 ms |
+| p95 | 598 ms | 624 ms | 457 ms |
+| p99 | 855 ms | 879 ms | 698 ms |
+
+### Execução B
+
+| Latência | Todos os pagamentos | Pagamento concluído | Saldo insuficiente |
+| --- | ---: | ---: | ---: |
+| p50 | 142 ms | 158 ms | 77 ms |
+| p95 | 234 ms | 237 ms | 124 ms |
+| p99 | 265 ms | 272 ms | 151 ms |
+
+O caminho concluído foi mais caro nas duas execuções, como esperado. A execução A, porém, foi mais lenta nos dois cenários. A diferença entre A e B, portanto, não veio apenas da etapa adicional de decisão do recebedor nem ficou escondida pela proporção de rejeições rápidas.
+
 Cada execução cumpriu os três critérios por conta própria.
 
 A execução A foi a menos favorável: sua pior janela ficou apenas 17 pagamentos acima do piso, e o p99 chegou a 855 ms. A execução B terminou com margem maior.
@@ -103,6 +123,10 @@ O teste usou uma instância de PostgreSQL, Kafka, Payment Ingress, Payment Proce
 | maior amostra de memória | 1.994,6 MiB | 1.955,8 MiB |
 
 Uma execução de 15 minutos ocupou aproximadamente 2,63 GB no PostgreSQL e 1,99 GB no Kafka, totalizando 4,62 GB.
+
+Dividir esse total pelos cerca de 1,89 milhão de pagamentos planejados para a fase medida produz uma razão aproximada de 2,4 KB acumulados por pagamento. Uma extrapolação puramente linear colocaria essa ordem de grandeza perto de 443 GB por dia; para o Kafka isoladamente, manter sete dias do mesmo volume corresponderia a aproximadamente 1,3 TB.
+
+Isso não é uma previsão de produção. O volume observado também inclui aquecimento, respostas, repetições e confirmações, enquanto compressão, limpeza de segmentos, retenções diferentes e a composição da carga mudam o crescimento real. A conta serve apenas para revelar outra consequência do experimento: capacidade de armazenamento e políticas de retenção tornam-se parte relevante do desenho mesmo antes de CPU ser o limite.
 
 Esses números descrevem o ambiente observado. Eles não eram critérios separados de aprovação.
 
