@@ -64,9 +64,9 @@ Depois da validação, o processamento distingue quatro resultados:
 | identidade nova e saldo disponível | cria o pagamento, reserva o valor e solicita decisão ao recebedor |
 | identidade nova e saldo insuficiente | cria uma rejeição terminal por `INSUFFICIENT_FUNDS` |
 | mesma identidade e mesmo conteúdo | não produz novo efeito |
-| mesma identidade e conteúdo diferente | classifica conflito determinístico |
+| mesma identidade e conteúdo diferente | classifica como conflito determinístico |
 
-Somente os pagamentos que esta transação realmente conseguiu criar entram no cálculo da reserva, na auditoria e nas notificações. Assim, duas cópias concorrentes do mesmo pedido não conseguem reservar o valor duas vezes.
+O cálculo da reserva, a auditoria e as notificações usam apenas os pagamentos criados por esta transação. Assim, duas cópias concorrentes do mesmo pedido não conseguem reservar o valor duas vezes.
 
 ### Como o sistema reconhece uma repetição
 
@@ -78,15 +78,15 @@ request_fingerprint_version
 SHA-256 da representação canônica da instrução
 ```
 
-Essa assinatura inclui valor, moeda, descrição e dados das partes e contas. Textos são normalizados antes do hash. A versão também é comparada, pois uma futura regra de normalização não pode tornar conteúdos diferentes equivalentes por acidente.
+Essa assinatura inclui valor, moeda, descrição e dados das partes e contas. Textos são normalizados antes do hash. A versão também faz parte da comparação. Assim, uma futura regra de normalização não torna conteúdos diferentes equivalentes por acidente.
 
 Uma repetição equivalente não faz nada novamente: não altera saldo, não cria outro fato de auditoria e não reconstrói a obrigação de notificar. A confirmação criada no primeiro processamento continua sendo a válida, mesmo depois de sair da outbox.
 
-Quando duas instruções com o mesmo `paymentId` e conteúdos diferentes aparecem no mesmo lote sem estado anterior que determine a identidade válida, todas são tratadas como conflitantes. Quando o pagamento já existe, o fingerprint persistido decide qual entrada é uma repetição e qual é divergente.
+Quando duas instruções com o mesmo `paymentId` e conteúdos diferentes aparecem no mesmo lote, pode não existir um estado anterior que diga qual conteúdo é o válido. Nesse caso, todas são tratadas como conflitantes. Quando o pagamento já existe, o fingerprint persistido decide qual entrada é uma repetição e qual é divergente.
 
 ### Como a reserva é decidida
 
-Os pagamentos novos são agrupados pela instituição pagadora. A transação bloqueia uma vez o registro de saldo de cada pagador envolvido, sempre na mesma ordem entre participantes.
+Os pagamentos novos são agrupados pela instituição pagadora. A transação bloqueia uma única vez o registro de saldo de cada pagador envolvido, sempre na mesma ordem entre participantes.
 
 Dentro do grupo de um pagador, os pagamentos são avaliados pela ordem de origem do lote. Uma rejeição não interrompe os pagamentos seguintes:
 
@@ -100,7 +100,7 @@ saldo disponível = 100
 
 Os débitos aprovados são somados e aplicados em uma única alteração por participante. O próprio banco impede saldo negativo. Se algum registro necessário estiver ausente ou o débito completo não puder ser aplicado, a transação inteira falha.
 
-Um pagamento sem saldo suficiente termina como `REJECTED / INSUFFICIENT_FUNDS` na própria transação de admissão. Ele não cria reserva nem solicitação de aceite ao recebedor; cria a auditoria e a obrigação de informar a rejeição ao pagador.
+Um pagamento sem saldo suficiente termina como `REJECTED / INSUFFICIENT_FUNDS` na própria transação de admissão. Ele não cria reserva nem solicitação de aceite ao recebedor. A mesma transação cria a auditoria e a obrigação de informar a rejeição ao pagador.
 
 ## Quando o recebedor responde
 
@@ -135,9 +135,9 @@ ou:
 WAITING_ACCEPTANCE → REJECTED
 ```
 
-Somente os pagamentos que esta transação realmente conseguiu mover para o estado final entram nos cálculos financeiros, na auditoria e nas notificações. Duas respostas concorrentes podem encontrar o mesmo pagamento, mas apenas uma consegue tirá-lo de `WAITING_ACCEPTANCE`.
+Os cálculos financeiros, a auditoria e as notificações usam apenas os pagamentos que esta transação moveu para o estado final. Duas respostas concorrentes podem encontrar o mesmo pagamento, mas apenas uma consegue tirá-lo de `WAITING_ACCEPTANCE`.
 
-Depois disso, os efeitos são somados por participante: aceites creditam recebedores; rejeições devolvem reservas aos pagadores. Os registros de saldo necessários também são bloqueados sempre na mesma ordem.
+Depois disso, os efeitos são somados por participante. Aceites creditam recebedores; rejeições devolvem reservas aos pagadores. Os registros de saldo necessários também são bloqueados sempre na mesma ordem.
 
 Essa regra impede tanto o crédito duplicado quanto a devolução duplicada.
 
@@ -193,7 +193,7 @@ registra PAYMENT_REJECTED
 cria confirmação para o pagador
 ```
 
-Se a persistência de auditoria ou da outbox falhar, a mudança de estado e os saldos também são revertidos. Não existe commit parcial no qual o estado afirma uma coisa, o dinheiro registra outra ou uma transição concluída perde a obrigação de informar seu resultado.
+Se a persistência da auditoria ou da outbox falhar, a mudança de estado e os saldos também são revertidos. Não há commit parcial: estado, dinheiro, auditoria e obrigação de notificar avançam juntos ou são revertidos juntos.
 
 ## A auditoria registra o que realmente aconteceu
 
@@ -208,7 +208,7 @@ A auditoria registra efeitos de negócio aplicados, não tentativas de processam
 
 Uma repetição sem efeito, uma entrada não autorizada ou um conflito não representa um novo fato financeiro e, portanto, não cria um novo evento de negócio.
 
-O banco permite no máximo um fato de admissão e um fato terminal por pagamento. Suas restrições também relacionam o tipo do evento, os estados, a origem da rejeição e os efeitos financeiros, impedindo combinações que contradigam o modelo.
+O banco permite no máximo um fato de admissão e um fato terminal por pagamento. Outras restrições ligam o tipo de evento aos estados, à origem da rejeição e aos efeitos financeiros. Assim, o banco impede combinações que contradigam o modelo.
 
 `event_id` é apenas uma identidade técnica. Ele não define uma ordem causal entre eventos de pagamentos diferentes.
 
@@ -224,21 +224,19 @@ As invariantes não dependem de um único mecanismo:
 | apenas o dono inicia | comparação entre ISPB autenticado e pagador |
 | apenas o recebedor decide | comparação entre ISPB autenticado e recebedor persistido |
 | uma única transição terminal | bloqueio do pagamento e mudança condicional a partir de `WAITING_ACCEPTANCE` |
-| auditoria consistente | mesma transação e constraints sobre os fatos |
+| auditoria consistente | mesma transação e restrições sobre os fatos |
 | notificação não esquecida no commit financeiro | outbox criada na mesma transação |
 
-## Onde este modelo termina
+## Escopo do modelo
 
-Este modelo foi validado dentro de alguns limites deliberados:
+Neste projeto:
 
-* um registro de saldo por participante cria uma espera intencional quando operações disputam a mesma disponibilidade;
+* cada participante possui um único registro de saldo, então operações sobre a mesma disponibilidade podem esperar umas pelas outras;
 * um pagamento em `WAITING_ACCEPTANCE` não expira automaticamente e pode manter dinheiro reservado se o recebedor nunca responder;
-* saldo insuficiente produz rejeição imediata; não há fila de liquidez;
-* ausência do registro de saldo esperado é falha operacional, não criação automática de dinheiro;
-* a qualificação atual não cobre múltiplas instâncias do Payment Processor nem contenção entre réplicas;
-* a auditoria não registra tentativas, repetições sem efeito ou a mensagem PACS original.
-
-Esses limites não mudam as invariantes dentro do escopo qualificado; delimitam as condições em que elas foram demonstradas.
+* saldo insuficiente produz rejeição imediata, sem fila de liquidez;
+* ausência do registro de saldo esperado é tratada como falha operacional, não como criação automática de dinheiro;
+* os testes de concorrência usam uma única instância do Payment Processor e não exercitam contenção entre réplicas;
+* a auditoria registra efeitos de negócio, não tentativas, repetições sem efeito ou a mensagem PACS original.
 
 ## Verificar no código
 

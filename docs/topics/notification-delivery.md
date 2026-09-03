@@ -16,7 +16,7 @@ A entrega preserva estas propriedades:
 4. o Gateway pode repetir fisicamente uma confirmação, mas não pode inventar que a instituição já a processou;
 5. memória acelera a leitura recente, mas não participa da corretude.
 
-O sistema oferece entrega **at-least-once**, não exactly-once. Em outras palavras: uma confirmação pode aparecer novamente, mas não pode desaparecer silenciosamente dentro das condições documentadas.
+O sistema oferece entrega **at-least-once**, não exactly-once. Uma confirmação pode aparecer novamente; quando uma fronteira fica inconclusiva, o sistema repete em vez de assumir que a entrega aconteceu.
 
 ## O primeiro risco está entre PostgreSQL e Kafka
 
@@ -77,13 +77,13 @@ Esse evento em memória é apenas o caminho rápido. Se a transação for revert
 
 ### A outbox só é removida depois da confirmação
 
-O publicador envia exatamente os bytes armazenados. A instituição destinatária define a chave Kafka, e a identidade da comunicação acompanha a mensagem. Ele espera a confirmação configurada como `acks=all` e usa a idempotência do Kafka.
+O publicador envia exatamente os bytes armazenados. A instituição destinatária define a chave Kafka, e a identidade da comunicação acompanha a mensagem. O publicador espera a confirmação configurada como `acks=all` e usa a idempotência do Kafka.
 
 A outbox só é apagada depois que todas as publicações do lote são confirmadas pelo broker.
 
 Se uma publicação falhar, ficar inconclusiva ou se a remoção da outbox falhar, o lote inteiro é enviado novamente. Algumas mensagens já podem ter chegado ao Kafka; por isso, essa regra evita perda ao custo de possíveis duplicatas.
 
-A idempotência do producer Kafka reduz duplicatas causadas por suas próprias tentativas internas. Ela não torna toda a fronteira exactly-once: a aplicação ainda pode reenviar algo que o broker recebeu antes de a resposta se perder.
+A idempotência do producer Kafka reduz duplicatas nas tentativas internas do próprio producer. Ela não torna toda a fronteira exactly-once. A aplicação ainda pode reenviar algo que o broker recebeu antes de a resposta se perder.
 
 ### O que acontece depois de uma reinicialização
 
@@ -91,7 +91,7 @@ Antes de aceitar novos lotes de pagamento, o Payment Processor lê as obrigaçõ
 
 Enquanto a aplicação está rodando, o publicador mantém o lote atual e tenta novamente até conseguir confirmá-lo e removê-lo.
 
-Existe uma limitação explícita: se a obrigação foi confirmada no banco, mas seu evento pós-commit não chegou ao publicador, não há hoje uma busca periódica durante a mesma execução. Ela continua segura no PostgreSQL, porém só volta ao fluxo na próxima inicialização.
+Hoje, se a obrigação foi confirmada no banco, mas seu evento pós-commit não chegou ao publicador, ela volta ao fluxo na próxima inicialização. Não há busca periódica durante a mesma execução; até lá, a obrigação continua no PostgreSQL.
 
 ## Depois da publicação, Kafka guarda o histórico
 
@@ -99,14 +99,14 @@ Depois que o broker confirma a publicação e a outbox é removida, Kafka passa 
 
 O tópico `psp-notifications-v1` possui, no ambiente atual:
 
-* oito partições fixas;
+* oito partições;
 * retenção de sete dias;
 * `recipient_ispb` como chave;
-* um broker e fator de replicação 1 no ambiente local qualificado.
+* um broker e fator de replicação 1 no ambiente local.
 
 Usar o destinatário como chave mantém todas as notificações de uma instituição na mesma partição enquanto o número de partições permanecer fixo. Instituições diferentes podem compartilhar uma partição; o Gateway ainda separa suas mensagens, mas o cursor precisa representar essa leitura compartilhada.
 
-O número de partições faz parte do desenho desta geração do tópico. Alterá-lo exige uma migração explícita de geração e cursor; não é uma mudança operacional transparente.
+Nesta geração do tópico, as oito partições são fixas. Mudar esse número exige uma nova geração do tópico e uma migração dos cursores.
 
 Kafka não decide estado financeiro, não sabe o que a instituição já processou e não participa da transação do pagamento. Sua autoridade começa no histórico publicado.
 
@@ -133,11 +133,11 @@ começa no primeiro offset ainda retido
 da partição daquela instituição
 ```
 
-O Gateway não começa em “agora”. Ele examina o histórico disponível desde o ponto mais antigo que o Kafka ainda preserva e devolve as notificações destinadas à instituição. Portanto, uma instituição que inicia o consumo recebe também seu backlog dentro da janela de retenção.
+O Gateway não começa em “agora”. Ele examina o histórico disponível desde o ponto mais antigo que o Kafka ainda preserva e devolve as notificações destinadas à instituição. Portanto, uma instituição que inicia o consumo também recebe seu backlog dentro da janela de retenção.
 
-Se nenhum registro estiver disponível, a chamada segue o long polling normal e pode terminar com um lote e um cursor ainda vazios. O primeiro cursor assinado é emitido quando o Gateway efetivamente examina algum registro da partição, mesmo que esse avanço inclua mensagens destinadas a outras instituições.
+Se nenhum registro estiver disponível, a chamada segue o long polling normal e pode terminar com um lote e um cursor ainda vazios. O primeiro cursor assinado aparece quando o Gateway examina algum registro da partição. Esse avanço pode incluir mensagens destinadas a outras instituições.
 
-Essa regra não recupera mensagens anteriores à retenção do tópico. O primeiro Pull começa no início do histórico **ainda disponível**, não no início absoluto da vida da instituição.
+Essa regra não recupera mensagens anteriores à retenção do tópico. O primeiro Pull começa no início do histórico **ainda disponível**, não no início absoluto do histórico da instituição.
 
 Dentro de uma partição, Kafka identifica cada mensagem por uma posição numérica chamada **offset**. O cursor é um token opaco assinado pelo Gateway que vincula:
 
@@ -151,9 +151,9 @@ partição
 
 Por isso, uma instituição não pode usar o cursor de outra ou avançar sua posição por conta própria sem invalidar a assinatura.
 
-O Gateway garante que o cursor representa uma posição que realmente emitiu. A instituição decide quando pode afirmar: **processei de forma durável até aqui**.
+O Gateway só aceita um cursor que ele próprio emitiu e assinou. A instituição decide quando pode afirmar: **processei de forma durável até aqui**.
 
-O protocolo exige que o cursor novo só seja persistido depois que todo o lote correspondente tiver sido processado de forma durável. O core não consegue tornar o armazenamento interno da instituição durável; ele fornece a fronteira necessária para que ela faça isso corretamente.
+A instituição persiste o novo cursor somente depois de processar todo o lote de forma durável. O Gateway fornece esse ponto de avanço; o armazenamento do cursor pertence à instituição.
 
 Se a instituição falhar antes de persistir o novo cursor, reapresenta o anterior e pode receber o mesmo envelope novamente. `communication_id` permanece igual nas republicações da mesma obrigação e permite que o consumidor reconheça a duplicata.
 
@@ -167,7 +167,7 @@ offset 101 → instituição B
 offset 102 → instituição A
 ```
 
-Ao atender a instituição A, o Gateway devolve os registros 100 e 102, mas também sabe que examinou o offset 101. O próximo cursor pode, portanto, apontar para 102.
+Ao atender a instituição A, o Gateway devolve as notificações dos offsets 100 e 102, mas também sabe que examinou o offset 101. O próximo cursor pode, portanto, apontar para 102.
 
 Se guardasse apenas a última mensagem da instituição A, o Gateway examinaria repetidamente as mensagens dos outros participantes. Por outro lado, avançar sem ler os offsets intermediários poderia saltar uma mensagem válida.
 
@@ -199,7 +199,7 @@ filtra a instituição dentro da partição
 responde ao Pull
 ```
 
-Não existe uma reconstrução separada do cache. A leitura histórica responde àquela chamada, enquanto o fluxo normal continua alimentando a memória recente.
+A leitura histórica atende àquela chamada. Enquanto isso, o fluxo normal continua alimentando a memória recente.
 
 Quando o cursor já está no ponto mais recente conhecido e não há notificação disponível, o Gateway mantém a chamada aberta por até 30 segundos. A chegada de mensagens para aquela instituição libera a resposta; o timeout devolve um lote vazio com o mesmo cursor.
 
@@ -233,19 +233,17 @@ Quando uma fronteira fica inconclusiva, o sistema prefere repetir a confirmaçã
 | caminho recente sem leitura histórica | janela limitada do Gateway |
 | mensagem antiga ou reinicialização | leitura direta do Kafka |
 
-## Onde este contrato termina
+## Escopo do contrato
 
-O contrato atual aceita estes limites:
+O contrato desta versão considera:
 
-* a retenção operacional é de sete dias; recuperar algo mais antigo exige um procedimento extraordinário;
-* o ambiente qualificado possui um broker e fator de replicação 1, portanto não demonstra alta disponibilidade do Kafka;
-* o tópico possui oito partições fixas e não suporta reparticionamento transparente;
-* existe um fluxo lógico e no máximo um Pull ativo por instituição;
-* o Gateway não persiste ACK, cursor ou estado individual de entrega;
-* uma indisponibilidade prolongada da entrega não reduz automaticamente a admissão de novos pagamentos;
-* encontrar novamente uma obrigação que perdeu o encaminhamento pós-commit ainda depende de uma reinicialização.
+* sete dias de retenção; mensagens mais antigas saem do histórico operacional desse fluxo;
+* oito partições fixas, sem reparticionamento transparente;
+* um fluxo lógico e no máximo um Pull ativo por instituição;
+* nenhum ACK, cursor ou estado individual de entrega persistido pelo Gateway;
+* uma obrigação que perde o encaminhamento pós-commit volta ao fluxo na próxima inicialização.
 
-Dentro dessas condições, a propriedade central é: **depois que a transação cria uma confirmação, o sistema preserva um caminho recuperável para entregá-la, aceitando repetição física quando uma fronteira fica inconclusiva**.
+Nesse escopo, a propriedade central é: **depois que a transação cria uma confirmação, o sistema mantém um caminho recuperável para entregá-la e aceita repetição física quando uma fronteira fica inconclusiva**.
 
 ## Verificar no código
 

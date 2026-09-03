@@ -4,7 +4,7 @@ Este documento responde a uma pergunta:
 
 > Como saber se o sistema realmente sustentou a carga, em vez de apenas acumular trabalho e recuperar a média depois?
 
-Os resultados, o ambiente e os critérios de aprovação estão em [Performance e evidência](../performance.md). Aqui, o foco é o método usado para produzir e medir a carga.
+Os resultados, o ambiente e os critérios do benchmark estão em [Performance e evidência](../performance.md). Aqui, o foco é o método usado para produzir e medir a carga.
 
 ## O gerador acompanha o pagamento inteiro
 
@@ -22,7 +22,7 @@ Uma resposta HTTP bem-sucedida confirma apenas que a mensagem entrou no sistema.
 
 O gerador também executa as repetições previstas e verifica se elas foram aceitas sem produzir um resultado contraditório.
 
-Ele não olha o estado interno das aplicações para concluir que tudo deu certo. O relatório se limita ao trabalho que a própria ferramenta conseguiu criar, acompanhar e observar.
+O relatório usa o trabalho que a própria ferramenta criou, acompanhou e observou. As invariantes financeiras internas são verificadas separadamente pelos testes transacionais do sistema.
 
 ## A mesma configuração produz a mesma carga
 
@@ -40,7 +40,7 @@ Essas escolhas vêm da sequência de cada pagamento, não da ordem em que tarefa
 
 A configuração original e o plano efetivamente executado são guardados junto com o resultado.
 
-## O sistema não controla a taxa oferecida
+## O sistema sob teste não controla a taxa oferecida
 
 O gerador trabalha em **malha aberta** (*open loop*): os instantes dos pagamentos são planejados antes de qualquer resposta existir.
 
@@ -60,7 +60,7 @@ Essa regra impede que uma execução fique abaixo da meta durante parte do tempo
 
 ## Planejar o instante não basta; a requisição precisa começar
 
-O cadenciamento divide o tempo em janelas absolutas de 10 ms. Todas são calculadas a partir do início da fase, portanto o atraso de uma janela não desloca as seguintes.
+O cadenciamento divide o tempo em janelas absolutas de 10 ms. Todas são calculadas a partir do início da fase. Assim, o atraso de uma janela não desloca as seguintes.
 
 Preparar um pagamento exatamente em seu instante de início adicionaria ao resultado o tempo necessário para montar a mensagem e conseguir espaço na conexão. Por isso, o gerador prepara o próximo grupo com antecedência.
 
@@ -71,17 +71,17 @@ Preparar não significa iniciar. Um pagamento só conta quando:
 3. seu instante planejado chegou;
 4. a requisição começa dentro da janela permitida.
 
-Se alguma dessas condições não for atendida a tempo, o pagamento aparece como não iniciado. Depois que começa corretamente, ele não é descartado por atraso; continua sendo acompanhado até a resposta ou o encerramento do experimento.
+Se alguma dessas condições não for atendida a tempo, o pagamento aparece como não iniciado. Depois que começa corretamente, ele continua sendo acompanhado até a resposta ou o encerramento do experimento.
 
 Reservar capacidade HTTP/2 é importante porque uma fila interna do cliente poderia aceitar trabalho sem colocá-lo imediatamente na conexão. Sem essa proteção, o relatório registraria como iniciado algo que ainda estava esperando localmente.
 
-As conexões permanecem abertas durante o teste e são aquecidas antes da carga. Isso representa melhor uma instituição cuja infraestrutura mantém um pool de conexões com o sistema.
+As conexões permanecem abertas durante o teste e são aquecidas antes da carga. Assim, o teste não inclui um novo handshake de conexão em cada pagamento.
 
 ## O relógio não disputa com a rede ou o relatório
 
 Uma thread dedicada controla apenas os instantes em que os pagamentos começam. Ela não espera respostas HTTP, não processa notificações e não calcula estatísticas.
 
-Rede, respostas do recebedor e repetições são executadas de forma assíncrona. Os eventos observados seguem para um gravador separado, e o relatório é construído somente depois da execução.
+Rede, respostas do recebedor e repetições são executadas de forma assíncrona. Um componente separado grava os eventos observados. O relatório é construído somente depois da execução.
 
 Essa divisão mantém o caminho que controla o tempo pequeno e evita que percentis, CSVs ou agregações atrasem a criação da própria carga.
 
@@ -100,7 +100,7 @@ Quando a geração do aquecimento termina, a ferramenta aguarda tudo que ela pr�
 
 A fase principal só começa depois que essas obrigações terminam ou quando o limite de espera é excedido.
 
-Essa condição não afirma que Kafka, PostgreSQL e todas as filas internas estão completamente vazios. Ela garante algo menor e verificável:
+O critério observa o trabalho do gerador. Ele não exige que todas as filas internas do Kafka e do PostgreSQL estejam vazias:
 
 > A fase medida não começa enquanto o gerador ainda acompanha trabalho do aquecimento.
 
@@ -110,7 +110,7 @@ Parte dos pedidos e das respostas é enviada novamente dez segundos depois.
 
 As repetições preservam a identidade e o conteúdo da mensagem original. Elas exercitam a idempotência do sistema, mas não ocupam o lugar de pagamentos novos e não contam para o piso de throughput.
 
-O relatório compara quantas foram planejadas, enviadas e aceitas. Uma repetição selecionada que não acontece ou não recebe uma resposta de ingresso bem-sucedida permanece visível como violação.
+O relatório compara quantas foram planejadas, enviadas e aceitas. Se uma repetição planejada não for enviada ou aceita na entrada, o relatório marca a violação.
 
 ## Como os resultados são calculados
 
@@ -154,22 +154,22 @@ A preparação cria um ambiente novo, aguarda os serviços, provisiona os partic
 
 Somente depois disso o comando de execução inicia a carga. Ele exige a mesma configuração usada na preparação e preserva o plano junto com os resultados.
 
-O comando de execução não repete verificações de infraestrutura nem tenta adivinhar que todos os serviços estão ociosos. Essas responsabilidades pertencem à preparação.
+A preparação cuida das verificações de infraestrutura. O comando de execução cuida apenas da carga e usa o ambiente que foi preparado.
 
-Nas qualificações finais, cada execução começou com uma preparação completa e independente.
+Nas execuções finais, cada rodada começou com uma preparação completa e independente.
 
-## Onde a metodologia termina
+## Escopo da metodologia
 
-O desenho assume conscientemente que:
+O método usado neste projeto considera:
 
-* gerador e sistema compartilham o mesmo host;
-* a thread que controla o cadenciamento não usa prioridade de tempo real nem afinidade fixa de CPU;
-* 10 ms é a menor unidade temporal contratada;
-* a conclusão do aquecimento considera o trabalho do gerador, não todo o estado interno dos serviços;
-* a corretude end-to-end observa resultados e repetições, mas não audita novamente todos os saldos;
-* diagnósticos ajudam a explicar uma execução, mas não substituem os critérios do relatório.
+* gerador e sistema no mesmo host;
+* a thread de cadenciamento sem prioridade de tempo real ou afinidade fixa de CPU;
+* 10 ms como menor unidade temporal usada pelo teste;
+* aquecimento concluído pelo trabalho observável do gerador, não pelo estado interno de todos os serviços;
+* corretude end-to-end medida por resultados e repetições, com saldos cobertos pelos testes transacionais;
+* diagnósticos usados para explicar a execução, sem substituir os critérios do relatório.
 
-Dentro desses limites, a propriedade central é simples:
+Com esse método, a propriedade central é simples:
 
 > O throughput inclui apenas pagamentos que realmente começaram em sua janela, e a latência acompanha esses mesmos pagamentos até o resultado final.
 

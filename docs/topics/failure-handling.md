@@ -6,7 +6,7 @@ Este documento responde a uma pergunta:
 
 Aqui o foco é a reação operacional. As regras que protegem o dinheiro estão em [Como o pagamento permanece correto](payment-correctness.md), e as falhas específicas da entrega estão em [Como uma confirmação continua recuperável](notification-delivery.md).
 
-## Primeiro: tentar novamente poderia funcionar?
+## Primeiro: tentar de novo pode funcionar?
 
 Nem todo resultado negativo é uma falha técnica:
 
@@ -20,7 +20,7 @@ Nem todo resultado negativo é uma falha técnica:
 | mensagem Kafka viola o contrato interno | entrada inválida no Payment Processor | isola a mensagem na DLQ |
 | instituição não tem autoridade para a operação | violação de autorização | não altera o negócio e envia a mensagem à DLQ |
 | banco está temporariamente indisponível | falha de infraestrutura | mantém o lote pendente e tenta novamente |
-| código falha sem classificação segura | defeito interno | tenta novamente e depois isola o lote na DLQ |
+| falha interna sem classificação segura | defeito interno | tenta novamente e depois isola o lote na DLQ |
 
 A decisão central é esta:
 
@@ -111,11 +111,11 @@ A mensagem mantém chave e conteúdo originais. Metadados adicionais registram:
 
 Os tipos atuais distinguem `INVALID_PAYLOAD`, `DIVERGENT_DUPLICATE`, `STATUS_REPORT_CONFLICT`, `NOT_AUTHENTICATED`, `UNAUTHORIZED_PSP` e `BATCH_PROCESSING_ERROR`.
 
-A DLQ não reprocessa mensagens automaticamente. Reintroduzir uma mensagem exige uma decisão operacional, porque repeti-la sem corrigir a causa apenas recriaria o mesmo problema.
+A DLQ não reprocessa mensagens automaticamente. Uma mensagem só volta ao fluxo quando é reintroduzida depois que sua causa foi analisada.
 
 ## Indisponibilidade temporária preserva o trabalho
 
-Quando PostgreSQL produz uma falha claramente transitória, o Payment Processor a classifica como infraestrutura indisponível.
+Quando uma falha do PostgreSQL é classificada como transitória, o Payment Processor trata a infraestrutura como indisponível.
 
 O consumidor então:
 
@@ -139,7 +139,7 @@ Uma exceção inesperada pode acontecer em um ponto no qual o consumidor não co
 
 Nessa situação, o consumidor tenta novamente duas vezes, com intervalo de um segundo. Se o defeito permanecer, todas as mensagens do lote seguem individualmente para a DLQ como `BATCH_PROCESSING_ERROR`, e o lote deixa de bloquear a partição.
 
-Isso evita que um lote problemático bloqueie a partição indefinidamente. O custo é deliberado: mensagens que seriam válidas isoladamente também podem ir para a DLQ quando não existe uma forma segura de identificar a origem da falha.
+Isso evita que um lote problemático bloqueie a partição indefinidamente. Nesse caso, mensagens que seriam válidas isoladamente também podem ir para a DLQ, porque o consumidor não consegue identificar com segurança a origem da falha.
 
 O sistema não tenta adivinhar qual mensagem causou uma exceção arbitrária nem executa parcialmente o lote uma segunda vez fora da transação para descobrir isso.
 
@@ -147,11 +147,11 @@ O sistema não tenta adivinhar qual mensagem causou uma exceção arbitrária ne
 
 Depois do commit, falhar ao publicar uma confirmação não pode transformar uma transação concluída em uma falsa rejeição.
 
-A outbox já persistida continua sendo a fonte de verdade. O publicador mantém e repete o lote; registros remanescentes também são publicados antes de novos pagamentos serem consumidos na próxima inicialização.
+A outbox persistida continua sendo a fonte de verdade. O publicador mantém e repete o lote; registros remanescentes também são publicados antes de novos pagamentos serem consumidos na próxima inicialização.
 
-Uma confirmação Kafka parcial ou um delete inconclusivo pode repetir o lote completo. Essa fronteira prefere duplicata recuperável a perda silenciosa.
+Uma confirmação Kafka parcial ou uma remoção inconclusiva pode repetir o lote completo. Isso pode criar duplicatas, mas evita perder a confirmação.
 
-O limite atual é que uma obrigação que não chegou ao publicador logo depois do commit não é procurada periodicamente durante a mesma execução. Esse caso depende de uma reinicialização e está detalhado em [Como uma confirmação continua recuperável](notification-delivery.md).
+Se uma obrigação não chegar ao publicador logo depois do commit, ela não é procurada periodicamente durante a mesma execução. Ela volta ao fluxo na próxima inicialização, como detalhado em [Como uma confirmação continua recuperável](notification-delivery.md).
 
 ## No Pull, o erro diz ao cliente o que fazer
 
@@ -183,18 +183,16 @@ O Gateway nunca afirma por conta própria que a instituição processou um lote.
 | publicação da confirmação inconclusiva | outbox do Payment Processor | obrigação no PostgreSQL | repete o lote |
 | cursor inválido ou expirado | Notification Gateway | progresso continua com a instituição | erro gRPC explícito |
 
-## O que ainda não está coberto
+## Escopo do tratamento de falhas
 
-O tratamento atual não inclui:
+Alguns comportamentos ficam fora do fluxo automático:
 
-* reprocessamento automático ou interface operacional para DLQs;
-* métricas, dashboards e alertas operacionais das DLQs;
-* classificação individual de uma exceção arbitrária surgida no processamento em lote;
-* limite de tempo para a indisponibilidade da infraestrutura;
-* redução automática da admissão de pagamentos quando a entrega de notificações está indisponível;
-* recuperação, durante a mesma execução, de uma obrigação que perdeu o encaminhamento pós-commit.
+* mensagens na DLQ só voltam ao fluxo por uma decisão explícita;
+* uma exceção arbitrária no processamento em lote pode levar o lote inteiro à DLQ;
+* falhas de infraestrutura classificadas como transitórias não possuem limite de tentativas;
+* uma obrigação que perde o encaminhamento pós-commit volta ao fluxo na próxima inicialização.
 
-Esses limites mantêm a regra principal simples: **mensagens que continuarão falhando sem mudança deixam o caminho principal; infraestrutura temporariamente indisponível preserva o trabalho; resultados de negócio continuam sendo resultados, não falhas técnicas**.
+A regra principal continua simples: **mensagens que continuarão falhando sem mudança deixam o caminho principal; infraestrutura temporariamente indisponível preserva o trabalho; resultados de negócio continuam sendo resultados, não falhas técnicas**.
 
 ## Verificar no código
 

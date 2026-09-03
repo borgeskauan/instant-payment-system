@@ -2,7 +2,7 @@
 
 Este documento mostra o sistema por dentro: quem decide o que acontece com o dinheiro, como o resultado sobrevive a uma falha e por que o trabalho foi dividido entre componentes diferentes.
 
-O objetivo é entender o desenho como um todo. Locks, SQL, formatos de mensagem e outros detalhes de implementação ficam nos documentos de aprofundamento.
+O objetivo é entender o desenho como um todo. Bloqueios, SQL, formatos de mensagem e outros detalhes de implementação ficam nos documentos de aprofundamento.
 
 ## A jornada do pagamento
 
@@ -74,7 +74,7 @@ Assim, o sistema não confirma um pagamento sem mover o dinheiro correspondente,
 
 A obrigação de enviar a confirmação é gravada no PostgreSQL junto com o pagamento. Depois que essa transação termina, ela é publicada no Kafka. Esse padrão é conhecido como **transactional outbox**.
 
-Kafka mantém um histórico recente das confirmações. As instituições consultam esse histórico pelo Notification Gateway e informam até onde já o processaram por meio de um cursor.
+O Kafka mantém um histórico recente das confirmações. As instituições consultam esse histórico pelo Notification Gateway e informam até onde já o processaram por meio de um cursor.
 
 Se uma instituição cair antes de terminar um lote, pode receber as mesmas mensagens novamente. A entrega é **at-least-once**: repetir é permitido; perder silenciosamente não.
 
@@ -88,13 +88,13 @@ Se uma instituição cair antes de terminar um lote, pode receber as mesmas mens
 | progresso já processado | a própria instituição |
 | acesso ao histórico | Notification Gateway |
 
-Essa separação evita duas partes diferentes tentando decidir a mesma coisa. Kafka não decide o estado do dinheiro, o Gateway não inventa o progresso de uma instituição e PostgreSQL não precisa acompanhar cada entrega individual.
+Essa separação evita que duas partes diferentes tentem decidir a mesma coisa. O Kafka não decide o estado do dinheiro, o Gateway não inventa o progresso de uma instituição e o PostgreSQL não precisa acompanhar cada entrega individual.
 
 ## Nem toda falha pede a mesma resposta
 
 O sistema distingue resultados normais de negócio, mensagens inválidas e falhas de infraestrutura.
 
-Saldo insuficiente é um resultado normal do pagamento. Uma mensagem inválida é separada para não bloquear as seguintes. Se a infraestrutura estiver temporariamente indisponível, o trabalho permanece disponível para uma nova tentativa.
+Saldo insuficiente é um resultado normal do pagamento. Uma mensagem inválida é isolada para não bloquear as seguintes. Se a infraestrutura estiver temporariamente indisponível, o trabalho permanece disponível para uma nova tentativa.
 
 Essa distinção evita tanto uma repetição infinita quanto o descarte de algo que ainda poderia ser concluído.
 
@@ -106,15 +106,13 @@ Cada documento abaixo responde a uma pergunta específica:
 * [Entrega recuperável de notificações](topics/notification-delivery.md): como outbox, Kafka, cursor e Pull mantêm a confirmação disponível?
 * [Tratamento de falhas](topics/failure-handling.md): como entradas inválidas, indisponibilidade, retry e DLQ são classificados?
 
-## O que este desenho ainda não cobre
+## Escopo desta versão
 
-O sistema foi construído e testado dentro de alguns limites deliberados:
+Algumas decisões definem o comportamento desta versão:
 
-* uma instância de cada serviço e um broker Kafka com fator de replicação 1;
-* nenhuma qualificação de escala horizontal, multi-região ou Kubernetes;
-* sete dias de retenção operacional das notificações;
-* nenhum timeout automático para pagamentos que aguardam a decisão do recebedor;
-* rejeição imediata por saldo insuficiente, sem fila de liquidez;
-* uma confirmação que não entra no caminho de publicação logo após o commit só é redescoberta na próxima inicialização.
+* as notificações ficam disponíveis no Kafka por sete dias;
+* pagamentos que aguardam a decisão do recebedor não expiram automaticamente;
+* saldo insuficiente produz rejeição imediata, sem fila de liquidez;
+* se uma confirmação não entrar no caminho de publicação logo após o commit, ela volta ao fluxo na próxima inicialização.
 
 A [evolução da engenharia](engineering-evolution.md) mostra como os problemas encontrados durante o projeto levaram a essas decisões.

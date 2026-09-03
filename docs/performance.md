@@ -6,7 +6,7 @@ A pergunta do benchmark era direta:
 
 Em duas execuções consecutivas de 15 minutos, a resposta foi sim.
 
-Este documento mostra o que foi executado, os resultados observados, o computador usado e até onde essa conclusão pode ser levada. O funcionamento detalhado do gerador está em [Como o load test funciona](topics/load-testing.md).
+Este documento mostra o que foi executado, os resultados observados, o computador usado e o escopo da medição. O funcionamento detalhado do gerador está em [Como o teste de carga funciona](topics/load-testing.md).
 
 ## O que precisava ser verdade
 
@@ -58,7 +58,7 @@ Os percentis acima combinam os dois cenários. Como uma rejeição por saldo ins
 | p95 | 234 ms | 237 ms | 124 ms |
 | p99 | 265 ms | 272 ms | 151 ms |
 
-O caminho concluído foi mais caro nas duas execuções, como esperado. A execução A, porém, foi mais lenta nos dois cenários. A diferença entre A e B, portanto, não veio apenas da etapa adicional de decisão do recebedor nem ficou escondida pela proporção de rejeições rápidas.
+O caminho concluído foi mais caro nas duas execuções, como esperado. A execução A foi mais lenta nos dois cenários. Portanto, a diferença entre A e B não veio apenas da etapa adicional de decisão do recebedor. Ela também não foi causada pela proporção de rejeições rápidas.
 
 Cada execução cumpriu os três critérios por conta própria.
 
@@ -97,7 +97,7 @@ Uma resposta HTTP bem-sucedida significa apenas que a entrada recebeu a mensagem
 
 O throughput também não é calculado apenas pela média. O relatório examina todas as janelas contínuas de um segundo e preserva a menor contagem encontrada. Uma rajada posterior não consegue esconder um período abaixo da meta.
 
-Na execução A, 631 pagamentos perderam sua janela e não foram iniciados. Eles permaneceram fora do total; mesmo assim, a pior janela ainda continha 2.017 pagamentos.
+Na execução A, 631 pagamentos perderam a janela planejada e não foram iniciados. Eles permaneceram fora do total; mesmo assim, a pior janela ainda continha 2.017 pagamentos.
 
 O gerador verifica as confirmações que recebe e as repetições que executa. Ele não relê todos os saldos finais do PostgreSQL. As garantias financeiras mais profundas são verificadas pelos testes descritos em [Corretude do pagamento](topics/payment-correctness.md).
 
@@ -124,11 +124,11 @@ O teste usou uma instância de PostgreSQL, Kafka, Payment Ingress, Payment Proce
 
 Uma execução de 15 minutos ocupou aproximadamente 2,63 GB no PostgreSQL e 1,99 GB no Kafka, totalizando 4,62 GB.
 
-Dividir esse total pelos cerca de 1,89 milhão de pagamentos planejados para a fase medida produz uma razão aproximada de 2,4 KB acumulados por pagamento. Uma extrapolação puramente linear colocaria essa ordem de grandeza perto de 443 GB por dia; para o Kafka isoladamente, manter sete dias do mesmo volume corresponderia a aproximadamente 1,3 TB.
+Dividir esse total pelos cerca de 1,89 milhão de pagamentos planejados para a fase medida produz aproximadamente 2,4 KB acumulados por pagamento. Em uma extrapolação linear, essa ordem de grandeza fica perto de 443 GB por dia. Para o Kafka isoladamente, sete dias do mesmo volume corresponderiam a aproximadamente 1,3 TB.
 
-Isso não é uma previsão de produção. O volume observado também inclui aquecimento, respostas, repetições e confirmações, enquanto compressão, limpeza de segmentos, retenções diferentes e a composição da carga mudam o crescimento real. A conta serve apenas para revelar outra consequência do experimento: capacidade de armazenamento e políticas de retenção tornam-se parte relevante do desenho mesmo antes de CPU ser o limite.
+A extrapolação serve para comparar a ordem de grandeza do armazenamento. O volume observado inclui aquecimento, respostas, repetições e confirmações. Compressão, limpeza de segmentos, retenção e composição da carga também afetam o crescimento. O experimento mostrou que armazenamento e retenção passam a importar antes de CPU se tornar o limite.
 
-Esses números descrevem o ambiente observado. Eles não eram critérios separados de aprovação.
+Esses números descrevem o ambiente observado e não entram nos três critérios do benchmark.
 
 ## Por que as duas execuções importam
 
@@ -151,7 +151,7 @@ docs/performance/evidence/2026-08-29/
 
 O perfil e o plano registram a carga executada. Os relatórios preservam geração, latência, confirmações e repetições. Os checksums permitem verificar que esses arquivos continuam iguais aos escolhidos como evidência final.
 
-Os relatórios de comparação entre os geradores Go e Rust, presentes no mesmo diretório, pertencem a outro estudo e não fazem parte das qualificações finais.
+Os relatórios de comparação entre os geradores Go e Rust, presentes no mesmo diretório, pertencem a outro estudo e não fazem parte das execuções finais.
 
 Para executar o mesmo perfil novamente:
 
@@ -163,15 +163,14 @@ cd load-test
 
 A preparação recria o ambiente local. Uma nova execução não herda a conclusão das anteriores: precisa cumprir novamente todos os critérios.
 
-## Onde a conclusão termina
+## Escopo da medição
 
-Essas duas execuções não demonstram:
+O benchmark mediu um cenário específico:
 
-* capacidade equivalente à do Pix real ou a uma implantação de produção;
-* alta disponibilidade, múltiplas instâncias, multi-região ou Kubernetes;
-* comportamento com um cluster Kafka replicado — o teste usou um broker e fator 1;
-* isolamento entre gerador e sistema, pois ambos compartilharam o host;
-* estabilidade por uma hora, 24 horas ou períodos maiores;
-* auditoria independente dos saldos finais de todos os pagamentos.
+* uma instância de cada serviço;
+* um broker Kafka com fator de replicação 1;
+* gerador e sistema no mesmo host;
+* fase principal de 15 minutos;
+* corretude end-to-end verificada pelas confirmações e repetições observadas, com as invariantes financeiras cobertas pelos testes transacionais.
 
-Dentro desses limites, as duas execuções sustentam a conclusão do projeto: pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhuma confirmação esperada ausente ou contraditória.
+Nesse cenário, as duas execuções sustentaram a conclusão do projeto: pelo menos 2.000 pagamentos por segundo, p99 abaixo de 1 segundo e nenhuma confirmação esperada ausente ou contraditória.
