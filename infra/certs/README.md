@@ -1,250 +1,76 @@
 # Local mTLS certificates
 
-This directory contains local development tooling for PSP mTLS connections to
-the `notification-gateway` and `kafka-producer`.
+This directory contains the script used to create certificates for local development and load testing. Generated files are written under `infra/certs/local/` and are ignored by Git.
 
-Generated files are written under `infra/certs/local/` and are intentionally ignored by Git.
+These certificates are for local environments only. They do not implement production certificate issuance, rotation, revocation, or private-key custody.
 
-## Commands
+## Generate certificates
 
-Generate the local CA and both server certificates:
+Create the local CA and the server certificates used by the Notification Gateway and Payment Ingress:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh init
 ```
 
-In the Docker Compose environment, this is normally done by the one-shot service:
+Docker Compose normally runs the same operation through its one-shot initialization service:
 
 ```bash
-LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) docker compose -f infra/docker-compose.yml up certs-init
+LOCAL_UID=$(id -u) LOCAL_GID=$(id -g) \
+  docker compose -f infra/docker-compose.yml up certs-init
 ```
 
-Generate a PSP client certificate for an ISPB:
+Create a client certificate for one PSP:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh psp 12345678
 ```
 
-Generate a PSP client certificate under a custom root:
+The PSP identity is stored in the signed certificate as:
 
-```bash
-infra/certs/generate-local-mtls-certs.sh --psp-root /tmp/load-certs psp 12345678
+```text
+SAN URI = urn:pix:ispb:12345678
 ```
 
-This writes the certificate to `/tmp/load-certs/psp-12345678/`. The load-tool uses this option to create temporary PSP certificates for each simulated ISPB without polluting `infra/certs/local/`.
-
-Recreate existing files with `--force`:
+The load tool can place PSP certificates in a temporary directory instead of the shared local tree:
 
 ```bash
-infra/certs/generate-local-mtls-certs.sh --force psp 12345678
+infra/certs/generate-local-mtls-certs.sh \
+  --psp-root /tmp/load-certs \
+  psp 12345678
 ```
 
 ## Generated files
 
 ```text
 infra/certs/local/
-  ca/
-    ca.crt
-    ca.key
-
-  notification-gateway/
-    server.crt
-    server.key
-
-  kafka-producer/
-    server.crt
-    server.key
-
-  psp-12345678/
-    client.crt
-    client.key
+├── ca/{ca.crt,ca.key}
+├── notification-gateway/{server.crt,server.key}
+├── kafka-producer/{server.crt,server.key}
+└── psp-12345678/{client.crt,client.key}
 ```
 
-With `--psp-root /tmp/load-certs`, only the PSP directory changes:
+Services use `ca.crt` to validate their peers. `ca.key` is only needed to issue certificates and must not be mounted into application containers.
 
-```text
-/tmp/load-certs/
-  psp-12345678/
-    client.crt
-    client.key
-```
+## Regenerate certificates
 
-`ca.crt` is the local CA certificate. Services use it at runtime to validate peer certificates.
-
-`ca.key` is the local CA private key. It is only used for provisioning new certificates and must not be mounted into application containers.
-
-The `notification-gateway/server.crt` and `server.key` files identify the gRPC
-server. Its certificate includes:
-
-```text
-SAN DNS = notification-gateway
-SAN DNS = localhost
-```
-
-The `kafka-producer/server.crt` and `server.key` files identify the HTTPS
-server. Its certificate includes:
-
-```text
-SAN DNS = kafka-producer
-SAN DNS = localhost
-```
-
-`client.crt` and `client.key` identify one PSP as an mTLS client for both
-servers. The client certificate includes the business identity:
-
-```text
-SAN URI = urn:pix:ispb:<ISPB>
-```
-
-Example:
-
-```text
-SAN URI = urn:pix:ispb:12345678
-```
-
-## kafka-producer identity contract
-
-The `kafka-producer` listener uses TLS with ALPN restricted to `h2`: it neither
-advertises nor accepts HTTP/1.1, H2C, or protocol downgrade. An mTLS client that
-does not offer `h2` fails protocol negotiation. The listener exposes exactly
-three authenticated endpoints:
-
-- `GET /health` authenticates the PSP and returns HTTP `200` without invoking
-  the payment publisher, publishing to Kafka, or creating business side
-  effects;
-- `POST /transfer` accepts `pacs.008` payloads;
-- `POST /transfer/status` accepts `pacs.002` payloads.
-
-All three endpoints extract the PSP identity from the client certificate and
-require exactly one SAN URI matching `urn:pix:ispb:<8 digits>`. An identity
-failure on `/health` is HTTP `401`, under the same authentication contract as
-the transfer routes.
-
-A certificate accepted by the CA but without a valid, unambiguous PSP identity
-receives HTTP `401`. A `pacs.008` whose payer does not match the authenticated
-ISPB receives HTTP `403`, and no transaction from that request is published.
-
-Every internal Kafka record created from either endpoint contains exactly one
-`authenticated-ispb` header derived from the certificate. Client HTTP headers
-and ISPB values from the URL or payload are not used as authenticated identity.
-
-## SPI authorization contract
-
-The SPI accepts an internal payment record only when it contains exactly one
-`authenticated-ispb` header. The value must be valid UTF-8 and contain exactly
-eight decimal digits. A missing, duplicated, null, malformed, or invalid header
-is published per record to the source topic DLQ with
-`dlq.error-type=NOT_AUTHENTICATED`.
-
-Header validation happens before protobuf decoding. This means a record with
-both an invalid authentication header and an invalid payload is classified as
-`NOT_AUTHENTICATED`.
-
-For a `pacs.008`, the SPI requires the authenticated ISPB to match the payer in
-the payload. For an existing payment, it also compares the identity with the
-persisted `sender_bank_code` before fingerprint and status replay rules are
-evaluated.
-
-For a `pacs.002`, the SPI compares the authenticated ISPB with the persisted
-`receiver_bank_code` before acquiring payment or funds locks and before applying
-status changes or settlement. An unknown payment remains a
-`STATUS_REPORT_CONFLICT`, because there is no persisted owner against which to
-authorize it.
-
-A valid identity that is not authorized for the message or payment is
-published per record with `dlq.error-type=UNAUTHORIZED_PSP`. Invalid or
-unauthorized records do not participate in business deduplication. Other
-authorized records in the same Kafka batch continue processing after the
-security DLQ publication succeeds. A security DLQ publication failure prevents
-the batch acknowledgment.
-
-## Local model vs production model
-
-This local setup follows the same trust idea as production: each server trusts
-a CA, the PSP presents a client certificate signed by that CA, and the
-application uses the signed certificate identity instead of trusting an ISPB
-sent in a payload.
-
-The local setup is intentionally simpler:
-
-- `generate-local-mtls-certs.sh init` creates the local CA and both server certificates.
-- `generate-local-mtls-certs.sh psp <ISPB>` creates both the PSP private key and the PSP client certificate.
-- The local CA private key is stored on the developer machine under `infra/certs/local/ca/ca.key`.
-- There is no CSR flow, revocation check, certificate inventory, or formal rotation policy.
-
-A production-like setup should be stricter:
-
-- The PSP generates and protects its own private key.
-- The PSP sends a CSR containing its public key and requested identity to the CA/onboarding process.
-- The CA validates the PSP/ISPB association and signs a certificate containing the approved identity, for example `SAN URI = urn:pix:ispb:<ISPB>`.
-- The PSP receives only the signed certificate; the CA/SPI does not need the PSP private key.
-- Homologation and production should use separate trust roots and separate certificates.
-- Certificate revocation, expiration monitoring, renewal, audit, and operational inventory should exist outside this local script.
-
-If a signed certificate is edited after issuance, the CA signature no longer validates. The gateway relies on this property: the ISPB extracted from the SAN URI is trusted only because it is part of the signed certificate validated during mTLS.
-
-## Idempotency and rotation
-
-Without `--force`, the script does not overwrite complete existing certificates.
-
-If only part of a certificate pair exists, the script fails and asks for cleanup or `--force`.
-
-`--force` means "delete and recreate the files for this command". With
-`--force init`, it also removes every `infra/certs/local/psp-*` directory
-because those certificates would no longer be valid after the CA changes.
-
-For a PSP certificate:
+The script does not overwrite a complete certificate pair unless `--force` is provided:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh --force psp 12345678
 ```
 
-This recreates only:
-
-```text
-infra/certs/local/psp-12345678/client.crt
-infra/certs/local/psp-12345678/client.key
-```
-
-For the local CA and gateway certificate:
+Rotating the local CA also recreates both server certificates and removes PSP certificates under `infra/certs/local/`:
 
 ```bash
 infra/certs/generate-local-mtls-certs.sh --force init
 ```
 
-This recreates:
+After rotating the CA, regenerate the required PSP certificates and restart services that use them. PSP certificates created under a custom `--psp-root` are not removed automatically.
 
-```text
-infra/certs/local/ca/ca.crt
-infra/certs/local/ca/ca.key
-infra/certs/local/notification-gateway/server.crt
-infra/certs/local/notification-gateway/server.key
-infra/certs/local/kafka-producer/server.crt
-infra/certs/local/kafka-producer/server.key
-```
-
-It also removes all locally generated PSP certificate directories:
-
-```text
-infra/certs/local/psp-*
-```
-
-PSP certificates created under a custom `--psp-root` are not tracked and are
-not removed.
-
-Be careful with `--force init`: recreating the CA changes the authority that
-signs certificates. Regenerate the PSP certificates that should keep working
-and restart running PSP containers:
+## Inspect a certificate
 
 ```bash
-infra/certs/generate-local-mtls-certs.sh --force init
-infra/certs/generate-local-mtls-certs.sh psp 12345678
-```
-
-## Inspect certificates
-
-```bash
-openssl x509 -in infra/certs/local/notification-gateway/server.crt -noout -text
-openssl x509 -in infra/certs/local/kafka-producer/server.crt -noout -text
-openssl x509 -in infra/certs/local/psp-12345678/client.crt -noout -text
+openssl x509 \
+  -in infra/certs/local/psp-12345678/client.crt \
+  -noout -text
 ```
