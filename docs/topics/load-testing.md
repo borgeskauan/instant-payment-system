@@ -1,4 +1,4 @@
-# Como o load test funciona
+# Como o teste de carga funciona
 
 Este documento responde a uma pergunta:
 
@@ -8,7 +8,7 @@ Os resultados, o ambiente e os critérios de aprovação estão em [Performance 
 
 ## O gerador acompanha o pagamento inteiro
 
-O load tool representa as instituições dos dois lados do fluxo:
+O gerador de carga representa as instituições dos dois lados do fluxo:
 
 ```text
 pagador envia o pagamento
@@ -22,11 +22,11 @@ Uma resposta HTTP bem-sucedida confirma apenas que a mensagem entrou no sistema.
 
 O gerador também executa as repetições previstas e verifica se elas foram aceitas sem produzir um resultado contraditório.
 
-Ele não consulta o estado interno das aplicações para decidir que tudo deu certo. Suas afirmações se limitam ao trabalho que conseguiu criar, acompanhar e observar de forma determinística.
+Ele não olha o estado interno das aplicações para concluir que tudo deu certo. O relatório se limita ao trabalho que a própria ferramenta conseguiu criar, acompanhar e observar.
 
 ## A mesma configuração produz a mesma carga
 
-Antes de começar, o perfil escolhido é validado e transformado em um plano de execução.
+Antes de começar, a configuração escolhida é validada e transformada em um plano de execução.
 
 Esse plano determina antecipadamente:
 
@@ -38,11 +38,11 @@ Esse plano determina antecipadamente:
 
 Essas escolhas vêm da sequência de cada pagamento, não da ordem em que tarefas concorrentes terminam. Executar novamente o mesmo plano preserva a composição da carga.
 
-O perfil original e o plano efetivamente executado são armazenados junto com o resultado.
+A configuração original e o plano efetivamente executado são guardados junto com o resultado.
 
-## A taxa é externa à velocidade do sistema
+## O sistema não controla a taxa oferecida
 
-O gerador trabalha em malha aberta (**open loop**). Os pagamentos possuem instantes planejados antes de suas respostas existirem.
+O gerador trabalha em **malha aberta** (*open loop*): os instantes dos pagamentos são planejados antes de qualquer resposta existir.
 
 Se o sistema ficar mais lento, o gerador não reduz automaticamente a taxa. Se um pagamento perder seu momento de início, ele também não é empurrado para frente para reparar a média.
 
@@ -58,9 +58,9 @@ Não existe uma fila de pagamentos atrasados seguida por uma rajada de recupera�
 
 Essa regra impede que uma execução fique abaixo da meta durante parte do tempo e pareça saudável apenas porque compensou depois.
 
-## Iniciar no momento certo exige capacidade real
+## Planejar o instante não basta; a requisição precisa começar
 
-O pacing divide o tempo em janelas absolutas de 10 ms. Todas são calculadas a partir do início da fase, portanto o atraso de uma janela não desloca as seguintes.
+O cadenciamento divide o tempo em janelas absolutas de 10 ms. Todas são calculadas a partir do início da fase, portanto o atraso de uma janela não desloca as seguintes.
 
 Preparar um pagamento exatamente em seu instante de início adicionaria ao resultado o tempo necessário para montar a mensagem e conseguir espaço na conexão. Por isso, o gerador prepara o próximo grupo com antecedência.
 
@@ -71,7 +71,7 @@ Preparar não significa iniciar. Um pagamento só conta quando:
 3. seu instante planejado chegou;
 4. a requisição começa dentro da janela permitida.
 
-Se alguma dessas condições não for atendida a tempo, o pagamento aparece como não iniciado. Depois que começa corretamente, ele não é abandonado por pacing; continua sendo acompanhado até a resposta ou o encerramento do experimento.
+Se alguma dessas condições não for atendida a tempo, o pagamento aparece como não iniciado. Depois que começa corretamente, ele não é descartado por atraso; continua sendo acompanhado até a resposta ou o encerramento do experimento.
 
 Reservar capacidade HTTP/2 é importante porque uma fila interna do cliente poderia aceitar trabalho sem colocá-lo imediatamente na conexão. Sem essa proteção, o relatório registraria como iniciado algo que ainda estava esperando localmente.
 
@@ -79,19 +79,19 @@ As conexões permanecem abertas durante o teste e são aquecidas antes da carga.
 
 ## O relógio não disputa com a rede ou o relatório
 
-Uma thread dedicada controla apenas os instantes de admissão. Ela não espera respostas HTTP, não processa notificações e não calcula estatísticas.
+Uma thread dedicada controla apenas os instantes em que os pagamentos começam. Ela não espera respostas HTTP, não processa notificações e não calcula estatísticas.
 
-Rede, respostas do recebedor e repetições são executadas de forma assíncrona. Os eventos observados seguem para um recorder separado, e o relatório é construído somente depois da execução.
+Rede, respostas do recebedor e repetições são executadas de forma assíncrona. Os eventos observados seguem para um gravador separado, e o relatório é construído somente depois da execução.
 
 Essa divisão mantém o caminho que controla o tempo pequeno e evita que percentis, CSVs ou agregações atrasem a criação da própria carga.
 
 Filas internas possuem limites. Se a ferramenta ficar sem capacidade para acompanhar seu próprio trabalho, a execução termina com erro em vez de reduzir silenciosamente a carga.
 
-## O warmup termina quando seu trabalho observável termina
+## O aquecimento termina quando seu trabalho observável termina
 
 Antes da fase principal, o gerador aumenta a taxa em duas etapas. O objetivo é aquecer conexões, caches e JVMs sem misturar essa inicialização com o período medido.
 
-Quando a geração do warmup termina, a ferramenta aguarda tudo que ela própria criou e consegue observar:
+Quando a geração do aquecimento termina, a ferramenta aguarda tudo que ela própria criou e consegue observar:
 
 * pedidos originais;
 * respostas do recebedor;
@@ -100,9 +100,9 @@ Quando a geração do warmup termina, a ferramenta aguarda tudo que ela própria
 
 A fase principal só começa depois que essas obrigações terminam ou quando o limite de espera é excedido.
 
-Esse gate não afirma que Kafka, PostgreSQL e todas as filas internas estão completamente vazios. Ele garante uma propriedade menor e verificável:
+Essa condição não afirma que Kafka, PostgreSQL e todas as filas internas estão completamente vazios. Ela garante algo menor e verificável:
 
-> A fase medida não começa enquanto o load tool ainda acompanha trabalho de warmup.
+> A fase medida não começa enquanto o gerador ainda acompanha trabalho do aquecimento.
 
 ## Repetições aumentam a carga, mas não o throughput declarado
 
@@ -118,7 +118,7 @@ O relatório compara quantas foram planejadas, enviadas e aceitas. Uma repetiç�
 
 Um pagamento conta somente se sua requisição original realmente começou dentro da fase medida.
 
-Depois da execução, o relatório avalia todas as janelas contínuas de um segundo contidas nessa fase. A menor contagem encontrada é o **minimum rolling TPS**.
+Depois da execução, o relatório avalia todas as janelas contínuas de um segundo contidas nessa fase. A menor contagem encontrada é o **minimum rolling TPS**, ou menor throughput contínuo de um segundo.
 
 Com isso:
 
@@ -148,13 +148,13 @@ Confirmações duplicadas e compatíveis são permitidas, pois a entrega é at-l
 
 O relatório não relê todos os saldos no PostgreSQL. As invariantes financeiras são verificadas diretamente pelos testes transacionais do sistema.
 
-## Preparar e executar são responsabilidades diferentes
+## Preparar o ambiente e gerar a carga são trabalhos diferentes
 
 A preparação cria um ambiente novo, aguarda os serviços, provisiona os participantes e gera os certificados necessários.
 
-Somente depois disso o runner inicia a carga. Ele exige o mesmo perfil usado na preparação e preserva a configuração e o plano junto com os resultados.
+Somente depois disso o comando de execução inicia a carga. Ele exige a mesma configuração usada na preparação e preserva o plano junto com os resultados.
 
-O runner não repete verificações de infraestrutura nem tenta inferir que toda a stack está ociosa. Essas responsabilidades pertencem à preparação.
+O comando de execução não repete verificações de infraestrutura nem tenta adivinhar que todos os serviços estão ociosos. Essas responsabilidades pertencem à preparação.
 
 Nas qualificações finais, cada execução começou com uma preparação completa e independente.
 
@@ -163,9 +163,9 @@ Nas qualificações finais, cada execução começou com uma preparação comple
 O desenho assume conscientemente que:
 
 * gerador e sistema compartilham o mesmo host;
-* o pacer não usa prioridade de tempo real nem afinidade fixa de CPU;
+* a thread que controla o cadenciamento não usa prioridade de tempo real nem afinidade fixa de CPU;
 * 10 ms é a menor unidade temporal contratada;
-* o gate de warmup conhece o trabalho do gerador, não todo o estado interno da stack;
+* a conclusão do aquecimento considera o trabalho do gerador, não todo o estado interno dos serviços;
 * a corretude end-to-end observa resultados e repetições, mas não audita novamente todos os saldos;
 * diagnósticos ajudam a explicar uma execução, mas não substituem os critérios do relatório.
 
