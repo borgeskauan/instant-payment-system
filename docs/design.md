@@ -1,41 +1,41 @@
-# Como o sistema funciona
+# How the system works
 
-O README mostra o projeto pelo ponto de vista de quem faz um pagamento. Aqui vamos olhar por dentro: quem decide o que acontece com o dinheiro, como o resultado sobrevive a uma falha e por que o trabalho foi dividido entre componentes diferentes.
+This document shows the system from the inside: who decides what happens to the money, how the result survives a failure, and why the work is split across different components.
 
-O objetivo é entender o desenho como um todo. Locks, SQL, formatos de mensagem e outros detalhes de implementação ficam nos documentos de aprofundamento.
+The goal is to understand the design as a whole. Locks, SQL, message formats, and other implementation details are covered in the deeper documents.
 
-## A jornada do pagamento
+## The payment journey
 
-Duas instituições participam do fluxo: a do pagador e a do recebedor.
+Two institutions take part in the flow: the payer's institution and the receiver's institution.
 
 ```mermaid
 sequenceDiagram
-    participant P as Instituição do pagador
-    participant S as Sistema de pagamentos
-    participant R as Instituição do recebedor
+    participant P as Payer institution
+    participant S as Payment system
+    participant R as Receiver institution
 
-    P->>S: envia o pagamento
-    S->>R: pede uma decisão
-    R->>S: aceita ou rejeita
-    S-->>P: informa o resultado
+    P->>S: sends payment
+    S->>R: asks for a decision
+    R->>S: accepts or rejects
+    S-->>P: returns the result
 ```
 
-Quando o pedido chega, o sistema verifica se o pagador possui saldo. Se não houver, rejeita o pagamento imediatamente.
+When the request arrives, the system checks whether the paying institution has enough available balance. If not, it rejects the payment immediately.
 
-Se houver, o valor é reservado antes de consultar o recebedor. Isso impede que outro pagamento gaste o mesmo dinheiro durante a espera.
+If the balance is enough, the amount is reserved before the receiver is asked. This prevents another payment from spending the same money while the system waits.
 
-O recebedor então decide:
+The receiver then decides:
 
-* se aceitar, recebe o valor reservado;
-* se rejeitar, o valor volta à disponibilidade do pagador.
+* if it accepts, it receives the reserved amount;
+* if it rejects, the amount becomes available to the paying institution again.
 
-Por fim, o resultado retorna às instituições envolvidas.
+Finally, the result goes back to the institutions involved.
 
-## Onde cada parte entra
+## Where each part fits
 
 ```mermaid
 flowchart LR
-    Participants[Instituições] --> Ingress[Payment Ingress]
+    Participants[Institutions] --> Ingress[Payment Ingress]
     Ingress --> Kafka[(Kafka)]
     Kafka --> Processor[Payment Processor]
     Processor --> DB[(PostgreSQL)]
@@ -44,77 +44,75 @@ flowchart LR
     Gateway --> Participants
 ```
 
-O **Payment Ingress** recebe e autentica as mensagens. Sua resposta diz apenas que o pedido entrou no sistema; ela ainda não diz se o pagamento deu certo.
+The **Payment Ingress** receives and authenticates messages. Its response only says that the request entered the system. It does not say yet whether the payment succeeded.
 
-O **Payment Processor** é a autoridade sobre pagamentos e movimentações financeiras. É nele que o saldo é reservado, creditado ou devolvido.
+The **Payment Processor** is the authority for payments and money movement. This is where balance is reserved, credited, or returned.
 
-O **PostgreSQL** guarda pagamentos, saldos e o histórico de auditoria. Ele também permite confirmar juntas todas as mudanças produzidas pelo mesmo pagamento.
+**PostgreSQL** stores payments, balances, and audit history. It also lets the system commit together all changes produced by the same payment.
 
-O **Kafka** conecta componentes que trabalham em ritmos diferentes e mantém as mensagens disponíveis enquanto elas atravessam o fluxo.
+**Kafka** connects components that work at different speeds and keeps messages available while they move through the flow.
 
-O **Notification Gateway** oferece às instituições uma forma de recuperar pedidos e resultados sem transferir essa responsabilidade para o processador financeiro.
+The **Notification Gateway** gives institutions a way to recover requests and results without moving that responsibility into the financial processor.
 
-## O que esse desenho precisa preservar
+## What this design must preserve
 
-### E se o mesmo pagamento chegar novamente?
+### What if the same payment arrives again?
 
-Mensagens podem se repetir depois de uma falha de comunicação ou de uma nova tentativa. O sistema reconhece que aquele pagamento já existe e preserva seu resultado. A mensagem pode aparecer novamente; o dinheiro não se move novamente.
+Messages can be repeated after a communication failure or a retry. The system recognizes that the payment already exists and keeps its result. The message may appear again; the money does not move again.
 
-### E se dois pagamentos tentarem usar o mesmo saldo?
+### What if two payments try to use the same balance?
 
-O PostgreSQL estabelece uma ordem entre pagamentos que disputam o dinheiro da mesma instituição. Essa espera existe somente onde há uma disputa real pelo mesmo saldo; instituições independentes continuam avançando separadamente.
+PostgreSQL creates an order between payments that compete for the same institution's money. This wait exists only where there is a real conflict over the same balance. Independent institutions can continue separately.
 
-### E se alguma coisa falhar no meio?
+### What if something fails in the middle?
 
-Estado do pagamento, movimentação financeira, registro de auditoria e obrigação de informar o resultado são confirmados na mesma transação.
+Payment state, money movement, audit record, and the obligation to report the result are committed in the same transaction.
 
-Assim, o sistema não confirma um pagamento sem mover o dinheiro correspondente, nem move o dinheiro sem guardar a obrigação de informar o resultado.
+This means the system does not commit a payment without moving the related money, and it does not move the money without storing the obligation to report the result.
 
-### E se o pagamento terminar, mas a confirmação não chegar?
+### What if the payment finishes but the confirmation does not arrive?
 
-A obrigação de enviar a confirmação é gravada no PostgreSQL junto com o pagamento. Depois que essa transação termina, ela é publicada no Kafka. Esse padrão é conhecido como **transactional outbox**.
+The obligation to send the confirmation is stored in PostgreSQL together with the payment. After that transaction commits, it is published to Kafka. This pattern is known as a **transactional outbox**.
 
-Kafka mantém um histórico recente das confirmações. As instituições consultam esse histórico pelo Notification Gateway e informam até onde já o processaram por meio de um cursor.
+Kafka keeps a recent history of confirmations. Institutions read this history through the Notification Gateway and use a cursor to report how far they have processed it.
 
-Se uma instituição cair antes de terminar um lote, pode receber as mesmas mensagens novamente. A entrega é **at-least-once**: repetir é permitido; perder silenciosamente não.
+If an institution fails before it finishes a batch, it can receive the same messages again. Delivery is **at-least-once**: duplicates are allowed; silent loss is not.
 
-## Quem é responsável por cada informação?
+## Who owns each piece of information?
 
-| Informação | Autoridade |
+| Information | Authority |
 | --- | --- |
-| pagamentos, saldos e auditoria | PostgreSQL |
-| criação da obrigação de notificar | PostgreSQL / outbox |
-| notificações publicadas e recuperáveis | Kafka |
-| progresso já processado | a própria instituição |
-| acesso ao histórico | Notification Gateway |
+| payments, balances, and audit | PostgreSQL |
+| creation of the notification obligation | PostgreSQL / outbox |
+| published and recoverable notifications | Kafka |
+| processed progress | the institution itself |
+| access to notification history | Notification Gateway |
 
-Essa separação evita duas partes diferentes tentando decidir a mesma coisa. Kafka não decide o estado do dinheiro, o Gateway não inventa o progresso de uma instituição e PostgreSQL não precisa acompanhar cada entrega individual.
+This split prevents two different parts from trying to decide the same thing. Kafka does not decide the state of the money, the Gateway does not invent an institution's progress, and PostgreSQL does not need to track every individual delivery.
 
-## Nem toda falha pede a mesma resposta
+## Not every failure needs the same response
 
-O sistema distingue resultados normais de negócio, mensagens inválidas e falhas de infraestrutura.
+The system separates normal business results, invalid messages, and infrastructure failures.
 
-Saldo insuficiente é um resultado normal do pagamento. Uma mensagem inválida é separada para não bloquear as seguintes. Se a infraestrutura estiver temporariamente indisponível, o trabalho permanece disponível para uma nova tentativa.
+Insufficient funds is a normal payment result. An invalid message is isolated so it does not block later messages. If infrastructure is temporarily unavailable, the work stays available for another attempt.
 
-Essa distinção evita tanto uma repetição infinita quanto o descarte de algo que ainda poderia ser concluído.
+This avoids both endless retries and dropping work that could still finish successfully.
 
-## Para entender os mecanismos
+## Understanding the mechanisms
 
-Cada documento abaixo responde a uma pergunta específica:
+Each document below answers one specific question:
 
-* [Corretude do pagamento](topics/payment-correctness.md): como identidade, reserva, concorrência e transações preservam o dinheiro?
-* [Entrega recuperável de notificações](topics/notification-delivery.md): como outbox, Kafka, cursor e Pull mantêm a confirmação disponível?
-* [Tratamento de falhas](topics/failure-handling.md): como entradas inválidas, indisponibilidade, retry e DLQ são classificados?
+* [Payment correctness](topics/payment-correctness.md): how do identity, reservation, concurrency, and transactions protect the money?
+* [Recoverable notification delivery](topics/notification-delivery.md): how do the outbox, Kafka, cursors, and Pull keep confirmations available?
+* [Failure handling](topics/failure-handling.md): how are invalid inputs, outages, retries, and the DLQ classified?
 
-## O que este desenho ainda não cobre
+## Scope of this version
 
-O sistema foi construído e testado dentro de alguns limites deliberados:
+A few decisions define how this version behaves:
 
-* uma instância de cada serviço e um broker Kafka com fator de replicação 1;
-* nenhuma qualificação de escala horizontal, multi-região ou Kubernetes;
-* sete dias de retenção operacional das notificações;
-* nenhum timeout automático para pagamentos que aguardam a decisão do recebedor;
-* rejeição imediata por saldo insuficiente, sem fila de liquidez;
-* uma confirmação que não entra no caminho de publicação logo após o commit só é redescoberta na próxima inicialização.
+* notifications stay available in Kafka for seven days;
+* payments waiting for the receiver's decision do not expire automatically;
+* insufficient funds causes an immediate rejection, with no liquidity queue;
+* if a confirmation does not enter the publication path right after commit, it returns to the flow on the next startup.
 
-A [evolução da engenharia](engineering-evolution.md) mostra como os problemas encontrados durante o projeto levaram a essas decisões.
+[Engineering evolution](engineering-evolution.md) shows how the problems found during the project led to these decisions.

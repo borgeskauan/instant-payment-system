@@ -1,96 +1,96 @@
-# Como o sistema reage a falhas
+# How the system handles failures
 
-Este documento responde a uma pergunta:
+This document answers one question:
 
-> Quando algo não pode ser processado, devemos rejeitar, tentar novamente, separar a mensagem ou concluir normalmente?
+> When something cannot be processed, should we reject it, retry it, isolate the message, or finish normally?
 
-Aqui o foco é a reação operacional. As regras que protegem o dinheiro estão em [Como o pagamento permanece correto](payment-correctness.md), e as falhas específicas da entrega estão em [Como uma confirmação continua recuperável](notification-delivery.md).
+The focus here is the operational response. The rules that protect the money are in [How payment correctness is preserved](payment-correctness.md), and delivery-specific failures are in [How a confirmation stays recoverable](notification-delivery.md).
 
-## Primeiro: tentar novamente poderia funcionar?
+## First: can retrying work?
 
-Nem todo resultado negativo é uma falha técnica:
+Not every negative result is a technical failure:
 
-| Situação | Classificação | Reação |
+| Situation | Classification | Response |
 | --- | --- | --- |
-| saldo insuficiente | resultado de negócio | persiste `REJECTED` e notifica o pagador |
-| recebedor rejeitou | resultado de negócio | devolve a reserva, persiste `REJECTED` e notifica |
-| mesma mensagem reapareceu | repetição idempotente | não produz novo efeito |
-| mensagem externa não pode ser convertida | entrada inválida na borda HTTP | responde `400`; não publica no Kafka |
-| identidade mTLS não pode ser obtida | autenticação inválida | responde `401`; não publica no Kafka |
-| mensagem Kafka viola o contrato interno | entrada inválida no Payment Processor | isola a mensagem na DLQ |
-| instituição não tem autoridade para a operação | violação de autorização | não altera o negócio e envia a mensagem à DLQ |
-| banco está temporariamente indisponível | falha de infraestrutura | mantém o lote pendente e tenta novamente |
-| código falha sem classificação segura | defeito interno | tenta novamente e depois isola o lote na DLQ |
+| insufficient funds | business result | persist `REJECTED` and notify the payer |
+| receiver rejected | business result | return the reservation, persist `REJECTED`, and notify |
+| same message appeared again | idempotent duplicate | produce no new effect |
+| external message cannot be converted | invalid input at the HTTP boundary | return `400`; do not publish to Kafka |
+| mTLS identity cannot be read | invalid authentication | return `401`; do not publish to Kafka |
+| Kafka message breaks the internal contract | invalid input in the Payment Processor | isolate the message in the DLQ |
+| institution is not allowed to perform the operation | authorization violation | do not change business state and send the message to the DLQ |
+| database is temporarily unavailable | infrastructure failure | keep the batch pending and retry |
+| internal failure with no safe classification | internal defect | retry, then isolate the batch in the DLQ |
 
-A decisão central é esta:
+The main decision is:
 
 ```text
-o mesmo trabalho pode funcionar depois?
+can the same work succeed later?
         │
-        ├── sim, infraestrutura indisponível → preservar e repetir
+        ├── yes, infrastructure unavailable → keep and retry
         │
-        └── não com a mesma entrada
-                ├── mensagem identificável → isolar essa mensagem
-                └── origem incerta no lote → tratar o lote inteiro
+        └── no with the same input
+                ├── identifiable message → isolate that message
+                └── uncertain source in batch → handle the whole batch
 ```
 
-Uma **dead-letter queue (DLQ)** não representa rejeição de negócio nem serve para guardar trabalho durante uma indisponibilidade temporária. Ela separa uma mensagem que continuaria falhando com a mesma entrada e impediria as mensagens seguintes de avançar.
+A **dead-letter queue (DLQ)** is not a business rejection and is not a place to store work during a temporary outage. It isolates a message that would keep failing with the same input and would block later messages.
 
-## A resposta HTTP fala apenas sobre a entrada
+## The HTTP response only describes ingress
 
-O Payment Ingress autentica a instituição pelo certificado mTLS, converte a mensagem externa para o formato interno e espera o Kafka confirmar a publicação antes de responder.
+The Payment Ingress authenticates the institution from its mTLS certificate, converts the external message to the internal format, and waits for Kafka to confirm publication before replying.
 
-| Resposta | Significado |
+| Response | Meaning |
 | --- | --- |
-| `200` | todas as mensagens produzidas a partir da entrada foram confirmadas pelo Kafka |
-| `400` | a mensagem de pagamento externa (PACS) não possui a estrutura mínima ou os valores necessários |
-| `401` | a identidade da instituição não pôde ser extraída do certificado |
-| `500` | publicação Kafka ou processamento interno da borda falhou |
+| `200` | every message produced from the input was confirmed by Kafka |
+| `400` | the external payment message (PACS) does not have the minimum required structure or values |
+| `401` | the institution identity could not be extracted from the certificate |
+| `500` | Kafka publication or internal ingress processing failed |
 
-`200` não significa que o Payment Processor aceitou ou concluiu o pagamento. Significa apenas que a entrada foi autenticada, convertida e publicada.
+`200` does not mean that the Payment Processor accepted or completed the payment. It only means the input was authenticated, converted, and published.
 
-O Ingress não decide se a instituição autenticada é a pagadora correta nem se uma resposta veio do recebedor correto. Essas regras dependem do estado do pagamento e permanecem no Payment Processor.
+The Ingress does not decide whether the authenticated institution is the correct payer or whether a response came from the correct receiver. Those rules depend on payment state and stay in the Payment Processor.
 
-### E se apenas parte da mensagem chegar ao Kafka?
+### What if only part of the message reaches Kafka?
 
-Uma mensagem externa pode produzir vários registros no Kafka. Se apenas parte deles for confirmada, a resposta HTTP é `500`.
+One external message can produce several Kafka records. If only some of them are confirmed, the HTTP response is `500`.
 
-O cliente pode então repetir a mensagem inteira, inclusive a parte que já chegou. O Payment Processor absorve essas repetições por idempotência; o Ingress não tenta criar uma transação distribuída entre várias publicações.
+The client can then send the full message again, including the part that already arrived. The Payment Processor absorbs those duplicates through idempotency. The Ingress does not try to create a distributed transaction across several publications.
 
-## Uma mensagem inválida não precisa condenar o lote inteiro
+## One invalid message does not need to fail the whole batch
 
-Os consumidores recebem grupos de mensagens, mas preservam a relação entre cada comando e seu registro de origem no Kafka.
+Consumers receive groups of messages, but keep the link between each command and its source Kafka record.
 
-Antes do processamento financeiro, cada mensagem é verificada individualmente:
+Before financial processing, every message is checked on its own:
 
-* presença e formato único da identidade autenticada em `authenticated-ispb`;
-* conteúdo não vazio;
-* mensagem interna decodificável;
-* campos mínimos do contrato interno;
-* moeda, valor, ISPB e tipos suportados.
+* `authenticated-ispb` must exist and contain one valid identity;
+* payload must not be empty;
+* the internal message must be decodable;
+* required fields from the internal contract must exist;
+* currency, amount, ISPB, and types must be supported.
 
-Um registro inválido segue para a DLQ, enquanto os demais registros válidos do mesmo lote continuam.
+An invalid record goes to the DLQ while the valid records in the same batch continue.
 
-Depois da classificação do pagamento, o Payment Processor também consegue identificar individualmente:
+After payment classification, the Payment Processor can also identify these cases per message:
 
-* identidade reutilizada com conteúdo divergente;
-* decisão incompatível com o estado do pagamento;
-* pagamento inexistente para a decisão recebida;
-* tentativa feita por uma instituição sem autoridade.
+* a reused identity with different content;
+* a decision that conflicts with payment state;
+* a decision for a payment that does not exist;
+* an attempt by an institution without authority.
 
-Esses registros não produzem efeito financeiro e seguem para a DLQ correspondente. Uma repetição equivalente apenas preserva o resultado existente e não vai para a DLQ.
+These records do not create financial effects and go to the related DLQ. An equivalent duplicate only preserves the existing result and does not go to the DLQ.
 
-O lote só é marcado como processado no Kafka depois que:
+The Kafka batch is marked as processed only after:
 
-1. as mensagens válidas concluíram sua transação;
-2. as mensagens inválidas foram confirmadas na DLQ;
-3. o lote inteiro chegou a uma conclusão conhecida.
+1. valid messages finish their transaction;
+2. invalid messages are confirmed in the DLQ;
+3. the full batch reaches a known result.
 
-Se a publicação na DLQ falhar, o lote continua pendente. O publicador espera a confirmação do Kafka por até dez segundos e propaga a falha em vez de avançar silenciosamente.
+If DLQ publication fails, the batch stays pending. The publisher waits up to ten seconds for Kafka confirmation and propagates the failure instead of moving forward silently.
 
-## A DLQ guarda contexto, mas não corrige nada
+## The DLQ keeps context, but does not fix anything
 
-Cada tópico de entrada possui uma DLQ na mesma partição lógica:
+Each input topic has a DLQ in the corresponding logical partition:
 
 ```text
 spi-payment-requests
@@ -100,111 +100,109 @@ spi-payment-status-reports
 → spi-payment-status-reports.dlq
 ```
 
-A mensagem mantém chave e conteúdo originais. Metadados adicionais registram:
+The message keeps its original key and payload. Extra metadata records:
 
-* tópico, partição, posição e instante de origem;
-* grupo consumidor;
-* serviço que classificou a falha;
-* tipo de erro;
-* classe, mensagem e resumo da pilha de erro;
-* instante da classificação.
+* source topic, partition, offset, and timestamp;
+* consumer group;
+* service that classified the failure;
+* error type;
+* exception class, message, and stack summary;
+* classification timestamp.
 
-Os tipos atuais distinguem `INVALID_PAYLOAD`, `DIVERGENT_DUPLICATE`, `STATUS_REPORT_CONFLICT`, `NOT_AUTHENTICATED`, `UNAUTHORIZED_PSP` e `BATCH_PROCESSING_ERROR`.
+Current types include `INVALID_PAYLOAD`, `DIVERGENT_DUPLICATE`, `STATUS_REPORT_CONFLICT`, `NOT_AUTHENTICATED`, `UNAUTHORIZED_PSP`, and `BATCH_PROCESSING_ERROR`.
 
-A DLQ não reprocessa mensagens automaticamente. Reintroduzir uma mensagem exige uma decisão operacional, porque repeti-la sem corrigir a causa apenas recriaria o mesmo problema.
+The DLQ does not reprocess messages automatically. A message returns to the flow only when it is reintroduced after its cause has been reviewed.
 
-## Indisponibilidade temporária preserva o trabalho
+## Temporary unavailability keeps the work
 
-Quando PostgreSQL produz uma falha claramente transitória, o Payment Processor a classifica como infraestrutura indisponível.
+When a PostgreSQL failure is classified as transient, the Payment Processor treats the infrastructure as unavailable.
 
-O consumidor então:
+The consumer then:
 
 ```text
-não avança sua posição no Kafka
+does not advance its Kafka position
         ↓
-pausa o container por 30 s
+pauses the container for 30 s
         ↓
-tenta o mesmo lote novamente
+retries the same batch
         ↓
-repete enquanto a infraestrutura continuar indisponível
+repeats while infrastructure stays unavailable
 ```
 
-Não há limite de tentativas para essa classe. A mensagem continua válida; movê-la para a DLQ perderia trabalho que pode voltar a ser processável sem nenhuma alteração.
+There is no retry limit for this class. The message is still valid. Moving it to the DLQ would lose work that can become processable again without any change to the input.
 
-A transação PostgreSQL é revertida antes da nova tentativa. Estado, saldo, auditoria e outbox não ficam parcialmente aplicados.
+The PostgreSQL transaction is rolled back before the retry. State, balance, audit, and outbox are not left partially applied.
 
-## Uma falha sem origem conhecida afeta o lote
+## A failure with no known source affects the batch
 
-Uma exceção inesperada pode acontecer em um ponto no qual o consumidor não consegue atribuir a causa com segurança a uma única mensagem.
+An unexpected exception can happen at a point where the consumer cannot safely connect the cause to one specific message.
 
-Nessa situação, o consumidor tenta novamente duas vezes, com intervalo de um segundo. Se o defeito permanecer, todas as mensagens do lote seguem individualmente para a DLQ como `BATCH_PROCESSING_ERROR`, e o lote deixa de bloquear a partição.
+In that case, the consumer retries twice with a one-second interval. If the problem remains, every message in the batch goes to the DLQ as `BATCH_PROCESSING_ERROR`, and the batch stops blocking the partition.
 
-Isso evita que um lote problemático bloqueie a partição indefinidamente. O custo é deliberado: mensagens que seriam válidas isoladamente também podem ir para a DLQ quando não existe uma forma segura de identificar a origem da falha.
+This prevents one bad batch from blocking the partition forever. Messages that would be valid on their own can also go to the DLQ in this case because the consumer cannot safely identify the source of the failure.
 
-O sistema não tenta adivinhar qual mensagem causou uma exceção arbitrária nem executa parcialmente o lote uma segunda vez fora da transação para descobrir isso.
+The system does not guess which message caused an arbitrary exception, and it does not run part of the batch again outside the transaction to find out.
 
-## Depois do pagamento, falhar ao notificar não muda o resultado
+## After the payment, notification failure does not change the result
 
-Depois do commit, falhar ao publicar uma confirmação não pode transformar uma transação concluída em uma falsa rejeição.
+After commit, a failure to publish a confirmation cannot turn a completed transaction into a false rejection.
 
-A outbox já persistida continua sendo a fonte de verdade. O publicador mantém e repete o lote; registros remanescentes também são publicados antes de novos pagamentos serem consumidos na próxima inicialização.
+The persisted outbox remains the source of truth. The publisher keeps and retries the batch. Remaining records are also published before new payments are consumed after the next startup.
 
-Uma confirmação Kafka parcial ou um delete inconclusivo pode repetir o lote completo. Essa fronteira prefere duplicata recuperável a perda silenciosa.
+A partial Kafka confirmation or an uncertain outbox deletion can cause the full batch to be sent again. This can create duplicates, but it avoids losing the confirmation.
 
-O limite atual é que uma obrigação que não chegou ao publicador logo depois do commit não é procurada periodicamente durante a mesma execução. Esse caso depende de uma reinicialização e está detalhado em [Como uma confirmação continua recuperável](notification-delivery.md).
+If an obligation does not reach the publisher right after commit, it is not searched for periodically during the same process run. It returns to the flow on the next startup, as described in [How a confirmation stays recoverable](notification-delivery.md).
 
-## No Pull, o erro diz ao cliente o que fazer
+## With Pull, the error tells the client what to do
 
-O Notification Gateway não move uma notificação para DLQ quando um Pull falha. Ele devolve um status que permite ao cliente distinguir a reação:
+The Notification Gateway does not move a notification to a DLQ when Pull fails. It returns a status that lets the client choose the right response:
 
-| Situação | Status gRPC | Reação esperada |
+| Situation | gRPC status | Expected response |
 | --- | --- | --- |
-| cursor adulterado, de outra instituição ou com posição impossível | `INVALID_ARGUMENT` | corrigir estado local; repetir sem mudança não ajuda |
-| cursor expirou pela retenção | `FAILED_PRECONDITION` | sair do fluxo operacional e iniciar recuperação |
-| segundo Pull concorrente da mesma instituição | `FAILED_PRECONDITION` | manter apenas um fluxo lógico |
-| Pull interrompido no servidor | `UNAVAILABLE` | repetir usando o último cursor durável |
-| Pull chega ao timeout sem dados | resposta vazia | emitir novo Pull com o mesmo cursor |
+| cursor was changed, belongs to another institution, or has an impossible position | `INVALID_ARGUMENT` | fix local state; retrying without a change will not help |
+| cursor expired because of retention | `FAILED_PRECONDITION` | leave the normal operational flow and start recovery |
+| second concurrent Pull from the same institution | `FAILED_PRECONDITION` | keep only one logical flow |
+| Pull interrupted on the server | `UNAVAILABLE` | retry with the last durable cursor |
+| Pull reaches timeout with no data | empty response | send another Pull with the same cursor |
 
-O Gateway nunca afirma por conta própria que a instituição processou um lote. Se a conexão cair ou a resposta se perder, o cliente reapresenta seu último cursor durável e pode receber mensagens repetidas.
+The Gateway never claims on its own that the institution processed a batch. If the connection drops or the response is lost, the client sends its last durable cursor again and may receive duplicate messages.
 
-## Quem toma cada decisão
+## Who makes each decision
 
-| Falha | Quem classifica | Estado preservado | Saída |
+| Failure | Who classifies it | State preserved | Output |
 | --- | --- | --- | --- |
-| PACS não convertível | Payment Ingress | nenhuma mensagem publicada | HTTP `400` |
-| certificado sem identidade válida | Payment Ingress | nenhuma mensagem publicada | HTTP `401` |
-| Kafka não confirma o ingresso | Payment Ingress | cliente ainda possui a mensagem original | HTTP `500` |
-| mensagem interna inválida ou sem autenticação | Payment Processor | conteúdo original e origem Kafka | DLQ do tópico |
-| conflito ou falta de autoridade | Payment Processor | estado financeiro inalterado | DLQ do tópico |
-| repetição equivalente | Payment Processor | resultado original | nenhum novo efeito e confirmação normal |
-| rejeição financeira válida | domínio do Payment Processor | fato `REJECTED` e notificação | resultado de negócio |
-| PostgreSQL indisponível | infraestrutura do Payment Processor | posição e lote não confirmados | pausa e novas tentativas |
-| defeito interno persistente | tratamento de erros do Payment Processor | mensagens originais | lote para DLQ após tentativas curtas |
-| publicação da confirmação inconclusiva | outbox do Payment Processor | obrigação no PostgreSQL | repete o lote |
-| cursor inválido ou expirado | Notification Gateway | progresso continua com a instituição | erro gRPC explícito |
+| PACS cannot be converted | Payment Ingress | no message published | HTTP `400` |
+| certificate has no valid identity | Payment Ingress | no message published | HTTP `401` |
+| Kafka does not confirm ingress | Payment Ingress | client still has the original message | HTTP `500` |
+| invalid or unauthenticated internal message | Payment Processor | original payload and Kafka source | topic DLQ |
+| conflict or missing authority | Payment Processor | financial state unchanged | topic DLQ |
+| equivalent duplicate | Payment Processor | original result | no new effect and normal confirmation |
+| valid financial rejection | Payment Processor domain | `REJECTED` fact and notification | business result |
+| PostgreSQL unavailable | Payment Processor infrastructure | position and batch not committed | pause and retry |
+| persistent internal defect | Payment Processor error handling | original messages | batch to DLQ after short retries |
+| uncertain confirmation publication | Payment Processor outbox | obligation in PostgreSQL | retry batch |
+| invalid or expired cursor | Notification Gateway | progress remains with the institution | explicit gRPC error |
 
-## O que ainda não está coberto
+## Failure-handling scope
 
-O tratamento atual não inclui:
+Some behaviors stay outside the automatic flow:
 
-* reprocessamento automático ou interface operacional para DLQs;
-* métricas, dashboards e alertas operacionais das DLQs;
-* classificação individual de uma exceção arbitrária surgida no processamento em lote;
-* limite de tempo para a indisponibilidade da infraestrutura;
-* redução automática da admissão de pagamentos quando a entrega de notificações está indisponível;
-* recuperação, durante a mesma execução, de uma obrigação que perdeu o encaminhamento pós-commit.
+* messages in the DLQ return to the flow only after an explicit decision;
+* an arbitrary exception during batch processing can send the full batch to the DLQ;
+* infrastructure failures classified as transient have no retry limit;
+* an obligation that misses the post-commit handoff returns to the flow on the next startup.
 
-Esses limites mantêm a regra principal simples: **mensagens que continuarão falhando sem mudança deixam o caminho principal; infraestrutura temporariamente indisponível preserva o trabalho; resultados de negócio continuam sendo resultados, não falhas técnicas**.
+The main rule stays simple: **messages that will keep failing without a change leave the main path; temporary infrastructure outages keep the work; business results stay business results, not technical failures**.
 
-## Verificar no código
+## Check it in the code
 
-A borda HTTP pode ser inspecionada em:
+The HTTP boundary can be inspected in:
 
 * [`ReactorNettyPaymentServer`](../../kafka-producer/src/main/java/br/kauan/kafkaproducer/http/ReactorNettyPaymentServer.java);
 * [`KafkaPaymentPublisher`](../../kafka-producer/src/main/java/br/kauan/kafkaproducer/kafka/KafkaPaymentPublisher.java);
 * [`ReactorNettyPaymentServerTest`](../../kafka-producer/src/test/java/br/kauan/kafkaproducer/http/ReactorNettyPaymentServerTest.java).
 
-A classificação do Payment Processor e as DLQs estão em:
+Payment Processor classification and DLQs are in:
 
 * [`PaymentMessageConsumer`](../../spi/src/main/java/br/kauan/spi/adapter/input/kafka/consumer/PaymentMessageConsumer.java);
 * [`KafkaErrorHandlingConfig`](../../spi/src/main/java/br/kauan/spi/adapter/input/kafka/infrastructure/error/KafkaErrorHandlingConfig.java);
@@ -213,4 +211,4 @@ A classificação do Payment Processor e as DLQs estão em:
 * [`KafkaErrorHandlingConfigTest`](../../spi/src/test/java/br/kauan/spi/adapter/input/kafka/infrastructure/error/KafkaErrorHandlingConfigTest.java);
 * [`KafkaDlqConfigTest`](../../spi/src/test/java/br/kauan/spi/adapter/input/kafka/infrastructure/dlq/KafkaDlqConfigTest.java).
 
-As respostas do protocolo de entrega estão em [`NotificationGrpcService`](../../notification-gateway/src/main/java/br/kauan/notificationgateway/grpc/NotificationGrpcService.java) e [`NotificationGrpcServiceTest`](../../notification-gateway/src/test/java/br/kauan/notificationgateway/grpc/NotificationGrpcServiceTest.java).
+Delivery-protocol responses are in [`NotificationGrpcService`](../../notification-gateway/src/main/java/br/kauan/notificationgateway/grpc/NotificationGrpcService.java) and [`NotificationGrpcServiceTest`](../../notification-gateway/src/test/java/br/kauan/notificationgateway/grpc/NotificationGrpcServiceTest.java).
