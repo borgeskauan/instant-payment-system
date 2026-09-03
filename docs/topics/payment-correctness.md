@@ -1,253 +1,253 @@
-# Como o pagamento permanece correto
+# How payment correctness is preserved
 
-Este documento responde a uma pergunta:
+This document answers one question:
 
-> O que impede uma mensagem repetida, uma disputa pelo mesmo saldo ou uma falha no meio do caminho de produzir um resultado financeiro incorreto?
+> What prevents a repeated message, competition for the same balance, or a failure in the middle of the flow from producing an incorrect financial result?
 
-Aqui acompanhamos o fluxo desde a chegada de um pedido autenticado ao Payment Processor até a criação durável de sua confirmação. Novas tentativas, isolamento de mensagens inválidas e entrega posterior aparecem somente quando afetam essa transação.
+We follow the flow from an authenticated request reaching the Payment Processor to the durable creation of its confirmation. Retries, invalid-message isolation, and later delivery appear only where they affect this transaction.
 
-## O que nunca pode ser quebrado
+## What must never break
 
-O sistema precisa preservar cinco regras ao mesmo tempo:
+The system must preserve five rules at the same time:
 
-1. uma mesma identidade lógica não movimenta dinheiro duas vezes;
-2. dinheiro comprometido por um pagamento pendente deixa de estar disponível para outros pagamentos;
-3. somente a instituição pagadora pode iniciar o pagamento e somente a recebedora pode decidir seu resultado;
-4. estado, saldo, auditoria e obrigação de notificar representam o mesmo fato de negócio;
-5. concorrência pode definir uma ordem entre operações, mas não pode criar saldo, duplicar efeitos ou produzir dois resultados terminais.
+1. the same logical identity never moves money twice;
+2. money committed to a pending payment is no longer available to other payments;
+3. only the paying institution can start the payment, and only the receiving institution can decide its result;
+4. state, balance, audit, and the obligation to notify represent the same business fact;
+5. concurrency may create an order between operations, but it cannot create balance, duplicate effects, or produce two terminal results.
 
-Regras de negócio e transações PostgreSQL trabalham juntas para proteger essas propriedades. Kafka pode repetir mensagens, e a entrega pode repetir confirmações. O efeito financeiro correspondente não pode se repetir.
+Business rules and PostgreSQL transactions work together to protect these properties. Kafka may repeat messages, and delivery may repeat confirmations. The related financial effect must not repeat.
 
-## O estado mostra onde o dinheiro está
+## State shows where the money is
 
-O pagamento possui três estados persistidos:
+A payment has three persisted states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> WAITING_ACCEPTANCE: pagamento admitido
-    [*] --> REJECTED: saldo insuficiente
-    WAITING_ACCEPTANCE --> SETTLED: recebedor aceita
-    WAITING_ACCEPTANCE --> REJECTED: recebedor rejeita
+    [*] --> WAITING_ACCEPTANCE: payment admitted
+    [*] --> REJECTED: insufficient funds
+    WAITING_ACCEPTANCE --> SETTLED: receiver accepts
+    WAITING_ACCEPTANCE --> REJECTED: receiver rejects
     SETTLED --> [*]
     REJECTED --> [*]
 ```
 
-Cada instituição possui um único registro de saldo disponível, armazenado em `participant_balance_entity`. Os valores são guardados como centavos inteiros.
+Each institution has one available-balance record stored in `participant_balance_entity`. Values are stored as integer cents.
 
-Não existe uma segunda tabela contendo “dinheiro reservado”. A reserva é representada pelo próprio pagamento:
+There is no second table that contains “reserved money.” The payment itself represents the reservation:
 
 ```text
 payment.state = WAITING_ACCEPTANCE
         +
-payment.amount_cents já saiu da disponibilidade do pagador
+payment.amount_cents has already left payer availability
 ```
 
-Por isso, cada transição possui exatamente um efeito financeiro:
+Each transition has exactly one financial effect:
 
-| Fato | Estado resultante | Efeito |
+| Fact | Resulting state | Effect |
 | --- | --- | --- |
-| pagamento admitido | `WAITING_ACCEPTANCE` | reduz a disponibilidade do pagador |
-| insuficiência de saldo na admissão | `REJECTED` | não altera saldos |
-| recebedor aceita | `SETTLED` | credita o recebedor |
-| recebedor rejeita | `REJECTED` | devolve a reserva ao pagador |
+| payment admitted | `WAITING_ACCEPTANCE` | reduces payer availability |
+| insufficient funds at admission | `REJECTED` | does not change balances |
+| receiver accepts | `SETTLED` | credits the receiver |
+| receiver rejects | `REJECTED` | returns the reservation to the payer |
 
-O pagador não é debitado novamente no aceite. O débito já aconteceu quando o pagamento entrou em `WAITING_ACCEPTANCE`.
+The payer is not debited again when the receiver accepts. The debit already happened when the payment entered `WAITING_ACCEPTANCE`.
 
-## Quando um pedido novo chega
+## When a new request arrives
 
-O pedido chega acompanhado da identidade da instituição autenticada na entrada, representada por seu ISPB. Essa identidade precisa ser a mesma da conta pagadora; outra instituição não pode iniciar o pagamento em seu nome.
+The request arrives with the identity of the institution authenticated at ingress, represented by its ISPB. This identity must match the paying account's institution. Another institution cannot start the payment on its behalf.
 
-Depois da validação, o processamento distingue quatro resultados:
+After validation, processing separates four results:
 
-| Entrada | Resultado |
+| Input | Result |
 | --- | --- |
-| identidade nova e saldo disponível | cria o pagamento, reserva o valor e solicita decisão ao recebedor |
-| identidade nova e saldo insuficiente | cria uma rejeição terminal por `INSUFFICIENT_FUNDS` |
-| mesma identidade e mesmo conteúdo | não produz novo efeito |
-| mesma identidade e conteúdo diferente | classifica como conflito determinístico |
+| new identity and enough balance | create the payment, reserve the amount, and ask the receiver for a decision |
+| new identity and insufficient balance | create a terminal `INSUFFICIENT_FUNDS` rejection |
+| same identity and same content | produce no new effect |
+| same identity and different content | classify as a deterministic conflict |
 
-O cálculo da reserva, a auditoria e as notificações usam apenas os pagamentos criados por esta transação. Assim, duas cópias concorrentes do mesmo pedido não conseguem reservar o valor duas vezes.
+Reservation calculation, audit, and notifications use only payments created by this transaction. So two concurrent copies of the same request cannot reserve the amount twice.
 
-### Como o sistema reconhece uma repetição
+### How the system recognizes a duplicate
 
-`paymentId` / `EndToEndId` identifica o pagamento. Para saber se uma nova mensagem realmente possui o mesmo conteúdo, o sistema cria uma assinatura chamada **fingerprint**:
+`paymentId` / `EndToEndId` identifies the payment. To check whether a new message really has the same content, the system creates a signature called a **fingerprint**:
 
 ```text
 request_fingerprint_version
 +
-SHA-256 da representação canônica da instrução
+SHA-256 of the canonical instruction representation
 ```
 
-Essa assinatura inclui valor, moeda, descrição e dados das partes e contas. Textos são normalizados antes do hash. A versão também faz parte da comparação. Assim, uma futura regra de normalização não torna conteúdos diferentes equivalentes por acidente.
+The signature includes amount, currency, description, and party and account data. Text is normalized before hashing. The version is also part of the comparison. This prevents a future normalization rule from accidentally making different content equivalent.
 
-Uma repetição equivalente não faz nada novamente: não altera saldo, não cria outro fato de auditoria e não reconstrói a obrigação de notificar. A confirmação criada no primeiro processamento continua sendo a válida, mesmo depois de sair da outbox.
+An equivalent duplicate does nothing again: it does not change balance, create another audit fact, or rebuild the notification obligation. The confirmation created during the first processing remains the valid one even after it leaves the outbox.
 
-Quando duas instruções com o mesmo `paymentId` e conteúdos diferentes aparecem no mesmo lote, pode não existir um estado anterior que diga qual conteúdo é o válido. Nesse caso, todas são tratadas como conflitantes. Quando o pagamento já existe, o fingerprint persistido decide qual entrada é uma repetição e qual é divergente.
+When two instructions with the same `paymentId` but different content appear in the same batch, there may be no earlier state that says which content is valid. In that case, all of them are treated as conflicting. When the payment already exists, the persisted fingerprint decides which input is a duplicate and which is different.
 
-### Como a reserva é decidida
+### How reservation is decided
 
-Os pagamentos novos são agrupados pela instituição pagadora. A transação bloqueia uma única vez o registro de saldo de cada pagador envolvido, sempre na mesma ordem entre participantes.
+New payments are grouped by paying institution. The transaction locks each payer's balance record once, always in the same order across participants.
 
-Dentro do grupo de um pagador, os pagamentos são avaliados pela ordem de origem do lote. Uma rejeição não interrompe os pagamentos seguintes:
+Inside one payer group, payments are evaluated in their source order from the batch. One rejection does not stop later payments:
 
 ```text
-saldo disponível = 100
+available balance = 100
 
-80 → reserva; restam 20
-50 → rejeita; restam 20
-10 → reserva; restam 10
+80 → reserve; 20 left
+50 → reject; 20 left
+10 → reserve; 10 left
 ```
 
-Os débitos aprovados são somados e aplicados em uma única alteração por participante. O próprio banco impede saldo negativo. Se algum registro necessário estiver ausente ou o débito completo não puder ser aplicado, a transação inteira falha.
+Approved debits are added together and applied in one change per participant. The database itself prevents a negative balance. If a required record is missing or the full debit cannot be applied, the whole transaction fails.
 
-Um pagamento sem saldo suficiente termina como `REJECTED / INSUFFICIENT_FUNDS` na própria transação de admissão. Ele não cria reserva nem solicitação de aceite ao recebedor. A mesma transação cria a auditoria e a obrigação de informar a rejeição ao pagador.
+A payment without enough balance ends as `REJECTED / INSUFFICIENT_FUNDS` inside the admission transaction. It creates no reservation and no request for receiver acceptance. The same transaction creates the audit fact and the obligation to tell the payer about the rejection.
 
-## Quando o recebedor responde
+## When the receiver responds
 
-O recebedor também responde com sua identidade autenticada. Ela precisa ser a mesma instituição recebedora registrada no pagamento.
+The receiver also responds with its authenticated identity. It must match the receiving institution stored in the payment.
 
-Antes de decidir, a transação bloqueia os registros dos pagamentos sempre na mesma ordem. Os resultados possíveis são:
+Before deciding, the transaction locks payment records in a stable order. The possible results are:
 
-| Decisão recebida | Estado atual | Resultado |
+| Received decision | Current state | Result |
 | --- | --- | --- |
-| aceita | `WAITING_ACCEPTANCE` | transiciona para `SETTLED` e credita o recebedor |
-| rejeita com motivo | `WAITING_ACCEPTANCE` | transiciona para `REJECTED` e devolve o valor ao pagador |
-| mesma decisão e mesmos motivos | estado terminal correspondente | preserva o resultado existente |
-| decisão incompatível | estado terminal diferente | conflito |
-| qualquer decisão | pagamento inexistente | conflito |
-| qualquer decisão | rejeição interna por saldo insuficiente | conflito |
+| accept | `WAITING_ACCEPTANCE` | move to `SETTLED` and credit the receiver |
+| reject with reason | `WAITING_ACCEPTANCE` | move to `REJECTED` and return the amount to the payer |
+| same decision and same reasons | matching terminal state | preserve the existing result |
+| incompatible decision | different terminal state | conflict |
+| any decision | payment does not exist | conflict |
+| any decision | internal rejection for insufficient funds | conflict |
 
-Uma rejeição enviada pelo recebedor preserva seus códigos de motivo. Saldo insuficiente, por outro lado, usa a causa interna `INSUFFICIENT_FUNDS`. O schema impede que as duas origens apareçam juntas.
+A rejection sent by the receiver keeps its reason codes. Insufficient funds, on the other hand, uses the internal cause `INSUFFICIENT_FUNDS`. The schema prevents both sources from appearing together.
 
-Respostas equivalentes dentro do mesmo lote são reduzidas a uma única decisão lógica. Se o mesmo pagamento recebe decisões ou motivos incompatíveis entre as respostas autorizadas do lote, elas não produzem transição.
+Equivalent responses inside the same batch are reduced to one logical decision. If the same payment receives incompatible decisions or reasons across authorized responses in the batch, they do not produce a transition.
 
-### Primeiro mudar o estado, depois calcular o dinheiro
+### Change state first, then calculate money
 
-Receber uma decisão não basta para alterar o saldo. Primeiro, a transação precisa conseguir mudar o pagamento enquanto ele ainda aguarda resposta:
+Receiving a decision is not enough to change a balance. First, the transaction must successfully change the payment while it is still waiting for a response:
 
 ```text
 WAITING_ACCEPTANCE → SETTLED
 ```
 
-ou:
+or:
 
 ```text
 WAITING_ACCEPTANCE → REJECTED
 ```
 
-Os cálculos financeiros, a auditoria e as notificações usam apenas os pagamentos que esta transação moveu para o estado final. Duas respostas concorrentes podem encontrar o mesmo pagamento, mas apenas uma consegue tirá-lo de `WAITING_ACCEPTANCE`.
+Financial calculations, audit, and notifications use only payments that this transaction moved to a final state. Two concurrent responses can find the same payment, but only one can move it out of `WAITING_ACCEPTANCE`.
 
-Depois disso, os efeitos são somados por participante. Aceites creditam recebedores; rejeições devolvem reservas aos pagadores. Os registros de saldo necessários também são bloqueados sempre na mesma ordem.
+After that, effects are added per participant. Accepts credit receivers; rejections return reservations to payers. Required balance records are also locked in a stable order.
 
-Essa regra impede tanto o crédito duplicado quanto a devolução duplicada.
+This rule prevents both duplicate credit and duplicate return.
 
-## Tudo termina na mesma transação
+## Everything finishes in the same transaction
 
-Cada mudança efetiva possui quatro partes:
-
-```text
-estado do pagamento
-+
-efeito financeiro
-+
-fato de auditoria
-+
-obrigação de notificar
-```
-
-O código pode persistir cada parte com um comando diferente, mas todas participam da mesma transação PostgreSQL.
-
-Na admissão com saldo:
+Every effective change has four parts:
 
 ```text
-cria WAITING_ACCEPTANCE
+payment state
 +
-debita disponibilidade do pagador
+financial effect
 +
-registra PAYMENT_RESERVED
+audit fact
 +
-cria solicitação de aceite para o recebedor
+obligation to notify
 ```
 
-No aceite:
+The code may persist each part with a different command, but all of them take part in the same PostgreSQL transaction.
+
+For admission with enough balance:
+
+```text
+create WAITING_ACCEPTANCE
++
+debit payer availability
++
+record PAYMENT_RESERVED
++
+create acceptance request for receiver
+```
+
+For acceptance:
 
 ```text
 WAITING_ACCEPTANCE → SETTLED
 +
-credita recebedor
+credit receiver
 +
-registra PAYMENT_SETTLED
+record PAYMENT_SETTLED
 +
-cria confirmações para pagador e recebedor
+create confirmations for payer and receiver
 ```
 
-Na rejeição do recebedor:
+For receiver rejection:
 
 ```text
 WAITING_ACCEPTANCE → REJECTED
 +
-devolve reserva ao pagador
+return reservation to payer
 +
-registra PAYMENT_REJECTED
+record PAYMENT_REJECTED
 +
-cria confirmação para o pagador
+create confirmation for payer
 ```
 
-Se a persistência da auditoria ou da outbox falhar, a mudança de estado e os saldos também são revertidos. Não há commit parcial: estado, dinheiro, auditoria e obrigação de notificar avançam juntos ou são revertidos juntos.
+If audit or outbox persistence fails, the state change and balances are rolled back as well. There is no partial commit: state, money, audit, and notification obligation move together or roll back together.
 
-## A auditoria registra o que realmente aconteceu
+## Audit records what actually happened
 
-A auditoria registra efeitos de negócio aplicados, não tentativas de processamento:
+Audit records applied business effects, not processing attempts:
 
-| Evento | O que prova |
+| Event | What it proves |
 | --- | --- |
-| `PAYMENT_RESERVED` | o pagamento foi criado e o valor saiu da disponibilidade do pagador |
-| `PAYMENT_SETTLED` | o pagamento foi aceito e o recebedor foi creditado |
-| `PAYMENT_REJECTED` na admissão | o pagamento foi rejeitado sem reserva por insuficiência de saldo |
-| `PAYMENT_REJECTED` após reserva | o recebedor rejeitou e a disponibilidade do pagador foi restaurada |
+| `PAYMENT_RESERVED` | the payment was created and the amount left payer availability |
+| `PAYMENT_SETTLED` | the payment was accepted and the receiver was credited |
+| `PAYMENT_REJECTED` at admission | the payment was rejected without reservation because of insufficient funds |
+| `PAYMENT_REJECTED` after reservation | the receiver rejected and payer availability was restored |
 
-Uma repetição sem efeito, uma entrada não autorizada ou um conflito não representa um novo fato financeiro e, portanto, não cria um novo evento de negócio.
+A duplicate with no effect, an unauthorized input, or a conflict does not represent a new financial fact, so it does not create a new business event.
 
-O banco permite no máximo um fato de admissão e um fato terminal por pagamento. Outras restrições ligam o tipo de evento aos estados, à origem da rejeição e aos efeitos financeiros. Assim, o banco impede combinações que contradigam o modelo.
+The database allows at most one admission fact and one terminal fact per payment. Other constraints connect event type to states, rejection source, and financial effects. This prevents combinations that contradict the model.
 
-`event_id` é apenas uma identidade técnica. Ele não define uma ordem causal entre eventos de pagamentos diferentes.
+`event_id` is only a technical identity. It does not define causal order between events from different payments.
 
-## Como cada regra é protegida
+## How each rule is protected
 
-As invariantes não dependem de um único mecanismo:
+The invariants do not depend on one mechanism alone:
 
-| Propriedade | Mecanismo principal |
+| Property | Main mechanism |
 | --- | --- |
-| identidade lógica única | chave primária de `payment_transaction_entity` |
-| equivalência de uma repetição | fingerprint canônico e versionado |
-| saldo nunca negativo | bloqueio do registro de saldo e restrição PostgreSQL |
-| apenas o dono inicia | comparação entre ISPB autenticado e pagador |
-| apenas o recebedor decide | comparação entre ISPB autenticado e recebedor persistido |
-| uma única transição terminal | bloqueio do pagamento e mudança condicional a partir de `WAITING_ACCEPTANCE` |
-| auditoria consistente | mesma transação e restrições sobre os fatos |
-| notificação não esquecida no commit financeiro | outbox criada na mesma transação |
+| one logical identity | primary key of `payment_transaction_entity` |
+| equivalent duplicate detection | canonical, versioned fingerprint |
+| balance never below zero | balance-record lock and PostgreSQL constraint |
+| only the owner can start | compare authenticated ISPB with payer |
+| only the receiver can decide | compare authenticated ISPB with persisted receiver |
+| one terminal transition | payment lock and conditional change from `WAITING_ACCEPTANCE` |
+| consistent audit | same transaction and constraints on audit facts |
+| notification not forgotten during financial commit | outbox created in the same transaction |
 
-## Escopo do modelo
+## Model scope
 
-Neste projeto:
+In this project:
 
-* cada participante possui um único registro de saldo, então operações sobre a mesma disponibilidade podem esperar umas pelas outras;
-* um pagamento em `WAITING_ACCEPTANCE` não expira automaticamente e pode manter dinheiro reservado se o recebedor nunca responder;
-* saldo insuficiente produz rejeição imediata, sem fila de liquidez;
-* ausência do registro de saldo esperado é tratada como falha operacional, não como criação automática de dinheiro;
-* os testes de concorrência usam uma única instância do Payment Processor e não exercitam contenção entre réplicas;
-* a auditoria registra efeitos de negócio, não tentativas, repetições sem efeito ou a mensagem PACS original.
+* each participant has one balance record, so operations on the same available balance may wait for each other;
+* a payment in `WAITING_ACCEPTANCE` does not expire automatically and may keep money reserved if the receiver never responds;
+* insufficient funds causes immediate rejection, with no liquidity queue;
+* a missing expected balance record is treated as an operational failure, not as automatic creation of money;
+* concurrency tests use one Payment Processor instance and do not test contention across replicas;
+* audit records business effects, not attempts, no-op duplicates, or the original PACS message.
 
-## Verificar no código
+## Check it in the code
 
-As regras de domínio estão concentradas em:
+Domain rules are concentrated in:
 
 * [`PaymentAdmissionPolicy`](../../spi/src/main/java/br/kauan/spi/domain/services/payment/PaymentAdmissionPolicy.java);
 * [`LiquidityReservationPolicy`](../../spi/src/main/java/br/kauan/spi/domain/services/payment/LiquidityReservationPolicy.java);
 * [`StatusTransitionPolicy`](../../spi/src/main/java/br/kauan/spi/domain/services/payment/StatusTransitionPolicy.java);
 * [`RequestFingerprint`](../../spi/src/main/java/br/kauan/spi/domain/services/payment/RequestFingerprint.java).
 
-O schema e as garantias transacionais podem ser verificados em:
+The schema and transactional guarantees can be checked in:
 
 * [`V1__Create_spi_baseline.sql`](../../spi/src/main/resources/db/migration/V1__Create_spi_baseline.sql);
 * [`ConcurrentParticipantBalanceIntegrationTest`](../../spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java);

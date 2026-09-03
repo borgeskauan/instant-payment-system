@@ -1,77 +1,77 @@
 # Instant Payment System
 
-O Pix é o sistema brasileiro de pagamentos instantâneos. Ele permite transferir dinheiro de uma conta para outra em poucos segundos, 24 horas por dia, todos os dias do ano e, para pessoas físicas, normalmente sem tarifa.
+Pix is Brazil's instant payment system. It lets people transfer money from one account to another in a few seconds, 24 hours a day, every day of the year, and it is usually free for individuals.
 
-Hoje isso parece normal. Antes do Pix, não era.
+Today, this feels normal. Before Pix, it did not.
 
-Transferir dinheiro entre bancos significava usar TED ou DOC, lidar com horários, dias úteis, tarifas e, dependendo da transferência, esperar até o dinheiro chegar. O Pix simplificou essa experiência: você abre o celular, envia o dinheiro e pronto.
+Sending money between banks meant using TED or DOC, dealing with business hours, business days, fees, and sometimes waiting for the money to arrive. Pix made that experience much simpler: you open your phone, send the money, and it is done.
 
-O que me chamou atenção foi a escala. O Pix não faz isso uma vez: faz **milhões de vezes**.
+What caught my attention was the scale. Pix does not do this once. It does it **millions of times**.
 
-Ele movimenta dinheiro entre instituições diferentes o tempo todo e, para quem usa, quase todo esse trabalho fica invisível. Você faz um Pix e ele simplesmente funciona.
+It moves money between different institutions all the time, while most of that work stays invisible to the user. You make a Pix payment, and it simply works.
 
-Foi aí que comecei a me perguntar: **como um sistema consegue fazer isso milhões de vezes por dia e continuar simplesmente funcionando?**
+That made me ask: **how can a system do this millions of times per day and keep simply working?**
 
-Foi dessa curiosidade que nasceu este projeto.
+That question led to this project.
 
-Antes de começar a construir, fui procurar como o Pix havia sido desenvolvido e testado. Encontrei um [podcast sobre sua arquitetura](https://open.spotify.com/episode/0r7a7HORZspD35Dn7y4WTY), conversas com engenheiros do Banco Central, requisitos públicos e os primeiros relatórios de desempenho do sistema.
+Before I started building it, I looked for material about how Pix was designed and tested. I found a [podcast about its architecture](https://open.spotify.com/episode/0r7a7HORZspD35Dn7y4WTY), talks with engineers from the Central Bank of Brazil, public requirements, and early performance reports from the system.
 
-## O desafio
+## The challenge
 
-O Pix real é um sistema enorme, construído para atender um país inteiro e sustentado por uma infraestrutura que obviamente está muito além do que eu conseguiria reproduzir sozinho.
+The real Pix serves an entire country and uses much more infrastructure than this project can cover. I needed to choose one part of the problem.
 
-Então, em vez de tentar copiar o Pix, construí uma versão muito menor de seu núcleo interinstitucional. Uma instituição envia uma ordem de pagamento, e a recebedora aceita ou rejeita. O sistema então liquida ou devolve o valor reservado, e as confirmações necessárias voltam às participantes.
+Instead of trying to copy Pix, I built a much smaller version of its inter-institution core. One institution sends a payment order, and the receiving institution accepts or rejects it. The system then settles the reserved amount or returns it, and sends the required confirmations back to the participants.
 
-O núcleo não implementa as contas e os saldos dos clientes dentro de cada banco. Ele modela a liquidez que cada instituição participante mantém no sistema e o fluxo entre a instituição pagadora e a instituição recebedora. O aceite ou a rejeição pertence à instituição recebedora, não à pessoa que receberia um Pix.
+The core does not model customer accounts and balances inside each bank. It models the liquidity that each participating institution keeps in the system and the flow between the paying and receiving institutions. The receiving institution makes the accept or reject decision, not the person who would receive the Pix payment.
 
-Os materiais publicados pelo Banco Central me deram referências concretas. Uma [apresentação sobre arquitetura e resiliência](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) usava **2.000 transações por segundo** como parâmetro. O [relatório anual do SPI de 2021](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) registrava o acordo de nível de serviço: 99% dos pagamentos processados dentro do SPI em menos de **4,6 segundos**.
+Material published by the Central Bank gave me concrete references. A [presentation about architecture and resilience](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) used **2,000 transactions per second** as a reference. The [2021 SPI annual report](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) recorded the service-level agreement: 99% of payments processed inside SPI in less than **4.6 seconds**.
 
-O mesmo relatório trazia outro dado interessante: na prática, o tempo necessário para processar 99% dos pagamentos ficava próximo ou abaixo de **1 segundo** durante grande parte do período observado.
+The same report included another useful number: in practice, the time needed to process 99% of payments stayed close to or below **1 second** during much of the observed period.
 
-Esses números viraram a referência do projeto:
+Those numbers became the target for this project:
 
-> **Sustentar pelo menos 2.000 pagamentos por segundo, com 99% deles terminando em menos de 1 segundo, sem perder resultados nem produzir contradições.**
+> **Sustain at least 2,000 payments per second, with 99% finishing in less than 1 second, without losing results or producing contradictions.**
 
-Eu também queria chegar lá com uma arquitetura pequena, capaz de rodar localmente, em vez de resolver o problema apenas adicionando mais hardware.
+I also wanted to reach that target with a small architecture that could run locally, instead of solving the problem only by adding more hardware.
 
-## O resultado
+## The result
 
-Na versão final, rodei o mesmo teste duas vezes, usando a mesma revisão limpa do sistema e a mesma carga.
+In the final version, I ran the same test twice with the same clean revision of the system and the same load.
 
-O sistema bateu a meta nas duas execuções:
+The system met the target in both runs:
 
-| Resultado                            |         Execução A |         Execução B |
-| ------------------------------------ | -----------------: | -----------------: |
-| Menor taxa observada                 | 2.017 pagamentos/s | 2.079 pagamentos/s |
-| 99% dos pagamentos terminaram em até |             855 ms |             265 ms |
-| Resultados ausentes ou contraditórios |                  0 |                  0 |
+| Result | Run A | Run B |
+| --- | ---: | ---: |
+| Lowest observed rate | 2,017 payments/s | 2,079 payments/s |
+| 99% of payments finished within | 855 ms | 265 ms |
+| Missing or contradictory results | 0 | 0 |
 
-A execução A foi claramente a menos favorável: chegou mais perto dos dois limites, mas ainda cumpriu os critérios.
+Run A was clearly the less favorable one. It came closer to both limits, but still met the criteria.
 
-Mantive as duas nos resultados finais. Mostrar apenas a melhor execução produziria um resultado mais bonito. Manter também a menos favorável mostra que o sistema continuou dentro da meta nessa condição.
+I kept both runs in the final results. Showing only the best run would make the numbers look better. Keeping the less favorable run as well shows that the system still met the target under that condition.
 
-## O que precisa acontecer em cada pagamento
+## What needs to happen for each payment
 
-Os números acima só fazem sentido porque cada pagamento continua tendo que percorrer o fluxo normalmente.
+The numbers above only matter if every payment still goes through the normal flow.
 
-Para quem usa o Pix, a experiência continua sendo enviar dinheiro para outra pessoa. Dentro deste projeto, porém, o fluxo começa na instituição pagadora e termina na instituição recebedora. Se a recebedora aceitar, a liquidez reservada é transferida para ela. Se rejeitar, o valor volta à disponibilidade da instituição pagadora. A pagadora precisa receber o resultado; na liquidação, a recebedora também recebe sua confirmação.
+For a Pix user, the experience is still just sending money to another person. In this project, the flow starts at the paying institution and ends at the receiving institution. If the receiver accepts, the reserved liquidity is transferred to it. If it rejects, the amount becomes available to the paying institution again. The paying institution must receive the result. After settlement, the receiving institution also gets its confirmation.
 
-Até aí, parece simples.
+So far, that sounds simple.
 
-O problema começa quando as coisas não acontecem perfeitamente:
+The problem starts when things do not happen perfectly:
 
-* **A instituição pagadora pode enviar novamente a mesma ordem.** Isso não pode reservar o valor duas vezes nem fazer a instituição recebedora ser creditada novamente.
-* **Dois pagamentos podem disputar a liquidez da mesma instituição.** Os dois não podem gastar o mesmo saldo disponível.
-* **Alguma parte do sistema pode falhar no meio do pagamento.** O valor não pode simplesmente ficar perdido entre as instituições.
-* **O pagamento pode já ter terminado, mas a confirmação ainda não ter chegado às participantes.** Ela pode chegar depois, mas não pode simplesmente desaparecer.
+* **The paying institution can send the same order again.** This must not reserve the amount twice or credit the receiver again.
+* **Two payments can compete for the same institution's liquidity.** They cannot both spend the same available balance.
+* **Part of the system can fail in the middle of a payment.** The money cannot simply disappear between institutions.
+* **The payment can be finished while its confirmation has not reached the participants yet.** The confirmation may arrive later, but it cannot simply disappear.
 
-É esse tipo de problema que começa a determinar como o sistema precisa ser construído.
+These problems start to define how the system needs to be built.
 
-No projeto, o trabalho fica dividido assim:
+The project splits the work like this:
 
 ```mermaid
 flowchart LR
-    Participants[Instituições participantes] --> Ingress[Payment Ingress]
+    Participants[Participating institutions] --> Ingress[Payment Ingress]
     Ingress --> Kafka[(Kafka)]
     Kafka --> Processor[Payment Processor]
     Processor --> DB[(PostgreSQL)]
@@ -80,37 +80,37 @@ flowchart LR
     Gateway --> Participants
 ```
 
-O **Payment Ingress** recebe e autentica os pagamentos que chegam ao sistema.
+The **Payment Ingress** receives and authenticates payments entering the system.
 
-O **Payment Processor** é o centro do fluxo. Ele acompanha cada pagamento, decide o que acontece com o dinheiro e impede que o mesmo pagamento altere os saldos de liquidez duas vezes.
+The **Payment Processor** is the center of the flow. It tracks each payment, decides what happens to the money, and prevents the same payment from changing liquidity balances twice.
 
-O **PostgreSQL** guarda os pagamentos e os saldos de liquidez e permite confirmar juntas as mudanças que pertencem à mesma operação.
+**PostgreSQL** stores payments and liquidity balances. It also lets the system commit together all changes that belong to the same operation.
 
-O **Kafka** conecta as partes assíncronas do sistema e mantém o trabalho disponível enquanto ele avança entre os componentes.
+**Kafka** connects the asynchronous parts of the system and keeps work available while it moves between components.
 
-O **Notification Gateway** informa às instituições se o pagamento foi concluído ou rejeitado, inclusive quando essa informação precisa chegar depois de uma falha.
+The **Notification Gateway** tells institutions whether a payment was completed or rejected, including when that information needs to arrive after a failure.
 
-Esse é o mapa geral. O [design do sistema](docs/design.md) explica como cada um desses problemas é tratado e por que essas decisões foram tomadas.
+This is the high-level map. The [system design](docs/design.md) explains how each problem is handled and why these choices were made.
 
-## Como eu medi
+## How I measured it
 
-Construir o sistema era só metade do problema. Se eu queria afirmar que ele sustentava 2.000 pagamentos por segundo, precisava ter certeza de que estava medindo pagamentos de verdade, e não apenas requisições aceitas na entrada.
+Building the system was only half of the problem. If I wanted to say it sustained 2,000 payments per second, I needed to make sure I was measuring real payments, not only requests accepted at the entry point.
 
-Por isso, uma resposta HTTP bem-sucedida significa apenas que o **Payment Ingress** aceitou a mensagem. Para o teste, o pagamento só termina quando a confirmação percorre o sistema e volta à instituição pagadora.
+For that reason, a successful HTTP response only means that the **Payment Ingress** accepted the message. In the test, a payment finishes only when its confirmation goes through the system and comes back to the paying institution.
 
-A ferramenta de carga fica fora do núcleo: ela envia os pagamentos, observa as confirmações que retornam e verifica se elas correspondem ao que deveria ter acontecido.
+The load generator stays outside the core. It sends payments, observes the confirmations that come back, and checks whether they match what should have happened.
 
-A mesma execução precisa passar pelos dois critérios: ser rápida e devolver todos os resultados esperados sem contradição. Bater a meta de pagamentos por segundo não vale se o resultado observável do fluxo estiver incorreto.
+The same run must meet both requirements: it must be fast and it must return every expected result without contradictions. Reaching the payments-per-second target does not count if the observable result of the flow is wrong.
 
-O benchmark exercita duplicidade e concorrência sob carga. A propriedade financeira principal é que uma mensagem repetida não pode mover dinheiro novamente. Os [testes concorrentes do Payment Processor](spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java) verificam diretamente reserva, crédito e devolução nos saldos de liquidez dos participantes.
+The benchmark includes duplicates and concurrency under load. The main financial property is that a repeated message must not move money again. The [concurrent Payment Processor tests](spi/src/test/java/br/kauan/spi/domain/services/ConcurrentParticipantBalanceIntegrationTest.java) check reservation, credit, and return directly on participant liquidity balances.
 
-Os detalhes sobre geração da carga, cálculo de throughput e latência, além da preservação das evidências, ficam na [metodologia de performance](docs/performance.md).
+Details about load generation, throughput and latency calculation, and how evidence is preserved are in the [performance methodology](docs/performance.md).
 
-## Executar
+## Run it
 
-O host precisa de Linux, Docker e Docker Compose.
+The host needs Linux, Docker, and Docker Compose.
 
-Para subir uma stack limpa e executar o smoke funcional:
+To start a clean stack and run the functional smoke test:
 
 ```bash
 cd load-test
@@ -118,7 +118,7 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-smoke smoke
 ```
 
-Para executar o perfil usado na medição final de performance:
+To run the profile used for the final performance measurement:
 
 ```bash
 cd load-test
@@ -126,15 +126,15 @@ cd load-test
 ./run-load-test.sh --profile mixed-outcomes-2k-15m qualification
 ```
 
-Os resultados ficam em:
+Results are stored in:
 
 ```text
 load-test/results/<run-tag>/<timestamp>/
 ```
 
-## Para aprofundar
+## Learn more
 
-* **[Design do sistema](docs/design.md)** — como o projeto lida com duplicidade, concorrência, falhas e entrega das confirmações.
-* **[Evolução da engenharia](docs/engineering-evolution.md)** — quais medições mudaram o desenho, quais alternativas foram descartadas e por que o sistema terminou assim.
-* **[Performance](docs/performance.md)** — carga, metodologia, ambiente, resultados e limites do benchmark.
-* **[Demonstração de referência](demo/README.md)** — um fluxo visual com instituições simuladas para explorar o sistema manualmente.
+* **[System design](docs/design.md)** — how the project handles duplicates, concurrency, failures, and confirmation delivery.
+* **[Engineering evolution](docs/engineering-evolution.md)** — which measurements changed the design, which alternatives were removed, and why the system ended up this way.
+* **[Performance](docs/performance.md)** — load, methodology, environment, results, and benchmark scope.
+* **[Reference demo](demo/README.md)** — a visual flow with simulated institutions for exploring the system manually.

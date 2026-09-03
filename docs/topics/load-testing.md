@@ -1,178 +1,178 @@
-# Como o teste de carga funciona
+# How the load test works
 
-Este documento responde a uma pergunta:
+This document answers one question:
 
-> Como saber se o sistema realmente sustentou a carga, em vez de apenas acumular trabalho e recuperar a média depois?
+> How can we know that the system really sustained the load instead of only building up work and recovering the average later?
 
-Os resultados, o ambiente e os critérios do benchmark estão em [Performance e evidência](../performance.md). Aqui, o foco é o método usado para produzir e medir a carga.
+The results, environment, and benchmark criteria are in [Performance and evidence](../performance.md). Here, the focus is the method used to create and measure the load.
 
-## O gerador acompanha o pagamento inteiro
+## The generator tracks the full payment
 
-O gerador de carga representa as instituições dos dois lados do fluxo:
-
-```text
-pagador envia o pagamento
-        ↓
-recebedor recebe e responde
-        ↓
-resultado final volta ao pagador
-```
-
-Uma resposta HTTP bem-sucedida confirma apenas que a mensagem entrou no sistema. Para o benchmark, o pagamento só termina quando o resultado final compatível volta ao pagador pelo Notification Gateway.
-
-O gerador também executa as repetições previstas e verifica se elas foram aceitas sem produzir um resultado contraditório.
-
-O relatório usa o trabalho que a própria ferramenta criou, acompanhou e observou. As invariantes financeiras internas são verificadas separadamente pelos testes transacionais do sistema.
-
-## A mesma configuração produz a mesma carga
-
-Antes de começar, a configuração escolhida é validada e transformada em um plano de execução.
-
-Esse plano determina antecipadamente:
-
-* quais pagamentos devem concluir ou ser rejeitados por saldo insuficiente;
-* quais instituições participam de cada pagamento;
-* quais pares recebem a maior concentração de tráfego;
-* quais mensagens serão repetidas;
-* qual resultado deve voltar para cada pagamento.
-
-Essas escolhas vêm da sequência de cada pagamento, não da ordem em que tarefas concorrentes terminam. Executar novamente o mesmo plano preserva a composição da carga.
-
-A configuração original e o plano efetivamente executado são guardados junto com o resultado.
-
-## O sistema sob teste não controla a taxa oferecida
-
-O gerador trabalha em **malha aberta** (*open loop*): os instantes dos pagamentos são planejados antes de qualquer resposta existir.
-
-Se o sistema ficar mais lento, o gerador não reduz automaticamente a taxa. Se um pagamento perder seu momento de início, ele também não é empurrado para frente para reparar a média.
+The load generator represents institutions on both sides of the flow:
 
 ```text
-momento perdido
-      ↓
-pagamento não iniciado
-      ↓
-diferença permanece visível
+payer sends payment
+        ↓
+receiver gets it and responds
+        ↓
+final result returns to payer
 ```
 
-Não existe uma fila de pagamentos atrasados seguida por uma rajada de recuperação.
+A successful HTTP response only confirms that the message entered the system. For the benchmark, the payment finishes only when the matching final result returns to the payer through the Notification Gateway.
 
-Essa regra impede que uma execução fique abaixo da meta durante parte do tempo e pareça saudável apenas porque compensou depois.
+The generator also sends the planned duplicates and checks that they were accepted without producing a contradictory result.
 
-## Planejar o instante não basta; a requisição precisa começar
+The report uses work that the tool itself created, tracked, and observed. Internal financial invariants are checked separately by the system's transactional tests.
 
-O cadenciamento divide o tempo em janelas absolutas de 10 ms. Todas são calculadas a partir do início da fase. Assim, o atraso de uma janela não desloca as seguintes.
+## The same configuration produces the same load
 
-Preparar um pagamento exatamente em seu instante de início adicionaria ao resultado o tempo necessário para montar a mensagem e conseguir espaço na conexão. Por isso, o gerador prepara o próximo grupo com antecedência.
+Before the run starts, the selected configuration is validated and turned into an execution plan.
 
-Preparar não significa iniciar. Um pagamento só conta quando:
+The plan decides in advance:
 
-1. sua mensagem está pronta;
-2. existe capacidade real para abrir uma requisição HTTP/2;
-3. seu instante planejado chegou;
-4. a requisição começa dentro da janela permitida.
+* which payments should complete or be rejected for insufficient funds;
+* which institutions take part in each payment;
+* which pairs receive most of the traffic;
+* which messages will be sent again;
+* which result should return for each payment.
 
-Se alguma dessas condições não for atendida a tempo, o pagamento aparece como não iniciado. Depois que começa corretamente, ele continua sendo acompanhado até a resposta ou o encerramento do experimento.
+These choices come from each payment's sequence, not from the order in which concurrent tasks finish. Running the same plan again keeps the same load composition.
 
-Reservar capacidade HTTP/2 é importante porque uma fila interna do cliente poderia aceitar trabalho sem colocá-lo imediatamente na conexão. Sem essa proteção, o relatório registraria como iniciado algo que ainda estava esperando localmente.
+The original configuration and the plan that was actually run are stored with the result.
 
-As conexões permanecem abertas durante o teste e são aquecidas antes da carga. Assim, o teste não inclui um novo handshake de conexão em cada pagamento.
+## The system under test does not control the offered rate
 
-## O relógio não disputa com a rede ou o relatório
+The generator runs in an **open loop**: payment start times are planned before any response exists.
 
-Uma thread dedicada controla apenas os instantes em que os pagamentos começam. Ela não espera respostas HTTP, não processa notificações e não calcula estatísticas.
+If the system becomes slower, the generator does not reduce the rate automatically. If a payment misses its planned start time, it is not moved forward to repair the average.
 
-Rede, respostas do recebedor e repetições são executadas de forma assíncrona. Um componente separado grava os eventos observados. O relatório é construído somente depois da execução.
+```text
+missed time
+      ↓
+payment not started
+      ↓
+gap stays visible
+```
 
-Essa divisão mantém o caminho que controla o tempo pequeno e evita que percentis, CSVs ou agregações atrasem a criação da própria carga.
+There is no queue of late payments followed by a recovery burst.
 
-Filas internas possuem limites. Se a ferramenta ficar sem capacidade para acompanhar seu próprio trabalho, a execução termina com erro em vez de reduzir silenciosamente a carga.
+This rule prevents a run from staying below the target for part of the time and still looking healthy only because it caught up later.
 
-## O aquecimento termina quando seu trabalho observável termina
+## Planning the time is not enough; the request must start
 
-Antes da fase principal, o gerador aumenta a taxa em duas etapas. O objetivo é aquecer conexões, caches e JVMs sem misturar essa inicialização com o período medido.
+Pacing divides time into absolute 10 ms windows. Every window is calculated from the start of the phase. A late window does not move the following windows.
 
-Quando a geração do aquecimento termina, a ferramenta aguarda tudo que ela própria criou e consegue observar:
+Preparing a payment exactly at its start time would add message-building time and connection-capacity wait time to the result. The generator prepares the next group in advance instead.
 
-* pedidos originais;
-* respostas do recebedor;
-* resultados finais;
-* repetições selecionadas.
+Preparing does not mean starting. A payment counts only when:
 
-A fase principal só começa depois que essas obrigações terminam ou quando o limite de espera é excedido.
+1. its message is ready;
+2. there is real capacity to open an HTTP/2 request;
+3. its planned time has arrived;
+4. the request starts inside the allowed window.
 
-O critério observa o trabalho do gerador. Ele não exige que todas as filas internas do Kafka e do PostgreSQL estejam vazias:
+If any of these conditions is not met in time, the payment is recorded as not started. Once it starts correctly, the generator keeps tracking it until the response or the end of the experiment.
 
-> A fase medida não começa enquanto o gerador ainda acompanha trabalho do aquecimento.
+Reserving HTTP/2 capacity matters because an internal client queue could accept work without placing it on the connection right away. Without this protection, the report could mark a payment as started while it was still waiting locally.
 
-## Repetições aumentam a carga, mas não o throughput declarado
+Connections stay open during the test and are warmed up before load begins. The test does not include a new connection handshake for every payment.
 
-Parte dos pedidos e das respostas é enviada novamente dez segundos depois.
+## The clock does not compete with network work or reporting
 
-As repetições preservam a identidade e o conteúdo da mensagem original. Elas exercitam a idempotência do sistema, mas não ocupam o lugar de pagamentos novos e não contam para o piso de throughput.
+One dedicated thread controls only the times when payments start. It does not wait for HTTP responses, process notifications, or calculate statistics.
 
-O relatório compara quantas foram planejadas, enviadas e aceitas. Se uma repetição planejada não for enviada ou aceita na entrada, o relatório marca a violação.
+Network work, receiver responses, and duplicates run asynchronously. A separate component records observed events. The report is built only after the run.
 
-## Como os resultados são calculados
+This keeps the timing path small and prevents percentiles, CSV files, or aggregations from delaying load generation itself.
+
+Internal queues are bounded. If the tool runs out of capacity to track its own work, the run fails instead of silently reducing the load.
+
+## Warm-up ends when its observable work ends
+
+Before the main phase, the generator increases the rate in two steps. The goal is to warm connections, caches, and JVMs without mixing that startup work into the measured period.
+
+When warm-up generation ends, the tool waits for everything it created and can observe:
+
+* original requests;
+* receiver responses;
+* final results;
+* selected duplicates.
+
+The main phase starts only after these obligations finish or the wait limit is reached.
+
+This rule observes the generator's work. It does not require every internal Kafka and PostgreSQL queue to be empty:
+
+> The measured phase does not start while the generator is still tracking warm-up work.
+
+## Duplicates add load, but not declared throughput
+
+Some requests and responses are sent again ten seconds later.
+
+Duplicates keep the identity and content of the original message. They test system idempotency, but they do not replace new payments and do not count toward the throughput floor.
+
+The report compares how many were planned, sent, and accepted. If a planned duplicate is not sent or accepted at ingress, the report records a violation.
+
+## How results are calculated
 
 ### Throughput
 
-Um pagamento conta somente se sua requisição original realmente começou dentro da fase medida.
+A payment counts only if its original request really started inside the measured phase.
 
-Depois da execução, o relatório avalia todas as janelas contínuas de um segundo contidas nessa fase. A menor contagem encontrada é o **minimum rolling TPS**, ou menor throughput contínuo de um segundo.
+After the run, the report checks every rolling one-second window inside that phase. The lowest count is the **minimum rolling TPS**.
 
-Com isso:
+This means:
 
-* a média não esconde um vale;
-* uma rajada posterior não corrige uma janela anterior;
-* pagamentos planejados e iniciados permanecem separados.
+* the average cannot hide a dip;
+* a later burst cannot repair an earlier window;
+* planned and started payments stay separate.
 
-### Latência
+### Latency
 
-A latência começa quando a requisição original inicia e termina na primeira confirmação final compatível observada pelo pagador.
+Latency starts when the original request starts and ends at the first matching final confirmation observed by the payer.
 
-O tempo usado para preparar a mensagem e a resposta HTTP do ingresso não encerram essa medição.
+Message preparation time and the ingress HTTP response do not end this measurement.
 
-### Corretude observável
+### Observable correctness
 
-O gerador conhece antecipadamente o resultado esperado de cada cenário. Para cada pagamento iniciado, ele verifica se o pagador recebeu uma confirmação compatível.
+The generator knows the expected result of each scenario before the run starts. For every started payment, it checks whether the payer received a matching confirmation.
 
-Ele registra:
+It records:
 
-* resultados compatíveis;
-* resultados ausentes;
-* estados ou motivos incompatíveis;
-* respostas causais rejeitadas;
-* repetições que não foram executadas ou aceitas.
+* matching results;
+* missing results;
+* incompatible states or reasons;
+* rejected causal responses;
+* duplicates that were not sent or accepted.
 
-Confirmações duplicadas e compatíveis são permitidas, pois a entrega é at-least-once. Uma confirmação incompatível continua sendo uma contradição mesmo se outra correta também tiver chegado.
+Matching duplicate confirmations are allowed because delivery is at-least-once. An incompatible confirmation is still a contradiction even if a correct one also arrived.
 
-O relatório não relê todos os saldos no PostgreSQL. As invariantes financeiras são verificadas diretamente pelos testes transacionais do sistema.
+The report does not read every balance back from PostgreSQL. Financial invariants are checked directly by the system's transactional tests.
 
-## Preparar o ambiente e gerar a carga são trabalhos diferentes
+## Preparing the environment and generating load are different jobs
 
-A preparação cria um ambiente novo, aguarda os serviços, provisiona os participantes e gera os certificados necessários.
+Preparation creates a new environment, waits for the services, provisions participants, and generates the required certificates.
 
-Somente depois disso o comando de execução inicia a carga. Ele exige a mesma configuração usada na preparação e preserva o plano junto com os resultados.
+Only after that does the run command start the load. It requires the same configuration used during preparation and stores the plan with the results.
 
-A preparação cuida das verificações de infraestrutura. O comando de execução cuida apenas da carga e usa o ambiente que foi preparado.
+Preparation handles infrastructure checks. The run command handles only the load and uses the environment that was prepared.
 
-Nas execuções finais, cada rodada começou com uma preparação completa e independente.
+For the final runs, every round started with a complete and independent preparation.
 
-## Escopo da metodologia
+## Method scope
 
-O método usado neste projeto considera:
+The method used in this project assumes:
 
-* gerador e sistema no mesmo host;
-* a thread de cadenciamento sem prioridade de tempo real ou afinidade fixa de CPU;
-* 10 ms como menor unidade temporal usada pelo teste;
-* aquecimento concluído pelo trabalho observável do gerador, não pelo estado interno de todos os serviços;
-* corretude end-to-end medida por resultados e repetições, com saldos cobertos pelos testes transacionais;
-* diagnósticos usados para explicar a execução, sem substituir os critérios do relatório.
+* generator and system on the same host;
+* pacing thread with no real-time priority or fixed CPU affinity;
+* 10 ms as the smallest time unit used by the test;
+* warm-up completion based on work observable by the generator, not the internal state of every service;
+* end-to-end correctness measured through results and duplicates, with balances covered by transactional tests;
+* diagnostics used to explain the run, not replace report criteria.
 
-Com esse método, a propriedade central é simples:
+With this method, the main property is simple:
 
-> O throughput inclui apenas pagamentos que realmente começaram em sua janela, e a latência acompanha esses mesmos pagamentos até o resultado final.
+> Throughput includes only payments that really started in their window, and latency tracks those same payments until the final result.
 
-## Verificar a implementação
+## Check the implementation
 
-O gerador e o relatório estão em [`load-test/rust-loadtool`](../../load-test/rust-loadtool/). A separação entre preparação e execução está nos scripts [`prepare-performance-environment.sh`](../../load-test/prepare-performance-environment.sh) e [`run-load-test.sh`](../../load-test/run-load-test.sh).
+The generator and report are in [`load-test/rust-loadtool`](../../load-test/rust-loadtool/). The split between preparation and execution is in [`prepare-performance-environment.sh`](../../load-test/prepare-performance-environment.sh) and [`run-load-test.sh`](../../load-test/run-load-test.sh).

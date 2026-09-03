@@ -1,260 +1,260 @@
-# Como uma confirmação continua recuperável
+# How a confirmation stays recoverable
 
-Este documento responde a uma pergunta:
+This document answers one question:
 
-> Depois que o dinheiro já foi movimentado, o que impede a confirmação de desaparecer antes de chegar à instituição?
+> After the money has moved, what prevents the confirmation from disappearing before it reaches the institution?
 
-O caminho começa quando o Payment Processor grava a obrigação de notificar junto com o pagamento. Termina quando a instituição processa a confirmação e avança seu próprio progresso. As regras financeiras anteriores a essa etapa estão em [Como o pagamento permanece correto](payment-correctness.md).
+The path starts when the Payment Processor stores the obligation to notify together with the payment. It ends when the institution processes the confirmation and advances its own progress. The financial rules before this stage are in [How payment correctness is preserved](payment-correctness.md).
 
-## O que a entrega promete
+## What delivery promises
 
-A entrega preserva estas propriedades:
+Delivery preserves these properties:
 
-1. uma transação financeira concluída deixa uma obrigação durável de informar seu resultado;
-2. uma falha entre PostgreSQL e Kafka não apaga silenciosamente essa obrigação;
-3. depois da publicação confirmada, o histórico permanece recuperável durante a retenção operacional;
-4. o Gateway pode repetir fisicamente uma confirmação, mas não pode inventar que a instituição já a processou;
-5. memória acelera a leitura recente, mas não participa da corretude.
+1. a completed financial transaction leaves a durable obligation to report its result;
+2. a failure between PostgreSQL and Kafka does not silently remove that obligation;
+3. after confirmed publication, the history stays recoverable during the operational retention period;
+4. the Gateway may deliver the same confirmation again, but it cannot claim that the institution already processed it;
+5. memory makes recent reads faster, but does not take part in correctness.
 
-O sistema oferece entrega **at-least-once**, não exactly-once. Uma confirmação pode aparecer novamente; quando uma fronteira fica inconclusiva, o sistema repete em vez de assumir que a entrega aconteceu.
+The system provides **at-least-once** delivery, not exactly-once delivery. A confirmation may appear again. When a boundary has an uncertain result, the system repeats the operation instead of assuming delivery happened.
 
-## O primeiro risco está entre PostgreSQL e Kafka
+## The first risk is between PostgreSQL and Kafka
 
-PostgreSQL e Kafka não compartilham uma transação. Publicar diretamente depois de alterar o pagamento abriria esta janela:
+PostgreSQL and Kafka do not share a transaction. Publishing directly after changing the payment would leave this window:
 
 ```text
-COMMIT do pagamento
+payment COMMIT
         ↓
-processo cai antes da publicação
+process fails before publication
         ↓
-resultado existe, mas ninguém pode recuperá-lo
+result exists, but nobody can recover it
 ```
 
-Para fechar essa janela, a confirmação é gravada primeiro no próprio PostgreSQL, dentro de uma **transactional outbox**:
+To close this window, the confirmation is first stored in PostgreSQL itself, inside a **transactional outbox**:
 
 ```text
-transação PostgreSQL
+PostgreSQL transaction
 
-├── pagamento e saldos
-├── auditoria
+├── payment and balances
+├── audit
 └── notification_outbox
           │
-          │ depois do commit
+          │ after commit
           ▼
         Kafka
 ```
 
-Cada registro da outbox contém somente:
+Each outbox record contains only:
 
-| Campo | Função |
+| Field | Purpose |
 | --- | --- |
-| `communication_id` | identidade estável do envelope de notificação |
-| `recipient_ispb` | instituição destinatária e chave de particionamento |
-| `payload` | bytes exatos que serão publicados |
-| `created_at` | ordem de recuperação na próxima inicialização |
+| `communication_id` | stable identity of the notification envelope |
+| `recipient_ispb` | destination institution and partition key |
+| `payload` | exact bytes that will be published |
+| `created_at` | recovery order on the next startup |
 
-Não há status de publicação, contador de tentativas ou controle individual de ACK na tabela. A presença do registro significa apenas: **esta obrigação ainda não teve sua publicação confirmada e removida**.
+The table has no publication status, retry counter, or per-message ACK state. A record in the table means only: **publication of this obligation has not been confirmed and the record has not been removed yet**.
 
-### O caminho normal não precisa consultar a tabela novamente
+### The normal path does not need to query the table again
 
-A transação que grava a outbox também agenda um evento interno. Ele só é entregue depois do commit e encaminha o lote ao publicador.
+The transaction that writes the outbox also schedules an internal event. The event is delivered only after commit and sends the batch to the publisher.
 
-Isso evita consultar a outbox no caminho saudável:
+This avoids querying the outbox on the normal path:
 
 ```text
 COMMIT
   ↓
-evento AFTER_COMMIT
+AFTER_COMMIT event
   ↓
-fila limitada
+bounded queue
   ↓
-publicador único
+single publisher
   ↓
 Kafka
 ```
 
-Esse evento em memória é apenas o caminho rápido. Se a transação for revertida, nem o registro nem o evento sobrevivem. Se o encaminhamento falhar depois do commit, a obrigação já persistida continua sendo a fonte de verdade.
+This in-memory event is only the fast path. If the transaction rolls back, neither the record nor the event survives. If handoff fails after commit, the persisted obligation is already the source of truth.
 
-### A outbox só é removida depois da confirmação
+### The outbox is removed only after confirmation
 
-O publicador envia exatamente os bytes armazenados. A instituição destinatária define a chave Kafka, e a identidade da comunicação acompanha a mensagem. O publicador espera a confirmação configurada como `acks=all` e usa a idempotência do Kafka.
+The publisher sends the exact bytes stored in the outbox. The destination institution is used as the Kafka key, and the communication identity travels with the message. The publisher waits for confirmation with `acks=all` and uses Kafka producer idempotency.
 
-A outbox só é apagada depois que todas as publicações do lote são confirmadas pelo broker.
+The outbox is deleted only after every publication in the batch is confirmed by the broker.
 
-Se uma publicação falhar, ficar inconclusiva ou se a remoção da outbox falhar, o lote inteiro é enviado novamente. Algumas mensagens já podem ter chegado ao Kafka; por isso, essa regra evita perda ao custo de possíveis duplicatas.
+If publication fails, has an uncertain result, or outbox deletion fails, the full batch is sent again. Some messages may already have reached Kafka. This rule avoids loss at the cost of possible duplicates.
 
-A idempotência do producer Kafka reduz duplicatas nas tentativas internas do próprio producer. Ela não torna toda a fronteira exactly-once. A aplicação ainda pode reenviar algo que o broker recebeu antes de a resposta se perder.
+Kafka producer idempotency reduces duplicates from the producer's own internal retries. It does not make the full PostgreSQL-to-Kafka boundary exactly-once. The application can still send something again if the broker received it but the response was lost.
 
-### O que acontece depois de uma reinicialização
+### What happens after a restart
 
-Antes de aceitar novos lotes de pagamento, o Payment Processor lê as obrigações mais antigas da outbox e tenta publicá-las. Isso impede que uma reinicialização deixe confirmações antigas indefinidamente atrás de tráfego novo.
+Before accepting new payment batches, the Payment Processor reads the oldest obligations from the outbox and tries to publish them. This prevents old confirmations from staying forever behind new traffic after a restart.
 
-Enquanto a aplicação está rodando, o publicador mantém o lote atual e tenta novamente até conseguir confirmá-lo e removê-lo.
+While the application is running, the publisher keeps the current batch and retries until it can confirm publication and remove the records.
 
-Hoje, se a obrigação foi confirmada no banco, mas seu evento pós-commit não chegou ao publicador, ela volta ao fluxo na próxima inicialização. Não há busca periódica durante a mesma execução; até lá, a obrigação continua no PostgreSQL.
+Today, if an obligation was committed to the database but its post-commit event did not reach the publisher, it returns to the flow on the next startup. There is no periodic scan during the same process run. Until then, the obligation stays in PostgreSQL.
 
-## Depois da publicação, Kafka guarda o histórico
+## After publication, Kafka stores the history
 
-Depois que o broker confirma a publicação e a outbox é removida, Kafka passa a ser a autoridade sobre as confirmações disponíveis para recuperação.
+After the broker confirms publication and the outbox record is removed, Kafka becomes the authority for confirmations that are available for recovery.
 
-O tópico `psp-notifications-v1` possui, no ambiente atual:
+In the current environment, topic `psp-notifications-v1` has:
 
-* oito partições;
-* retenção de sete dias;
-* `recipient_ispb` como chave;
-* um broker e fator de replicação 1 no ambiente local.
+* eight partitions;
+* seven-day retention;
+* `recipient_ispb` as the key;
+* one broker and replication factor 1 in the local environment.
 
-Usar o destinatário como chave mantém todas as notificações de uma instituição na mesma partição enquanto o número de partições permanecer fixo. Instituições diferentes podem compartilhar uma partição; o Gateway ainda separa suas mensagens, mas o cursor precisa representar essa leitura compartilhada.
+Using the recipient as the key keeps all notifications for one institution in the same partition while the partition count stays fixed. Different institutions can share a partition. The Gateway still separates their messages, but the cursor must represent this shared read.
 
-Nesta geração do tópico, as oito partições são fixas. Mudar esse número exige uma nova geração do tópico e uma migração dos cursores.
+For this topic generation, the eight partitions are fixed. Changing that number requires a new topic generation and cursor migration.
 
-Kafka não decide estado financeiro, não sabe o que a instituição já processou e não participa da transação do pagamento. Sua autoridade começa no histórico publicado.
+Kafka does not decide financial state, does not know what the institution already processed, and does not take part in the payment transaction. Its authority starts with published history.
 
-## A instituição decide até onde processou
+## The institution decides how far it has processed
 
-Para buscar notificações, a instituição envia ao Gateway seu último cursor processado. A resposta contém até 15 mensagens e um novo cursor.
+To fetch notifications, the institution sends the Gateway its last processed cursor. The response contains up to 15 messages and a new cursor.
 
 ```text
-Pull(cursor anterior)
+Pull(previous cursor)
         ↓
-até 15 notificações
+up to 15 notifications
 +
 nextCursor
 ```
 
-### O primeiro Pull
+### The first Pull
 
-Não existe um cursor criado durante o onboarding. Na primeira chamada, a instituição envia o campo vazio:
+No cursor is created during onboarding. On the first call, the institution sends an empty field:
 
 ```text
-Pull(cursor vazio)
+Pull(empty cursor)
         ↓
-começa no primeiro offset ainda retido
-da partição daquela instituição
+starts at the earliest retained offset
+in the institution's partition
 ```
 
-O Gateway não começa em “agora”. Ele examina o histórico disponível desde o ponto mais antigo que o Kafka ainda preserva e devolve as notificações destinadas à instituição. Portanto, uma instituição que inicia o consumo também recebe seu backlog dentro da janela de retenção.
+The Gateway does not start at “now.” It scans the available history from the oldest point Kafka still keeps and returns notifications for that institution. An institution starting consumption also receives its backlog inside the retention window.
 
-Se nenhum registro estiver disponível, a chamada segue o long polling normal e pode terminar com um lote e um cursor ainda vazios. O primeiro cursor assinado aparece quando o Gateway examina algum registro da partição. Esse avanço pode incluir mensagens destinadas a outras instituições.
+If no record is available, the call follows the normal long-polling behavior and may finish with an empty batch and an empty cursor. The first signed cursor appears after the Gateway scans at least one record in the partition. That progress can include messages for other institutions.
 
-Essa regra não recupera mensagens anteriores à retenção do tópico. O primeiro Pull começa no início do histórico **ainda disponível**, não no início absoluto do histórico da instituição.
+This rule cannot recover messages older than the topic retention period. The first Pull starts at the beginning of the history **that is still available**, not at the absolute beginning of the institution's history.
 
-Dentro de uma partição, Kafka identifica cada mensagem por uma posição numérica chamada **offset**. O cursor é um token opaco assinado pelo Gateway que vincula:
+Inside a partition, Kafka identifies each message with a numeric position called an **offset**. The cursor is an opaque token signed by the Gateway and binds these values:
 
 ```text
-versão do formato
-geração do tópico
-ISPB autenticado
-partição
-último offset examinado
+format version
+topic generation
+authenticated ISPB
+partition
+last scanned offset
 ```
 
-Por isso, uma instituição não pode usar o cursor de outra ou avançar sua posição por conta própria sem invalidar a assinatura.
+An institution cannot use another institution's cursor or move its position forward on its own without making the signature invalid.
 
-O Gateway só aceita um cursor que ele próprio emitiu e assinou. A instituição decide quando pode afirmar: **processei de forma durável até aqui**.
+The Gateway accepts only a cursor that it created and signed. The institution decides when it can say: **I have durably processed everything up to this point**.
 
-A instituição persiste o novo cursor somente depois de processar todo o lote de forma durável. O Gateway fornece esse ponto de avanço; o armazenamento do cursor pertence à instituição.
+The institution persists the new cursor only after it durably processes the full batch. The Gateway provides this progress point; cursor storage belongs to the institution.
 
-Se a instituição falhar antes de persistir o novo cursor, reapresenta o anterior e pode receber o mesmo envelope novamente. `communication_id` permanece igual nas republicações da mesma obrigação e permite que o consumidor reconheça a duplicata.
+If the institution fails before it persists the new cursor, it sends the previous one again and may receive the same envelope again. `communication_id` stays the same when the same obligation is republished, so the consumer can recognize the duplicate.
 
-### Por que o cursor avança também sobre mensagens de outras instituições
+### Why the cursor also moves across messages for other institutions
 
-Uma partição pode conter registros de várias instituições:
+One partition can contain records for several institutions:
 
 ```text
-offset 100 → instituição A
-offset 101 → instituição B
-offset 102 → instituição A
+offset 100 → institution A
+offset 101 → institution B
+offset 102 → institution A
 ```
 
-Ao atender a instituição A, o Gateway devolve as notificações dos offsets 100 e 102, mas também sabe que examinou o offset 101. O próximo cursor pode, portanto, apontar para 102.
+When serving institution A, the Gateway returns notifications from offsets 100 and 102, but it also knows that it scanned offset 101. So the next cursor can point to 102.
 
-Se guardasse apenas a última mensagem da instituição A, o Gateway examinaria repetidamente as mensagens dos outros participantes. Por outro lado, avançar sem ler os offsets intermediários poderia saltar uma mensagem válida.
+If the Gateway stored only the last message for institution A, it would scan the other participants' messages again and again. On the other hand, moving forward without reading intermediate offsets could skip a valid message.
 
-A leitura para quando encontra a décima quinta notificação da instituição ou atinge o limite de varredura. O cursor nunca avança além do último registro realmente examinado.
+The scan stops when it finds the fifteenth notification for the institution or reaches the scan limit. The cursor never moves past the last record that was actually scanned.
 
-## Memória acelera; Kafka recupera
+## Memory makes it faster; Kafka provides recovery
 
-O Gateway acompanha as partições e mantém em memória uma janela limitada das mensagens mais recentes. Ela inclui mensagens de todas as instituições que compartilham a partição, preservando a sequência dos offsets.
+The Gateway follows the partitions and keeps a bounded window of the newest messages in memory. It includes messages from all institutions that share the partition and keeps offset order.
 
-Quando a janela contém uma sequência contínua depois do cursor, o Pull é respondido sem uma leitura histórica no Kafka.
+When the window contains a continuous sequence after the cursor, Pull can answer without a historical Kafka read.
 
 ```text
-leitura contínua do Kafka
+continuous Kafka read
     ↓
-janela recente por partição
+recent window per partition
     ↓
 Pull
 ```
 
-Se o cursor apontar para algo mais antigo ou a memória não contiver uma sequência completa, o Gateway lê diretamente do Kafka:
+If the cursor points to older data or memory does not contain a complete sequence, the Gateway reads directly from Kafka:
 
 ```text
-mensagem fora da janela em memória
+message outside the in-memory window
     ↓
-lê a partir da posição seguinte ao cursor
+read from the position after the cursor
     ↓
-filtra a instituição dentro da partição
+filter for the institution inside the partition
     ↓
-responde ao Pull
+answer Pull
 ```
 
-A leitura histórica atende àquela chamada. Enquanto isso, o fluxo normal continua alimentando a memória recente.
+The historical read serves that call. At the same time, the normal flow continues feeding recent messages into memory.
 
-Quando o cursor já está no ponto mais recente conhecido e não há notificação disponível, o Gateway mantém a chamada aberta por até 30 segundos. A chegada de mensagens para aquela instituição libera a resposta; o timeout devolve um lote vazio com o mesmo cursor.
+When the cursor is already at the newest known point and no notification is available, the Gateway keeps the call open for up to 30 seconds. A new message for that institution releases the response. A timeout returns an empty batch with the same cursor.
 
-Só um Pull pode permanecer ativo por instituição. Uma segunda chamada concorrente é rejeitada, evitando dois fluxos competindo pelo mesmo progresso lógico.
+Only one Pull can stay active per institution. A second concurrent call is rejected so that two flows do not compete for the same logical progress.
 
-## O que acontece quando alguma fronteira falha
+## What happens when a boundary fails
 
-| Situação | Resultado |
+| Situation | Result |
 | --- | --- |
-| rollback da transação financeira | a obrigação de notificar também é revertida |
-| commit seguido de queda antes da publicação | o registro permanece na outbox e é recuperado na próxima inicialização |
-| confirmação Kafka parcial ou inconclusiva | o lote inteiro pode ser publicado novamente |
-| Kafka confirmou, mas a remoção da outbox falhou | o lote inteiro pode ser publicado novamente |
-| Gateway reiniciou ou perdeu a janela em memória | o Pull lê o histórico diretamente do Kafka |
-| instituição falhou antes de persistir o cursor | o cursor anterior pode produzir nova entrega |
-| cursor aponta para dados removidos pela retenção | o Pull falha explicitamente; a recuperação deixa o fluxo operacional normal |
-| cursor foi adulterado ou pertence a outra instituição | o Pull é rejeitado |
+| financial transaction rolls back | the notification obligation also rolls back |
+| commit succeeds, then process fails before publication | the record stays in the outbox and is recovered on the next startup |
+| Kafka confirmation is partial or uncertain | the full batch may be published again |
+| Kafka confirms, but outbox deletion fails | the full batch may be published again |
+| Gateway restarts or loses its in-memory window | Pull reads history directly from Kafka |
+| institution fails before persisting the cursor | the previous cursor may cause another delivery |
+| cursor points to data removed by retention | Pull fails explicitly; recovery leaves the normal operational flow |
+| cursor was changed or belongs to another institution | Pull is rejected |
 
-Quando uma fronteira fica inconclusiva, o sistema prefere repetir a confirmação. Ele nunca conclui sozinho que a instituição a processou.
+When a boundary has an uncertain result, the system prefers to repeat the confirmation. It never decides on its own that the institution processed it.
 
-## Como cada promessa é protegida
+## How each promise is protected
 
-| Propriedade | Autoridade ou mecanismo |
+| Property | Authority or mechanism |
 | --- | --- |
-| obrigação nasce com o fato financeiro | transação PostgreSQL e outbox |
-| bytes e identidade permanecem estáveis durante novas tentativas | registro imutável da outbox |
-| publicação só libera a outbox depois da confirmação | publicador do Payment Processor |
-| histórico operacional recuperável | Kafka |
-| progresso efetivamente processado | instituição participante |
-| cursor não pode ser inventado ou transferido | HMAC e vínculo ao ISPB/partição |
-| caminho recente sem leitura histórica | janela limitada do Gateway |
-| mensagem antiga ou reinicialização | leitura direta do Kafka |
+| obligation is created with the financial fact | PostgreSQL transaction and outbox |
+| bytes and identity stay stable across retries | immutable outbox record |
+| publication releases the outbox only after confirmation | Payment Processor publisher |
+| recoverable operational history | Kafka |
+| progress that was actually processed | participating institution |
+| cursor cannot be invented or transferred | HMAC bound to ISPB/partition |
+| recent path without historical reads | bounded Gateway window |
+| old message or restart | direct Kafka read |
 
-## Escopo do contrato
+## Contract scope
 
-O contrato desta versão considera:
+This version uses these rules:
 
-* sete dias de retenção; mensagens mais antigas saem do histórico operacional desse fluxo;
-* oito partições fixas, sem reparticionamento transparente;
-* um fluxo lógico e no máximo um Pull ativo por instituição;
-* nenhum ACK, cursor ou estado individual de entrega persistido pelo Gateway;
-* uma obrigação que perde o encaminhamento pós-commit volta ao fluxo na próxima inicialização.
+* seven days of retention; older messages leave this flow's operational history;
+* eight fixed partitions, with no transparent repartitioning;
+* one logical flow and at most one active Pull per institution;
+* no per-delivery ACK, cursor, or state persisted by the Gateway;
+* an obligation that misses the post-commit handoff returns to the flow on the next startup.
 
-Nesse escopo, a propriedade central é: **depois que a transação cria uma confirmação, o sistema mantém um caminho recuperável para entregá-la e aceita repetição física quando uma fronteira fica inconclusiva**.
+Within this scope, the main property is: **after a transaction creates a confirmation, the system keeps a recoverable path for delivering it and allows duplicate delivery when a boundary has an uncertain result**.
 
-## Verificar no código
+## Check it in the code
 
-A passagem entre PostgreSQL e Kafka pode ser inspecionada em:
+The PostgreSQL-to-Kafka boundary can be inspected in:
 
 * [`NotificationObligationService`](../../spi/src/main/java/br/kauan/spi/application/notification/NotificationObligationService.java);
 * [`NotificationOutboxPipeline`](../../spi/src/main/java/br/kauan/spi/adapter/output/notification/NotificationOutboxPipeline.java);
 * [`OutboundNotificationFastPathIntegrationTest`](../../spi/src/test/java/br/kauan/spi/adapter/output/notification/OutboundNotificationFastPathIntegrationTest.java);
 * [`NotificationOutboxPipelineTest`](../../spi/src/test/java/br/kauan/spi/adapter/output/notification/NotificationOutboxPipelineTest.java).
 
-O protocolo de Pull, cursor e leitura histórica pode ser verificado em:
+The Pull protocol, cursor, and historical reads can be checked in:
 
 * [`NotificationGrpcService`](../../notification-gateway/src/main/java/br/kauan/notificationgateway/grpc/NotificationGrpcService.java);
 * [`DeliveryCursorCodec`](../../notification-gateway/src/main/java/br/kauan/notificationgateway/grpc/DeliveryCursorCodec.java);
