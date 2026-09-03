@@ -25,7 +25,7 @@ Mensagens inválidas, incompatíveis com o contrato ou impossíveis de processar
 - Erro desconhecido de processamento usa retry curto e depois DLQ.
 - Falha clara de infraestrutura, como indisponibilidade do PostgreSQL, não vai para DLQ; o consumer pausa/backoff e reprocessa o mesmo batch quando a infraestrutura volta.
 - Ack manual imediato configurado; ack só acontece ao final do batch ou após recuperação confirmada pelo error handler.
-- Documentação operacional adicionada em `docs/KAFKA_DLQ_POLICY.md`.
+- Política vigente consolidada em `docs/design.md`.
 
 **Fora do escopo desta versão**
 

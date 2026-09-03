@@ -1,0 +1,85 @@
+package br.kauan.spi.application.notification.payload;
+
+import br.kauan.spi.domain.entity.status.NotificationStatus;
+import br.kauan.spi.domain.entity.status.NotificationStatusItem;
+import br.kauan.spi.domain.entity.transfer.BankAccount;
+import br.kauan.spi.domain.entity.transfer.BankAccountType;
+import br.kauan.spi.domain.entity.transfer.Party;
+import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.junit.jupiter.api.Test;
+
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class NotificationPayloadFactoryTest {
+
+    private final NotificationPayloadFactory factory = new NotificationPayloadFactory(
+            new ObjectMapper()
+                    .registerModule(new JavaTimeModule())
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    );
+
+    @Test
+    void buildsPaymentNotificationWithPacsJsonShape() {
+        byte[] payload = factory.paymentNotification("MSG-1", List.of(paymentTransaction("E2E-1")));
+
+        assertThat(serialized(payload))
+                .contains("\"GrpHdr\"")
+                .contains("\"NbOfTxs\":1")
+                .contains("\"CdtTrfTxInf\"")
+                .contains("\"EndToEndId\":\"E2E-1\"")
+                .contains("\"IntrBkSttlmAmt\":{\"value\":10.00,\"Ccy\":\"BRL\"}")
+                .contains("\"DbtrAcct\":{\"Id\":{\"Othr\":{\"Id\":\"000123\",\"Issr\":\"0012\"}}")
+                .contains("\"CdtrAcct\":{\"Id\":{\"Othr\":{\"Id\":\"000123\",\"Issr\":\"0012\"}}");
+    }
+
+    @Test
+    void buildsStatusNotificationWithPacsJsonShape() {
+        byte[] payload = factory.statusNotification("MSG-1", List.of(new NotificationStatusItem(
+                "E2E-1",
+                NotificationStatus.ACSC,
+                List.of()
+        )));
+
+        assertThat(serialized(payload))
+                .contains("\"GrpHdr\"")
+                .contains("\"NbOfTxs\":1")
+                .contains("\"TxInfAndSts\"")
+                .contains("\"OrgnlEndToEndId\":\"E2E-1\"")
+                .contains("\"TxSts\":\"ACSC\"");
+    }
+
+    private String serialized(byte[] payload) {
+        return new String(payload, StandardCharsets.UTF_8);
+    }
+
+    private static PaymentTransactionCommand paymentTransaction(String paymentId) {
+        return PaymentTransactionCommand.builder()
+                .paymentId(paymentId)
+                .amountCents(1000L)
+                .currency("BRL")
+                .description("test")
+                .sender(party("10000001"))
+                .receiver(party("20000001"))
+                .build();
+    }
+
+    private static Party party(String bankCode) {
+        return Party.builder()
+                .name("Name")
+                .taxId("12345678900")
+                .pixKey("+5511999999999")
+                .account(BankAccount.builder()
+                        .bankCode(bankCode)
+                        .number("000123")
+                        .branch("0012")
+                        .type(BankAccountType.CHECKING)
+                        .build())
+                .build();
+    }
+}

@@ -1,6 +1,5 @@
 {
   "name": "mixed-outcomes-smoke",
-  "schemaVersion": 1,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8001",
@@ -16,10 +15,23 @@
     }
   },
   "load": {
-    "targetTxRate": 100,
-    "warmup": "5s",
+    "offeredTxRate": 105,
+    "requiredMinimumTxRate": 100,
+    "warmup": {
+      "bootstrap": {
+        "offeredTxRate": 50,
+        "duration": "2s",
+        "requestTimeout": "5s"
+      },
+      "steady": {
+        "offeredTxRate": 50,
+        "duration": "3s",
+        "requestTimeout": "5s"
+      },
+      "completionTimeout": "30s"
+    },
     "duration": "10s",
-    "drain": "10s"
+    "drain": "20s"
   },
   "replay": {
     "pacs008": {

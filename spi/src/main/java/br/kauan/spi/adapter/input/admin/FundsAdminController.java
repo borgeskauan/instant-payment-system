@@ -1,6 +1,6 @@
 package br.kauan.spi.adapter.input.admin;
 
-import br.kauan.spi.domain.services.ParticipantSettlementAccountService;
+import br.kauan.spi.application.ParticipantSettlementAccountService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

@@ -1,17 +1,27 @@
 package br.kauan.spi.adapter.output.paymenttransaction;
 
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
 import br.kauan.spi.domain.entity.status.PaymentRejection;
-import br.kauan.spi.domain.entity.status.PaymentRejectionReason;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
-import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.port.output.PaymentStatusTransition;
+import br.kauan.spi.domain.entity.status.PaymentRejectionCause;
+import br.kauan.spi.domain.entity.status.PaymentSettlement;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
+import br.kauan.spi.domain.entity.transfer.PaymentReference;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Candidate;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Classification;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Decision;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.LockedPayment;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.PreparedBatch;
+import br.kauan.spi.domain.services.payment.StatusTransitionPolicy.Transition;
 import br.kauan.spi.port.output.StatusReportPersistenceResult;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Array;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -19,19 +29,13 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 class IncomingStatusReportPersistence {
 
-    private static final int BUCKET_COUNT = 16;
-    private static final String SETTLED_PAYMENT = "SETTLED_PAYMENT";
-    private static final String REJECTED_NOTIFICATION = "REJECTED_NOTIFICATION";
-    private static final String ACCEPTED_IN_PROCESS_TRANSITION = "ACCEPTED_IN_PROCESS_TRANSITION";
-    private static final String DIVERGENT_STATUS_REPORT = "DIVERGENT_STATUS_REPORT";
-    private static final String UNAUTHORIZED_PSP = "UNAUTHORIZED_PSP";
-
-    private static final String STATUS_REPORT_SQL = """
+    private static final String LOCK_PAYMENTS_SQL = """
             WITH incoming AS (
                 SELECT *
                 FROM unnest(
@@ -42,429 +46,383 @@ class IncomingStatusReportPersistence {
                 ) AS i(
                     ordinal,
                     payment_id,
-                    requested_status,
+                    requested_outcome,
                     authenticated_ispb
                 )
-            ),
-            existing_lookup AS MATERIALIZED (
-                SELECT
-                    i.*,
-                    p.payment_id AS existing_payment_id,
-                    p.receiver_bank_code AS existing_receiver_bank_code
-                FROM incoming i
-                LEFT JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-            ),
-            unknown_actions AS (
-                SELECT
-                    i.ordinal,
-                    'DIVERGENT_STATUS_REPORT'::text AS action,
-                    i.payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code,
-                    NULL::text AS rejection_reason
-                FROM existing_lookup i
-                WHERE i.existing_payment_id IS NULL
-            ),
-            unauthorized_actions AS (
-                SELECT
-                    i.ordinal,
-                    'UNAUTHORIZED_PSP'::text AS action,
-                    i.payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code,
-                    NULL::text AS rejection_reason
-                FROM existing_lookup i
-                WHERE i.existing_payment_id IS NOT NULL
-                  AND i.authenticated_ispb IS DISTINCT FROM i.existing_receiver_bank_code
-            ),
-            authorized_existing_input AS (
-                SELECT *
-                FROM existing_lookup
-                WHERE existing_payment_id IS NOT NULL
-                  AND authenticated_ispb IS NOT DISTINCT FROM existing_receiver_bank_code
-            ),
-            authorized_group_stats AS (
-                SELECT
-                    payment_id,
-                    COUNT(DISTINCT requested_status) > 1 AS divergent
-                FROM authorized_existing_input
-                GROUP BY payment_id
-            ),
-            same_batch_divergent_actions AS (
-                SELECT
-                    i.ordinal,
-                    'DIVERGENT_STATUS_REPORT'::text AS action,
-                    i.payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code,
-                    NULL::text AS rejection_reason
-                FROM authorized_existing_input i
-                JOIN authorized_group_stats stats USING (payment_id)
-                WHERE stats.divergent
-            ),
-            logical_authorized_existing AS (
-                SELECT DISTINCT ON (i.payment_id) i.*
-                FROM authorized_existing_input i
-                JOIN authorized_group_stats stats USING (payment_id)
-                WHERE NOT stats.divergent
-                ORDER BY i.payment_id, i.ordinal
-            ),
-            locked_existing AS MATERIALIZED (
-                SELECT
-                    i.ordinal,
-                    i.payment_id,
-                    i.requested_status,
-                    p.status AS existing_status,
-                    p.rejection_reason AS existing_rejection_reason,
-                    p.amount_cents,
-                    p.sender_bank_code,
-                    p.receiver_bank_code,
-                    (ABS(hashtext(p.payment_id)) % ?) AS bucket_id
-                FROM logical_authorized_existing i
-                JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
-                ORDER BY p.payment_id
-                FOR UPDATE OF p
-            ),
-            rejected_updates AS (
-                UPDATE payment_transaction_entity p
-                SET status = ?,
-                    rejection_reason = NULL
-                FROM locked_existing le
-                WHERE p.payment_id = le.payment_id
-                  AND le.requested_status = ?
-                  AND le.existing_status = ?
-                  AND p.status = ?
-                RETURNING
-                    le.ordinal,
-                    p.payment_id,
-                    p.amount_cents,
-                    p.sender_bank_code,
-                    p.receiver_bank_code,
-                    p.rejection_reason
-            ),
-            divergent_existing_actions AS (
-                SELECT
-                    le.ordinal,
-                    'DIVERGENT_STATUS_REPORT'::text AS action,
-                    le.payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code,
-                    NULL::text AS rejection_reason
-                FROM locked_existing le
-                WHERE le.requested_status NOT IN (?, ?)
-                   OR (
-                       le.requested_status = ?
-                       AND NOT (
-                           le.existing_status IN (?, ?, ?)
-                           OR (
-                               le.existing_status = ?
-                               AND le.existing_rejection_reason = ?
-                           )
-                       )
-                   )
-                   OR (
-                       le.requested_status = ?
-                       AND le.existing_status NOT IN (?, ?)
-                   )
-            ),
-            accepted_waiting AS (
-                SELECT *
-                FROM locked_existing le
-                WHERE le.requested_status = ?
-                  AND le.existing_status = ?
-            ),
-            required_buckets AS (
-                SELECT sender_bank_code AS bank_code, bucket_id
-                FROM accepted_waiting
-                UNION
-                SELECT receiver_bank_code AS bank_code, bucket_id
-                FROM accepted_waiting
-            ),
-            locked_buckets AS MATERIALIZED (
-                SELECT f.bank_code, f.bucket_id, f.balance_cents
-                FROM funds_bucket_entity f
-                JOIN required_buckets b
-                  ON b.bank_code = f.bank_code
-                 AND b.bucket_id = f.bucket_id
-                ORDER BY f.bank_code, f.bucket_id
-                FOR UPDATE OF f
-            ),
-            provisioned_waiting AS (
-                SELECT aw.*, sender_bucket.balance_cents AS sender_balance_cents
-                FROM accepted_waiting aw
-                JOIN locked_buckets sender_bucket
-                  ON sender_bucket.bank_code = aw.sender_bank_code
-                 AND sender_bucket.bucket_id = aw.bucket_id
-                JOIN locked_buckets receiver_bucket
-                  ON receiver_bucket.bank_code = aw.receiver_bank_code
-                 AND receiver_bucket.bucket_id = aw.bucket_id
-            ),
-            ranked AS (
-                SELECT pw.*,
-                       SUM(pw.amount_cents) OVER (
-                           PARTITION BY pw.sender_bank_code, pw.bucket_id
-                           ORDER BY pw.ordinal
-                       ) AS cumulative_debit_cents
-                FROM provisioned_waiting pw
-            ),
-            settleable AS (
-                SELECT r.*
-                FROM ranked r
-                WHERE r.sender_balance_cents >= r.cumulative_debit_cents
-            ),
-            insufficient_funds AS (
-                SELECT r.*
-                FROM ranked r
-                WHERE r.sender_balance_cents < r.cumulative_debit_cents
-            ),
-            deltas AS (
-                SELECT sender_bank_code AS bank_code,
-                       bucket_id,
-                       -SUM(amount_cents) AS delta_cents
-                FROM settleable
-                GROUP BY sender_bank_code, bucket_id
-                UNION ALL
-                SELECT receiver_bank_code AS bank_code,
-                       bucket_id,
-                       SUM(amount_cents) AS delta_cents
-                FROM settleable
-                GROUP BY receiver_bank_code, bucket_id
-            ),
-            net_deltas AS (
-                SELECT bank_code, bucket_id, SUM(delta_cents) AS delta_cents
-                FROM deltas
-                GROUP BY bank_code, bucket_id
-            ),
-            updated_funds AS (
-                UPDATE funds_bucket_entity f
-                SET balance_cents = f.balance_cents + d.delta_cents
-                FROM net_deltas d
-                WHERE f.bank_code = d.bank_code
-                  AND f.bucket_id = d.bucket_id
-                RETURNING f.bank_code
-            ),
-            funds_applied AS (
-                SELECT COUNT(*) AS applied_count
-                FROM updated_funds
-            ),
-            settled_updates AS (
-                UPDATE payment_transaction_entity p
-                SET status = ?,
-                    rejection_reason = NULL
-                FROM settleable s, funds_applied fa
-                WHERE p.payment_id = s.payment_id
-                  AND p.status = ?
-                RETURNING
-                    s.ordinal,
-                    p.payment_id,
-                    p.amount_cents,
-                    p.sender_bank_code,
-                    p.receiver_bank_code,
-                    p.rejection_reason
-            ),
-            insufficient_funds_updates AS (
-                UPDATE payment_transaction_entity p
-                SET status = ?,
-                    rejection_reason = ?
-                FROM insufficient_funds insufficient
-                WHERE p.payment_id = insufficient.payment_id
-                  AND p.status = ?
-                RETURNING
-                    insufficient.ordinal,
-                    p.payment_id,
-                    p.amount_cents,
-                    p.sender_bank_code,
-                    p.receiver_bank_code,
-                    p.rejection_reason
-            ),
-            accepted_in_process_updates AS (
-                UPDATE payment_transaction_entity p
-                SET status = ?,
-                    rejection_reason = NULL
-                FROM accepted_waiting aw
-                LEFT JOIN provisioned_waiting provisioned ON provisioned.payment_id = aw.payment_id
-                WHERE p.payment_id = aw.payment_id
-                  AND provisioned.payment_id IS NULL
-                  AND p.status = ?
-                RETURNING aw.ordinal, p.payment_id
-            ),
-            settled_payment_actions AS (
-                SELECT
-                    ordinal,
-                    'SETTLED_PAYMENT'::text AS action,
-                    payment_id,
-                    amount_cents,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    rejection_reason
-                FROM settled_updates
-            ),
-            rejected_notification_actions AS (
-                SELECT
-                    ordinal,
-                    'REJECTED_NOTIFICATION'::text AS action,
-                    payment_id,
-                    amount_cents,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    rejection_reason
-                FROM rejected_updates
-                UNION ALL
-                SELECT
-                    ordinal,
-                    'REJECTED_NOTIFICATION'::text AS action,
-                    payment_id,
-                    amount_cents,
-                    sender_bank_code,
-                    receiver_bank_code,
-                    rejection_reason
-                FROM insufficient_funds_updates
-            ),
-            accepted_in_process_actions AS (
-                SELECT
-                    ordinal,
-                    'ACCEPTED_IN_PROCESS_TRANSITION'::text AS action,
-                    payment_id,
-                    NULL::bigint AS amount_cents,
-                    NULL::text AS sender_bank_code,
-                    NULL::text AS receiver_bank_code,
-                    NULL::text AS rejection_reason
-                FROM accepted_in_process_updates
             )
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM unknown_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM unauthorized_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM same_batch_divergent_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM divergent_existing_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM settled_payment_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM rejected_notification_actions
-            UNION ALL
-            SELECT ordinal, action, payment_id, amount_cents, sender_bank_code, receiver_bank_code, rejection_reason
-            FROM accepted_in_process_actions
-            ORDER BY ordinal
+            SELECT
+                i.ordinal,
+                i.payment_id,
+                i.requested_outcome,
+                i.authenticated_ispb,
+                p.state,
+                p.rejection_cause,
+                p.external_reason_codes,
+                p.amount_cents,
+                p.sender_bank_code,
+                p.receiver_bank_code
+            FROM incoming i
+            JOIN payment_transaction_entity p ON p.payment_id = i.payment_id
+            ORDER BY p.payment_id, i.ordinal
+            FOR UPDATE OF p
             """;
 
-    private final Mapper repositoryMapper;
-    private final JdbcTemplate jdbcTemplate;
+    private static final String LOCK_BALANCES_SQL = """
+            SELECT bank_code
+            FROM participant_balance_entity
+            WHERE bank_code = ANY (?::text[])
+            ORDER BY bank_code
+            FOR UPDATE
+            """;
 
-    IncomingStatusReportPersistence(
-            Mapper repositoryMapper,
-            JdbcTemplate jdbcTemplate
-    ) {
-        this.repositoryMapper = repositoryMapper;
+    private static final String ACQUIRE_TRANSITIONS_SQL = """
+            UPDATE payment_transaction_entity
+            SET state = ?::payment_state,
+                rejection_cause = NULL,
+                external_reason_codes = ?::text[]
+            WHERE payment_id = ANY (?::text[])
+              AND state = ?::payment_state
+            """;
+
+    private static final String APPLY_BALANCE_DELTAS_SQL = """
+            UPDATE participant_balance_entity balance
+            SET balance_cents = balance.balance_cents + delta.amount_cents
+            FROM unnest(?::text[], ?::bigint[]) AS delta(bank_code, amount_cents)
+            WHERE balance.bank_code = delta.bank_code
+            """;
+
+    private final JdbcTemplate jdbcTemplate;
+    private final StatusTransitionPolicy transitionPolicy;
+
+    IncomingStatusReportPersistence(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
+        this.transitionPolicy = new StatusTransitionPolicy();
     }
 
     StatusReportPersistenceResult classifyAndApply(List<AuthenticatedStatusReport> statusReports) {
         if (statusReports.isEmpty()) {
-            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of(), List.of());
+            return new StatusReportPersistenceResult(List.of(), List.of(), List.of(), List.of());
         }
 
-        BatchLocalStatusReportClassification batchLocalClassification =
-                classifyStatusReportsWithinBatch(statusReports);
-        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = reportsByOrdinal(statusReports);
-        List<PaymentTransactionCommand> settledPayments = new ArrayList<>();
+        PreparedBatch preparedBatch = transitionPolicy.prepare(statusReports);
+        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal = preparedBatch.reportsByOrdinal();
+        List<PaymentSettlement> settlements = new ArrayList<>();
         List<PaymentRejection> rejectedPayments = new ArrayList<>();
-        List<PaymentStatusTransition> appliedStatusTransitions = new ArrayList<>();
         Set<Integer> divergentStatusReportOrdinals = new LinkedHashSet<>();
         Set<Integer> unauthorizedStatusReportOrdinals = new LinkedHashSet<>();
 
-        for (StatusReportActionRow actionRow : classifyAndApplyStatusReports(batchLocalClassification.statusReportsToClassify())) {
+        List<StatusReportActionRow> actionRows = classifyAndApplyStatusReports(
+                preparedBatch.candidatesToClassify()
+        );
+        for (StatusReportActionRow actionRow : actionRows) {
             AuthenticatedStatusReport statusReport = reportsByOrdinal.get(actionRow.ordinal());
             if (statusReport == null) {
                 throw new IllegalStateException("Unknown status report ordinal: " + actionRow.ordinal());
             }
 
             switch (actionRow.action()) {
-                case SETTLED_PAYMENT -> {
-                    settledPayments.add(toPaymentTransaction(actionRow));
-                    appliedStatusTransitions.add(transition(
-                            actionRow,
-                            PaymentStatus.ACCEPTED_AND_SETTLED
-                    ));
-                }
-                case REJECTED_NOTIFICATION -> {
-                    PaymentRejectionReason reason = rejectionReason(actionRow.rejectionReason());
-                    rejectedPayments.add(new PaymentRejection(toPaymentTransaction(actionRow), reason));
-                    appliedStatusTransitions.add(transition(actionRow, PaymentStatus.REJECTED, reason));
-                }
-                case ACCEPTED_IN_PROCESS_TRANSITION -> appliedStatusTransitions.add(transition(
-                        actionRow,
-                        PaymentStatus.ACCEPTED_IN_PROCESS
+                case SETTLED_PAYMENT -> settlements.add(new PaymentSettlement(
+                        toPaymentReference(actionRow),
+                        actionRow.externalReasonCodes()
                 ));
-                case DIVERGENT_STATUS_REPORT -> addExpandedOrdinals(
+                case REJECTED_NOTIFICATION -> rejectedPayments.add(PaymentRejection.receiverRejected(
+                        toPaymentReference(actionRow),
+                        actionRow.externalReasonCodes()
+                ));
+                case STATUS_REPORT_CONFLICT -> addExpandedOrdinals(
                         divergentStatusReportOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        preparedBatch.originalOrdinalsByRepresentative(),
                         actionRow.ordinal()
                 );
                 case UNAUTHORIZED_PSP -> addExpandedOrdinals(
                         unauthorizedStatusReportOrdinals,
-                        batchLocalClassification.originalOrdinalsByRepresentative(),
+                        preparedBatch.originalOrdinalsByRepresentative(),
                         actionRow.ordinal()
                 );
-                default -> throw new IllegalStateException("Unknown status report action: " + actionRow.action());
             }
         }
 
         return new StatusReportPersistenceResult(
-                settledPayments,
+                settlements,
                 rejectedPayments,
-                appliedStatusTransitions,
                 reportsWithOrdinals(statusReports, divergentStatusReportOrdinals),
                 reportsWithOrdinals(statusReports, unauthorizedStatusReportOrdinals)
         );
     }
 
-    private PaymentStatusTransition transition(
-            StatusReportActionRow actionRow,
-            PaymentStatus resultingStatus
-    ) {
-        return transition(actionRow, resultingStatus, null);
+    private List<StatusReportActionRow> classifyAndApplyStatusReports(List<Candidate> statusReports) {
+        return jdbcTemplate.execute((ConnectionCallback<List<StatusReportActionRow>>) connection -> {
+            Map<Integer, Candidate> reportsByOrdinal = new LinkedHashMap<>();
+            for (Candidate statusReport : statusReports) {
+                reportsByOrdinal.put(statusReport.ordinal(), statusReport);
+            }
+
+            List<LockedPayment> lockedRows = lockExistingPayments(
+                    connection,
+                    statusReports,
+                    reportsByOrdinal
+            );
+            List<StatusReportActionRow> actions = new ArrayList<>();
+            Decision decision = transitionPolicy.decide(statusReports, lockedRows);
+            for (Classification classification : decision.classifications()) {
+                Candidate statusReport = reportsByOrdinal.get(classification.ordinal());
+                if (statusReport == null) {
+                    throw new IllegalStateException("Unknown status report ordinal: " + classification.ordinal());
+                }
+                actions.add(classificationAction(
+                        statusReport,
+                        switch (classification.type()) {
+                            case STATUS_REPORT_CONFLICT -> Action.STATUS_REPORT_CONFLICT;
+                            case UNAUTHORIZED_PSP -> Action.UNAUTHORIZED_PSP;
+                        }
+                ));
+            }
+
+            lockRequiredBalances(connection, decision.transitions());
+            List<AcquiredTransition> acquiredTransitions = acquireTransitions(
+                    connection,
+                    decision.transitions()
+            );
+            applyBalanceDeltas(connection, acquiredTransitions);
+            for (AcquiredTransition transition : acquiredTransitions) {
+                actions.add(new StatusReportActionRow(
+                        transition.ordinal(),
+                        transition.resultingState() == PaymentState.SETTLED
+                                ? Action.SETTLED_PAYMENT
+                                : Action.REJECTED_NOTIFICATION,
+                        transition.paymentId(),
+                        transition.amountCents(),
+                        transition.senderBankCode(),
+                        transition.receiverBankCode(),
+                        transition.externalReasonCodes()
+                ));
+            }
+
+            actions.sort((first, second) -> Integer.compare(first.ordinal(), second.ordinal()));
+            return actions;
+        });
     }
 
-    private PaymentStatusTransition transition(
-            StatusReportActionRow actionRow,
-            PaymentStatus resultingStatus,
-            PaymentRejectionReason rejectionReason
-    ) {
-        return new PaymentStatusTransition(
-                actionRow.paymentId(),
-                PaymentStatus.WAITING_ACCEPTANCE,
-                resultingStatus,
-                rejectionReason
-        );
+    private List<LockedPayment> lockExistingPayments(
+            Connection connection,
+            List<Candidate> statusReports,
+            Map<Integer, Candidate> reportsByOrdinal
+    ) throws SQLException {
+        IncomingStatusReportArrays incoming = incomingStatusReportArrays(statusReports);
+        Array ordinalArray = null;
+        Array paymentIdArray = null;
+        Array requestedOutcomeArray = null;
+        Array authenticatedIspbArray = null;
+        try {
+            ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
+            paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
+            requestedOutcomeArray = connection.createArrayOf("text", incoming.requestedOutcomes());
+            authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
+            try (var statement = connection.prepareStatement(LOCK_PAYMENTS_SQL)) {
+                statement.setArray(1, ordinalArray);
+                statement.setArray(2, paymentIdArray);
+                statement.setArray(3, requestedOutcomeArray);
+                statement.setArray(4, authenticatedIspbArray);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    List<LockedPayment> rows = new ArrayList<>(statusReports.size());
+                    while (resultSet.next()) {
+                        int ordinal = resultSet.getInt(1);
+                        Candidate incomingReport = reportsByOrdinal.get(ordinal);
+                        if (incomingReport == null) {
+                            throw new IllegalStateException("Unknown status report ordinal: " + ordinal);
+                        }
+                        rows.add(new LockedPayment(
+                                ordinal,
+                                resultSet.getString(2),
+                                StatusReportOutcome.valueOf(resultSet.getString(3)),
+                                incomingReport.statusReport().command().reasonCodes(),
+                                resultSet.getString(4),
+                                PaymentState.valueOf(resultSet.getString(5)),
+                                rejectionCause(resultSet.getString(6)),
+                                reasonCodes(resultSet.getArray(7)),
+                                resultSet.getLong(8),
+                                resultSet.getString(9),
+                                resultSet.getString(10)
+                        ));
+                    }
+                    return rows;
+                }
+            }
+        } finally {
+            free(ordinalArray, paymentIdArray, requestedOutcomeArray, authenticatedIspbArray);
+        }
     }
 
-    private PaymentRejectionReason rejectionReason(String rejectionReason) {
-        return rejectionReason == null ? null : PaymentRejectionReason.valueOf(rejectionReason);
+    private PaymentRejectionCause rejectionCause(String rejectionCause) {
+        return rejectionCause == null ? null : PaymentRejectionCause.valueOf(rejectionCause);
     }
 
-    private Map<Integer, AuthenticatedStatusReport> reportsByOrdinal(
-            List<AuthenticatedStatusReport> statusReports
-    ) {
-        Map<Integer, AuthenticatedStatusReport> reportsByOrdinal =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-        for (AuthenticatedStatusReport statusReport : statusReports) {
-            if (reportsByOrdinal.put(statusReport.sourceOrdinal(), statusReport) != null) {
-                throw new IllegalArgumentException(
-                        "Status report source ordinals must be unique: " + statusReport.sourceOrdinal());
+    private List<StatusReasonCode> reasonCodes(Array sqlArray) throws SQLException {
+        if (sqlArray == null) {
+            return List.of();
+        }
+        try {
+            Object[] values = (Object[]) sqlArray.getArray();
+            List<StatusReasonCode> codes = new ArrayList<>(values.length);
+            for (Object value : values) {
+                codes.add(StatusReasonCode.of(String.valueOf(value)));
+            }
+            return StatusReasonCode.normalize(codes);
+        } finally {
+            sqlArray.free();
+        }
+    }
+
+    private void lockRequiredBalances(
+            Connection connection,
+            List<Transition> transitionCandidates
+    ) throws SQLException {
+        Set<String> requiredIspbs = new TreeSet<>();
+        for (Transition candidate : transitionCandidates) {
+            requiredIspbs.add(candidate.resultingState() == PaymentState.SETTLED
+                    ? candidate.payment().receiverBankCode()
+                    : candidate.payment().senderBankCode());
+        }
+        if (requiredIspbs.isEmpty()) {
+            return;
+        }
+
+        Array ispbArray = null;
+        try {
+            ispbArray = connection.createArrayOf("text", requiredIspbs.toArray(String[]::new));
+            try (var statement = connection.prepareStatement(LOCK_BALANCES_SQL)) {
+                statement.setArray(1, ispbArray);
+                int lockedBalances = 0;
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        lockedBalances++;
+                    }
+                }
+                if (lockedBalances != requiredIspbs.size()) {
+                    throw new IllegalStateException("Required participant balance is missing");
+                }
+            }
+        } finally {
+            free(ispbArray);
+        }
+    }
+
+    private List<AcquiredTransition> acquireTransitions(
+            Connection connection,
+            List<Transition> transitionCandidates
+    ) throws SQLException {
+        if (transitionCandidates.isEmpty()) {
+            return List.of();
+        }
+
+        Map<TransitionKey, List<Transition>> candidatesByTransition = new LinkedHashMap<>();
+        for (Transition candidate : transitionCandidates) {
+            TransitionKey key = new TransitionKey(
+                    candidate.resultingState(),
+                    candidate.externalReasonCodes()
+            );
+            candidatesByTransition.computeIfAbsent(key, ignored -> new ArrayList<>()).add(candidate);
+        }
+
+        List<AcquiredTransition> acquired = new ArrayList<>(transitionCandidates.size());
+        for (Map.Entry<TransitionKey, List<Transition>> entry : candidatesByTransition.entrySet()) {
+            List<Transition> candidates = entry.getValue();
+            acquireTransitionsForKey(connection, entry.getKey(), candidates);
+            for (Transition candidate : candidates) {
+                LockedPayment payment = candidate.payment();
+                acquired.add(new AcquiredTransition(
+                        payment.ordinal(),
+                        payment.paymentId(),
+                        candidate.resultingState(),
+                        payment.amountCents(),
+                        payment.senderBankCode(),
+                        payment.receiverBankCode(),
+                        candidate.externalReasonCodes()
+                ));
             }
         }
-        return reportsByOrdinal;
+        acquired.sort((first, second) -> Integer.compare(first.ordinal(), second.ordinal()));
+        return acquired;
+    }
+
+    private void acquireTransitionsForKey(
+            Connection connection,
+            TransitionKey transition,
+            List<Transition> transitionCandidates
+    ) throws SQLException {
+        String[] paymentIds = new String[transitionCandidates.size()];
+        for (int index = 0; index < transitionCandidates.size(); index++) {
+            paymentIds[index] = transitionCandidates.get(index).payment().paymentId();
+        }
+
+        Array reasonCodeArray = null;
+        Array paymentIdArray = null;
+        try {
+            reasonCodeArray = connection.createArrayOf(
+                    "text",
+                    transition.externalReasonCodes().stream()
+                            .map(StatusReasonCode::value)
+                            .toArray(String[]::new)
+            );
+            paymentIdArray = connection.createArrayOf("text", paymentIds);
+            try (var statement = connection.prepareStatement(ACQUIRE_TRANSITIONS_SQL)) {
+                statement.setString(1, transition.resultingState().name());
+                statement.setArray(2, reasonCodeArray);
+                statement.setArray(3, paymentIdArray);
+                statement.setString(4, PaymentState.WAITING_ACCEPTANCE.name());
+                int acquired = statement.executeUpdate();
+                if (acquired != transitionCandidates.size()) {
+                    throw new IllegalStateException("Could not acquire every waiting payment transition");
+                }
+            }
+        } finally {
+            free(reasonCodeArray, paymentIdArray);
+        }
+    }
+
+    private void applyBalanceDeltas(
+            Connection connection,
+            List<AcquiredTransition> acquiredTransitions
+    ) throws SQLException {
+        Map<String, Long> deltasByParticipant = new TreeMap<>();
+        for (AcquiredTransition transition : acquiredTransitions) {
+            String participantIspb = transition.resultingState() == PaymentState.SETTLED
+                    ? transition.receiverBankCode()
+                    : transition.senderBankCode();
+            deltasByParticipant.merge(participantIspb, transition.amountCents(), Math::addExact);
+        }
+        if (deltasByParticipant.isEmpty()) {
+            return;
+        }
+
+        Array ispbArray = null;
+        Array deltaArray = null;
+        try {
+            ispbArray = connection.createArrayOf("text", deltasByParticipant.keySet().toArray(String[]::new));
+            deltaArray = connection.createArrayOf("int8", deltasByParticipant.values().toArray(Long[]::new));
+            try (var statement = connection.prepareStatement(APPLY_BALANCE_DELTAS_SQL)) {
+                statement.setArray(1, ispbArray);
+                statement.setArray(2, deltaArray);
+                int updatedBalances = statement.executeUpdate();
+                if (updatedBalances != deltasByParticipant.size()) {
+                    throw new IllegalStateException("Could not apply every participant balance delta");
+                }
+            }
+        } finally {
+            free(ispbArray, deltaArray);
+        }
+    }
+
+    private StatusReportActionRow classificationAction(Candidate statusReport, Action action) {
+        return new StatusReportActionRow(
+                statusReport.ordinal(),
+                action,
+                statusReport.paymentId(),
+                null,
+                null,
+                null,
+                List.of()
+        );
     }
 
     private void addExpandedOrdinals(
@@ -477,61 +435,6 @@ class IncomingStatusReportPersistence {
             throw new IllegalStateException("Unknown status report representative ordinal: " + representativeOrdinal);
         }
         classifiedOrdinals.addAll(originalOrdinals);
-    }
-
-    private BatchLocalStatusReportClassification classifyStatusReportsWithinBatch(
-            List<AuthenticatedStatusReport> statusReports
-    ) {
-        Map<String, List<StatusReportRow>> rowsByPaymentId =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-        for (AuthenticatedStatusReport statusReport : statusReports) {
-            rowsByPaymentId.computeIfAbsent(
-                    statusReport.command().getOriginalPaymentId(),
-                    ignored -> new ArrayList<>()
-            ).add(new StatusReportRow(statusReport));
-        }
-
-        List<StatusReportRow> statusReportsToClassify = new ArrayList<>(rowsByPaymentId.size());
-        Map<Integer, List<Integer>> originalOrdinalsByRepresentative =
-                new LinkedHashMap<>(mapCapacity(statusReports.size()));
-
-        for (List<StatusReportRow> statusReportRows : rowsByPaymentId.values()) {
-            List<Integer> originalOrdinals = new ArrayList<>(statusReportRows.size());
-            StatusReportRow firstRow = statusReportRows.get(0);
-            boolean homogeneous = true;
-            for (StatusReportRow statusReportRow : statusReportRows) {
-                originalOrdinals.add(statusReportRow.ordinal());
-                if (!sameSecurityAndStatus(firstRow, statusReportRow)) {
-                    homogeneous = false;
-                }
-            }
-
-            if (homogeneous) {
-                statusReportsToClassify.add(firstRow);
-                originalOrdinalsByRepresentative.put(firstRow.ordinal(), originalOrdinals);
-            } else {
-                for (StatusReportRow statusReportRow : statusReportRows) {
-                    statusReportsToClassify.add(statusReportRow);
-                    originalOrdinalsByRepresentative.put(
-                            statusReportRow.ordinal(),
-                            List.of(statusReportRow.ordinal())
-                    );
-                }
-            }
-        }
-
-        return new BatchLocalStatusReportClassification(
-                statusReportsToClassify,
-                originalOrdinalsByRepresentative
-        );
-    }
-
-    private boolean sameSecurityAndStatus(StatusReportRow firstRow, StatusReportRow row) {
-        return Objects.equals(
-                firstRow.statusReport().authenticatedIspb(),
-                row.statusReport().authenticatedIspb()
-        )
-                && firstRow.statusReport().command().getStatus() == row.statusReport().command().getStatus();
     }
 
     private List<AuthenticatedStatusReport> reportsWithOrdinals(
@@ -547,101 +450,27 @@ class IncomingStatusReportPersistence {
         return classifiedReports;
     }
 
-    private List<StatusReportActionRow> classifyAndApplyStatusReports(List<StatusReportRow> statusReports) {
-        return jdbcTemplate.execute((ConnectionCallback<List<StatusReportActionRow>>) connection -> {
-            IncomingStatusReportArrays incoming = incomingStatusReportArrays(statusReports);
-            Array ordinalArray = null;
-            Array paymentIdArray = null;
-            Array requestedStatusArray = null;
-            Array authenticatedIspbArray = null;
-            try {
-                ordinalArray = connection.createArrayOf("int4", incoming.ordinals());
-                paymentIdArray = connection.createArrayOf("text", incoming.paymentIds());
-                requestedStatusArray = connection.createArrayOf("text", incoming.requestedStatuses());
-                authenticatedIspbArray = connection.createArrayOf("text", incoming.authenticatedIspbs());
-
-                try (var statement = connection.prepareStatement(STATUS_REPORT_SQL)) {
-                    int parameterIndex = 1;
-                    statement.setArray(parameterIndex++, ordinalArray);
-                    statement.setArray(parameterIndex++, paymentIdArray);
-                    statement.setArray(parameterIndex++, requestedStatusArray);
-                    statement.setArray(parameterIndex++, authenticatedIspbArray);
-                    statement.setInt(parameterIndex++, BUCKET_COUNT);
-
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_AND_SETTLED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_AND_SETTLED.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-
-                    statement.setString(parameterIndex++, PaymentStatus.REJECTED.name());
-                    statement.setString(parameterIndex++, PaymentRejectionReason.INSUFFICIENT_FUNDS.name());
-                    statement.setString(parameterIndex++, PaymentStatus.WAITING_ACCEPTANCE.name());
-
-                    statement.setString(parameterIndex++, PaymentStatus.ACCEPTED_IN_PROCESS.name());
-                    statement.setString(parameterIndex, PaymentStatus.WAITING_ACCEPTANCE.name());
-
-                    try (ResultSet resultSet = statement.executeQuery()) {
-                        List<StatusReportActionRow> actionRows = new ArrayList<>(statusReports.size());
-                        while (resultSet.next()) {
-                            Long amountCents = resultSet.getObject(4, Long.class);
-                            actionRows.add(new StatusReportActionRow(
-                                    resultSet.getInt(1),
-                                    resultSet.getString(2),
-                                    resultSet.getString(3),
-                                    amountCents,
-                                    resultSet.getString(5),
-                                    resultSet.getString(6),
-                                    resultSet.getString(7)
-                            ));
-                        }
-                        return actionRows;
-                    }
-                }
-            } finally {
-                free(ordinalArray, paymentIdArray, requestedStatusArray, authenticatedIspbArray);
-            }
-        });
-    }
-
-    private IncomingStatusReportArrays incomingStatusReportArrays(List<StatusReportRow> statusReports) {
+    private IncomingStatusReportArrays incomingStatusReportArrays(List<Candidate> statusReports) {
         int size = statusReports.size();
         Integer[] ordinals = new Integer[size];
         String[] paymentIds = new String[size];
-        String[] requestedStatuses = new String[size];
+        String[] requestedOutcomes = new String[size];
         String[] authenticatedIspbs = new String[size];
 
         for (int index = 0; index < statusReports.size(); index++) {
-            StatusReportRow statusReportRow = statusReports.get(index);
+            Candidate statusReportRow = statusReports.get(index);
             AuthenticatedStatusReport authenticatedStatusReport = statusReportRow.statusReport();
-            StatusReportCommand statusReport = authenticatedStatusReport.command();
+            IncomingStatusReportCommand statusReport = authenticatedStatusReport.command();
             ordinals[index] = statusReportRow.ordinal();
-            paymentIds[index] = statusReport.getOriginalPaymentId();
-            requestedStatuses[index] = statusReport.getStatus().name();
+            paymentIds[index] = statusReport.originalPaymentId();
+            requestedOutcomes[index] = statusReport.outcome().name();
             authenticatedIspbs[index] = authenticatedStatusReport.authenticatedIspb();
         }
 
         return new IncomingStatusReportArrays(
                 ordinals,
                 paymentIds,
-                requestedStatuses,
+                requestedOutcomes,
                 authenticatedIspbs
         );
     }
@@ -658,50 +487,60 @@ class IncomingStatusReportPersistence {
         return Math.max(16, expectedSize * 4 / 3 + 1);
     }
 
-    private PaymentTransactionCommand toPaymentTransaction(StatusReportActionRow actionRow) {
-        Entity entity = new Entity();
-        entity.setPaymentId(actionRow.paymentId());
-        entity.setAmountCents(actionRow.amountCents());
-        entity.setSenderBankCode(actionRow.senderBankCode());
-        entity.setReceiverBankCode(actionRow.receiverBankCode());
-        return repositoryMapper.toDomain(entity);
+    private PaymentReference toPaymentReference(StatusReportActionRow actionRow) {
+        return new PaymentReference(
+                actionRow.paymentId(),
+                actionRow.amountCents(),
+                actionRow.senderBankCode(),
+                actionRow.receiverBankCode()
+        );
     }
 
-    private record StatusReportRow(
-            AuthenticatedStatusReport statusReport
+    private enum Action {
+        SETTLED_PAYMENT,
+        REJECTED_NOTIFICATION,
+        STATUS_REPORT_CONFLICT,
+        UNAUTHORIZED_PSP
+    }
+
+    private record TransitionKey(
+            PaymentState resultingState,
+            List<StatusReasonCode> externalReasonCodes
     ) {
-        private int ordinal() {
-            return statusReport.sourceOrdinal();
-        }
     }
 
-    private record BatchLocalStatusReportClassification(
-            List<StatusReportRow> statusReportsToClassify,
-            Map<Integer, List<Integer>> originalOrdinalsByRepresentative
+    private record AcquiredTransition(
+            int ordinal,
+            String paymentId,
+            PaymentState resultingState,
+            long amountCents,
+            String senderBankCode,
+            String receiverBankCode,
+            List<StatusReasonCode> externalReasonCodes
     ) {
     }
 
     private record StatusReportActionRow(
             int ordinal,
-            String action,
+            Action action,
             String paymentId,
             Long amountCents,
             String senderBankCode,
             String receiverBankCode,
-            String rejectionReason
+            List<StatusReasonCode> externalReasonCodes
     ) {
     }
 
     private record IncomingStatusReportArrays(
             Integer[] ordinals,
             String[] paymentIds,
-            String[] requestedStatuses,
+            String[] requestedOutcomes,
             String[] authenticatedIspbs
     ) {
         private IncomingStatusReportArrays {
             int size = ordinals.length;
             if (paymentIds.length != size
-                    || requestedStatuses.length != size
+                    || requestedOutcomes.length != size
                     || authenticatedIspbs.length != size) {
                 throw new IllegalStateException("Incoming status report arrays must have the same size");
             }

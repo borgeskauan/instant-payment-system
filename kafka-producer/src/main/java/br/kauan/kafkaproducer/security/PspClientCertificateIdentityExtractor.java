@@ -1,5 +1,6 @@
 package br.kauan.kafkaproducer.security;
 
+import io.netty.channel.Channel;
 import io.netty.handler.ssl.SslHandler;
 import reactor.netty.http.server.HttpServerRequest;
 
@@ -25,12 +26,22 @@ public final class PspClientCertificateIdentityExtractor {
     public static String extractIspb(HttpServerRequest request) {
         AtomicReference<SSLSession> sslSession = new AtomicReference<>();
         request.withConnection(connection -> {
-            SslHandler sslHandler = connection.channel().pipeline().get(SslHandler.class);
+            SslHandler sslHandler = findSslHandler(connection.channel());
             if (sslHandler != null) {
                 sslSession.set(sslHandler.engine().getSession());
             }
         });
         return extractIspb(sslSession.get());
+    }
+
+    private static SslHandler findSslHandler(Channel channel) {
+        for (Channel current = channel; current != null; current = current.parent()) {
+            SslHandler handler = current.pipeline().get(SslHandler.class);
+            if (handler != null) {
+                return handler;
+            }
+        }
+        return null;
     }
 
     static String extractIspb(SSLSession sslSession) {

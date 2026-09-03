@@ -4,7 +4,7 @@
 
 ## Objetivo
 
-Preparar e validar funcionalmente os workloads que serão usados depois pela task **Estabilizar teste de carga dentro do budget de CPU**, em [`estabilizar-teste-carga-budget-cpu.md`](../agora/estabilizar-teste-carga-budget-cpu.md).
+Preparar e validar funcionalmente os workloads que serão usados depois pela task **Estabilizar teste de carga dentro do budget de CPU**, em [`estabilizar-teste-carga-budget-cpu.md`](estabilizar-teste-carga-budget-cpu.md).
 
 A matriz cobre caminho feliz, resultados de negócio mistos, tráfego hot-pair e repetições idênticas de `pacs.008` e `pacs.002` aplicadas dentro dos workloads normais. Repetição é uma dimensão do workload, não um cenário de negócio nem um workload independente.
 
@@ -33,7 +33,11 @@ Esta é uma task guarda-chuva e avança uma fatia por vez. Ela prepara workloads
 - warmup e janela ativa são intervalos semiabertos, nenhum original pode começar em `generation_ended_at` ou depois, e backlog não prolonga o deadline fixo do experimento;
 - `sla-report.json` é centrado nos cenários: cada cenário reúne seu tráfego de pagamentos e `pacs.002` originais, seu outcome lógico e suas métricas, enquanto geração de originais e replays permanecem globais;
 - no relatório, `started` significa tentativa HTTP iniciada e `accepted` significa resposta HTTP `2xx`; aceitação HTTP permanece distinta do outcome assíncrono de negócio;
-- o relatório valida tráfego, outcomes de negócio e replays no run inteiro; throughput, latência e threshold permanecem restritos à janela ativa;
+- o relatório valida tráfego e outcomes de negócio no run inteiro; para replays,
+  qualifica somente a quantidade agregada selecionada/iniciada e a aceitação
+  HTTP, enquanto identidade, timing e igualdade do payload permanecem nos
+  testes do gerador; throughput, latência e threshold permanecem restritos à
+  janela ativa;
 - o runner público executa uma única chamada `go-loadtool run --run-dir`, coleta diagnósticos mesmo quando essa chamada falha e preserva o exit code original do Go;
 - `loadtool_finished_at` registra o fim da chamada única, enquanto `replay_deadline_at` permanece o fim autoritativo da janela experimental;
 - o relatório publica `valid` como decisão agregada, verdadeira somente quando geração, todos os cenários e os dois tipos de replay têm zero violações; o runner retorna zero somente para `valid: true`;
@@ -155,7 +159,7 @@ O modelo de repetição está explícito no contrato e na documentação; `run-w
 - [x] Manter as populações, configurações e contagens dos dois tipos separadas e impedir que replay `pacs.008` crie outro `pacs.002` original.
 - [x] Não proteger ordinais, identidade dos pagamentos selecionados, coincidência entre conjuntos ou reprodutibilidade de `EndToEndId`.
 - [x] Tratar entregas `pacs.002` idênticas sob `at-least-once` como um único resultado lógico final e transformar ausência, status contraditório ou reason contraditório em violação do relatório.
-- [x] Provar na SPI que happy-path produz exatamente um `SETTLEMENT_APPLIED`, insufficient-funds produz zero e status aceito repetido não duplica settlement, fundos, auditoria ou outbox.
+- [x] Provar na SPI que happy-path produz exatamente um `PAYMENT_SETTLED`, insufficient-funds produz zero e status aceito repetido não duplica settlement, fundos, auditoria ou outbox.
 - [x] Rejeitar na SPI tanto um segundo settlement idêntico quanto um segundo settlement divergente para o mesmo pagamento.
 - [x] Manter settlement como invariante interno da SPI: o relatório do load-tool não inventa observabilidade que o fluxo externo não oferece e não consulta PostgreSQL.
 
@@ -252,8 +256,13 @@ Simulação e relatório continuam funcionalmente iguais para o contrato vigente
 - [x] Manter geração de pagamentos originais como contrato global, com target, esperado, iniciado, TPS efetivo e violações da janela autoritativa.
 - [x] Agrupar por cenário os pagamentos e `pacs.002` originais iniciados/aceitos, o outcome esperado/observado e as métricas da janela ativa.
 - [x] Preservar semântica `at-least-once`: entregas compatíveis repetidas contam como um resultado lógico; ausência ou qualquer entrega contraditória invalida o cenário.
-- [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas, com tentativas iniciadas, aceitas e violações.
-- [x] Consolidar performance global em threshold, TPS ativo por tipo de tráfego, notificações posteriores à janela ativa e percentis de latência arredondados.
+- [x] Manter replays `pacs.008` e `pacs.002` como populações globais separadas,
+  com tentativas iniciadas, aceitas e violações agregadas de quantidade/HTTP;
+  propriedades internas de cada replay ficam nos testes do gerador.
+- [x] Consolidar performance global em threshold, TPS ativo de originais,
+  replays e notificações ao pagador, notificações posteriores à janela ativa e
+  percentis de latência arredondados; `pacs.002` causal mantém somente contagens
+  totais iniciadas/aceitas por cenário.
 - [x] Remover os blocos redundantes `run`, `transactions`, `status_messages`, `load_generation`, `throughput_per_second`, `payer_notification_latency_ms` e `diagnostics`.
 - [x] Manter `run-window.json`, `inputs/profile.json` e os quatro CSVs de `events/` como fontes autoritativas de janela, configuração e evidência detalhada.
 
@@ -280,7 +289,7 @@ O perfil longo exercita simultaneamente throughput contratual de pagamentos orig
 - [x] Registrar para cada perfil ou workload: comando, objetivo, distribuição, taxa de originais, carga adicional, outcomes esperados e evidência do run funcional curto.
 - [x] Identificar `mixed-outcomes-2k-15m` como o único perfil longo que a estabilização deve exercitar; os dois smokes permanecem controles funcionais.
 - [x] Entregar a meta de `2.000` pagamentos originais/s, com mensagens repetidas como carga adicional mensurada separadamente.
-- [x] Entregar a matriz à task [`estabilizar-teste-carga-budget-cpu.md`](../agora/estabilizar-teste-carga-budget-cpu.md), sem concluir capacidade a partir dos runs funcionais curtos.
+- [x] Entregar a matriz à task [`estabilizar-teste-carga-budget-cpu.md`](estabilizar-teste-carga-budget-cpu.md), sem concluir capacidade a partir dos runs funcionais curtos.
 
 ## Critérios de conclusão da task guarda-chuva
 
@@ -307,5 +316,5 @@ O perfil longo exercita simultaneamente throughput contratual de pagamentos orig
 - classificar múltiplos frames por `communication_id`, obrigação lógica ou redelivery operacional;
 - adicionar hot sender/fan-out, hot receiver/fan-in ou hot partition Kafka; hot-pair é suficiente para o MVP, e topologias direcionais só serão adicionadas se a estabilização revelar necessidade concreta;
 - publicar records diretamente em tópicos Kafka, manipular offsets ou provocar redelivery no broker;
-- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/operacao-testes/engenharia-caos-resiliencia-operacional.md);
+- injetar falhas deliberadas de componente ou rede, incluindo PSP offline/reconnect, restart do gateway, ACK perdido, retry e redelivery operacional; esses cenários pertencem à task [`Engenharia de caos e resiliência operacional`](../Backlog/operacao-confiabilidade/engenharia-caos-resiliencia-operacional.md);
 - implementar retentativa automática de pagamentos em `ACCEPTED_IN_PROCESS`.

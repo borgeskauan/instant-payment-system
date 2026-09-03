@@ -1,11 +1,6 @@
 package br.kauan.spi.adapter.input.kafka.consumer;
 
-import br.kauan.spi.Utils;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentDuplicateDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DivergentStatusReportDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.InvalidPayloadDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.NotAuthenticatedDlqPublisher;
-import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.UnauthorizedPspDlqPublisher;
+import br.kauan.spi.adapter.input.kafka.infrastructure.dlq.DlqPublisher;
 import br.kauan.spi.adapter.input.kafka.infrastructure.error.InfrastructureUnavailableException;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
@@ -14,15 +9,15 @@ import br.kauan.spi.port.input.StatusReportProcessingResult;
 import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 @Slf4j
 @Component
@@ -33,39 +28,35 @@ public class PaymentMessageConsumer {
 
     private final InboundPaymentMessageDecoder messageDecoder;
     private final PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase;
-    private final InvalidPayloadDlqPublisher invalidPayloadDlqPublisher;
-    private final DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher;
-    private final DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher;
-    private final NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher;
-    private final UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher;
+    private final DlqPublisher dlqPublisher;
 
-    @Autowired
     public PaymentMessageConsumer(
             InboundPaymentMessageDecoder messageDecoder,
             PaymentTransactionProcessorUseCase paymentTransactionProcessorUseCase,
-            InvalidPayloadDlqPublisher invalidPayloadDlqPublisher,
-            DivergentDuplicateDlqPublisher divergentDuplicateDlqPublisher,
-            DivergentStatusReportDlqPublisher divergentStatusReportDlqPublisher,
-            NotAuthenticatedDlqPublisher notAuthenticatedDlqPublisher,
-            UnauthorizedPspDlqPublisher unauthorizedPspDlqPublisher
+            DlqPublisher dlqPublisher
     ) {
         this.messageDecoder = messageDecoder;
         this.paymentTransactionProcessorUseCase = paymentTransactionProcessorUseCase;
-        this.invalidPayloadDlqPublisher = invalidPayloadDlqPublisher;
-        this.divergentDuplicateDlqPublisher = divergentDuplicateDlqPublisher;
-        this.divergentStatusReportDlqPublisher = divergentStatusReportDlqPublisher;
-        this.notAuthenticatedDlqPublisher = notAuthenticatedDlqPublisher;
-        this.unauthorizedPspDlqPublisher = unauthorizedPspDlqPublisher;
+        this.dlqPublisher = dlqPublisher;
         log.debug("PaymentMessageConsumer initialized - ready to consume from topics '{}' and '{}'",
                 PAYMENT_REQUESTS_TOPIC, PAYMENT_STATUS_REPORTS_TOPIC);
     }
 
     @KafkaListener(
             topics = PAYMENT_REQUESTS_TOPIC,
-            groupId = "${spi.kafka.payment-request-group-id:spi-payment-request-consumer-group}",
-            containerFactory = "spiKafkaListenerContainerFactory"
+            groupId = "${spi.kafka.payment-request-group-id}",
+            containerFactory = "paymentRequestKafkaListenerContainerFactory"
     )
     public void consumePaymentRequests(
+            List<ConsumerRecord<String, byte[]>> records,
+            Acknowledgment acknowledgment
+    ) {
+        try (var ignored = KafkaBatchReceivedEvent.start(PAYMENT_REQUESTS_TOPIC, records.size())) {
+            processPaymentRequestBatch(records, acknowledgment);
+        }
+    }
+
+    private void processPaymentRequestBatch(
             List<ConsumerRecord<String, byte[]>> records,
             Acknowledgment acknowledgment
     ) {
@@ -77,18 +68,11 @@ public class PaymentMessageConsumer {
             try {
                 String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
                 var payment = messageDecoder.toPaymentTransaction(record);
-                if (!Objects.equals(authenticatedIspb, Utils.getBankCode(payment.getSender()))) {
-                    unauthorizedPspDlqPublisher.publish(
-                            record,
-                            new UnauthorizedPspException(payment.getPaymentId(), authenticatedIspb)
-                    );
-                    continue;
-                }
                 payments.add(new AuthenticatedPaymentRequest(sourceOrdinal, authenticatedIspb, payment));
             } catch (NotAuthenticatedException e) {
-                notAuthenticatedDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
-                invalidPayloadDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             }
         }
 
@@ -98,7 +82,7 @@ public class PaymentMessageConsumer {
                         paymentTransactionProcessorUseCase.processTransactions(payments);
                 publishDivergentDuplicates(result, records);
                 publishUnauthorizedPaymentRequests(result, records);
-            } catch (DataAccessResourceFailureException e) {
+            } catch (DataAccessResourceFailureException | TransientDataAccessException e) {
                 throw databaseUnavailable(
                         PAYMENT_REQUESTS_TOPIC,
                         payments.size(),
@@ -114,7 +98,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedPaymentRequest divergentDuplicate : result.divergentDuplicates()) {
-            divergentDuplicateDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, divergentDuplicate.sourceOrdinal()),
                     new DivergentDuplicatePaymentException(divergentDuplicate.command().getPaymentId())
             );
@@ -126,7 +110,7 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedPaymentRequest unauthorizedRequest : result.unauthorizedRequests()) {
-            unauthorizedPspDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, unauthorizedRequest.sourceOrdinal()),
                     new UnauthorizedPspException(
                             unauthorizedRequest.command().getPaymentId(),
@@ -138,10 +122,19 @@ public class PaymentMessageConsumer {
 
     @KafkaListener(
             topics = PAYMENT_STATUS_REPORTS_TOPIC,
-            groupId = "${spi.kafka.status-report-group-id:spi-status-report-consumer-group}",
-            containerFactory = "spiKafkaListenerContainerFactory"
+            groupId = "${spi.kafka.status-report-group-id}",
+            containerFactory = "statusReportKafkaListenerContainerFactory"
     )
     public void consumeStatusReports(
+            List<ConsumerRecord<String, byte[]>> records,
+            Acknowledgment acknowledgment
+    ) {
+        try (var ignored = KafkaBatchReceivedEvent.start(PAYMENT_STATUS_REPORTS_TOPIC, records.size())) {
+            processStatusReportBatch(records, acknowledgment);
+        }
+    }
+
+    private void processStatusReportBatch(
             List<ConsumerRecord<String, byte[]>> records,
             Acknowledgment acknowledgment
     ) {
@@ -153,16 +146,16 @@ public class PaymentMessageConsumer {
             try {
                 String authenticatedIspb = AuthenticatedIspbHeaderExtractor.extract(record);
                 var statusReport = messageDecoder.toStatusReport(record);
-                log.debug("Processing status report. payment_id={}", statusReport.getOriginalPaymentId());
+                log.debug("Processing status report. payment_id={}", statusReport.originalPaymentId());
                 statusReports.add(new AuthenticatedStatusReport(
                         sourceOrdinal,
                         authenticatedIspb,
                         statusReport
                 ));
             } catch (NotAuthenticatedException e) {
-                notAuthenticatedDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             } catch (InvalidInboundPayloadException e) {
-                invalidPayloadDlqPublisher.publish(record, e);
+                dlqPublisher.publish(record, e);
             }
         }
 
@@ -172,7 +165,7 @@ public class PaymentMessageConsumer {
                         paymentTransactionProcessorUseCase.processStatusReports(statusReports);
                 publishDivergentStatusReports(result, records);
                 publishUnauthorizedStatusReports(result, records);
-            } catch (DataAccessResourceFailureException e) {
+            } catch (DataAccessResourceFailureException | TransientDataAccessException e) {
                 throw databaseUnavailable(
                         PAYMENT_STATUS_REPORTS_TOPIC,
                         statusReports.size(),
@@ -188,10 +181,10 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedStatusReport divergentStatusReport : result.divergentStatusReports()) {
-            divergentStatusReportDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, divergentStatusReport.sourceOrdinal()),
-                    new DivergentStatusReportException(
-                            divergentStatusReport.command().getOriginalPaymentId()
+                    new StatusReportConflictException(
+                            divergentStatusReport.command().originalPaymentId()
                     )
             );
         }
@@ -202,10 +195,10 @@ public class PaymentMessageConsumer {
             List<ConsumerRecord<String, byte[]>> records
     ) {
         for (AuthenticatedStatusReport unauthorizedStatusReport : result.unauthorizedStatusReports()) {
-            unauthorizedPspDlqPublisher.publish(
+            dlqPublisher.publish(
                     recordAt(records, unauthorizedStatusReport.sourceOrdinal()),
                     new UnauthorizedPspException(
-                            unauthorizedStatusReport.command().getOriginalPaymentId(),
+                            unauthorizedStatusReport.command().originalPaymentId(),
                             unauthorizedStatusReport.authenticatedIspb()
                     )
             );
@@ -225,7 +218,7 @@ public class PaymentMessageConsumer {
     private InfrastructureUnavailableException databaseUnavailable(
             String topic,
             int records,
-            DataAccessResourceFailureException exception
+            DataAccessException exception
     ) {
         KafkaConsumerLogs.infrastructureUnavailable(topic, records, exception);
         return new InfrastructureUnavailableException(

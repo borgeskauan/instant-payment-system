@@ -1,0 +1,66 @@
+{
+  "generation": {
+    "planned_originals": 4,
+    "executed_originals": 4,
+    "required_minimum_tps": 1,
+    "minimum_rolling_tps": 2
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 0.5,
+      "traffic": {
+        "payments": { "started": 2, "accepted": 2 },
+        "pacs002": { "started": 2, "accepted": 2 }
+      },
+      "outcome": {
+        "expected": { "status": "ACSC", "reason_codes": [] },
+        "matched": 2,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 2,
+        "after_threshold": 0,
+        "latency_ms": { "p50": 200, "p95": 200, "p99": 200, "max": 200 }
+      },
+      "violations": 0
+    },
+    {
+      "name": "insufficient-funds",
+      "share": 0.5,
+      "traffic": {
+        "payments": { "started": 2, "accepted": 2 },
+        "pacs002": { "started": 0, "accepted": 0 }
+      },
+      "outcome": {
+        "expected": { "status": "RJCT", "reason_codes": ["AM04"] },
+        "matched": 2,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 2,
+        "after_threshold": 0,
+        "latency_ms": { "p50": 100, "p95": 100, "p99": 100, "max": 100 }
+      },
+      "violations": 0
+    }
+  ],
+  "replays": {
+    "pacs008": { "started": 1, "accepted": 1, "violations": 0 },
+    "pacs002": { "started": 1, "accepted": 1, "violations": 0 }
+  },
+  "performance": {
+    "threshold_ms": 1000,
+    "within_sla": true,
+    "active_tps": {
+      "payments": 2,
+      "pacs008_replays": 0.5,
+      "pacs002_replays": 0.5,
+      "payer_notifications": 2
+    },
+    "payer_notifications_after_active": 0,
+    "latency_ms": { "p50": 150, "p95": 200, "p99": 200, "max": 200 }
+  }
+}

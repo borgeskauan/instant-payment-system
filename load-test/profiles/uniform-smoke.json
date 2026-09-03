@@ -1,6 +1,5 @@
 {
   "name": "uniform-smoke",
-  "schemaVersion": 1,
   "connections": {
     "centralTransfer": {
       "baseUrl": "https://localhost:8001",
@@ -16,8 +15,21 @@
     }
   },
   "load": {
-    "targetTxRate": 2000,
-    "warmup": "1m",
+    "offeredTxRate": 2000,
+    "requiredMinimumTxRate": 2000,
+    "warmup": {
+      "bootstrap": {
+        "offeredTxRate": 1000,
+        "duration": "30s",
+        "requestTimeout": "5s"
+      },
+      "steady": {
+        "offeredTxRate": 1000,
+        "duration": "30s",
+        "requestTimeout": "5s"
+      },
+      "completionTimeout": "30s"
+    },
     "duration": "1m",
     "drain": "30s"
   },

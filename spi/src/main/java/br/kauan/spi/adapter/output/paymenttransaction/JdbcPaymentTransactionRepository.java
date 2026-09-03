@@ -1,0 +1,37 @@
+package br.kauan.spi.adapter.output.paymenttransaction;
+
+import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
+import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
+import br.kauan.spi.port.output.PaymentTransactionPersistenceResult;
+import br.kauan.spi.port.output.PaymentTransactionRepository;
+import br.kauan.spi.port.output.StatusReportPersistenceResult;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public class JdbcPaymentTransactionRepository implements PaymentTransactionRepository {
+
+    private final IncomingPaymentRequestPersistence incomingPaymentRequestPersistence;
+    private final IncomingStatusReportPersistence incomingStatusReportPersistence;
+
+    public JdbcPaymentTransactionRepository(JdbcTemplate jdbcTemplate) {
+        this.incomingPaymentRequestPersistence = new IncomingPaymentRequestPersistence(jdbcTemplate);
+        this.incomingStatusReportPersistence = new IncomingStatusReportPersistence(jdbcTemplate);
+    }
+
+    @Override
+    public PaymentTransactionPersistenceResult storeAndClassifyIncomingPaymentRequests(
+            List<AuthenticatedPaymentRequest> paymentTransactions
+    ) {
+        return incomingPaymentRequestPersistence.storeAndClassify(paymentTransactions);
+    }
+
+    @Override
+    public StatusReportPersistenceResult classifyAndApplyIncomingStatusReports(
+            List<AuthenticatedStatusReport> statusReports
+    ) {
+        return incomingStatusReportPersistence.classifyAndApply(statusReports);
+    }
+}

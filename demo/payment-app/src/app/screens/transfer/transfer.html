@@ -1,0 +1,188 @@
+<div class="app-shell flex flex-col">
+  <header class="app-topbar">
+    <div class="mx-auto flex w-full max-w-md items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div>
+        <p class="eyebrow text-blue-200">{{ customerName }} · {{ providerName }}</p>
+        <h1 class="mt-0.5 text-lg font-bold">
+          @switch (step) {
+            @case ('pix') { Find recipient }
+            @case ('amount') { Enter amount }
+            @case ('confirm') { Review payment }
+            @case ('result') { Payment status }
+          }
+        </h1>
+      </div>
+      @if (step !== 'result') {
+        <button (click)="back()" class="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold ring-1 ring-white/15 transition hover:bg-white/20">
+          {{ step === 'pix' ? 'Cancel' : 'Back' }}
+        </button>
+      }
+    </div>
+  </header>
+
+  <main class="page-container flex-grow space-y-5">
+    @if (step !== 'result') {
+      <div class="surface-card p-4">
+        <div class="mb-3 flex items-center justify-between text-xs font-semibold text-slate-400">
+          <span [class.text-blue-700]="stepNumber >= 1">Recipient</span>
+          <span [class.text-blue-700]="stepNumber >= 2">Amount</span>
+          <span [class.text-blue-700]="stepNumber >= 3">Review</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <span class="h-1.5 rounded-full bg-blue-600"></span>
+          <span class="h-1.5 rounded-full transition-colors" [class.bg-blue-600]="stepNumber >= 2" [class.bg-slate-200]="stepNumber < 2"></span>
+          <span class="h-1.5 rounded-full transition-colors" [class.bg-blue-600]="stepNumber >= 3" [class.bg-slate-200]="stepNumber < 3"></span>
+        </div>
+      </div>
+    }
+
+    @if (errorMessage) {
+      <div class="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{{ errorMessage }}</div>
+    }
+
+    @if (step !== 'pix') {
+      <section class="surface-card flex items-center gap-4 p-4">
+        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-lg font-bold text-blue-700">{{ recipient.name.charAt(0) }}</div>
+        <div class="min-w-0">
+          <p class="eyebrow text-slate-400">Recipient</p>
+          <p class="mt-0.5 truncate text-lg font-bold text-slate-900">{{ recipient.name }}</p>
+          <p class="mt-0.5 text-xs text-slate-500">{{ recipient.institution }}</p>
+        </div>
+      </section>
+    }
+
+    @switch (step) {
+      @case ('pix') {
+        <form (ngSubmit)="submitPixKey()" class="surface-card space-y-6 p-5 sm:p-6">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+            <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <circle cx="7.5" cy="15.5" r="3.5" /><path d="m10 13 8-8m-2 2 2 2m-5 1 2 2" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="text-xl font-bold tracking-tight text-slate-900">Who are you paying?</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-500">Enter a PIX key and we'll find the person who owns it.</p>
+          </div>
+          <label class="block">
+            <span class="text-sm font-bold text-slate-700">PIX key</span>
+            <input
+              type="text"
+              name="pixKey"
+              [(ngModel)]="pixKey"
+              placeholder="receiver@example.com"
+              class="form-input mt-2"
+            />
+          </label>
+          <button
+            type="submit"
+            [disabled]="loading"
+            class="primary-button"
+          >
+            {{ loading ? 'Looking up...' : 'Continue' }}
+          </button>
+        </form>
+      }
+      @case ('amount') {
+        <form (ngSubmit)="proceedToConfirm()" class="surface-card space-y-6 p-5 sm:p-6">
+          <div>
+            <p class="eyebrow text-blue-600">Payment amount</p>
+            <h2 class="mt-1 text-xl font-bold tracking-tight text-slate-900">How much do you want to send?</h2>
+          </div>
+          <label class="block">
+            <span class="text-sm font-bold text-slate-700">Amount</span>
+            <div class="relative mt-2">
+              <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 font-bold text-slate-500">R$</span>
+              <input
+                type="number"
+                name="amount"
+                inputmode="decimal"
+                min="0.01"
+                step="0.01"
+                [(ngModel)]="amount"
+                placeholder="0.00"
+                class="form-input py-4 pl-12 text-xl font-bold"
+              />
+            </div>
+          </label>
+          <button
+            type="submit"
+            class="primary-button"
+          >
+            Review payment
+          </button>
+        </form>
+      }
+      @case ('confirm') {
+        <section class="surface-card space-y-6 p-5 sm:p-6">
+          <div>
+            <p class="eyebrow text-blue-600">Review</p>
+            <h2 class="mt-1 text-xl font-bold tracking-tight text-slate-900">Everything looks right?</h2>
+          </div>
+          <div class="rounded-2xl bg-slate-950 p-5 text-white">
+            <p class="text-xs font-medium uppercase tracking-wider text-slate-400">You are sending</p>
+            <p class="mt-2 text-3xl font-bold tracking-tight">R$ {{ amount | number:'1.2-2' }}</p>
+            <div class="my-4 h-px bg-white/10"></div>
+            <p class="text-sm text-slate-300">To <span class="font-bold text-white">{{ recipient.name }}</span></p>
+            <p class="mt-1 break-all font-mono text-xs text-slate-400">{{ pixKey }}</p>
+          </div>
+          <button
+            (click)="confirmTransfer()"
+            [disabled]="loading"
+            class="primary-button"
+          >
+            {{ loading ? 'Submitting...' : 'Send payment' }}
+          </button>
+        </section>
+      }
+      @case ('result') {
+        <section class="surface-card space-y-6 p-7 text-center">
+          @switch (paymentResult) {
+            @case ('checking') {
+              <div class="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600"></div>
+              <div>
+                <p class="eyebrow text-blue-600">Payment sent</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Confirming your payment</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">This usually takes only a moment.</p>
+              </div>
+            }
+            @case ('settled') {
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700 ring-8 ring-emerald-50">&#10003;</div>
+              <div>
+                <p class="eyebrow text-emerald-600">All done</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Payment confirmed</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">{{ formattedAmount }} was sent to {{ recipient.name }}.</p>
+              </div>
+            }
+            @case ('rejected') {
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-3xl text-red-700 ring-8 ring-red-50">&#10005;</div>
+              <div>
+                <p class="eyebrow text-red-600">Not completed</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">We couldn't complete the payment</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">No money was sent.</p>
+              </div>
+            }
+            @case ('processing') {
+              <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 text-3xl text-blue-700 ring-8 ring-blue-50">&#8230;</div>
+              <div>
+                <p class="eyebrow text-blue-600">Taking longer than usual</p>
+                <h2 class="mt-1 text-2xl font-bold tracking-tight text-slate-900">Still processing</h2>
+                <p class="mt-2 text-sm leading-6 text-slate-500">You can follow the final status from your account.</p>
+              </div>
+            }
+          }
+        </section>
+
+        @if (paymentResult !== 'checking') {
+          @if (paymentResult === 'settled') {
+            <button (click)="viewRecipientAccount()" [disabled]="loading" class="primary-button">
+              {{ loading ? 'Opening...' : "View " + recipient.name + "'s account" }}
+            </button>
+            <button (click)="back()" [disabled]="loading" class="secondary-button mt-3">Back to {{ customerName }}</button>
+          } @else {
+            <button (click)="back()" class="primary-button">Back to account</button>
+          }
+        }
+      }
+    }
+  </main>
+</div>

@@ -1,0 +1,48 @@
+<div class="app-shell flex flex-col">
+  <header class="app-topbar">
+    <div class="mx-auto flex w-full max-w-md items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div>
+        <p class="eyebrow text-blue-200">{{ customerName }} · {{ providerName }}</p>
+        <h1 class="mt-0.5 text-lg font-bold">Register PIX key</h1>
+      </div>
+      <button (click)="cancel()" class="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold ring-1 ring-white/15 transition hover:bg-white/20">Cancel</button>
+    </div>
+  </header>
+
+  <main class="page-container flex-grow">
+    @if (errorMessage) {
+      <div class="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{{ errorMessage }}</div>
+    }
+
+    <form (ngSubmit)="savePixKey()" class="surface-card space-y-6 p-5 sm:p-6">
+      <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-50 text-violet-700">
+        <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="7.5" cy="15.5" r="3.5" /><path d="m10 13 8-8m-2 2 2 2m-5 1 2 2" />
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-xl font-bold tracking-tight text-slate-900">Create a new key</h2>
+        <p class="mt-2 text-sm leading-6 text-slate-500">Other people can use this key to send money to {{ customerName }}.</p>
+      </div>
+      <label class="block">
+        <span class="text-sm font-bold text-slate-700">PIX key</span>
+        <input
+          type="text"
+          name="pixKey"
+          [(ngModel)]="pixKey"
+          placeholder="alice@example.com"
+          class="form-input mt-2"
+        />
+        <span class="mt-2 block text-xs text-slate-400">Try an email-style key, such as alice@example.com.</span>
+      </label>
+
+      <button
+        type="submit"
+        [disabled]="loading"
+        class="primary-button"
+      >
+        {{ loading ? 'Registering...' : 'Register key' }}
+      </button>
+    </form>
+  </main>
+</div>

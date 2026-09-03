@@ -16,17 +16,19 @@ public record AppConfig(
         Path tlsTrustCertCollection
 ) {
 
+    private static final int SERVER_PORT = 8001;
+    private static final String DEFAULT_KAFKA_BOOTSTRAP_SERVERS = "localhost:9092";
+
     public static final String PAYMENT_REQUESTS_TOPIC = "spi-payment-requests";
     public static final String PAYMENT_STATUS_REPORTS_TOPIC = "spi-payment-status-reports";
 
     public static AppConfig fromEnv(Map<String, String> env) {
-        int port = Integer.parseInt(env.getOrDefault("SERVER_PORT", "8001"));
-        String bootstrapServers = firstPresent(env,
-                "KAFKA_BOOTSTRAP_SERVERS",
-                "SPRING_KAFKA_BOOTSTRAP_SERVERS",
-                "localhost:9092");
+        String bootstrapServers = env.get("KAFKA_BOOTSTRAP_SERVERS");
+        if (bootstrapServers == null || bootstrapServers.isBlank()) {
+            bootstrapServers = DEFAULT_KAFKA_BOOTSTRAP_SERVERS;
+        }
         return new AppConfig(
-                port,
+                SERVER_PORT,
                 bootstrapServers,
                 requiredPath(env, "KAFKA_PRODUCER_TLS_CERTIFICATE_CHAIN"),
                 requiredPath(env, "KAFKA_PRODUCER_TLS_PRIVATE_KEY"),
@@ -47,18 +49,6 @@ public record AppConfig(
         Properties properties = new Properties();
         properties.putAll(values);
         return properties;
-    }
-
-    private static String firstPresent(Map<String, String> env, String primary, String fallback, String defaultValue) {
-        String primaryValue = env.get(primary);
-        if (primaryValue != null && !primaryValue.isBlank()) {
-            return primaryValue;
-        }
-        String fallbackValue = env.get(fallback);
-        if (fallbackValue != null && !fallbackValue.isBlank()) {
-            return fallbackValue;
-        }
-        return defaultValue;
     }
 
     private static Path requiredPath(Map<String, String> env, String name) {

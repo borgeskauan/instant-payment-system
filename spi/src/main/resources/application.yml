@@ -1,14 +1,8 @@
 spring:
-  jpa:
-    hibernate:
-      ddl-auto: validate
-
   flyway:
     enabled: true
     locations: classpath:db/migration
     table: spi_flyway_schema_history
-    baseline-on-migrate: true
-    baseline-version: 0
     validate-on-migrate: true
 
   datasource:
@@ -25,6 +19,8 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+    listener:
+      auto-startup: false
   jmx:
     enabled: false
   main:
@@ -32,25 +28,25 @@ spring:
     web-application-type: reactive
 
 spi:
-  default-initial-balance: 1_000_000_000
-  notification-outbox:
-    batch-size: 1000
-    fixed-delay: 20ms
-    retry-delay: 1s
   kafka:
-    listener-concurrency: 3
+    payment-request-listener-concurrency: 1
+    status-report-listener-concurrency: 1
     payment-request-group-id: spi-payment-request-consumer-group
     status-report-group-id: spi-status-report-consumer-group
-    max-poll-records: 500
-    fetch-min-bytes: 1024
-    fetch-max-wait-ms: 10
-    force-unknown-processing-error: false
-  trace:
-    file: /tmp/spi-trace.csv
-    queue-capacity: 8192
-    flush-interval-ms: 250
-    batch-size: 1024
-    sample-rate: 100
+    payment-request:
+      max-poll-records: 500
+      fetch-min-bytes: 57344
+      fetch-max-wait-ms: 100
+    status-report:
+      max-poll-records: 500
+      fetch-min-bytes: 16384
+      fetch-max-wait-ms: 125
+  notification-outbox:
+    queue-capacity: 1024
+    recovery-batch-size: 256
+    retry-delay: 100ms
+  notification-runtime:
+    enabled: true
 
 server:
   port: 8002

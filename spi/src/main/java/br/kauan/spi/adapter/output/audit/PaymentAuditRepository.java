@@ -1,7 +1,9 @@
 package br.kauan.spi.adapter.output.audit;
 
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.services.audit.PaymentAuditEvent;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.audit.PaymentAuditEvent;
+import br.kauan.spi.port.output.PaymentAuditStore;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -11,54 +13,61 @@ import java.sql.SQLException;
 import java.util.List;
 
 @Repository
-public class PaymentAuditRepository {
+public class PaymentAuditRepository implements PaymentAuditStore {
 
     private static final String INSERT_SQL = """
             INSERT INTO payment_audit_event (
                 payment_id,
                 event_type,
-                previous_status,
-                resulting_status,
+                previous_state,
+                resulting_state,
                 amount_cents,
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
                 receiver_delta_cents,
-                reason
+                rejection_cause,
+                external_reason_codes
             )
             SELECT
                 payment_id,
                 event_type,
-                previous_status,
-                resulting_status,
+                previous_state,
+                resulting_state,
                 amount_cents,
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
                 receiver_delta_cents,
-                reason
+                rejection_cause,
+                CASE
+                    WHEN external_reason_codes_csv IS NULL THEN NULL
+                    ELSE string_to_array(external_reason_codes_csv, ',')
+                END
             FROM unnest(
                 ?::text[],
-                ?::text[],
-                ?::text[],
-                ?::text[],
+                ?::payment_audit_event_type[],
+                ?::payment_state[],
+                ?::payment_state[],
                 ?::bigint[],
                 ?::text[],
                 ?::text[],
                 ?::bigint[],
                 ?::bigint[],
+                ?::payment_rejection_cause[],
                 ?::text[]
             ) AS event(
                 payment_id,
                 event_type,
-                previous_status,
-                resulting_status,
+                previous_state,
+                resulting_state,
                 amount_cents,
                 sender_ispb,
                 receiver_ispb,
                 sender_delta_cents,
                 receiver_delta_cents,
-                reason
+                rejection_cause,
+                external_reason_codes_csv
             )
             """;
 
@@ -68,6 +77,7 @@ public class PaymentAuditRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    @Override
     public void insertAll(List<PaymentAuditEvent> events) {
         if (events.isEmpty()) {
             return;
@@ -85,6 +95,7 @@ public class PaymentAuditRepository {
             Array senderDeltas = null;
             Array receiverDeltas = null;
             Array reasons = null;
+            Array externalReasonCodes = null;
             try {
                 paymentIds = connection.createArrayOf("text", values.paymentIds());
                 eventTypes = connection.createArrayOf("text", values.eventTypes());
@@ -96,6 +107,7 @@ public class PaymentAuditRepository {
                 senderDeltas = connection.createArrayOf("int8", values.senderDeltas());
                 receiverDeltas = connection.createArrayOf("int8", values.receiverDeltas());
                 reasons = connection.createArrayOf("text", values.reasons());
+                externalReasonCodes = connection.createArrayOf("text", values.externalReasonCodes());
 
                 try (var statement = connection.prepareStatement(INSERT_SQL)) {
                     statement.setArray(1, paymentIds);
@@ -108,6 +120,7 @@ public class PaymentAuditRepository {
                     statement.setArray(8, senderDeltas);
                     statement.setArray(9, receiverDeltas);
                     statement.setArray(10, reasons);
+                    statement.setArray(11, externalReasonCodes);
                     return statement.executeUpdate();
                 }
             } finally {
@@ -121,7 +134,8 @@ public class PaymentAuditRepository {
                         receiverIspbs,
                         senderDeltas,
                         receiverDeltas,
-                        reasons
+                        reasons,
+                        externalReasonCodes
                 );
             }
         });
@@ -145,7 +159,8 @@ public class PaymentAuditRepository {
             String[] receiverIspbs,
             Long[] senderDeltas,
             Long[] receiverDeltas,
-            String[] reasons
+            String[] reasons,
+            String[] externalReasonCodes
     ) {
         private static PaymentAuditArrays from(List<PaymentAuditEvent> events) {
             int size = events.size();
@@ -159,19 +174,25 @@ public class PaymentAuditRepository {
             Long[] senderDeltas = new Long[size];
             Long[] receiverDeltas = new Long[size];
             String[] reasons = new String[size];
+            String[] externalReasonCodes = new String[size];
 
             for (int index = 0; index < size; index++) {
                 PaymentAuditEvent event = events.get(index);
                 paymentIds[index] = event.paymentId();
                 eventTypes[index] = event.eventType() == null ? null : event.eventType().name();
-                previousStatuses[index] = statusName(event.previousStatus());
-                resultingStatuses[index] = statusName(event.resultingStatus());
+                previousStatuses[index] = stateName(event.previousState());
+                resultingStatuses[index] = stateName(event.resultingState());
                 amounts[index] = event.amountCents();
                 senderIspbs[index] = event.senderIspb();
                 receiverIspbs[index] = event.receiverIspb();
                 senderDeltas[index] = event.senderDeltaCents();
                 receiverDeltas[index] = event.receiverDeltaCents();
-                reasons[index] = event.reason() == null ? null : event.reason().name();
+                reasons[index] = event.rejectionCause() == null ? null : event.rejectionCause().name();
+                externalReasonCodes[index] = event.externalReasonCodes().isEmpty()
+                        ? null
+                        : String.join(",", event.externalReasonCodes().stream()
+                                .map(StatusReasonCode::value)
+                                .toList());
             }
 
             return new PaymentAuditArrays(
@@ -184,12 +205,13 @@ public class PaymentAuditRepository {
                     receiverIspbs,
                     senderDeltas,
                     receiverDeltas,
-                    reasons
+                    reasons,
+                    externalReasonCodes
             );
         }
 
-        private static String statusName(PaymentStatus status) {
-            return status == null ? null : status.name();
+        private static String stateName(PaymentState state) {
+            return state == null ? null : state.name();
         }
     }
 }

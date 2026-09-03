@@ -1,7 +1,7 @@
 opencollection: 1.0.0
 
 info:
-  name: SPI
+  name: Reference Demo
 bundled: false
 extensions:
   bruno:

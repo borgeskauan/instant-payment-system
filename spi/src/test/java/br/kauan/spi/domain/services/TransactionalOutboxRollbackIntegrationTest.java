@@ -1,19 +1,21 @@
 package br.kauan.spi.domain.services;
 
 import br.kauan.spi.adapter.output.audit.PaymentAuditRepository;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxRepository;
-import br.kauan.spi.adapter.output.outbox.NotificationOutboxWorker;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationPublisher;
+import br.kauan.spi.adapter.output.notification.OutboundNotificationRepository;
+import br.kauan.spi.application.notification.NotificationException;
+import br.kauan.spi.application.notification.payload.NotificationPayloadFactory;
 import br.kauan.spi.domain.entity.commons.Money;
 import br.kauan.spi.domain.entity.security.AuthenticatedPaymentRequest;
 import br.kauan.spi.domain.entity.security.AuthenticatedStatusReport;
-import br.kauan.spi.domain.entity.status.PaymentStatus;
-import br.kauan.spi.domain.entity.status.StatusReportCommand;
+import br.kauan.spi.domain.entity.status.IncomingStatusReportCommand;
+import br.kauan.spi.domain.entity.status.PaymentState;
+import br.kauan.spi.domain.entity.status.StatusReasonCode;
+import br.kauan.spi.domain.entity.status.StatusReportOutcome;
 import br.kauan.spi.domain.entity.transfer.BankAccount;
 import br.kauan.spi.domain.entity.transfer.BankAccountType;
 import br.kauan.spi.domain.entity.transfer.Party;
 import br.kauan.spi.domain.entity.transfer.PaymentTransactionCommand;
-import br.kauan.spi.domain.services.notification.NotificationContentSerializer;
-import br.kauan.spi.domain.services.notification.NotificationException;
 import br.kauan.spi.port.input.PaymentTransactionProcessorUseCase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,7 +48,7 @@ class TransactionalOutboxRollbackIntegrationTest {
     private static final String RECEIVER_ISPB = "82222222";
 
     @MockitoBean
-    private NotificationOutboxWorker notificationOutboxWorker;
+    private OutboundNotificationPublisher outboundNotificationPublisher;
 
     @Autowired
     private PaymentTransactionProcessorUseCase processor;
@@ -54,19 +57,21 @@ class TransactionalOutboxRollbackIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
-    private NotificationOutboxRepository outboxRepository;
+    private OutboundNotificationRepository outboundNotificationRepository;
 
     @MockitoBean
     private PaymentAuditRepository auditRepository;
 
     @MockitoBean
-    private NotificationContentSerializer contentSerializer;
+    private NotificationPayloadFactory payloadFactory;
 
     @BeforeEach
     void prepareFixture() {
         cleanFixtures();
-        reset(auditRepository, outboxRepository, contentSerializer);
-        when(contentSerializer.serialize(any()))
+        reset(auditRepository, outboundNotificationRepository, payloadFactory);
+        when(payloadFactory.paymentNotification(anyString(), anyList()))
+                .thenReturn("{}".getBytes(StandardCharsets.UTF_8));
+        when(payloadFactory.statusNotification(anyString(), anyList()))
                 .thenReturn("{}".getBytes(StandardCharsets.UTF_8));
     }
 
@@ -75,7 +80,7 @@ class TransactionalOutboxRollbackIntegrationTest {
         jdbcTemplate.update("DELETE FROM payment_audit_event WHERE payment_id LIKE 'E2E-TX-ROLLBACK-%'");
         jdbcTemplate.update("DELETE FROM payment_transaction_entity WHERE payment_id LIKE 'E2E-TX-ROLLBACK-%'");
         jdbcTemplate.update(
-                "DELETE FROM funds_bucket_entity WHERE bank_code IN (?, ?)",
+                "DELETE FROM participant_balance_entity WHERE bank_code IN (?, ?)",
                 SENDER_ISPB,
                 RECEIVER_ISPB
         );
@@ -84,6 +89,8 @@ class TransactionalOutboxRollbackIntegrationTest {
     @Test
     void auditInsertFailureRollsBackNewPaymentBeforeOutboxWork() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-NEW");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         doThrow(new DataIntegrityViolationException("audit rejected insert"))
                 .when(auditRepository).insertAll(anyList());
 
@@ -91,12 +98,28 @@ class TransactionalOutboxRollbackIntegrationTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
-        verifyNoInteractions(outboxRepository);
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
+        verifyNoInteractions(outboundNotificationRepository);
+    }
+
+    @Test
+    void missingPayerBalanceRollsBackInsteadOfBecomingInsufficientFunds() {
+        PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-MISSING-PAYER");
+        insertFunds(RECEIVER_ISPB, "500.00");
+
+        assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("participant balance");
+
+        assertThat(paymentCount(payment.getPaymentId())).isZero();
+        verifyNoInteractions(auditRepository, outboundNotificationRepository);
     }
 
     @Test
     void auditDatabaseOutagePropagatesForInfrastructureRetryAndRollsBackNewPayment() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-DATABASE-OUTAGE");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         DataAccessResourceFailureException databaseFailure =
                 new DataAccessResourceFailureException("audit database unavailable");
         doThrow(databaseFailure).when(auditRepository).insertAll(anyList());
@@ -105,97 +128,102 @@ class TransactionalOutboxRollbackIntegrationTest {
                 .isSameAs(databaseFailure);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
     void auditInsertFailureRollsBackRejectionBeforeOutboxWork() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-REJECTION");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertFunds(SENDER_ISPB, "990.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("audit rejected insert"))
                 .when(auditRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.REJECTED
+                StatusReportOutcome.REJECTED
         ))).isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        verifyNoInteractions(outboxRepository);
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
     void auditInsertFailureRollsBackSettlementStatusAndBalancesBeforeOutboxWork() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-SETTLEMENT");
-        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("audit rejected insert"))
                 .when(auditRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
+                StatusReportOutcome.ACCEPTED
         ))).isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
-        verifyNoInteractions(outboxRepository);
-    }
-
-    @Test
-    void auditInsertFailureRollsBackInsufficientFundsStatusAndReasonBeforeOutboxWork() {
-        PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-AUDIT-INSUFFICIENT");
-        insertFunds(SENDER_ISPB, "0.00");
-        insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
-        doThrow(new DataIntegrityViolationException("audit rejected insert"))
-                .when(auditRepository).insertAll(anyList());
-
-        assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
-                payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
-        ))).isInstanceOf(DataIntegrityViolationException.class);
-
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        assertThat(paymentRejectionReason(payment.getPaymentId())).isNull();
-        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
-        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
     void outboxInsertFailureRollsBackNewPayment() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-NEW");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void outboxInsertFailureRollsBackIngressInsufficientRejection() {
+        PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-INGRESS-NO-FUNDS");
+        insertFunds(SENDER_ISPB, "0.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+        doThrow(new DataIntegrityViolationException("outbox rejected insert"))
+                .when(outboundNotificationRepository).insertAll(anyList());
+
+        assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(paymentCount(payment.getPaymentId())).isZero();
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
+        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
     }
 
     @Test
     void serializationFailureRollsBackNewPaymentBeforeOutboxInsert() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-SERIALIZATION");
-        when(contentSerializer.serialize(any()))
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+        when(payloadFactory.paymentNotification(anyString(), anyList()))
                 .thenThrow(new NotificationException("serialization failed", new IllegalStateException("boom")));
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isInstanceOf(NotificationException.class);
 
         assertThat(paymentCount(payment.getPaymentId())).isZero();
-        verifyNoInteractions(outboxRepository);
+        verifyNoInteractions(outboundNotificationRepository);
     }
 
     @Test
     void outboxDatabaseOutagePropagatesForInfrastructureRetryAndRollsBackNewPayment() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-DATABASE-OUTAGE");
+        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
         DataAccessResourceFailureException databaseFailure =
                 new DataAccessResourceFailureException("database unavailable");
-        doThrow(databaseFailure).when(outboxRepository).insertAll(anyList());
+        doThrow(databaseFailure).when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processTransactions(authenticatedPayments(payment)))
                 .isSameAs(databaseFailure);
@@ -206,54 +234,37 @@ class TransactionalOutboxRollbackIntegrationTest {
     @Test
     void outboxInsertFailureRollsBackRejection() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-REJECTION");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertFunds(SENDER_ISPB, "990.00");
+        insertFunds(RECEIVER_ISPB, "500.00");
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.REJECTED
+                StatusReportOutcome.REJECTED
         ))).isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
     }
 
     @Test
     void outboxInsertFailureRollsBackSettlementStatusAndBalances() {
         PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-SETTLEMENT");
-        insertFunds(SENDER_ISPB, "1000.00");
+        insertFunds(SENDER_ISPB, "990.00");
         insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
+        insertPayment(payment, PaymentState.WAITING_ACCEPTANCE);
         doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
+                .when(outboundNotificationRepository).insertAll(anyList());
 
         assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
                 payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
+                StatusReportOutcome.ACCEPTED
         ))).isInstanceOf(DataIntegrityViolationException.class);
 
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("1000.00");
-        assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
-    }
-
-    @Test
-    void outboxInsertFailureRollsBackInsufficientFundsStatusAndReason() {
-        PaymentTransactionCommand payment = payment("E2E-TX-ROLLBACK-OUTBOX-INSUFFICIENT");
-        insertFunds(SENDER_ISPB, "0.00");
-        insertFunds(RECEIVER_ISPB, "500.00");
-        insertPayment(payment, PaymentStatus.WAITING_ACCEPTANCE);
-        doThrow(new DataIntegrityViolationException("outbox rejected insert"))
-                .when(outboxRepository).insertAll(anyList());
-
-        assertThatThrownBy(() -> processor.processStatusReports(authenticatedReports(
-                payment.getPaymentId(),
-                PaymentStatus.ACCEPTED_IN_PROCESS
-        ))).isInstanceOf(DataIntegrityViolationException.class);
-
-        assertThat(paymentStatus(payment.getPaymentId())).isEqualTo(PaymentStatus.WAITING_ACCEPTANCE.name());
-        assertThat(paymentRejectionReason(payment.getPaymentId())).isNull();
-        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("0.00");
+        assertThat(paymentState(payment.getPaymentId())).isEqualTo(PaymentState.WAITING_ACCEPTANCE.name());
+        assertThat(balance(SENDER_ISPB)).isEqualByComparingTo("990.00");
         assertThat(balance(RECEIVER_ISPB)).isEqualByComparingTo("500.00");
     }
 
@@ -261,14 +272,20 @@ class TransactionalOutboxRollbackIntegrationTest {
         return List.of(new AuthenticatedPaymentRequest(0, SENDER_ISPB, payment));
     }
 
-    private List<AuthenticatedStatusReport> authenticatedReports(String paymentId, PaymentStatus status) {
+    private List<AuthenticatedStatusReport> authenticatedReports(
+            String paymentId,
+            StatusReportOutcome outcome
+    ) {
         return List.of(new AuthenticatedStatusReport(
                 0,
                 RECEIVER_ISPB,
-                StatusReportCommand.builder()
-                        .originalPaymentId(paymentId)
-                        .status(status)
-                        .build()
+                new IncomingStatusReportCommand(
+                        paymentId,
+                        outcome,
+                        outcome == StatusReportOutcome.REJECTED
+                                ? List.of(StatusReasonCode.of("AB03"))
+                                : List.of()
+                )
         ));
     }
 
@@ -280,36 +297,28 @@ class TransactionalOutboxRollbackIntegrationTest {
         );
     }
 
-    private String paymentStatus(String paymentId) {
+    private String paymentState(String paymentId) {
         return jdbcTemplate.queryForObject(
-                "SELECT status FROM payment_transaction_entity WHERE payment_id = ?",
+                "SELECT state FROM payment_transaction_entity WHERE payment_id = ?",
                 String.class,
                 paymentId
         );
     }
 
-    private String paymentRejectionReason(String paymentId) {
-        return jdbcTemplate.queryForObject(
-                "SELECT rejection_reason FROM payment_transaction_entity WHERE payment_id = ?",
-                String.class,
-                paymentId
-        );
-    }
-
-    private void insertPayment(PaymentTransactionCommand payment, PaymentStatus status) {
+    private void insertPayment(PaymentTransactionCommand payment, PaymentState state) {
         jdbcTemplate.update(
                 """
                         INSERT INTO payment_transaction_entity (
                             payment_id,
                             amount_cents,
-                            status,
+                            state,
                             sender_bank_code,
                             receiver_bank_code
-                        ) VALUES (?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?::payment_state, ?, ?)
                         """,
                 payment.getPaymentId(),
                 payment.getAmountCents(),
-                status.name(),
+                state.name(),
                 SENDER_ISPB,
                 RECEIVER_ISPB
         );
@@ -317,21 +326,20 @@ class TransactionalOutboxRollbackIntegrationTest {
 
     private void insertFunds(String bankCode, String balance) {
         long balanceCents = Money.toCents(new BigDecimal(balance));
-        long bucketBalance = balanceCents / 16;
-        long remainder = balanceCents % 16;
-        for (int bucketId = 0; bucketId < 16; bucketId++) {
-            jdbcTemplate.update(
-                    "INSERT INTO funds_bucket_entity (bank_code, bucket_id, balance_cents) VALUES (?, ?, ?)",
-                    bankCode,
-                    bucketId,
-                    bucketId == 0 ? bucketBalance + remainder : bucketBalance
-            );
-        }
+        jdbcTemplate.update(
+                """
+                        INSERT INTO participant_balance_entity (bank_code, balance_cents)
+                        VALUES (?, ?)
+                        ON CONFLICT (bank_code) DO UPDATE SET balance_cents = EXCLUDED.balance_cents
+                        """,
+                bankCode,
+                balanceCents
+        );
     }
 
     private BigDecimal balance(String bankCode) {
         Long balanceCents = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(SUM(balance_cents), 0) FROM funds_bucket_entity WHERE bank_code = ?",
+                "SELECT COALESCE(balance_cents, 0) FROM participant_balance_entity WHERE bank_code = ?",
                 Long.class,
                 bankCode
         );

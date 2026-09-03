@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+demo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$demo_dir/.." && pwd)"
+
+export LOCAL_UID="${LOCAL_UID:-$(id -u)}"
+export LOCAL_GID="${LOCAL_GID:-$(id -g)}"
+
+core_compose=(docker compose -f "$repo_root/infra/docker-compose.yml")
+demo_compose=(docker compose -f "$demo_dir/docker-compose.yml")
+
+start() {
+  "${core_compose[@]}" up -d --build
+  "${demo_compose[@]}" up -d --build
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./demo/demo <command>
+
+Commands:
+  start  Build and start the core and reference demo
+  smoke  Exercise the running demo payment flow
+  reset  Delete local core state and recreate both stacks
+  stop   Stop only the reference demo
+EOF
+}
+
+case "${1:-}" in
+  start)
+    start
+    ;;
+  smoke)
+    "$demo_dir/smoke.sh"
+    ;;
+  reset)
+    "${demo_compose[@]}" down --remove-orphans
+    "${core_compose[@]}" down -v --remove-orphans
+    start
+    ;;
+  stop)
+    "${demo_compose[@]}" down --remove-orphans
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

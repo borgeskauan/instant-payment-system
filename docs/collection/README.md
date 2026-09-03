@@ -1,44 +1,29 @@
-# Bruno Transfer Flow
+# Try the payment flow with Bruno
 
-Start two PSP containers before running these requests:
+This collection tells the same story as the browser demo, one HTTP request at a time: Alice opens an account at Bank A, Bob opens an account at Bank B, and Alice sends Bob a PIX payment of 25.50.
 
-```bash
-payment-service-provider/start-psp.sh 11111111 --host-port 8081 --replace
-payment-service-provider/start-psp.sh 22222222 --host-port 8082 --replace
-```
+## Before you begin
 
-The launcher automatically creates each PSP settlement account in the local SPI
-with an initial balance of `1000`, without resetting an existing account. Use
-`--funds-balance VALUE` to choose another initial balance or
-`--no-provision-funds` when the account must be prepared separately.
-
-Select the `local` environment in Bruno. It defaults:
-
-```text
-senderPspUrl=http://localhost:8081
-receiverPspUrl=http://localhost:8082
-```
-
-Collection variables to fill while running the flow:
-
-```text
-receiverPixKey=bob@example.com
-```
-
-Requests `01`, `02`, and `04` set `senderCustomerId`, `receiverCustomerId`, and `previewReceiverJson` automatically as runtime variables.
-
-Run requests in order:
-
-1. `01 Create sender customer`
-2. `02 Create receiver customer`
-3. `03 Create receiver PIX key`
-4. `04 Preview transfer`
-5. `05 Execute transfer`
-
-Watch the backend flow:
+Start from a clean demo environment:
 
 ```bash
-docker compose -f infra/docker-compose.yml logs -f kafka-producer spi notification-gateway
-docker logs -f psp-11111111
-docker logs -f psp-22222222
+./demo/demo reset
 ```
+
+This command deletes the local data from previous runs. See the [reference demo guide](../../demo/README.md) for more details.
+
+Open `docs/collection` in Bruno and select the `local` environment. You do not need to copy IDs or change variables; the collection carries the information from one request to the next.
+
+## Run the journey
+
+Open the `Alice pays Bob` folder and run its requests in order:
+
+1. `01 Create Alice at Bank A`
+2. `02 Create Bob at Bank B`
+3. `03 Register Bob's PIX key`
+4. `04 Check the recipient`
+5. `05 Send 25.50 from Alice to Bob`
+
+The fourth request shows the person associated with Bob's key before any money is sent. The final request then creates the payment using that same key.
+
+The collection uses `bruno-bob@example.com` rather than the key from the browser walkthrough, so the two examples remain independent.

@@ -1,68 +1,64 @@
 package br.kauan.notificationgateway.kafka;
 
-import br.kauan.notificationgateway.delivery.IncomingNotification;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
+import br.kauan.notificationgateway.delivery.RecentNotificationWindow;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class NotificationKafkaConsumerTest {
 
     @Test
-    void consumesKafkaRecordAsPersistentDelivery() {
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(repository);
+    void appendsTheWholePollToTheSharedPartitionBufferAndSignalsItsRecipients() {
+        RecentNotificationWindow window = new RecentNotificationWindow(20);
+        PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(window, coordinator);
+
+        consumer.consume(List.of(
+                record(10, "20000001", "message-1"),
+                record(11, "20000002", "message-2")
+        ));
+
+        assertThat(window.lookup(3, "20000001", 9, 15, 100).notifications())
+                .extracting(DeliveryNotification::communicationId)
+                .containsExactly("message-1");
+        verify(coordinator).signal(java.util.Set.of("20000001", "20000002"));
+    }
+
+    @Test
+    void malformedPollFailsWithoutSignallingRecipients() {
+        RecentNotificationWindow window = new RecentNotificationWindow(20);
+        PullRequestCoordinator coordinator = mock(PullRequestCoordinator.class);
+        NotificationKafkaConsumer consumer = new NotificationKafkaConsumer(window, coordinator);
+        ConsumerRecord<String, byte[]> invalid = record(11, "20000001", "message-2");
+        invalid.headers().remove("notification.communication-id");
+
+        assertThatThrownBy(() -> consumer.consume(List.of(
+                record(10, "20000001", "message-1"),
+                invalid
+        ))).isInstanceOf(IllegalArgumentException.class);
+        assertThat(window.lookup(3, "20000001", 9, 15, 100).state())
+                .isEqualTo(RecentNotificationWindow.LookupState.HIT);
+        verifyNoInteractions(coordinator);
+    }
+
+    private ConsumerRecord<String, byte[]> record(long offset, String ispb, String communicationId) {
         ConsumerRecord<String, byte[]> record = new ConsumerRecord<>(
-                "psp-notifications",
-                1,
-                10L,
-                "20000001",
-                "payload".getBytes(StandardCharsets.UTF_8)
+                NotificationLog.TOPIC, 3, offset, ispb, communicationId.getBytes(StandardCharsets.UTF_8)
         );
-        headers().forEach(record.headers()::add);
-
-        consumer.consume(record);
-
-        var captor = ArgumentCaptor.forClass(IncomingNotification.class);
-        verify(repository).saveIfAbsent(captor.capture());
-        assertThat(captor.getValue())
-                .extracting(
-                        IncomingNotification::communicationId,
-                        IncomingNotification::recipientIspb,
-                        IncomingNotification::eventType,
-                        IncomingNotification::paymentId,
-                        IncomingNotification::status,
-                        IncomingNotification::schemaVersion
-                )
-                .containsExactly(
-                        "v1:abc",
-                        "20000001",
-                        "SETTLED_NOTIFICATION",
-                        "E2E-1",
-                        "ACSC",
-                        "v1"
-                );
-        assertThat(captor.getValue().payload()).isEqualTo("payload".getBytes(StandardCharsets.UTF_8));
-    }
-
-    private RecordHeaders headers() {
         RecordHeaders headers = new RecordHeaders();
-        headers.add("notification.communication-id", bytes("v1:abc"));
-        headers.add("notification.event-type", bytes("SETTLED_NOTIFICATION"));
-        headers.add("notification.payment-id", bytes("E2E-1"));
-        headers.add("notification.status", bytes("ACSC"));
-        headers.add("notification.schema-version", bytes("v1"));
-        return headers;
-    }
-
-    private byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+        headers.add("notification.communication-id", communicationId.getBytes(StandardCharsets.UTF_8));
+        headers.forEach(record.headers()::add);
+        return record;
     }
 }

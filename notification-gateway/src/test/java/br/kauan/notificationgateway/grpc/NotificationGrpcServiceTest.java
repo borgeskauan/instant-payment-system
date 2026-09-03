@@ -1,73 +1,215 @@
 package br.kauan.notificationgateway.grpc;
 
-import br.kauan.notificationgateway.delivery.NotificationDelivery;
-import br.kauan.notificationgateway.delivery.NotificationDeliveryRepository;
+import br.kauan.notificationgateway.config.NotificationGatewayProperties;
+import br.kauan.notificationgateway.delivery.DeliveryNotification;
+import br.kauan.notificationgateway.delivery.DeliveryPage;
+import br.kauan.notificationgateway.delivery.NotificationCursorExpiredException;
+import br.kauan.notificationgateway.delivery.NotificationDeliveryReader;
+import br.kauan.notificationgateway.delivery.PullRequestCoordinator;
+import br.kauan.notificationgateway.grpc.proto.PullRequest;
+import br.kauan.notificationgateway.grpc.proto.PullResponse;
 import br.kauan.notificationgateway.grpc.security.AuthenticatedPspContext;
-import br.kauan.notificationgateway.grpc.proto.Ack;
-import br.kauan.notificationgateway.grpc.proto.ClientMessage;
-import br.kauan.notificationgateway.grpc.proto.Notification;
+import br.kauan.notificationgateway.kafka.NotificationLog;
+import br.kauan.notificationgateway.kafka.NotificationPartitionResolver;
 import io.grpc.Context;
-import io.grpc.StatusRuntimeException;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class NotificationGrpcServiceTest {
 
+    private static final byte[] SECRET =
+            "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
+
     @Test
-    void authenticatedIspbRegistersStreamAndPassesAckToRepository() throws Exception {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, repository);
-        CapturingObserver responseObserver = new CapturingObserver();
-        when(repository.acknowledge("v1:delivery", "20000001")).thenReturn(true);
+    void springCanWireTheGrpcServiceFromItsApplicationDependencies() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(NotificationDeliveryReader.class, () -> mock(NotificationDeliveryReader.class));
+            context.registerBean(PullRequestCoordinator.class, PullRequestCoordinator::new);
+            context.registerBean(DeliveryCursorCodec.class, () -> new DeliveryCursorCodec(SECRET));
+            context.registerBean(NotificationPartitionResolver.class, NotificationPartitionResolver::new);
+            context.registerBean(NotificationGatewayProperties.class, () -> properties(1));
+            context.register(NotificationGrpcService.class);
 
-        StreamObserver<ClientMessage> requestObserver = Context.current()
-                .withValue(AuthenticatedPspContext.AUTHENTICATED_ISPB, "20000001")
-                .call(() -> service.streamNotifications(responseObserver));
+            context.refresh();
 
-        boolean sent = registry.dispatch(new NotificationDelivery(
-                "v1:delivery",
-                "20000001",
-                "payload".getBytes()
+            assertThat(context.getBean(NotificationGrpcService.class)).isNotNull();
+        }
+    }
+
+    @Test
+    void returnsTheAuthenticatedPspPayloadsAndIssuesItsLastExaminedKafkaOffset() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        when(reader.read("20000001", partition, -1, 15)).thenReturn(new DeliveryPage(
+                List.of(record(partition, 12, "first"), record(partition, 18, "second")),
+                18,
+                true
         ));
-        requestObserver.onNext(ClientMessage.newBuilder()
-                .setAck(Ack.newBuilder().setDeliveryId("v1:delivery"))
-                .build());
+        CapturingObserver observer = new CapturingObserver();
 
-        assertThat(sent).isTrue();
-        assertThat(responseObserver.notification.getDeliveryId()).isEqualTo("v1:delivery");
-        assertThat(responseObserver.notification.getPayload().toByteArray()).isEqualTo("payload".getBytes());
-        verify(repository).acknowledge("v1:delivery", "20000001");
+        authenticatedCall(service, PullRequest.newBuilder().build(), observer);
+
+        assertThat(observer.response.getNotificationsList())
+                .extracting(notification -> notification.getPayload().toStringUtf8())
+                .containsExactly("first", "second");
+        assertThat(observer.response.getNotificationsList())
+                .extracting(notification -> notification.getCommunicationId())
+                .containsExactly("first", "second");
+        assertThat(codec.decode(observer.response.getNextCursor(), "20000001", partition).lastExaminedOffset())
+                .isEqualTo(18);
     }
 
     @Test
-    void missingAuthenticatedIspbRejectsStream() {
-        SubscriberRegistry registry = new SubscriberRegistry();
-        NotificationDeliveryRepository repository = mock(NotificationDeliveryRepository.class);
-        NotificationGrpcService service = new NotificationGrpcService(registry, repository);
+    void emptyPageThatExaminedUnrelatedRecordsAdvancesImmediatelyWithoutLongPolling() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1_000);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        when(reader.read("20000001", partition, -1, 15))
+                .thenReturn(new DeliveryPage(List.of(), 25, true));
+        CapturingObserver observer = new CapturingObserver();
 
-        assertThatThrownBy(() -> service.streamNotifications(new CapturingObserver()))
-                .isInstanceOf(StatusRuntimeException.class)
-                .hasMessageContaining("authenticated PSP ISPB is required");
+        authenticatedCall(service, PullRequest.newBuilder().build(), observer);
+
+        assertThat(codec.decode(observer.response.getNextCursor(), "20000001", partition).lastExaminedOffset())
+                .isEqualTo(25);
+        verify(reader).read("20000001", partition, -1, 15);
     }
 
-    private static final class CapturingObserver implements StreamObserver<Notification> {
+    @Test
+    void knownTailLongPollsAndReturnsTheSameCursorWhenNoRecordArrives() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, partition, 20));
+        when(reader.read("20000001", partition, 20, 15))
+                .thenReturn(new DeliveryPage(List.of(), 20, true));
+        CapturingObserver observer = new CapturingObserver();
 
-        private Notification notification;
+        authenticatedCall(service, PullRequest.newBuilder().setCursor(cursor).build(), observer);
+
+        assertThat(observer.response.getNextCursor()).isEqualTo(cursor);
+        verify(reader, times(2)).read("20000001", partition, 20, 15);
+    }
+
+    @Test
+    void releasesPullAdmissionBeforeTheClientObservesCompletion() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        when(reader.read("20000001", partition, -1, 15)).thenReturn(new DeliveryPage(
+                List.of(record(partition, 1, "notification")),
+                1,
+                true
+        ));
+        CapturingObserver secondObserver = new CapturingObserver();
+        CapturingObserver firstObserver = new CapturingObserver() {
+            @Override
+            public void onCompleted() {
+                service.pullNotifications(PullRequest.newBuilder().build(), secondObserver);
+            }
+        };
+
+        authenticatedCall(service, PullRequest.newBuilder().build(), firstObserver);
+
+        assertThat(firstObserver.error).isNull();
+        assertThat(secondObserver.error).isNull();
+        assertThat(secondObserver.response).isNotNull();
+    }
+
+    @Test
+    void mapsExpiredCursorToFailedPrecondition() throws Exception {
+        NotificationDeliveryReader reader = mock(NotificationDeliveryReader.class);
+        DeliveryCursorCodec codec = new DeliveryCursorCodec(SECRET);
+        NotificationGrpcService service = service(reader, codec, 1);
+        int partition = new NotificationPartitionResolver().partition("20000001");
+        String cursor = codec.encode(new DeliveryCursor("20000001", NotificationLog.GENERATION, partition, 20));
+        when(reader.read("20000001", partition, 20, 15)).thenThrow(new NotificationCursorExpiredException());
+        CapturingObserver observer = new CapturingObserver();
+
+        authenticatedCall(service, PullRequest.newBuilder().setCursor(cursor).build(), observer);
+
+        assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+        assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo("notification cursor expired");
+    }
+
+    private NotificationGrpcService service(
+            NotificationDeliveryReader reader,
+            DeliveryCursorCodec codec,
+            long timeoutMillis
+    ) {
+        return new NotificationGrpcService(
+                reader,
+                new PullRequestCoordinator(),
+                codec,
+                new NotificationPartitionResolver(),
+                properties(timeoutMillis)
+        );
+    }
+
+    private NotificationGatewayProperties properties(long timeoutMillis) {
+        return new NotificationGatewayProperties(
+                new NotificationGatewayProperties.Kafka(1, 1),
+                new NotificationGatewayProperties.Pull(
+                        new String(SECRET, StandardCharsets.UTF_8),
+                        Duration.ofMillis(timeoutMillis),
+                        15,
+                        Duration.ofMillis(1)
+                )
+        );
+    }
+
+    private void authenticatedCall(
+            NotificationGrpcService service,
+            PullRequest request,
+            StreamObserver<PullResponse> observer
+    ) throws Exception {
+        Context.current()
+                .withValue(AuthenticatedPspContext.AUTHENTICATED_ISPB, "20000001")
+                .call(() -> {
+                    service.pullNotifications(request, observer);
+                    return null;
+                });
+    }
+
+    private DeliveryNotification record(int partition, long offset, String payload) {
+        return new DeliveryNotification(
+                partition,
+                offset,
+                "20000001",
+                payload,
+                payload.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    private static class CapturingObserver implements StreamObserver<PullResponse> {
+        private PullResponse response;
+        private Throwable error;
 
         @Override
-        public void onNext(Notification value) {
-            this.notification = value;
+        public void onNext(PullResponse value) {
+            response = value;
         }
 
         @Override
-        public void onError(Throwable t) {
+        public void onError(Throwable throwable) {
+            error = throwable;
         }
 
         @Override

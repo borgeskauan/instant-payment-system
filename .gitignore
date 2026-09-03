@@ -36,4 +36,8 @@ build/
 
 /load_test/summary/
 /load-test/results/
+/load-test/results-*.tar.zst
+/load-test/.prepared-environment/
 /infra/certs/local/
+# Rust load-tool build output
+load-test/rust-loadtool/target/

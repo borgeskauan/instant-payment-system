@@ -1,6 +1,6 @@
 package br.kauan.kafkaproducer.kafka;
 
-import br.kauan.kafkaproducer.security.PspAuthorizationException;
+import br.kauan.kafkaproducer.pacs.InvalidPacsPayloadException;
 import br.kauan.pix.internal.v1.PaymentRequest;
 import br.kauan.pix.internal.v1.PaymentStatus;
 import br.kauan.pix.internal.v1.PaymentStatusReport;
@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -19,14 +20,14 @@ class KafkaPaymentPublisherTest {
 
     @Test
     void publishesPaymentRequestsToPaymentRequestsTopic() throws Exception {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        FakeProducerClient statusProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, statusProducer);
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.publishPaymentRequest("10000001", pacs008()).block();
 
-        ProducerRecord<byte[], byte[]> record = paymentProducer.sends.getFirst();
+        ProducerRecord<byte[], byte[]> record = producer.sends.getFirst();
         assertEquals("spi-payment-requests", record.topic());
+        assertRecordKey(record, "10000001");
         assertAuthenticatedIspb(record, "10000001");
         PaymentRequest request = PaymentRequest.parseFrom(record.value());
         assertEquals("E2E-1", request.getPaymentId());
@@ -37,102 +38,165 @@ class KafkaPaymentPublisherTest {
         assertEquals("10000001", request.getSender().getAccount().getIspb());
         assertEquals("+5511999999999", request.getReceiver().getPixKey());
         assertEquals("20000001", request.getReceiver().getAccount().getIspb());
-        assertEquals(0, statusProducer.sends.size());
+        assertEquals(1, producer.sends.size());
     }
 
     @Test
     void publishesStatusReportsToStatusReportsTopic() throws Exception {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        FakeProducerClient statusProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, statusProducer);
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.publishStatusReport("20000001", pacs002("ACSP")).block();
 
-        ProducerRecord<byte[], byte[]> record = statusProducer.sends.getFirst();
+        ProducerRecord<byte[], byte[]> record = producer.sends.getFirst();
         assertEquals("spi-payment-status-reports", record.topic());
+        assertRecordKey(record, "20000001");
         assertAuthenticatedIspb(record, "20000001");
         PaymentStatusReport report = PaymentStatusReport.parseFrom(record.value());
         assertEquals("E2E-1", report.getPaymentId());
         assertEquals(PaymentStatus.ACCEPTED_IN_PROCESS, report.getStatus());
-        assertEquals(0, paymentProducer.sends.size());
+        assertEquals(1, producer.sends.size());
     }
 
     @Test
     void mapsRejectedStatusReports() throws Exception {
-        FakeProducerClient statusProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(new FakeProducerClient(), statusProducer);
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.publishStatusReport("20000001", pacs002("RJCT")).block();
 
-        PaymentStatusReport report = PaymentStatusReport.parseFrom(statusProducer.sends.getFirst().value());
+        PaymentStatusReport report = PaymentStatusReport.parseFrom(producer.sends.getFirst().value());
         assertEquals(PaymentStatus.REJECTED, report.getStatus());
     }
 
     @Test
     void publishesOnePaymentRequestRecordPerPacs008Transaction() throws Exception {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, new FakeProducerClient());
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.publishPaymentRequest("10000001", pacs008Multi()).block();
 
-        assertEquals(2, paymentProducer.sends.size());
-        assertEquals("E2E-1", PaymentRequest.parseFrom(paymentProducer.sends.get(0).value()).getPaymentId());
-        assertEquals("E2E-2", PaymentRequest.parseFrom(paymentProducer.sends.get(1).value()).getPaymentId());
-        assertAuthenticatedIspb(paymentProducer.sends.get(0), "10000001");
-        assertAuthenticatedIspb(paymentProducer.sends.get(1), "10000001");
-    }
-
-    @Test
-    void rejectsEntirePaymentRequestWhenOneTransactionBelongsToAnotherPsp() {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, new FakeProducerClient());
-        byte[] payload = new String(pacs008Multi(), StandardCharsets.UTF_8)
-                .replaceFirst("10000001", "99999999")
-                .getBytes(StandardCharsets.UTF_8);
-
-        assertThrows(PspAuthorizationException.class,
-                () -> publisher.publishPaymentRequest("10000001", payload).block());
-
-        assertEquals(0, paymentProducer.sends.size());
+        assertEquals(2, producer.sends.size());
+        assertEquals("E2E-1", PaymentRequest.parseFrom(producer.sends.get(0).value()).getPaymentId());
+        assertEquals("E2E-2", PaymentRequest.parseFrom(producer.sends.get(1).value()).getPaymentId());
+        assertRecordKey(producer.sends.get(0), "10000001");
+        assertRecordKey(producer.sends.get(1), "10000001");
+        assertAuthenticatedIspb(producer.sends.get(0), "10000001");
+        assertAuthenticatedIspb(producer.sends.get(1), "10000001");
     }
 
     @Test
     void publishesOneStatusReportRecordPerPacs002Transaction() throws Exception {
-        FakeProducerClient statusProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(new FakeProducerClient(), statusProducer);
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.publishStatusReport("20000001", pacs002Multi()).block();
 
-        assertEquals(2, statusProducer.sends.size());
-        assertEquals("E2E-1", PaymentStatusReport.parseFrom(statusProducer.sends.get(0).value()).getPaymentId());
-        assertEquals("E2E-2", PaymentStatusReport.parseFrom(statusProducer.sends.get(1).value()).getPaymentId());
-        assertAuthenticatedIspb(statusProducer.sends.get(0), "20000001");
-        assertAuthenticatedIspb(statusProducer.sends.get(1), "20000001");
+        assertEquals(2, producer.sends.size());
+        assertEquals("E2E-1", PaymentStatusReport.parseFrom(producer.sends.get(0).value()).getPaymentId());
+        assertEquals("E2E-2", PaymentStatusReport.parseFrom(producer.sends.get(1).value()).getPaymentId());
+        assertRecordKey(producer.sends.get(0), "20000001");
+        assertRecordKey(producer.sends.get(1), "20000001");
+        assertAuthenticatedIspb(producer.sends.get(0), "20000001");
+        assertAuthenticatedIspb(producer.sends.get(1), "20000001");
+    }
+
+    @Test
+    void usesEachAuthenticatedIspbAsItsStatusRecordKey() throws Exception {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+
+        publisher.publishStatusReport("20000001", pacs002("ACSP")).block();
+        publisher.publishStatusReport("20000002", pacs002("ACSP")).block();
+
+        assertRecordKey(producer.sends.get(0), "20000001");
+        assertRecordKey(producer.sends.get(1), "20000002");
+        assertEquals("E2E-1", PaymentStatusReport.parseFrom(producer.sends.get(0).value()).getPaymentId());
+        assertEquals("E2E-1", PaymentStatusReport.parseFrom(producer.sends.get(1).value()).getPaymentId());
     }
 
     @Test
     void propagatesKafkaSendFailures() {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        paymentProducer.failure = new IllegalStateException("send failed");
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, new FakeProducerClient());
+        FakeProducerClient producer = new FakeProducerClient();
+        producer.failure = new IllegalStateException("send failed");
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         assertThrows(IllegalStateException.class,
                 () -> publisher.publishPaymentRequest("10000001", pacs008()).block());
     }
 
     @Test
-    void warmsUpBothTopicsAndClosesBothProducers() {
-        FakeProducerClient paymentProducer = new FakeProducerClient();
-        FakeProducerClient statusProducer = new FakeProducerClient();
-        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(paymentProducer, statusProducer);
+    void rejectsMalformedPacs008WithoutPublishing() {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+
+        assertThrows(InvalidPacsPayloadException.class,
+                () -> publisher.publishPaymentRequest("10000001", "not-json".getBytes()).block());
+
+        assertEquals(0, producer.sends.size());
+    }
+
+    @Test
+    void rejectsPacs008WithoutRequiredConversionFields() {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+
+        assertThrows(InvalidPacsPayloadException.class,
+                () -> publisher.publishPaymentRequest(
+                        "10000001",
+                        "{\"CdtTrfTxInf\":[{\"IntrBkSttlmAmt\":{\"value\":1,\"Ccy\":\"BRL\"}}]}".getBytes())
+                        .block());
+
+        assertEquals(0, producer.sends.size());
+    }
+
+    @Test
+    void rejectsPacs008AmountThatCannotBeRepresentedInCents() {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+        byte[] payload = new String(pacs008(), StandardCharsets.UTF_8)
+                .replace("12.34", "12.345")
+                .getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(InvalidPacsPayloadException.class,
+                () -> publisher.publishPaymentRequest("10000001", payload).block());
+
+        assertEquals(0, producer.sends.size());
+    }
+
+    @Test
+    void rejectsUnsupportedPacs002StatusWithoutPublishing() {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+
+        assertThrows(InvalidPacsPayloadException.class,
+                () -> publisher.publishStatusReport("20000001", pacs002("PDNG")).block());
+
+        assertEquals(0, producer.sends.size());
+    }
+
+    @Test
+    void propagatesFailureAfterARecordFromTheSameEnvelopeWasConfirmed() {
+        FakeProducerClient producer = new FakeProducerClient();
+        producer.failOnSend = 2;
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
+
+        assertThrows(IllegalStateException.class,
+                () -> publisher.publishPaymentRequest("10000001", pacs008Multi()).block());
+
+        assertEquals(2, producer.sends.size());
+    }
+
+    @Test
+    void warmsUpBothTopicsAndClosesTheProducer() {
+        FakeProducerClient producer = new FakeProducerClient();
+        KafkaPaymentPublisher publisher = new KafkaPaymentPublisher(producer);
 
         publisher.warmUp();
         publisher.close();
 
-        assertEquals(List.of("spi-payment-requests"), paymentProducer.warmedTopics);
-        assertEquals(List.of("spi-payment-status-reports"), statusProducer.warmedTopics);
-        assertEquals(1, paymentProducer.closeCalls);
-        assertEquals(1, statusProducer.closeCalls);
+        assertEquals(List.of("spi-payment-requests", "spi-payment-status-reports"), producer.warmedTopics);
+        assertEquals(1, producer.closeCalls);
     }
 
     private static void assertAuthenticatedIspb(ProducerRecord<byte[], byte[]> record, String expectedIspb) {
@@ -142,16 +206,24 @@ class KafkaPaymentPublisherTest {
         assertEquals(expectedIspb, new String(headers.getFirst().value(), StandardCharsets.UTF_8));
     }
 
+    private static void assertRecordKey(ProducerRecord<byte[], byte[]> record, String expectedIspb) {
+        assertArrayEquals(expectedIspb.getBytes(StandardCharsets.UTF_8), record.key());
+    }
+
     private static final class FakeProducerClient implements ProducerClient {
         final List<ProducerRecord<byte[], byte[]>> sends = new ArrayList<>();
         final List<String> warmedTopics = new ArrayList<>();
         RuntimeException failure;
+        int failOnSend;
         int closeCalls;
 
         @Override
         public void send(ProducerRecord<byte[], byte[]> record, SendCallback callback) {
             sends.add(record);
-            callback.complete(failure);
+            RuntimeException sendFailure = failOnSend == sends.size()
+                    ? new IllegalStateException("send failed")
+                    : failure;
+            callback.complete(sendFailure);
         }
 
         @Override

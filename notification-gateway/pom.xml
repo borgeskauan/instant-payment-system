@@ -13,14 +13,13 @@
     <artifactId>notification-gateway</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>notification-gateway</name>
-    <description>Notification Gateway — bridges internal Kafka psp-notifications to external gRPC consumers</description>
+    <description>Notification Gateway — exposes the durable Kafka notification log through authenticated gRPC Pull</description>
 
     <properties>
         <java.version>21</java.version>
         <grpc.version>1.68.1</grpc.version>
         <protobuf.version>3.25.5</protobuf.version>
         <grpc.spring.boot.starter.version>3.1.0.RELEASE</grpc.spring.boot.starter.version>
-        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -34,25 +33,6 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
-        </dependency>
-
-        <!-- Persistent delivery tracking -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-database-postgresql</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
         </dependency>
 
         <!-- gRPC server (auto-configures Netty gRPC server) -->
@@ -105,11 +85,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

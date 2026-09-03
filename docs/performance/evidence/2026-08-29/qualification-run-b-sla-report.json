@@ -1,0 +1,109 @@
+{
+  "generation": {
+    "planned_originals": 1890000,
+    "executed_originals": 1890000,
+    "required_minimum_tps": 2000,
+    "minimum_rolling_tps": 2079
+  },
+  "scenarios": [
+    {
+      "name": "happy-path",
+      "share": 0.8,
+      "traffic": {
+        "payments": {
+          "started": 1607515,
+          "accepted": 1607515
+        },
+        "pacs002": {
+          "started": 1607515,
+          "accepted": 1607515
+        }
+      },
+      "outcome": {
+        "expected": {
+          "status": "ACSC",
+          "reason_codes": []
+        },
+        "matched": 1607515,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 1512000,
+        "after_threshold": 0,
+        "latency_ms": {
+          "p50": 157.53,
+          "p95": 237.008,
+          "p99": 272.326,
+          "max": 692.904
+        }
+      },
+      "violations": 0
+    },
+    {
+      "name": "insufficient-funds",
+      "share": 0.2,
+      "traffic": {
+        "payments": {
+          "started": 401888,
+          "accepted": 401888
+        },
+        "pacs002": {
+          "started": 0,
+          "accepted": 0
+        }
+      },
+      "outcome": {
+        "expected": {
+          "status": "RJCT",
+          "reason_codes": [
+            "AM04"
+          ]
+        },
+        "matched": 401888,
+        "missing": 0,
+        "contradictory": 0
+      },
+      "performance": {
+        "within_threshold": 378000,
+        "after_threshold": 0,
+        "latency_ms": {
+          "p50": 76.745,
+          "p95": 124.469,
+          "p99": 150.906,
+          "max": 565.211
+        }
+      },
+      "violations": 0
+    }
+  ],
+  "replays": {
+    "pacs008": {
+      "started": 100472,
+      "accepted": 100472,
+      "violations": 0
+    },
+    "pacs002": {
+      "started": 80373,
+      "accepted": 80373,
+      "violations": 0
+    }
+  },
+  "performance": {
+    "threshold_ms": 1000,
+    "within_sla": true,
+    "active_tps": {
+      "payments": 2100,
+      "pacs008_replays": 103.833,
+      "pacs002_replays": 83.056,
+      "payer_notifications": 2099.883
+    },
+    "payer_notifications_after_active": 105,
+    "latency_ms": {
+      "p50": 142.436,
+      "p95": 233.917,
+      "p99": 265.195,
+      "max": 692.904
+    }
+  }
+}

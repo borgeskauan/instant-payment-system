@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    ".",
+    "crates/loadtool-contract",
+    "crates/loadtool-generator",
+    "crates/loadtool-report",
+]
+resolver = "2"
+
+[package]
+name = "rust-loadtool"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+autobins = false
+
+[[bin]]
+name = "rust-loadtool"
+path = "src/main.rs"
+
+[[bench]]
+name = "pacer_hot_path"
+harness = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+loadtool-contract = { path = "crates/loadtool-contract" }
+loadtool-generator = { path = "crates/loadtool-generator" }
+loadtool-report = { path = "crates/loadtool-report" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+bytes = "1.10"
+hdrhistogram = "7.5"
+http-body-util = "0.1"
+hyper = { version = "1.6", features = ["server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tempfile = "3.20"
+tokio = { version = "1.47", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
