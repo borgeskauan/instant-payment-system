@@ -24,6 +24,25 @@ Instead of trying to copy Pix, I built a much smaller version of its inter-insti
 
 The core does not model customer accounts and balances inside each bank. It models the liquidity that each participating institution keeps in the system and the flow between the paying and receiving institutions. The receiving institution makes the accept or reject decision, not the person who would receive the Pix payment.
 
+### The payment in one picture
+
+```mermaid
+sequenceDiagram
+    participant P as Paying institution
+    participant S as Payment system
+    participant R as Receiving institution
+
+    P->>S: Sends a payment
+    Note over S: Check and reserve the paying institution's money
+    S->>R: Asks for a decision
+    R->>S: Accepts or rejects
+    Note over S: Accept: transfer it. Reject: return it.
+    S-->>P: Reports the result
+    S-->>R: Confirms the transfer if accepted
+```
+
+The receiving **institution** decides whether to accept the payment. The system reserves its money first, then either transfers it to that institution or makes it available to the payer again. The later sections show how it keeps this flow correct under load, retries, and failures.
+
 Material published by the Central Bank gave me concrete references. A [presentation about architecture and resilience](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) used **2,000 transactions per second** as a reference. The [2021 SPI annual report](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) recorded the service-level agreement: 99% of payments processed inside SPI in less than **4.6 seconds**.
 
 The same report included another useful number: in practice, the time needed to process 99% of payments stayed close to or below **1 second** during much of the observed period.
