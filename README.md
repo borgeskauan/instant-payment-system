@@ -41,7 +41,7 @@ sequenceDiagram
     S-->>R: Confirms the transfer if accepted
 ```
 
-The receiving **institution** decides whether to accept the payment. The system reserves its money first, then either transfers it to that institution or makes it available to the payer again. The later sections show how it keeps this flow correct under load, retries, and failures.
+The receiving **institution** decides whether to accept the payment. The system first reserves money from the paying institution's balance. If the receiver accepts, that money moves to its balance; if it rejects, the money becomes available to the paying institution again. The later sections show how it keeps this flow correct under load, retries, and failures.
 
 Material published by the Central Bank gave me concrete references. A [presentation about architecture and resilience](https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Forum_Pix_Plenaria/Forum_PI_180220.pdf) used **2,000 transactions per second** as a reference. The [2021 SPI annual report](https://www.bcb.gov.br/content/estabilidadefinanceira/relatorios_SPI/relatorio_anual_spi_2021.pdf) recorded the service-level agreement: 99% of payments processed inside SPI in less than **4.6 seconds**.
 
